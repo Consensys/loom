@@ -31,7 +31,7 @@ func FinalizeProof(S System, P *Proof, fs *fiatshamir.Transcript) error {
 		return nil
 	}
 
-	H, err := univariate.ComputeQuotient(S.Trace, S.Constraint, univariate.WithResultBasis(univariate.Canonical))
+	H, err := univariate.ComputeQuotient(S.Trace, S.Constraint, univariate.WithResultBasis(univariate.Canonical), univariate.WithOutputName(FINAL_QUOTIENT))
 	if err != nil {
 		return err
 	}

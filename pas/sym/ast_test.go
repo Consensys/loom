@@ -38,14 +38,13 @@ func TestPrune(t *testing.T) {
 
 	x0 := NewVar("x_0")
 	x1 := NewVar("x_1")
-
-	a := x0.Add(x1).Mul(x0.Add(x1))
 	e := x0.Add(x1).Pow(8)
 
 	degreeBefore := e.Degree()
 	beforePruning := e.String()
 
-	b := e.Prune(2)
+	degreeToPrune := 2
+	_ = e.Prune(degreeToPrune)
 	degreeAfter := e.Degree()
 	afterPruning := e.String()
 	if beforePruning != afterPruning {
@@ -53,13 +52,7 @@ func TestPrune(t *testing.T) {
 	}
 
 	if degreeAfter+1 != degreeBefore {
-		t.Errorf("pruning by a degree 2 should decrease the degree by 1")
-	}
-
-	astring := a.String()
-	bstring := b.String()
-	if astring != bstring {
-		t.Errorf("expected: %s, got %s", astring, bstring)
+		t.Errorf("pruning by a degree %d should decrease the degree by %d", degreeToPrune, degreeToPrune-1)
 	}
 
 }

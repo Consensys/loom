@@ -140,6 +140,7 @@ func ComputeQuotient(Pi []Polynomial, C sym.Expr, opts ...BuilderOption) (Polyno
 
 	var r Polynomial
 	r.EP = quotient
+	r.ID = config.OutputName
 
 	return r, nil
 }

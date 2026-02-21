@@ -1,6 +1,7 @@
 package cs
 
 import (
+	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/iop/crypto/dummycommitment"
 	"github.com/consensys/iop/pas/univariate"
@@ -14,13 +15,9 @@ type Trace = []univariate.Polynomial
 type System struct {
 	Trace      Trace
 	Constraint Constraint
+	fs         *fiatshamir.Transcript // <- needed to track the challenge derivation when a system is passed along protocols
 	N          int
 }
-
-// 	// create a system System{T, C, n} and return it
-// 	return System{Trace: T, Constraint: C, N: n}, nil
-
-// }
 
 // Binding is used for challenge derivation. They populate the 'Bindings' field
 // of a fiat shamir instance, and orchestrate the rounds of a sigma protocol.

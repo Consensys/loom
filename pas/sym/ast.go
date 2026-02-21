@@ -394,8 +394,56 @@ func (s *Sub) Leaves() []string         { return append(s.Left.Leaves(), s.Right
 func (m *Mul) Leaves() []string         { return append(m.Left.Leaves(), m.Right.Leaves()...) }
 func (p *Pow) Leaves() []string         { return p.Base.Leaves() }
 
+// Clone returns a deep copy of the expression tree with no shared nodes.
+//
+// fix from an error originally found in TestPrune. Without Clone some nodes share the same objects,
+// resulting in a DAG and not a tree
+//
+// ================ claude log ================
+// Root cause: squareAndMultiply built a DAG instead of a tree. The line
+//   result = &Mul{result, result} made both Left and Right of the new Mul
+//   point to the same object. For (x0+x1)^8:
+// M3.Left === M3.Right === M2
+//   M2.Left === M2.Right === M1   ← shared!
+//   M1.Left === M1.Right === Add{x0,x1}
+
+//   When Prune(2) found M1 (degree 2) inside M2.Left and replaced it in-place
+//    with a Var, it also silently modified M2.Right (same pointer). So degree
+//    dropped from 8 → 6 instead of 8 → 7.
+
+// Fix: Added a Clone(Expr) Expr deep-copy function and changed
+// squareAndMultiply to clone the right child on every square step (result =
+//
+//	&Mul{result, Clone(result)}) and clone base on every multiply step. This
+//	ensures every node in the tree is a distinct object, so in-place
+//
+// mutations like Prune only affect the intended subtree
+// ================================================
+func Clone(e Expr) Expr {
+	switch v := e.(type) {
+	case *Var:
+		return &Var{Name: v.Name}
+	case *Const:
+		c := *v
+		return &c
+	case *Placeholder:
+		return &Placeholder{Name: v.Name}
+	case *Add:
+		return &Add{Left: Clone(v.Left), Right: Clone(v.Right)}
+	case *Sub:
+		return &Sub{Left: Clone(v.Left), Right: Clone(v.Right)}
+	case *Mul:
+		return &Mul{Left: Clone(v.Left), Right: Clone(v.Right)}
+	case *Pow:
+		return &Pow{Base: Clone(v.Base), Exp: v.Exp}
+	}
+	panic("Clone: unknown Expr type")
+}
+
 // squareAndMultiply builds an Expr tree for base^exp using binary exponentiation.
 // exp must be >= 3.
+// Each node in the tree is a distinct object (no shared pointers) so that
+// in-place transformations such as Prune work correctly on the tree.
 func squareAndMultiply(base Expr, exp uint32) Expr {
 	// Collect the bits of exp from LSB to MSB, then reverse to get MSB-first.
 	var binaryBits []bool
@@ -407,11 +455,14 @@ func squareAndMultiply(base Expr, exp uint32) Expr {
 	}
 
 	// The MSB is always 1; start with result = base and process the remaining bits.
+	// Clone the right child on every squaring step so that Left and Right are always
+	// distinct objects — otherwise Prune (which rewrites nodes in-place) would
+	// simultaneously modify both sides of a Mul when it modifies a shared subtree.
 	result := base
 	for i := 1; i < len(binaryBits); i++ {
-		result = &Mul{result, result} // square
+		result = &Mul{result, Clone(result)} // square
 		if binaryBits[i] {
-			result = &Mul{result, base} // multiply
+			result = &Mul{result, Clone(base)} // multiply
 		}
 	}
 	return result
