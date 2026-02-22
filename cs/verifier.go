@@ -7,9 +7,36 @@ import (
 
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/iop/crypto/dummycommitment"
 	"github.com/consensys/iop/pas/sym"
 )
+
+// GenerateChallenges generate the challenges in the same order of generation than the prover
+func GenerateChallenges(P Proof, fs *fiatshamir.Transcript) ([]koalabear.Element, error) {
+
+	r := make([]koalabear.Element, len(P.Rounds))
+	for i := 0; i < len(P.Rounds); i++ {
+		err := fs.NewChallenge(P.Rounds[i].ChallengeName)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range P.Rounds[i].Dependencies {
+			com, ok := P.OpeningProofs[d]
+			if !ok {
+				return nil, fmt.Errorf("%s not found in the list of commitments", d)
+			}
+			err = fs.Bind(P.Rounds[i].ChallengeName, com.Digest.Marshal())
+			if err != nil {
+				return nil, err
+			}
+		}
+		br, err := fs.ComputeChallenge(P.Rounds[i].ChallengeName)
+		if err != nil {
+			return nil, err
+		}
+		r[i].SetBytes(br)
+	}
+	return r, nil
+}
 
 // Verify verifies a Proof P
 //
@@ -53,10 +80,6 @@ import (
 //	|-------------------------------–-----------------------------------------------|
 func Verify(P *Proof, opts ...IopOption) error {
 
-	// TODO ensure len(P.Bindings)=1 and len(P.Bindings[0])=len(P.OpeningProofs)
-
-	// create a fiat shamir instance
-	// evaluationPointName := P.Bindings[0].ChallengeName
 	var config IopConfig
 	for _, opt := range opts {
 		err := opt(&config)
@@ -65,66 +88,80 @@ func Verify(P *Proof, opts ...IopOption) error {
 		}
 	}
 
-	// if Config.ChallengeNames is not set, we pick the names in the proof
-	// else we use the one in config
-	challengesID := make([]string, len(P.Bindings))
-	if config.ChallengeNames == nil {
-		for i := 0; i < len(P.Bindings); i++ {
-			challengesID[i] = P.Bindings[i].ChallengeName
-		}
-	} else {
-		// TODO ensure the  len(config.ChallengeNames) == len(challengesID)
-		copy(challengesID, config.ChallengeNames)
-	}
-	fs := fiatshamir.NewTranscript(sha256.New(), challengesID...)
+	// crreate FS instance
+	fs := fiatshamir.NewTranscript(sha256.New())
 
-	// create the bindings. Every bindings but the quotient are in P.Bindings
-	for i := 0; i < len(P.Bindings); i++ {
-		for j := 0; j < len(P.Bindings[i].CommitmentsName); j++ {
-			curCom, err := getDigestByName(P.OpeningProofs, P.Bindings[i].CommitmentsName[j])
+	// create the variable index for evaluating P.Constraint. We get all the names, except the constants
+	leaves := P.Constraint.Leaves()
+	leaves = sym.RemoveDuplicates(leaves)
+	varindex := make(sym.VarIndex)
+	for i, l := range leaves {
+		varindex[l] = i
+	}
+
+	// populate the list of variables at which P.Constraint is evaluated
+	values := make([]koalabear.Element, len(leaves))
+	for k, v := range P.OpeningProofs {
+		// EVALUATION_POINT and FINAL_QUOTIENT do not appear as leaves of P.Constraint
+		// (the quotient is the RHS, not the LHS) and must be skipped here.
+		if k == EVALUATION_POINT || k == FINAL_QUOTIENT {
+			continue
+		}
+		values[varindex[k]].Set(&v.OpeningProof.ClaimedValue)
+	}
+
+	// simulate each rounds with Fiat Shamir. The last round derives zeta, not used in P.C so we let the last round for later
+	for i := 0; i < len(P.Rounds)-1; i++ {
+
+		round := P.Rounds[i]
+
+		err := fs.NewChallenge(round.ChallengeName) // round i: receive i-th Commitments, then send i-th challenge
+		if err != nil {
+			return err
+		}
+		for _, comID := range round.Dependencies {
+			pp, ok := P.OpeningProofs[comID]
+			if !ok {
+				return fmt.Errorf("commitment %s not found", comID)
+			}
+			err = fs.Bind(round.ChallengeName, pp.Digest.Marshal())
 			if err != nil {
 				return err
 			}
-			fs.Bind(P.Bindings[i].ChallengeName, curCom.Marshal())
 		}
+		bithChallenge, err := fs.ComputeChallenge(round.ChallengeName)
+		if err != nil {
+			return err
+		}
+		values[varindex[round.ChallengeName]].SetBytes(bithChallenge)
 	}
-	err := fs.Bind(P.Bindings[len(P.Bindings)-1].ChallengeName, P.Quotient.Digest.Marshal()) // <- the last binding is the quotient
+
+	// derive zeta
+	err := fs.NewChallenge(EVALUATION_POINT)
 	if err != nil {
 		return err
 	}
-
-	// derive the challenges
-	challenges := make([]koalabear.Element, len(P.Bindings))
-	if config.ChallengeValues == nil {
-		for i, binding := range P.Bindings {
-			bchallenge, err := fs.ComputeChallenge(binding.ChallengeName)
-			if err != nil {
-				return err
-			}
-			challenges[i].SetBytes(bchallenge)
+	for _, comID := range P.Rounds[len(P.Rounds)-1].Dependencies {
+		pp, ok := P.OpeningProofs[comID]
+		if !ok {
+			return fmt.Errorf("commitment %s not found", comID)
 		}
-	} else { // we force the values
-		for i, c := range config.ChallengeValues {
-			challenges[i].Set(&c)
-		}
-	}
-	zeta := challenges[len(challenges)-1] // <- the point of evaluation is the last challenge
-
-	// check the opening proofs
-	for i := 0; i < len(P.OpeningProofs); i++ {
-		err = dummycommitment.Verify(P.OpeningProofs[i].Digest, P.OpeningProofs[i].OpeningProof, zeta)
+		err = fs.Bind(P.Rounds[len(P.Rounds)-1].ChallengeName, pp.Digest.Marshal())
 		if err != nil {
 			return err
 		}
 	}
-	err = dummycommitment.Verify(P.Quotient.Digest, P.Quotient.OpeningProof, zeta)
+	bzeta, err := fs.ComputeChallenge(EVALUATION_POINT)
 	if err != nil {
 		return err
 	}
+	var zeta koalabear.Element
+	zeta.SetBytes(bzeta)
 
 	// check the relation P.C(evaluations) = q*(x^n-1)
-	Czeta := ComputeEvaluationWithClaimedValues(*P, challenges[:len(challenges)-1]) // <- all but the last challenge are used in the algebraic expression
-	Qzeta := P.Quotient.OpeningProof.ClaimedValue
+	ConstraintHorner := sym.ToHorner(sym.Convert(P.Constraint, varindex, len(leaves)))
+	Czeta := ConstraintHorner.Eval(values)
+	Qzeta := P.OpeningProofs[FINAL_QUOTIENT].OpeningProof.ClaimedValue
 	zetaNMinusOne := zeta
 	var one koalabear.Element
 	one.SetOne()
@@ -137,50 +174,4 @@ func Verify(P *Proof, opts ...IopOption) error {
 	}
 
 	return nil
-}
-
-// getPositionDigestByName return the position of the Digest whose ID matches name
-func getPositionDigestByName(D []dummycommitment.PackedProof, name string) (int, error) {
-	res := -1
-	for i := 0; i < len(D); i++ {
-		if D[i].ID == name {
-			res = i
-		}
-	}
-	if res == -1 {
-		return res, fmt.Errorf("polynomial %s not in the list", name)
-	}
-	return res, nil
-}
-
-// getDigestByName return Digest whose ID matches name
-func getDigestByName(D []dummycommitment.PackedProof, name string) (dummycommitment.Digest, error) {
-	for i := 0; i < len(D); i++ {
-		if D[i].ID == name {
-			return D[i].Digest, nil
-		}
-	}
-	return dummycommitment.Digest{}, fmt.Errorf("polynomial %s not in the list", name)
-}
-
-// computes P.C(evaluations)
-// challenges appear in the same order as those in P.Bindings
-func ComputeEvaluationWithClaimedValues(P Proof, challenges []koalabear.Element) koalabear.Element {
-	numChallenges := len(challenges) // the last binding is the evaluation point, not used in P.Constraint
-	varindex := make(sym.VarIndex)
-	y := make([]koalabear.Element, len(P.OpeningProofs)+numChallenges)
-	for i := 0; i < len(P.OpeningProofs); i++ {
-		varindex[P.OpeningProofs[i].ID] = i
-		y[i] = P.OpeningProofs[i].OpeningProof.ClaimedValue
-	}
-	offset := len(P.OpeningProofs)
-	for i := 0; i < numChallenges; i++ { // <- the last binding is the point of evaluation, not used in P.Constraint
-		varindex[P.Bindings[i].ChallengeName] = i + offset
-
-		// challenges[i] corresponds to P.Bindings[i].ChallengeName
-		y[i+offset] = challenges[i]
-	}
-	CHorner := sym.ToHorner(sym.Convert(P.Constraint, varindex, len(P.OpeningProofs)+numChallenges))
-	Cy := CHorner.Eval(y)
-	return Cy
 }

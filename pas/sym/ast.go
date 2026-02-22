@@ -18,9 +18,13 @@ type Expr interface {
 	Mul(Expr) Expr
 	Pow(uint32) Expr
 
-	// return a slice containing the names of the leaves of Expr
+	// return a slice containing the names of the leaves of Expr, except the constants
 	// /!\ contains duplicates, use RemoveDuplicates to clean the slice
 	Leaves() []string
+
+	// return a slice containing the names of the leaves of Expr, except the constants and the placeholders
+	// /!\ contains duplicates, use RemoveDuplicates to clean the slice
+	LeavesWOPlaceholders() []string
 
 	// recurse through expr, until an Expr (call it E) of degree <= deg is found.
 	// When E is found, remove E from expr and replace this subexpression with NewVar(E.String())
@@ -388,11 +392,19 @@ func (p *Pow) Prune(deg int) Expr         { return pruneSearch(p, deg) }
 
 func (c *Placeholder) Leaves() []string { return []string{c.String()} }
 func (v *Var) Leaves() []string         { return []string{v.Name} }
-func (c *Const) Leaves() []string       { return []string{c.String()} }
+func (c *Const) Leaves() []string       { return []string{} }
 func (a *Add) Leaves() []string         { return append(a.Left.Leaves(), a.Right.Leaves()...) }
 func (s *Sub) Leaves() []string         { return append(s.Left.Leaves(), s.Right.Leaves()...) }
 func (m *Mul) Leaves() []string         { return append(m.Left.Leaves(), m.Right.Leaves()...) }
 func (p *Pow) Leaves() []string         { return p.Base.Leaves() }
+
+func (c *Placeholder) LeavesWOPlaceholders() []string { return []string{c.String()} }
+func (v *Var) LeavesWOPlaceholders() []string         { return []string{} }
+func (c *Const) LeavesWOPlaceholders() []string       { return []string{} }
+func (a *Add) LeavesWOPlaceholders() []string         { return append(a.Left.Leaves(), a.Right.Leaves()...) }
+func (s *Sub) LeavesWOPlaceholders() []string         { return append(s.Left.Leaves(), s.Right.Leaves()...) }
+func (m *Mul) LeavesWOPlaceholders() []string         { return append(m.Left.Leaves(), m.Right.Leaves()...) }
+func (p *Pow) LeavesWOPlaceholders() []string         { return p.Base.Leaves() }
 
 // Clone returns a deep copy of the expression tree with no shared nodes.
 //

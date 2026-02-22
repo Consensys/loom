@@ -106,7 +106,7 @@ func NewInterpolatedEPolynomial(evals []koalabear.Element, id string) (*EPolynom
 
 // NewEPolynomial creates a new polynomial with the given coefficients in canonical basis with normal layout.
 // The size of the coefficient slice is automatically padded to the next power of two if necessary.
-func NewEPolynomial(coeffs []koalabear.Element, id string) (*EPolynomial, error) {
+func NewEPolynomial(coeffs []koalabear.Element) (*EPolynomial, error) {
 	if len(coeffs) == 0 {
 		return nil, fmt.Errorf("coefficients slice cannot be empty")
 	}
@@ -120,17 +120,11 @@ func NewEPolynomial(coeffs []koalabear.Element, id string) (*EPolynomial, error)
 		coeffs = padded
 	}
 
-	// Calculate actual degree
-	degree := len(coeffs) - 1
-	for degree > 0 && coeffs[degree].IsZero() {
-		degree--
-	}
-
 	return &EPolynomial{
 		Coefficients: coeffs,
 		Basis:        Canonical,
 		Layout:       Normal,
-		Degree:       degree,
+		Degree:       len(coeffs) - 1,
 	}, nil
 }
 

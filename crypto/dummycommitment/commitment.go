@@ -51,13 +51,11 @@ func Verify(commitment Digest, proof OpeningProof, point koalabear.Element) erro
 type PackedProof struct {
 	Digest       Digest
 	OpeningProof OpeningProof
-	ID           string
 }
 
-func PackProof(d Digest, proof OpeningProof, id string) PackedProof {
+func PackProof(d Digest, proof OpeningProof) PackedProof {
 	return PackedProof{
 		Digest:       d,
 		OpeningProof: proof,
-		ID:           id,
 	}
 }

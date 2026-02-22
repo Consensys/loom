@@ -2,36 +2,40 @@ package univariate
 
 // Config holds configuration options for ComputeSym and ComputeQuotient
 type BuilderConfig struct {
-	ResultLayout Layout
-	ResultBasis  Basis
+	OutputLayout Layout
+	OutputBasis  Basis
 	OutputName   string
 	// DomainSize, when > 0, pins the evaluation domain size and skips the automatic
 	// degree-based inflation. Useful when computing mod X^N-1 (e.g., in Flatten).
 	DomainSize int
+
+	// InputBasis
+	InputBasis Basis
 }
 
 // Option is a functional option type for configuring ComputeSym and ComputeQuotient
 type BuilderOption func(*BuilderConfig) error
 
-// WithResultLayout sets the layout of the resulting polynomial (Normal or BitReversed)
-func WithResultLayout(layout Layout) BuilderOption {
+// WithOutputLayout sets the layout of the resulting polynomial (Normal or BitReversed)
+func WithOutputLayout(layout Layout) BuilderOption {
 	return func(c *BuilderConfig) error {
-		c.ResultLayout = layout
+		c.OutputLayout = layout
 		return nil
 	}
 }
 
-// WithResultLayout sets the layout of the resulting polynomial (Normal or BitReversed)
-func WithResultBasis(basis Basis) BuilderOption {
+// WithOutputLayout sets the layout of the resulting polynomial (Normal or BitReversed)
+func WithOutputBasis(basis Basis) BuilderOption {
 	return func(c *BuilderConfig) error {
-		c.ResultBasis = basis
+		c.OutputBasis = basis
 		return nil
 	}
 }
 
-func WithOutputName(name string) BuilderOption {
-	return func(s *BuilderConfig) error {
-		s.OutputName = name
+// WithInputBasis sets the layout of the inputs polynomial (Normal or BitReversed)
+func WithInputBasis(basis Basis) BuilderOption {
+	return func(c *BuilderConfig) error {
+		c.InputBasis = basis
 		return nil
 	}
 }
@@ -48,6 +52,8 @@ func WithDomainSize(n int) BuilderOption {
 
 func NewBuilderConfig() BuilderConfig {
 	return BuilderConfig{
-		OutputName: "Output",
+		OutputName:  "Output",
+		InputBasis:  Lagrange,
+		OutputBasis: Lagrange,
 	}
 }

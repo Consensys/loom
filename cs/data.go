@@ -1,46 +1,42 @@
 package cs
 
 import (
-	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/iop/crypto/dummycommitment"
 	"github.com/consensys/iop/pas/univariate"
 )
 
-// Trace represents a trace of execution of a program, where each column is a polynomial representing the values of a variable at each step of the execution, and Index is the variable that represents the step index in the trace.
-// Index maps each columns to a variable that appears in a symbolic expression.
-type Trace = []univariate.Polynomial
+// Trace represents a trace of execution. It is just a list of columns, referenced by an ID.
+type Trace = map[string]*univariate.Polynomial
 
 // System represents a constraint system, satisfying Constraint(Trace) = 0 mod X^n-1
 type System struct {
-	Trace      Trace
-	Constraint Constraint
-	fs         *fiatshamir.Transcript // <- needed to track the challenge derivation when a system is passed along protocols
-	N          int
+	Trace             Trace
+	Constraints       []Constraint // list of constraints
+	CachedConstraints []Constraint // list of constraints which are not yet recorded (useful to accumulate constraints that we will fold later)
+	N                 int
 }
 
-// Binding is used for challenge derivation. They populate the 'Bindings' field
-// of a fiat shamir instance, and orchestrate the rounds of a sigma protocol.
-type Binding struct {
-
-	// ChallengeName is the name of the challenge to generate
-	ChallengeName string
-
-	// Names of the commitments used to derive the challenge
-	CommitmentsName []string
+func NewSystem(T Trace, C, CC []Constraint, N int) System {
+	return System{
+		Trace:             T,
+		Constraints:       C,
+		CachedConstraints: CC,
+		N:                 N,
+	}
 }
 
 type Proof struct {
-	OpeningProofs []dummycommitment.PackedProof
-	Quotient      dummycommitment.PackedProof
-	Constraint    Constraint
+	OpeningProofs map[string]dummycommitment.PackedProof
 
-	// Bindings.
+	// The final constraint. The verifier checks a relation of the form C(P1, P2.. ) = Quotient * (X^n-1)
+	Constraint Constraint
+
+	// List of Rounds, simulating a \Sigma protocol.
 	// The last challenge derive is always the evaluation point, and the last binded poly is the quotient.
-	Bindings []Binding
+	Rounds []Round
 
-	// N size of the domain on which the constraints vanish -> the "n" in
-	// Constraints
+	// N size of the domain on which the constraints vanish (the "n" in C(P1, P2.. ) = Quotient * (X^n-1) )
 	N int
 }
 

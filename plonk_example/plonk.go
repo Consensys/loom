@@ -1,6 +1,8 @@
 package plonk_example
 
 import (
+	"fmt"
+
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/gnark-crypto/field/koalabear/iop"
@@ -30,7 +32,7 @@ const (
 )
 
 // gnarkCryptoPolyToUnivariatePoly convesions *iop.Polynomial -> univariate.Polynomial
-func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial, id string) (univariate.Polynomial, error) {
+func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial) (*univariate.Polynomial, error) {
 
 	c := p.Coefficients()
 
@@ -54,10 +56,9 @@ func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial, id string) (univariate.P
 		c,
 		univariate.WithBasis(basis),
 		univariate.WithLayout(layout),
-		univariate.WithID(id),
 	)
 	if err != nil {
-		return res, iop.ErrInconsistentFormat
+		return &res, iop.ErrInconsistentFormat
 	}
 
 	// For Lagrange/LagrangeShifted polynomials, NewPolynomial's degree computation
@@ -68,85 +69,89 @@ func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial, id string) (univariate.P
 		res.EP.Degree = len(res.EP.Coefficients) - 1
 	}
 
-	return res, nil
+	return &res, nil
 }
 
 // BuildTrace from a plonk trace ([ql, qr, qm, qo, qk, l, r, o], permutation), returns
 // a trace.
 //
-// TODO we assume that Commit has not been used save it for later
-func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1CSSolution) (cs.Trace, error) {
+// nbPublicInputs must equal len(spr.Public) (i.e. spr.GetNbPublicVariables()).
+// gnark's NewTrace leaves Qk[i]=0 for i < nbPublicInputs (public-input placeholder rows
+// where Ql[i]=-1), with the explicit note "to be completed by the prover". The prover
+// must set Qk[i]=L[i] so that the vanishing relation Ql[i]*L[i]+Qk[i] = -L[i]+L[i] = 0
+// holds on those rows.
+func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1CSSolution, nbPublicInputs int) (cs.Trace, error) {
 
 	// ql, qr, qm, qo, qk, id1, id2, id3, s1, s2, s3, l, r, o = 14 columns (z and zs are created in a separate system)
 	nbColumns := 16
 	T := make(cs.Trace, nbColumns)
 	var err error
-	T[0], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Ql, "QL")
+	T[ID_Ql], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Ql)
 	if err != nil {
 		return T, err
 	}
-	T[1], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qr, "QR")
+	T[ID_Qr], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qr)
 	if err != nil {
 		return T, err
 	}
-	T[2], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qm, "QM")
+	T[ID_Qm], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qm)
 	if err != nil {
 		return T, err
 	}
-	T[3], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qo, "QO")
+	T[ID_Qo], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qo)
 	if err != nil {
 		return T, err
 	}
-	T[4], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qk, "QK")
-	if err != nil {
-		return T, err
-	}
-
-	T[5], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S1, "S1")
-	if err != nil {
-		return T, err
-	}
-	T[6], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S2, "S2")
-	if err != nil {
-		return T, err
-	}
-	T[7], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S3, "S3")
+	T[ID_Qk], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qk)
 	if err != nil {
 		return T, err
 	}
 
-	T[8], err = univariate.NewPolynomial(
-		[]koalabear.Element(plonkSolution.L),
-		univariate.WithID("L"),
-		univariate.WithBasis(univariate.Lagrange),
-		univariate.WithLayout(univariate.Normal))
+	T[ID_S1], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S1)
+	if err != nil {
+		return T, err
+	}
+	T[ID_S2], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S2)
+	if err != nil {
+		return T, err
+	}
+	T[ID_S3], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S3)
 	if err != nil {
 		return T, err
 	}
 
-	T[9], err = univariate.NewPolynomial(
-		[]koalabear.Element(plonkSolution.R),
-		univariate.WithID("R"),
-		univariate.WithBasis(univariate.Lagrange),
-		univariate.WithLayout(univariate.Normal))
+	// Each polynomial must be declared with its own variable so that &poly gives a
+	// distinct address for each entry. Reusing a single variable p and storing &p
+	// multiple times would make all map entries alias the same memory location.
+	lPoly, err := univariate.NewPolynomial([]koalabear.Element(plonkSolution.L), univariate.WithBasis(univariate.Lagrange))
 	if err != nil {
 		return T, err
+	}
+	// lPoly.EP.Degree = len(lPoly.EP.Coefficients) - 1
+	T[ID_L] = &lPoly
+
+	// Complete Qk for the public-input placeholder rows. Both Qk and L are in
+	// Lagrange basis, Normal layout, so Coefficients[i] is the i-th row value.
+	for i := 0; i < nbPublicInputs; i++ {
+		T[ID_Qk].EP.Coefficients[i] = T[ID_L].EP.Coefficients[i]
 	}
 
-	T[10], err = univariate.NewPolynomial(
-		[]koalabear.Element(plonkSolution.O),
-		univariate.WithID("O"),
-		univariate.WithBasis(univariate.Lagrange),
-		univariate.WithLayout(univariate.Normal))
+	rPoly, err := univariate.NewPolynomial([]koalabear.Element(plonkSolution.R), univariate.WithBasis(univariate.Lagrange))
 	if err != nil {
 		return T, err
 	}
+	// rPoly.EP.Degree = len(rPoly.EP.Coefficients) - 1
+	T[ID_R] = &rPoly
+
+	oPoly, err := univariate.NewPolynomial([]koalabear.Element(plonkSolution.O), univariate.WithBasis(univariate.Lagrange))
+	if err != nil {
+		return T, err
+	}
+	// oPoly.EP.Degree = len(oPoly.EP.Coefficients) - 1
+	T[ID_O] = &oPoly
 
 	n := len(plonkTrace.Ql.Coefficients())
 	domain := fft.NewDomain(uint64(n))
-	if err != nil {
-		return T, err
-	}
 
 	res := make([]koalabear.Element, 3*domain.Cardinality)
 
@@ -160,33 +165,53 @@ func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1C
 		res[2*domain.Cardinality+i].Mul(&res[2*domain.Cardinality+i-1], &domain.Generator)
 	}
 
-	T[11], err = univariate.NewPolynomial(
-		res[:domain.Cardinality],
-		univariate.WithBasis(univariate.Lagrange),
-		univariate.WithLayout(univariate.Normal),
-		univariate.WithID("ID1"))
+	id1Poly, err := univariate.NewPolynomial([]koalabear.Element(res[:domain.Cardinality]), univariate.WithBasis(univariate.Lagrange))
 	if err != nil {
 		return T, err
 	}
+	id1Poly.EP.Degree = len(id1Poly.EP.Coefficients) - 1
+	T[ID_ID1] = &id1Poly
 
-	T[12], err = univariate.NewPolynomial(
-		res[domain.Cardinality:2*domain.Cardinality],
-		univariate.WithBasis(univariate.Lagrange),
-		univariate.WithLayout(univariate.Normal),
-		univariate.WithID("ID2"))
+	id2Poly, err := univariate.NewPolynomial([]koalabear.Element(res[domain.Cardinality:2*domain.Cardinality]), univariate.WithBasis(univariate.Lagrange))
 	if err != nil {
 		return T, err
 	}
+	id2Poly.EP.Degree = len(id2Poly.EP.Coefficients) - 1
+	T[ID_ID2] = &id2Poly
 
-	T[13], err = univariate.NewPolynomial(
-		res[2*domain.Cardinality:],
-		univariate.WithBasis(univariate.Lagrange),
-		univariate.WithLayout(univariate.Normal),
-		univariate.WithID("ID3"))
+	id3Poly, err := univariate.NewPolynomial([]koalabear.Element(res[2*domain.Cardinality:]), univariate.WithBasis(univariate.Lagrange))
 	if err != nil {
 		return T, err
 	}
+	id3Poly.EP.Degree = len(id3Poly.EP.Coefficients) - 1
+	T[ID_ID3] = &id3Poly
 
 	return T, nil
 
+}
+
+func prettyPrintTrace(T cs.Trace) {
+
+	type wrap struct {
+		id string
+		p  univariate.Polynomial
+	}
+
+	w := []wrap{}
+	for k, t := range T {
+		w = append(w, wrap{id: k, p: *t})
+	}
+
+	for _, w := range w {
+		fmt.Printf("%s\t\t", w.id)
+	}
+	fmt.Println("")
+	for i := 0; i < len(w[0].p.EP.Coefficients); i++ {
+		for _, w := range w {
+			c := w.p.GetCoefficient(i)
+			fmt.Printf("%s\t", c.String())
+		}
+		fmt.Println("")
+	}
+	fmt.Println("")
 }
