@@ -1,4 +1,4 @@
-package cs
+package system
 
 import (
 	"fmt"
@@ -35,49 +35,20 @@ func prettyPrintTrace(T Trace) {
 	fmt.Println("")
 }
 
+// TestGrandProductIOP tests that a system with the grand product constraints vanished on X^n-1
 func TestGrandProductIOP(t *testing.T) {
 
 	size := 16
 
-	// Create P0 with random evaluations
-	coeffs0 := make([]koalabear.Element, size)
-	for i := range coeffs0 {
-		coeffs0[i].SetRandom()
-	}
-	P0, err := univariate.NewInterpolatedPolynomial(coeffs0, "P0")
-	if err != nil {
-		t.Fatalf("Failed to create P0: %v", err)
-	}
-
-	// Create P1 as a cyclic shift of P0: P1[i] = P0[(i+1) % size].
-	// Both encode the same multiset, so Π(P0[i]-gamma) = Π(P1[i]-gamma),
-	// meaning the grand product wraps back to 1 and the constraint holds at every row.
-	coeffs1 := make([]koalabear.Element, size)
-	for i := range coeffs1 {
-		coeffs1[i] = coeffs0[(i+1)%size]
-	}
-	P1, err := univariate.NewInterpolatedPolynomial(coeffs1, "P1")
-	if err != nil {
-		t.Fatalf("Failed to create P1: %v", err)
-	}
-
-	T := map[string]*univariate.Polynomial{
-		"P0": &P0,
-		"P1": &P1,
-	}
-	S := System{
-		Trace:             T,
-		Constraints:       []Constraint{},
-		CachedConstraints: []Constraint{},
-		N:                 size,
-	}
+	S := BuildPermutationCircuit(t, size)
 
 	// fix a challenge value (gamma for the grand product)
 	var gamma koalabear.Element
 	gamma.SetUint64(42)
 	challenge := Challenge{Name: "gamma", Value: gamma}
 
-	err = NewGrandProductIOP(&S, []string{"P0", "P1"}, "R", challenge)
+	var err error
+	err = BuildGrandProductConstraint(&S, []sym.Expr{sym.NewVar("P0")}, []sym.Expr{sym.NewVar("P1")}, "R", challenge)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,8 +66,10 @@ func TestGrandProductIOP(t *testing.T) {
 		Ri := S.Trace["R"].GetCoefficient(i)
 		Ri1 := S.Trace["R"].GetCoefficient((i + 1) % size)
 		Ri1Expected := new(koalabear.Element).Set(&Ri)
-		num := new(koalabear.Element).Sub(&coeffs0[i], &gamma)
-		den := new(koalabear.Element).Sub(&coeffs1[i], &gamma)
+		c := S.Trace["P0"].GetCoefficient(i)
+		num := new(koalabear.Element).Sub(&c, &gamma)
+		c = S.Trace["P1"].GetCoefficient(i)
+		den := new(koalabear.Element).Sub(&c, &gamma)
 		Ri1Expected.Mul(Ri1Expected, num)
 		Ri1Expected.Div(Ri1Expected, den)
 		if !Ri1.Equal(Ri1Expected) {
@@ -205,13 +178,13 @@ func TestSimpleIOP(t *testing.T) {
 	}
 
 	// Sub-test 1: E = P0^2
-	// NewSimpleIOP evaluates P0 pointwise, stores Q[i] = P0[i]^2, and records P0^2 - Q = 0.
+	// BuildColumnWithChallenge evaluates P0 pointwise, stores Q[i] = P0[i]^2, and records P0^2 - Q = 0.
 	t.Run("PointwiseSquare", func(t *testing.T) {
 		P0, raw0 := makePoly("P0")
 		S := makeSystem(map[string]*univariate.Polynomial{"P0": &P0})
 
 		E := sym.NewVar("P0").Pow(2)
-		if err := NewSimpleIOP(&S, E, "Q", challenge); err != nil {
+		if err := NewColumn(&S, E, "Q"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -241,7 +214,7 @@ func TestSimpleIOP(t *testing.T) {
 		S := makeSystem(map[string]*univariate.Polynomial{"P0": &P0, "P1": &P1, "P2": &P2})
 
 		E := sym.NewVar("P0").Mul(sym.NewVar("P1")).Mul(sym.NewVar("P2"))
-		if err := NewSimpleIOP(&S, E, "Q", challenge); err != nil {
+		if err := NewColumn(&S, E, "Q"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -274,7 +247,7 @@ func TestSimpleIOP(t *testing.T) {
 		E := sym.NewVar("P0").Pow(2).
 			Add(sym.NewPlaceholder("alpha").Mul(sym.NewVar("P1"))).
 			Sub(sym.NewVar("P2"))
-		if err := NewSimpleIOP(&S, E, "Q", challenge); err != nil {
+		if err := BuildColumnWithChallenge(&S, E, "Q", challenge.Value); err != nil {
 			t.Fatal(err)
 		}
 

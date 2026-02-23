@@ -27,7 +27,7 @@ The witness used in the test is `(A=3, B=4, C=5, D=6)`. gnark compiles this into
 Each constraint row enforces:
 
 ```
-QL·L + QR·R + QM·L·R + QO·O + QK = 0
+ QL·L + QR·R + QM·L·R + QO·O + QK = 0
 ```
 
 - **L, R**: left and right inputs to the gate
@@ -48,46 +48,38 @@ The permutation argument proves that the wire values are consistent: that every 
 `BuildTrace` converts gnark's compiled circuit and witness solution into a 14-column trace. Each column is a Lagrange polynomial of degree N−1, so row `i` holds the evaluation at `ωⁱ`.
 
 ```
-prettyPrintTrace(T):
-
  QL     QR     QM     QO     QK     S1     S2     S3     ID1    ID2    ID3    L      R      O
  0      0      1      -1     0      ...    ...    ...    1      g      g²     3      4      12       ← row 0: L*R = O  (3*4=12)
- 0      0      1      -1     0      ...    ...    ...    ω      g·ω    g²·ω   12     5      17       ← row 1: L*R = O  ((12)*? but actually L+R=O after add)
+ 0      0      1      -1     0      ...    ...    ...    ω      g·ω    g²·ω   12     5      17       ← row 1: L+R = O  (12+5=17)
  ...
- 0      0      1      -1     0      ...    ...    ...    ...    ...    ...    ...    ...    ...
  0      0      0      0      0      ...    ...    ...    ...    ...    ...    0      0      0        ← padding rows (rows 24..31)
 ```
 
 *Note: row 0 is the first real constraint `A·B → O`, row 1 adds C. Rows 2–22 are the 20 squarings, row 23 encodes the `AssertIsDifferent`. Rows 24–31 are zero-padded.*
 
-The trace at this point has **14 columns**: `QL QR QM QO QK S1 S2 S3 ID1 ID2 ID3 L R O`.
-
-The selector columns (QL..QK, S1..S3, ID1..ID3) are **fixed** — they encode the circuit structure and are the same for any valid witness. The wire columns (L, R, O) are **witness-dependent**.
-
 ---
 
-## Round 0 — Setup (no interaction)
+## Setup — Arithmetic Constraint
 
-The prover initialises the system with the arithmetic constraint cached:
+The arithmetic constraint is registered directly as an active constraint on the system:
 
 ```go
-C := QL·L + QR·R + QM·L·R + QO·O + QK          // cached, will be folded later
-
-S := cs.NewSystem(T,
-    []cs.Constraint{},       // no active constraints yet
-    []cs.Constraint{C},      // C is cached
-    N,
-)
-protocol := cs.NewProtocol(S)
+C := QL·L + QR·R + QM·L·R + QO·O + QK
+system.AddConstraint(&S, C)
+prot := protocol.NewProtocol(S)
 ```
 
-**`S.CachedConstraints`** = `[ QL·L + QR·R + QM·L·R + QO·O + QK ]`
+**`S.Constraints`** = `[ QL·L + QR·R + QM·L·R + QO·O + QK ]`
+
+There are no cached constraints. All constraints will be folded together in Round 3.
 
 ---
 
 ## Round 1 — Sample β (Permutation Preparation)
 
-**Purpose**: bind the challenge β to the wire and permutation columns before constructing the folded permutation polynomials.
+**Purpose**: commit to the wire and permutation columns, then derive β for folding the copy-constraint tuples into scalars.
+
+This round happens inside `std.MultiSetEqualityUpToPermutation`.
 
 ```
 Prover  ──── Com(L), Com(R), Com(O), Com(ID1), Com(ID2), Com(ID3),
@@ -97,141 +89,113 @@ Prover  ←───────────────────────
 ```
 
 ```go
-_, err = protocol.SendMeAChallenge(
-    []string{ID_L, ID_R, ID_O, ID_ID1, ID_ID2, ID_ID3, ID_S1, ID_S2, ID_S3},
-    "beta",
+std.MultiSetEqualityUpToPermutation(
+    &prot,
+    [][]string{{"L","ID1"}, {"R","ID2"}, {"O","ID3"}},
+    [][]string{{"L","S1"},  {"R","S2"},  {"O","S3"}},
+    "PlonkGrandProduct", "beta", "gamma",
 )
 ```
 
-`β` is derived by Fiat-Shamir from the nine commitments above. It is stored in the trace as a constant column named `"beta"`.
+β is derived by Fiat-Shamir from the nine commitments. It is stored in the trace as a constant column `"beta"`.
 
-**Prover then computes the folded permutation columns** (no further interaction):
-
-```go
-f1[i] = L[i] + β · ID1[i]    // left wire + β × identity coset 1
-f2[i] = R[i] + β · ID2[i]    // right wire + β × identity coset 2
-f3[i] = O[i] + β · ID3[i]    // output wire + β × identity coset 3
-
-g1[i] = L[i] + β · S1[i]     // left wire + β × permutation coset 1
-g2[i] = R[i] + β · S2[i]     // right wire + β × permutation coset 2
-g3[i] = O[i] + β · S3[i]     // output wire + β × permutation coset 3
-```
-
-These are computed with `NewSimpleIOP(..., WithCaching())`, which evaluates each expression pointwise and records the constraint `fi - (wi + β·IDi) = 0` in `CachedConstraints`.
+**Folded virtual columns** (symbolic, not materialised in the trace):
 
 ```
-prettyPrintTrace(T) after β-round: 20 columns
-
- ...original 14 columns...    beta   f1     f2     f3     g1     g2     g3
- ...                           β      L+β·1  R+β·g  O+β·g² L+β·S1 R+β·S2 O+β·S3
- ...                           β      ...    ...    ...    ...    ...    ...
+F1_0 = L + β·ID1,   F1_1 = R + β·ID2,   F1_2 = O + β·ID3
+F2_0 = L + β·S1,    F2_1 = R + β·S2,    F2_2 = O + β·S3
 ```
 
-**`S.CachedConstraints`** after this round = 7 constraints:
-1. `QL·L + QR·R + QM·L·R + QO·O + QK`
-2. `(L + beta·ID1) − f1`
-3. `(R + beta·ID2) − f2`
-4. `(O + beta·ID3) − f3`
-5. `(L + beta·S1)  − g1`
-6. `(R + beta·S2)  − g2`
-7. `(O + beta·S3)  − g3`
+These expressions are registered as **virtual columns** — they are kept in symbolic form and inlined directly into the grand product constraint. No new trace columns are created for them.
+
+```
+Trace after β-round: 15 columns
+
+ ...original 14 columns...    beta
+ ...                           β
+```
 
 ---
 
 ## Round 2 — Sample γ (Grand Product)
 
-**Purpose**: reduce the multiset equality claim `{f1·f2·f3} = {g1·g2·g3}` to a single recurrence on a grand product polynomial `Z`.
+**Purpose**: reduce the multiset equality claim `{F1_s} = {F2_s}` to a single recurrence on a grand product polynomial `Z`.
+
+This round happens inside `EqualityUpToPermutation`, called by `MultiSetEqualityUpToPermutation`.
 
 ```
-Prover  ──── Com(f1), Com(f2), Com(f3), Com(g1), Com(g2), Com(g3)  ────→  Verifier
+(no new commitments — physical columns were already committed in Round 1)
 
-Prover  ←──────────────────────────────────────────────  γ = FS(commitments above)
+Prover  ←──────────────────────────────────────────────  γ = FS(same commitments as Round 1)
 ```
 
-```go
-err = protocol.NewHintedIOP(
-    cs.NewGrandProductIOP,
-    []string{"f1", "f2", "f3", "g1", "g2", "g3"},
-    "GrandProduct",
-    "gamma",
-    cs.WithCaching(),
-)
-```
-
-**Prover computes the grand product polynomial `Z`**:
+**Prover computes the grand product polynomial `Z`** (`"PlonkGrandProduct"`):
 
 ```
 Z[0]   = 1
-Z[i+1] = Z[i] · (f1[i]−γ)(f2[i]−γ)(f3[i]−γ)
-               ─────────────────────────────────
-               (g1[i]−γ)(g2[i]−γ)(g3[i]−γ)
+Z[i+1] = Z[i] · (F1_0[i]−γ)(F1_1[i]−γ)(F1_2[i]−γ)
+               ─────────────────────────────────────
+               (F2_0[i]−γ)(F2_1[i]−γ)(F2_2[i]−γ)
 ```
 
-`Z` is added to the trace as `"GrandProduct"`. An explicit cyclic-shift copy is also stored as `"GrandProduct_shifted"` (where `ZS[i] = Z[i+1 mod N]`), so that the recurrence can be expressed as a single polynomial equation vanishing on the domain without needing shift arithmetic in `ComputeQuotient`.
-
-The recorded constraint is:
+With F1/F2 inlined, this is:
 
 ```
-E2 · GrandProduct_shifted  −  E1 · GrandProduct  =  0  mod X^N − 1
-
-where  E1 = (f1−γ)(f2−γ)(f3−γ)
-       E2 = (g1−γ)(g2−γ)(g3−γ)
+Z[i+1] = Z[i] · (L[i]+β·ID1[i]−γ)(R[i]+β·ID2[i]−γ)(O[i]+β·ID3[i]−γ)
+               ────────────────────────────────────────────────────────
+               (L[i]+β·S1[i]−γ)(R[i]+β·S2[i]−γ)(O[i]+β·S3[i]−γ)
 ```
 
-This vanishes on the domain iff `Z[N] = Z[0]`, which — combined with the boundary condition below — forces `Z[0] = Z[N] = 1`, proving multiset equality.
+`Z` is added to the trace as `"PlonkGrandProduct"`. Its cyclic shift `ZS[i] = Z[(i+1) mod N]` is stored explicitly as `"PlonkGrandProduct_shifted"`.
 
-**Boundary condition**: the verifier must also check `Z[0] = 1`. This is enforced by a Lagrange constraint:
-
-```go
-err = protocol.NewLagrangeConstraint("GrandProduct", 0, one, cs.WithCaching())
-```
-
-`NewLagrangeConstraint` auto-inserts the Lagrange basis column `LAGRANGE_0` (all zeros except a 1 at row 0) and records:
+Two active constraints are recorded:
 
 ```
-(GrandProduct − 1) · LAGRANGE_0  =  0  mod X^N − 1
+C2: ∏_s(F2_s−γ) · PlonkGrandProduct_shifted  −  ∏_s(F1_s−γ) · PlonkGrandProduct  =  0  mod X^N − 1
+
+C3: (PlonkGrandProduct − 1) · LAGRANGE_0  =  0  mod X^N − 1   (enforces Z[0]=1)
 ```
 
-```
-prettyPrintTrace(T) after γ-round: 23 columns
+where `F1_s` and `F2_s` are the inlined symbolic expressions (no separate trace columns).
 
- ...22 columns from before...    gamma   GrandProduct   GrandProduct_shifted   LAGRANGE_0
- ...                              γ       1              Z[1]                   1
- ...                              γ       Z[1]           Z[2]                   0
- ...                              γ       ...            ...                    0
- ...                              γ       Z[N-1]         1                      0
+```
+Trace after γ-round: 19 columns
+
+ ...15 columns...    gamma   PlonkGrandProduct   PlonkGrandProduct_shifted   LAGRANGE_0
+ ...                  γ       1                   Z[1]                        1
+ ...                  γ       Z[1]                Z[2]                        0
+ ...                  γ       ...                 ...                         0
+ ...                  γ       Z[N-1]              1                           0
 ```
 
-**`S.CachedConstraints`** after this round = 9 constraints:
-1–7. (same as before)
-8. `E2·GrandProduct_shifted − E1·GrandProduct`
-9. `(GrandProduct − 1)·LAGRANGE_0`
+**`S.Constraints`** after this round = 3 active constraints:
+1. `QL·L + QR·R + QM·L·R + QO·O + QK`
+2. `∏_s(F2_s−γ)·PlonkGrandProduct_shifted − ∏_s(F1_s−γ)·PlonkGrandProduct`
+3. `(PlonkGrandProduct − 1)·LAGRANGE_0`
 
 ---
 
 ## Round 3 — Sample α (Constraint Folding)
 
-**Purpose**: combine all 9 cached constraints into a single polynomial identity using a random linear combination.
+**Purpose**: combine all 3 active constraints into a single polynomial identity using a random linear combination.
 
 ```
-Prover  ──── Com(all polynomials appearing in the 9 constraints)  ────→  Verifier
+Prover  ──── Com(all polynomials appearing in the 3 constraints)  ────→  Verifier
 
 Prover  ←──────────────────────────────────────────────  α = FS(commitments above)
 ```
 
 ```go
-err = protocol.FoldCachedConstraints("alpha")
+prot.FoldConstraints("alpha")
 ```
 
-The 9 cached constraints `C1, …, C9` are combined into:
+The 3 active constraints `C1, C2, C3` are combined into:
 
 ```
-C_folded = C1 + α·C2 + α²·C3 + α³·C4 + α⁴·C5 + α⁵·C6 + α⁶·C7 + α⁷·C8 + α⁸·C9
+C_folded = C1 + α·C2 + α²·C3
 ```
 
-`α` is stored as a constant column `"alpha"` in the trace (needed for evaluation during quotient computation).
-
-After folding, `S.CachedConstraints` is empty and `S.Constraints` holds exactly one constraint: `C_folded`.
+`α` is stored as a constant column `"alpha"` in the trace. After folding, `S.Constraints` holds exactly one constraint: `C_folded`.
 
 ---
 
@@ -259,7 +223,7 @@ Prover  ←───────────────────────
 
 ### 4c — Prover opens all polynomials at ζ
 
-The prover evaluates every column appearing in `C_folded` (roughly 20+ columns) and `H` at the single point ζ, and sends opening proofs.
+The prover evaluates every column appearing in `C_folded` and `H` at the single point ζ, and sends opening proofs.
 
 ```
 Prover  ──── { P(ζ) for every P in C_folded } ∪ { H(ζ) }  ──────────→  Verifier
@@ -273,26 +237,25 @@ The verifier re-derives all challenges (β, γ, α, ζ) from the commitments usi
 C_folded( L(ζ), R(ζ), O(ζ), QL(ζ), …, Z(ζ), β, γ, α )  =  H(ζ) · (ζ^N − 1)
 ```
 
-If this holds, the verifier is convinced (with overwhelming probability) that all 9 constraints vanish simultaneously on the entire domain.
+If this holds, the verifier is convinced (with overwhelming probability) that all 3 constraints vanish simultaneously on the entire domain.
 
 ```go
-cs.Verify(&proof)
+protocol.Verify(&proof)
 ```
 
 ---
 
 ## Summary of Trace Evolution
 
-| After stage          | Columns in trace                                                                            | `CachedConstraints` |
-|----------------------|---------------------------------------------------------------------------------------------|---------------------|
-| `BuildTrace`         | QL QR QM QO QK S1 S2 S3 ID1 ID2 ID3 L R O                                                 | 0 (added by NewSystem below) |
-| `NewSystem`          | same                                                                                         | 1 (arithmetic)      |
-| `SendMeAChallenge β` | + **beta**                                                                                   | 1                   |
-| `generateFoldings`   | + **f1 f2 f3 g1 g2 g3**                                                                     | 7                   |
-| `NewHintedIOP γ`     | + **gamma GrandProduct GrandProduct_shifted**                                               | 8                   |
-| `NewLagrangeConstraint` | + **LAGRANGE_0**                                                                         | 9                   |
-| `FoldCachedConstraints α` | + **alpha**                                                                           | 0 → 1 active        |
-| `Finalize`           | + **H** (quotient, on big domain)                                                           | —                   |
+| After stage                        | Columns in trace                                                                                       | Active `Constraints` |
+|------------------------------------|--------------------------------------------------------------------------------------------------------|----------------------|
+| `BuildTrace`                       | QL QR QM QO QK S1 S2 S3 ID1 ID2 ID3 L R O                                                            | 0                    |
+| `AddConstraint`                    | same                                                                                                    | 1 (arithmetic)       |
+| `NewProtocol`                      | same                                                                                                    | 1                    |
+| `MultiSetEqualityUpToPermutation` β | + **beta** (virtual: F1_0 F1_1 F1_2 F2_0 F2_1 F2_2)                                                 | 1                    |
+| `EqualityUpToPermutation` γ        | + **gamma**, **PlonkGrandProduct**, **PlonkGrandProduct_shifted**, **LAGRANGE_0**                      | 3                    |
+| `FoldConstraints` α                | + **alpha**                                                                                             | 1 (folded)           |
+| `Finalize`                         | + **H** (quotient, on big domain)                                                                      | —                    |
 
 The final proof (`Proof`) contains:
 - One commitment digest per column (stored as the first coefficient in `dummycommitment`)

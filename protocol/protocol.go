@@ -1,4 +1,4 @@
-package cs
+package protocol
 
 import (
 	"crypto/sha256"
@@ -10,11 +10,12 @@ import (
 	"github.com/consensys/iop/crypto/dummycommitment"
 	"github.com/consensys/iop/pas/sym"
 	"github.com/consensys/iop/pas/univariate"
+	"github.com/consensys/iop/system"
 )
 
 // Protocol represents a Σ protocol
 type Protocol struct {
-	S System
+	S system.System
 	P Proof
 	I Interactions
 }
@@ -32,18 +33,13 @@ func NewInteractions() Interactions {
 	}
 }
 
-type Challenge struct {
-	Name  string
-	Value koalabear.Element
-}
-
-// NewIOP callback to record a new interaction in the protocol creating one columns along the way
+// BuildColumnWithChallenge callback to record a new interaction in the protocol creating one columns along the way
 // (whose computation amounts to executing E, so it is automated)
 // It models the following Σ protocol:
 // 1 - Prover commits to the polys Pi whose ID are in E (without placeholders and constants)
 // 2 - Verifier sends a challenge α, depending on Pi
 // 3 - Prover compute a new polynomial Q = E(Pi, α). It records the constraint Q - E(Pi, α)
-type NewIOP func(S *System, E sym.Expr, IDresult string, challenge Challenge, opts ...IOPOption) error
+// type BuildColumnWithChallenge func(S *system.System, E sym.Expr, IDresult string, challenge system.Challenge, opts ...system.IOPOption) error
 
 // NewHintedIOP callback to record a new interaction in the protocol, creating one or more columns along the way (whose computation is complex and needs to be hinted)
 // It models the following Σ protocol:
@@ -51,10 +47,10 @@ type NewIOP func(S *System, E sym.Expr, IDresult string, challenge Challenge, op
 // 2 - Verifier sends a challenge α, depending on Pi
 // 3 - Prover compute a new polynomial (whose computation is complex and needs to be hinted)
 // and whose ID is IDresult. It records a constraint C(P, P_i, α) that vanished on X^n-1
-type NewHintedIOP func(S *System, IDs []string, IDresult string, challenge Challenge, opts ...IOPOption) error
+type NewHintedIOP func(S *system.System, IDs []string, IDresult string, challenge system.Challenge, opts ...system.IOPOption) error
 
 // NewProtocol returns a new Protocol populated by S
-func NewProtocol(S System) Protocol {
+func NewProtocol(S system.System) Protocol {
 	return Protocol{
 		S: S,
 		P: Proof{OpeningProofs: make(map[string]dummycommitment.PackedProof)},
@@ -76,83 +72,73 @@ type Round struct {
 	Dependencies []string
 }
 
-// NewIOP syntactic sugar, we could have defined F directly on Protocol, but it is convenient for testing to have
-// the NewIOP functions isolated
-// TODO we can do better and query the placeholders from E, and get rid of challengeNames
-//
-// NewIOP records a new interaction in the protocol creating one columns along the way
+// buildColumnWithChallenge records a new interaction in the protocol creating one columns along the way
 // (whose computation amounts to executing E, so it is automated)
 // It models the following Σ protocol:
 // 1 - Prover commits to the polys Pi whose ID are in E (without placeholders and constants)
 // 2 - Verifier sends a challenge α, depending on Pi
 // 3 - Prover compute a new polynomial Q = E(Pi, α). It records the constraint Q - E(Pi, α)
-func (p *Protocol) NewIOP(F NewIOP, E sym.Expr, IDresult string, challengeName string, opts ...IOPOption) error {
+func (p *Protocol) buildColumnWithChallenge(E sym.Expr, IDresult string, opts ...system.IOPOption) error {
 
 	var err error
-	var challenge Challenge
 
 	// IDs of polynomials on which depend the challenge -> it consists of all the leaves (without placeholders) of E
 	IDs := sym.RemoveDuplicates(E.LeavesWOPlaceholders())
 
-	// if challengeName=="", we don't generate a challenge. It means that we create a new polynomial Q=E(Pi) (E doesn't depend on a challenge)
-	if challengeName != "" {
-		challenge.Value, err = p.SendMeAChallenge(IDs, challengeName)
-		if err != nil {
-			return err
-		}
-		challenge.Name = challengeName
+	// retrieve the challenge in the expression
+	placeholders := E.Placeholders()
+	if len(placeholders) != 1 {
+		return fmt.Errorf("%s should contain exactly one placeholders, found %d", E.String(), len(placeholders))
 	}
-	return F(&p.S, E, IDresult, challenge, opts...)
-}
 
-// NewHintedIOP syntactic sugar, we could have defined F directly on Protocol, but it is convenient for testing to have
-// the NewIOP functions isolated
-//
-// NewHintedIOP records a new interaction in the protocol, creating one or more columns along the way (whose computation is complex and needs to be hinted)
-// It models the following Σ protocol:
-// 1 - Prover commits to the polys Pi whose ID are in IDs
-// 2 - Verifier sends a challenge α, depending on Pi
-// 3 - Prover compute a new polynomial (whose computation is complex and needs to be hinted)
-// and whose ID is IDresult. It records a constraint C(P, P_i, α) that vanished on X^n-1
-func (p *Protocol) NewHintedIOP(F NewHintedIOP, IDs []string, IDresult string, challengeName string, opts ...IOPOption) error {
-	var err error
-	var challenge Challenge
-
-	challenge.Value, err = p.SendMeAChallenge(IDs, challengeName)
-	challenge.Name = challengeName
+	// if challengeName=="", we don't generate a challenge. It means that we create a new polynomial Q=E(Pi) (E doesn't depend on a challenge)
+	var value koalabear.Element
+	challengeName := placeholders[0]
+	value, err = p.SendMeAChallenge(IDs, challengeName)
 	if err != nil {
 		return err
 	}
-	return F(&p.S, IDs, IDresult, challenge, opts...)
+
+	return system.BuildColumnWithChallenge(&p.S, E, IDresult, value, opts...)
 }
 
+// TODO see l.15 system/lagrange.go, special computable columns need not be committed, and should be recomputed by the verifier
+//
 // NewLagrangeConstraint special treatment for this constraint.
 // Syntactic sugar, the inner NewLagrangeConstraint is useful for testing, but it could have be defined directly on Protocol
-func (p *Protocol) NewLagrangeConstraint(ID string, entry int, value koalabear.Element, opts ...IOPOption) error {
-	return NewLagrangeConstraint(&p.S, ID, entry, value, opts...)
+func (p *Protocol) NewLagrangeConstraint(ID string, entry int, value koalabear.Element, opts ...system.IOPOption) error {
+	return system.NewLagrangeConstraint(&p.S, ID, entry, value, opts...)
 }
 
-// FoldCachedConstraints calls FoldCachedConstraints
-func (p *Protocol) FoldCachedConstraints(foldingChallenge string) error {
-
-	var err error
-	var challenge Challenge
-	challenge.Name = foldingChallenge
-	// the challenge depends on every polynomials appearing in p.S.CachedConstraints
+// getVarIdsFromConstraints returns the list of the names of Variable appearing in c
+func getVarIdsFromConstraints(constraints []system.Constraint) []string {
 	var ids []string
-	for _, c := range p.S.CachedConstraints {
+	for _, c := range constraints {
 		n := c.LeavesWOPlaceholders()
 		sym.RemoveDuplicates(n) // avoid the expression to grow too big
 		ids = append(ids, n...)
 	}
 	ids = sym.RemoveDuplicates(ids)
+	return ids
+}
+
+// FoldCachedConstraints calls FoldCachedConstraints, and put the folded constraints in the constraint registery.
+// Flushes the cached constraints
+func (p *Protocol) FoldCachedConstraints(foldingChallenge string) error {
+
+	var err error
+	var challenge system.Challenge
+	challenge.Name = foldingChallenge
+
+	// the challenge depends on every polynomials appearing in p.S.CachedConstraints
+	// var ids []string
+	ids := getVarIdsFromConstraints(p.S.CachedConstraints)
 
 	challenge.Value, err = p.SendMeAChallenge(ids, foldingChallenge)
-
 	if err != nil {
 		return err
 	}
-	err = FoldCachedConstraints(&p.S, challenge)
+	err = system.FoldCachedConstraints(&p.S, challenge)
 
 	return err
 }
@@ -160,23 +146,19 @@ func (p *Protocol) FoldCachedConstraints(foldingChallenge string) error {
 // FoldConstraints folds all active constraints in S.Constraints
 func (p *Protocol) FoldConstraints(folderID string) error {
 	var err error
-	var challenge Challenge
+	var challenge system.Challenge
 	challenge.Name = folderID
-	// the challenge depends on every polynomials appearing in p.S.Constraints
-	var ids []string
-	for _, c := range p.S.Constraints {
-		n := c.LeavesWOPlaceholders()
-		sym.RemoveDuplicates(n) // avoid the expression to grow too big
-		ids = append(ids, n...)
-	}
-	ids = sym.RemoveDuplicates(ids)
+
+	// the challenge depends on every polynomials appearing in p.S.CachedConstraints
+	// var ids []string
+	ids := getVarIdsFromConstraints(p.S.Constraints)
 
 	challenge.Value, err = p.SendMeAChallenge(ids, folderID)
 	if err != nil {
 		return err
 	}
 
-	err = FoldConstraints(&p.S, challenge)
+	err = system.FoldConstraints(&p.S, challenge)
 	return err
 }
 
@@ -189,7 +171,7 @@ func (p *Protocol) FoldConstraints(folderID string) error {
 // |computeQuotient,
 // |send commitment 					---->
 // |------------------------------------------------------------------------------------------------
-// |									<----       sample zeta (EVALUATION_POINT)
+// |									<----       sample zeta (FINAL_EVALUATION_POINT)
 // |------------------------------------------------------------------------------------------------
 // | opening everything at zeta			---->		verify final relation C(T)=Q*(X^n-)1, and all the opening proofs
 // |------------------------------------------------------------------------------------------------
@@ -241,7 +223,7 @@ func (p *Protocol) Finalize() (Proof, error) {
 	p.P.N = p.S.N
 
 	// derive zeta with zetaBindings
-	zeta, err := p.SendMeAChallenge(zetaBindings, EVALUATION_POINT)
+	zeta, err := p.SendMeAChallenge(zetaBindings, FINAL_EVALUATION_POINT)
 	if err != nil {
 		return Proof{}, fmt.Errorf("SendMeAChallenge zeta: %w", err)
 	}

@@ -1,8 +1,9 @@
-package cs
+package system
 
 import (
 	"fmt"
 	"math/big"
+	"testing"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
@@ -117,4 +118,40 @@ func QuotientChecker(S System) error {
 	}
 
 	return nil
+}
+
+func BuildPermutationCircuit(t *testing.T, size int) System {
+	// Create P0 with random evaluations
+	coeffs0 := make([]koalabear.Element, size)
+	for i := range coeffs0 {
+		coeffs0[i].SetRandom()
+	}
+	P0, err := univariate.NewInterpolatedPolynomial(coeffs0, "P0")
+	if err != nil {
+		t.Fatalf("Failed to create P0: %v", err)
+	}
+
+	// Create P1 as a cyclic shift of P0: P1[i] = P0[(i+1) % size].
+	// Both encode the same multiset, so Π(P0[i]-gamma) = Π(P1[i]-gamma),
+	// meaning the grand product wraps back to 1 and the constraint holds at every row.
+	coeffs1 := make([]koalabear.Element, size)
+	for i := range coeffs1 {
+		coeffs1[i] = coeffs0[(i+1)%size]
+	}
+	P1, err := univariate.NewInterpolatedPolynomial(coeffs1, "P1")
+	if err != nil {
+		t.Fatalf("Failed to create P1: %v", err)
+	}
+
+	T := map[string]*univariate.Polynomial{
+		"P0": &P0,
+		"P1": &P1,
+	}
+	S := System{
+		Trace:             T,
+		Constraints:       []Constraint{},
+		CachedConstraints: []Constraint{},
+		N:                 size,
+	}
+	return S
 }

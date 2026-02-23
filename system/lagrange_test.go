@@ -1,4 +1,4 @@
-package cs
+package system
 
 import (
 	"testing"
@@ -60,7 +60,7 @@ func TestAddConstraint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// WithCaching routes the constraint to CachedConstraints instead.
+	// CacheMe routes the constraint to CachedConstraints instead.
 	S2 := System{
 		Trace: map[string]*univariate.Polynomial{
 			"P":        &P,
@@ -68,7 +68,7 @@ func TestAddConstraint(t *testing.T) {
 		},
 		N: size,
 	}
-	if err := AddConstraint(&S2, C, WithCaching()); err != nil {
+	if err := AddConstraint(&S2, C, CacheMe()); err != nil {
 		t.Fatal(err)
 	}
 	if len(S2.Constraints) != 0 {
@@ -110,13 +110,13 @@ func TestFold(t *testing.T) {
 	}
 
 	// Cache three Lagrange constraints: P[0]=v0, P[1]=v1, P[2]=v2.
-	if err := NewLagrangeConstraint(&S, "P", 0, v0, WithCaching()); err != nil {
+	if err := NewLagrangeConstraint(&S, "P", 0, v0, CacheMe()); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewLagrangeConstraint(&S, "P", 1, v1, WithCaching()); err != nil {
+	if err := NewLagrangeConstraint(&S, "P", 1, v1, CacheMe()); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewLagrangeConstraint(&S, "P", 2, v2, WithCaching()); err != nil {
+	if err := NewLagrangeConstraint(&S, "P", 2, v2, CacheMe()); err != nil {
 		t.Fatal(err)
 	}
 

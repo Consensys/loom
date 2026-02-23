@@ -1,4 +1,4 @@
-package plonk_example
+package std
 
 import (
 	"fmt"
@@ -8,8 +8,10 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear/iop"
 	gnark_plonk "github.com/consensys/gnark/backend/plonk/koalabear"
 	gnark_cs "github.com/consensys/gnark/constraint/koalabear"
-	"github.com/consensys/iop/cs"
+	"github.com/consensys/gnark/frontend"
+	"github.com/consensys/gnark/frontend/cs/scs"
 	"github.com/consensys/iop/pas/univariate"
+	"github.com/consensys/iop/system"
 )
 
 const (
@@ -80,11 +82,11 @@ func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial) (*univariate.Polynomial,
 // where Ql[i]=-1), with the explicit note "to be completed by the prover". The prover
 // must set Qk[i]=L[i] so that the vanishing relation Ql[i]*L[i]+Qk[i] = -L[i]+L[i] = 0
 // holds on those rows.
-func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1CSSolution, nbPublicInputs int) (cs.Trace, error) {
+func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1CSSolution, nbPublicInputs int) (system.Trace, error) {
 
 	// ql, qr, qm, qo, qk, id1, id2, id3, s1, s2, s3, l, r, o = 14 columns (z and zs are created in a separate system)
 	nbColumns := 16
-	T := make(cs.Trace, nbColumns)
+	T := make(system.Trace, nbColumns)
 	var err error
 	T[ID_Ql], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Ql)
 	if err != nil {
@@ -190,28 +192,77 @@ func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1C
 
 }
 
-func prettyPrintTrace(T cs.Trace) {
+// plonk circuit
+type Circuit struct {
+	A, B, C frontend.Variable
+	D       frontend.Variable
+}
 
-	type wrap struct {
-		id string
-		p  univariate.Polynomial
+func (c *Circuit) Define(api frontend.API) error {
+
+	a := api.Mul(c.A, c.B)
+	a = api.Add(a, c.C)
+
+	for i := 0; i < 20; i++ {
+		a = api.Mul(a, a)
 	}
 
-	w := []wrap{}
-	for k, t := range T {
-		w = append(w, wrap{id: k, p: *t})
+	api.AssertIsDifferent(a, c.D)
+
+	return nil
+}
+
+func GetPlonkSystem() (system.System, error) {
+
+	assignment := Circuit{
+		A: 3,
+		B: 4,
+		C: 5,
+		D: 6,
+	}
+	witness, err := frontend.NewWitness(&assignment, koalabear.Modulus())
+	if err != nil {
+		return system.System{}, err
 	}
 
-	for _, w := range w {
-		fmt.Printf("%s\t\t", w.id)
+	var circuit Circuit
+
+	ccs, err := frontend.CompileU32(koalabear.Modulus(), scs.NewBuilder, &circuit)
+	if err != nil {
+		return system.System{}, err
 	}
-	fmt.Println("")
-	for i := 0; i < len(w[0].p.EP.Coefficients); i++ {
-		for _, w := range w {
-			c := w.p.GetCoefficient(i)
-			fmt.Printf("%s\t", c.String())
-		}
-		fmt.Println("")
+	spr, ok := ccs.(*gnark_cs.SparseR1CS)
+	if !ok {
+		return system.System{}, fmt.Errorf("cannot cast ccs to *gnark_cs.SparseR1CS")
+
 	}
-	fmt.Println("")
+
+	nbPublic := ccs.GetNbPublicVariables()
+	nbConstraints := ccs.GetNbConstraints()
+	// Domain size must accommodate both public-input placeholder rows and actual
+	// constraint rows, matching gnark's evaluateLROSmallDomain which uses
+	// NextPowerOfTwo(nbConstraints + len(cs.Public)).
+	size := univariate.NextPowerOfTwo(nbConstraints + nbPublic)
+	d := fft.NewDomain(uint64(size))
+
+	publicTrace := gnark_plonk.NewTrace(spr, d)
+
+	isolution, err := spr.Solve(witness)
+	if err != nil {
+		return system.System{}, err
+	}
+	solution, ok := isolution.(*gnark_cs.SparseR1CSSolution)
+	if !ok {
+		return system.System{}, fmt.Errorf("cannot cast isolution to *gnark_cs.SparseR1CSSolution")
+	}
+
+	T, err := BuildTrace(publicTrace, solution, nbPublic)
+	if err != nil {
+		return system.System{}, err
+	}
+
+	S := system.NewSystem(T, []system.Constraint{}, []system.Constraint{}, size)
+
+	return S, nil
+
 }

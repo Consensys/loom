@@ -1,4 +1,4 @@
-package cs
+package protocol
 
 import (
 	"crypto/sha256"
@@ -6,6 +6,7 @@ import (
 
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/iop/system"
 	"github.com/consensys/iop/pas/univariate"
 )
 
@@ -14,7 +15,7 @@ func TestChallengeGeneration(t *testing.T) {
 
 	// build a random trace with three polynomials
 	size := 16
-	T := make(Trace)
+	T := make(system.Trace)
 	for _, name := range []string{"P1", "P2", "P3"} {
 		coeffs := make([]koalabear.Element, size)
 		for i := range coeffs {
@@ -27,7 +28,7 @@ func TestChallengeGeneration(t *testing.T) {
 		pp := p
 		T[name] = &pp
 	}
-	S := System{Trace: T, N: size}
+	S := system.System{Trace: T, N: size}
 
 	// create a new protocol
 	prot := NewProtocol(S)

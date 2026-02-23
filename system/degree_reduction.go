@@ -1,4 +1,4 @@
-package cs
+package system
 
 // flatten lows the degree of a constraint.
 //
@@ -35,8 +35,7 @@ func Flatten(S *System, C Constraint, targetDegree int) error {
 		}
 		CLowRecord[CLow.String()] = struct{}{}
 
-		// NewSimpleIOP(S *System, E sym.Expr, IDs []string, IDresult string, challenge Challenge, opts ...IOPOption)
-		err := NewSimpleIOP(S, CLow, CLow.String(), Challenge{})
+		err := NewColumn(S, CLow, CLow.String())
 		if err != nil {
 			return err
 		}

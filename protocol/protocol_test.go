@@ -1,10 +1,11 @@
-package cs
+package protocol
 
 import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/iop/pas/univariate"
+	"github.com/consensys/iop/system"
 )
 
 func TestRunLastRound(t *testing.T) {
@@ -30,10 +31,10 @@ func TestRunLastRound(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	S := System{
+	S := system.System{
 		Trace:             map[string]*univariate.Polynomial{"P": &P},
-		Constraints:       []Constraint{},
-		CachedConstraints: []Constraint{},
+		Constraints:       []system.Constraint{},
+		CachedConstraints: []system.Constraint{},
 		N:                 size,
 	}
 
@@ -42,13 +43,13 @@ func TestRunLastRound(t *testing.T) {
 
 	// Cache three Lagrange constraints via the protocol (ReceiveChallenge commits P
 	// and binds it to the folding challenge in the same round).
-	if err := NewLagrangeConstraint(&prot.S, "P", 0, v0, WithCaching()); err != nil {
+	if err := system.NewLagrangeConstraint(&prot.S, "P", 0, v0, system.CacheMe()); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewLagrangeConstraint(&prot.S, "P", 1, v1, WithCaching()); err != nil {
+	if err := system.NewLagrangeConstraint(&prot.S, "P", 1, v1, system.CacheMe()); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewLagrangeConstraint(&prot.S, "P", 2, v2, WithCaching()); err != nil {
+	if err := system.NewLagrangeConstraint(&prot.S, "P", 2, v2, system.CacheMe()); err != nil {
 		t.Fatal(err)
 	}
 

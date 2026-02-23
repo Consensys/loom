@@ -1,4 +1,4 @@
-package cs
+package protocol
 
 import (
 	"crypto/sha256"
@@ -8,6 +8,7 @@ import (
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/iop/pas/sym"
+	"github.com/consensys/iop/system"
 )
 
 // GenerateChallenges generate the challenges in the same order of generation than the prover
@@ -78,9 +79,9 @@ func GenerateChallenges(P Proof, fs *fiatshamir.Transcript) ([]koalabear.Element
 //	|	Open(P_i_j..) at zeta		----→		Verify opening proofs 				|
 //	|	Open(H) at zeta					Verify C(P_i(ζ),α_i)=H(ζ)(ζⁿ-1)				|ROUND 2n+4
 //	|-------------------------------–-----------------------------------------------|
-func Verify(P *Proof, opts ...IopOption) error {
+func Verify(P *Proof, opts ...system.IOPOption) error {
 
-	var config IopConfig
+	var config system.IOPConfig
 	for _, opt := range opts {
 		err := opt(&config)
 		if err != nil {
@@ -102,9 +103,9 @@ func Verify(P *Proof, opts ...IopOption) error {
 	// populate the list of variables at which P.Constraint is evaluated
 	values := make([]koalabear.Element, len(leaves))
 	for k, v := range P.OpeningProofs {
-		// EVALUATION_POINT and FINAL_QUOTIENT do not appear as leaves of P.Constraint
+		// FINAL_EVALUATION_POINT and FINAL_QUOTIENT do not appear as leaves of P.Constraint
 		// (the quotient is the RHS, not the LHS) and must be skipped here.
-		if k == EVALUATION_POINT || k == FINAL_QUOTIENT {
+		if k == FINAL_EVALUATION_POINT || k == FINAL_QUOTIENT {
 			continue
 		}
 		values[varindex[k]].Set(&v.OpeningProof.ClaimedValue)
@@ -137,7 +138,7 @@ func Verify(P *Proof, opts ...IopOption) error {
 	}
 
 	// derive zeta
-	err := fs.NewChallenge(EVALUATION_POINT)
+	err := fs.NewChallenge(FINAL_EVALUATION_POINT)
 	if err != nil {
 		return err
 	}
@@ -151,7 +152,7 @@ func Verify(P *Proof, opts ...IopOption) error {
 			return err
 		}
 	}
-	bzeta, err := fs.ComputeChallenge(EVALUATION_POINT)
+	bzeta, err := fs.ComputeChallenge(FINAL_EVALUATION_POINT)
 	if err != nil {
 		return err
 	}

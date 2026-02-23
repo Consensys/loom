@@ -1,4 +1,4 @@
-package cs
+package system
 
 import (
 	"fmt"
@@ -8,6 +8,10 @@ import (
 )
 
 // Lagrange standard identifier across systems for Lagrange polynomial, suffixed by an integer to specify which Lagrange polynomial
+//
+// TODO this is a special case (maybe the only case ?) of a simple column, that should be recomputed by the verifier. We need
+// a special expression for such columns, like "Computable" or something, which should not be added in the commitments... During the verification
+// process, when a "Computable" Expr is found in the expression, we should have map [Lagrange_i]->func(i) koalabear.Element, so the verifier can recompute its value at zeta
 const Lagrange = "LAGRANGE_"
 
 func GetLagrangeColumn(idx, N int) univariate.Polynomial {

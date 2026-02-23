@@ -22,9 +22,16 @@ type Expr interface {
 	// /!\ contains duplicates, use RemoveDuplicates to clean the slice
 	Leaves() []string
 
-	// return a slice containing the names of the leaves of Expr, except the constants and the placeholders
+	// return a slice containing the names of the leaves of Expr, except the constants AND the placeholders
 	// /!\ contains duplicates, use RemoveDuplicates to clean the slice
 	LeavesWOPlaceholders() []string
+
+	// return a slice containing ONLY the names of the placeholders
+	// /!\ contains duplicates, use RemoveDuplicates to clean the slice
+	Placeholders() []string
+
+	// ReplaceLeafByExpression finds all occurence of leaf in the tree and replace it with e
+	ReplaceLeafByExpression(leaf string, e Expr) Expr
 
 	// recurse through expr, until an Expr (call it E) of degree <= deg is found.
 	// When E is found, remove E from expr and replace this subexpression with NewVar(E.String())
@@ -398,13 +405,61 @@ func (s *Sub) Leaves() []string         { return append(s.Left.Leaves(), s.Right
 func (m *Mul) Leaves() []string         { return append(m.Left.Leaves(), m.Right.Leaves()...) }
 func (p *Pow) Leaves() []string         { return p.Base.Leaves() }
 
-func (c *Placeholder) LeavesWOPlaceholders() []string { return []string{c.String()} }
-func (v *Var) LeavesWOPlaceholders() []string         { return []string{} }
+func (c *Placeholder) ReplaceLeafByExpression(leaf string, e Expr) Expr {
+	if c.Name == leaf {
+		return e
+	} else {
+		return c
+	}
+}
+func (v *Var) ReplaceLeafByExpression(leaf string, e Expr) Expr {
+	if v.Name == leaf {
+		return e
+	} else {
+		return v
+	}
+}
+func (c *Const) ReplaceLeafByExpression(leaf string, e Expr) Expr { return c }
+func (a *Add) ReplaceLeafByExpression(leaf string, e Expr) Expr {
+	return &Add{a.Left.ReplaceLeafByExpression(leaf, e), a.Right.ReplaceLeafByExpression(leaf, e)}
+}
+func (s *Sub) ReplaceLeafByExpression(leaf string, e Expr) Expr {
+	return &Sub{s.Left.ReplaceLeafByExpression(leaf, e), s.Right.ReplaceLeafByExpression(leaf, e)}
+}
+func (m *Mul) ReplaceLeafByExpression(leaf string, e Expr) Expr {
+	return &Mul{m.Left.ReplaceLeafByExpression(leaf, e), m.Right.ReplaceLeafByExpression(leaf, e)}
+}
+func (p *Pow) ReplaceLeafByExpression(leaf string, e Expr) Expr {
+	return &Pow{p.Base.ReplaceLeafByExpression(leaf, e), p.Exp}
+}
+
+func (c *Placeholder) LeavesWOPlaceholders() []string { return []string{} }
+func (v *Var) LeavesWOPlaceholders() []string         { return []string{v.String()} }
 func (c *Const) LeavesWOPlaceholders() []string       { return []string{} }
-func (a *Add) LeavesWOPlaceholders() []string         { return append(a.Left.Leaves(), a.Right.Leaves()...) }
-func (s *Sub) LeavesWOPlaceholders() []string         { return append(s.Left.Leaves(), s.Right.Leaves()...) }
-func (m *Mul) LeavesWOPlaceholders() []string         { return append(m.Left.Leaves(), m.Right.Leaves()...) }
-func (p *Pow) LeavesWOPlaceholders() []string         { return p.Base.Leaves() }
+func (a *Add) LeavesWOPlaceholders() []string {
+	return append(a.Left.LeavesWOPlaceholders(), a.Right.LeavesWOPlaceholders()...)
+}
+func (s *Sub) LeavesWOPlaceholders() []string {
+	return append(s.Left.LeavesWOPlaceholders(), s.Right.LeavesWOPlaceholders()...)
+}
+func (m *Mul) LeavesWOPlaceholders() []string {
+	return append(m.Left.LeavesWOPlaceholders(), m.Right.LeavesWOPlaceholders()...)
+}
+func (p *Pow) LeavesWOPlaceholders() []string { return p.Base.LeavesWOPlaceholders() }
+
+func (c *Placeholder) Placeholders() []string { return []string{c.String()} }
+func (v *Var) Placeholders() []string         { return []string{} }
+func (c *Const) Placeholders() []string       { return []string{} }
+func (a *Add) Placeholders() []string {
+	return append(a.Left.Placeholders(), a.Right.Placeholders()...)
+}
+func (s *Sub) Placeholders() []string {
+	return append(s.Left.Placeholders(), s.Right.Placeholders()...)
+}
+func (m *Mul) Placeholders() []string {
+	return append(m.Left.Placeholders(), m.Right.Placeholders()...)
+}
+func (p *Pow) Placeholders() []string { return p.Base.Placeholders() }
 
 // Clone returns a deep copy of the expression tree with no shared nodes.
 //
