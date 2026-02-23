@@ -33,14 +33,6 @@ func NewInteractions() Interactions {
 	}
 }
 
-// NewHintedIOP callback to record a new interaction in the protocol, creating one or more columns along the way (whose computation is complex and needs to be hinted)
-// It models the following Σ protocol:
-// 1 - Prover commits to the polys Pi whose ID are in IDs
-// 2 - Verifier sends a challenge α, depending on Pi
-// 3 - Prover compute a new polynomial (whose computation is complex and needs to be hinted)
-// and whose ID is IDresult. It records a constraint C(P, P_i, α) that vanished on X^n-1
-type NewHintedIOP func(S *system.System, IDs []string, IDresult string, challenge system.Challenge, opts ...system.IOPOption) error
-
 // NewProtocol returns a new Protocol populated by S
 func NewProtocol(S system.System) Protocol {
 	return Protocol{
