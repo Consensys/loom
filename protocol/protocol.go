@@ -33,14 +33,6 @@ func NewInteractions() Interactions {
 	}
 }
 
-// BuildColumnWithChallenge callback to record a new interaction in the protocol creating one columns along the way
-// (whose computation amounts to executing E, so it is automated)
-// It models the following Σ protocol:
-// 1 - Prover commits to the polys Pi whose ID are in E (without placeholders and constants)
-// 2 - Verifier sends a challenge α, depending on Pi
-// 3 - Prover compute a new polynomial Q = E(Pi, α). It records the constraint Q - E(Pi, α)
-// type BuildColumnWithChallenge func(S *system.System, E sym.Expr, IDresult string, challenge system.Challenge, opts ...system.IOPOption) error
-
 // NewHintedIOP callback to record a new interaction in the protocol, creating one or more columns along the way (whose computation is complex and needs to be hinted)
 // It models the following Σ protocol:
 // 1 - Prover commits to the polys Pi whose ID are in IDs
