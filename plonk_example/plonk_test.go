@@ -47,7 +47,7 @@ func TestPlonk(t *testing.T) {
 		[]string{ID_O, ID_S3},
 	}
 
-	err = std.MultiSetEqualityUpToPermutation(&prot, multiSetIds1, multiSetIds2, "PlonkGrandProduct", "beta", "gamma")
+	err = std.MultiSetEqualityUpToPermutationIOP(&prot, multiSetIds1, multiSetIds2, "PlonkGrandProduct", "beta", "gamma")
 	if err != nil {
 		t.Fatal(err)
 	}

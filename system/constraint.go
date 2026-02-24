@@ -15,7 +15,7 @@ type Constraint = sym.Expr
 func AddConstraint(S *System, C Constraint, opts ...IOPOption) error {
 
 	// build the config file
-	var config IOPConfig
+	var config Config
 	for _, opt := range opts {
 		err := opt(&config)
 		if err != nil {
@@ -85,9 +85,6 @@ func FlushCache(S *System) {
 }
 
 func FoldCachedConstraints(S *System, challenge Challenge) error {
-	// if err := addChallengeInTrace(S, challenge); err != nil {
-	// 	return err
-	// }
 	return foldConstraints(S, challenge, true)
 }
 
@@ -125,7 +122,7 @@ func GetProductExpression(E []sym.Expr, challenge string) Constraint {
 
 // GetFoldingExpression returns the expression Σ_i αⁱ Pi
 // where challenge is registered as a placeholder
-func GetFoldingExpression(IDs []string, challenge, R string) Constraint {
+func GetFoldingExpression(IDs []string, challenge string) Constraint {
 	var one koalabear.Element
 	one.SetOne()
 	C := sym.NewVar(IDs[0]).Mul(sym.NewConst(one))

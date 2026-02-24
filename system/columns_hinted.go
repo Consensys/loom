@@ -22,7 +22,7 @@ import (
 func BuildGrandProductConstraint(S *System, E1, E2 []sym.Expr, IDGrandProduct string, challenge Challenge, opts ...IOPOption) error {
 
 	// build the config
-	var config IOPConfig
+	var config Config
 	for _, opt := range opts {
 		if err := opt(&config); err != nil {
 			return err

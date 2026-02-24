@@ -53,7 +53,7 @@ import (
 //	|-------------------------------–-----------------------------------------------|
 func Verify(P *Proof, opts ...system.IOPOption) error {
 
-	var config system.IOPConfig
+	var config system.Config
 	for _, opt := range opts {
 		err := opt(&config)
 		if err != nil {

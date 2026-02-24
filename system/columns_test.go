@@ -127,12 +127,11 @@ func TestFlatten(t *testing.T) {
 	// that Flatten deposited into S.Trace and S.Constraints.
 	C := sym.NewVar("P0").Pow(4).Sub(sym.NewVar("P1").Pow(2))
 
-	if err := Flatten(&S, C, 2); err != nil {
+	constraints, err := Flatten(&S, C, 2)
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	// The final reduced C (degree ≤ 2) is not added by Flatten itself; the caller must add it.
-	S.Constraints = append(S.Constraints, C)
+	S.Constraints = append(S.Constraints, constraints...)
 
 	// Every constraint must have degree ≤ 2.
 	for i, constraint := range S.Constraints {
@@ -185,9 +184,11 @@ func TestColumnBuilder(t *testing.T) {
 		S := makeSystem(map[string]*univariate.Polynomial{"P0": &P0})
 
 		E := sym.NewVar("P0").Pow(2)
-		if err := BuildColumn(&S, E, "Q"); err != nil {
+		c, err := BuildColumn(&S, E, "Q")
+		if err != nil {
 			t.Fatal(err)
 		}
+		S.Constraints = append(S.Constraints, c)
 
 		for i := 0; i < size; i++ {
 			var expected koalabear.Element
@@ -215,9 +216,11 @@ func TestColumnBuilder(t *testing.T) {
 		S := makeSystem(map[string]*univariate.Polynomial{"P0": &P0, "P1": &P1, "P2": &P2})
 
 		E := sym.NewVar("P0").Mul(sym.NewVar("P1")).Mul(sym.NewVar("P2"))
-		if err := BuildColumn(&S, E, "Q"); err != nil {
+		c, err := BuildColumn(&S, E, "Q")
+		if err != nil {
 			t.Fatal(err)
 		}
+		S.Constraints = append(S.Constraints, c)
 
 		for i := 0; i < size; i++ {
 			expected := new(koalabear.Element).Mul(&raw0[i], &raw1[i])
@@ -250,9 +253,11 @@ func TestColumnBuilder(t *testing.T) {
 		E := sym.NewVar("P0").Pow(2).
 			Add(sym.NewChallenge("alpha").Mul(sym.NewVar("P1"))).
 			Sub(sym.NewVar("P2"))
-		if err := BuildColumn(&S, E, "Q"); err != nil {
+		c, err := BuildColumn(&S, E, "Q")
+		if err != nil {
 			t.Fatal(err)
 		}
+		S.Constraints = append(S.Constraints, c)
 
 		for i := 0; i < size; i++ {
 			var expected koalabear.Element

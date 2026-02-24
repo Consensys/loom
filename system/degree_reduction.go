@@ -18,10 +18,15 @@ package system
 // Now (Q1-P1²)+α(Q2-Q1²)+α²(Q3-Q2*Q)+α³(R1-P2²)+α⁴(R2 - P2*R1) is if low degree, so we can compute
 // [ (Q1-P1²)+α(Q2-Q1²)+α²(Q3-Q2*Q)+α³(R1-P2²)+α⁴(R2 - P2*R1) ] / X^n-1 without an fft domain which is too big.
 //
-// Flatten returns all the simple IOP created in the process of pruning C, low-degree expressions at a time
-func Flatten(S *System, C Constraint, targetDegree int) error {
+// Flatten returns:
+// * a constraint C' equivalent to C of low degree
+// * all the contraints created in the process of pruning C, low-degree expressions at a time
+// such that C(P1,..) = 0 <=> for all c in C', c(P1,..)=0., with c of low degree
+func Flatten(S *System, C Constraint, targetDegree int) ([]Constraint, error) {
 
 	CLowRecord := make(map[string]struct{})
+
+	generatedConstraints := make([]Constraint, 0)
 
 	for C.Degree() > targetDegree {
 
@@ -35,11 +40,14 @@ func Flatten(S *System, C Constraint, targetDegree int) error {
 		}
 		CLowRecord[CLow.String()] = struct{}{}
 
-		err := BuildColumn(S, CLow, CLow.String())
+		c, err := BuildColumn(S, CLow, CLow.String())
 		if err != nil {
-			return err
+			return nil, err
 		}
-
+		generatedConstraints = append(generatedConstraints, c)
 	}
-	return nil
+
+	generatedConstraints = append(generatedConstraints, C)
+
+	return generatedConstraints, nil
 }

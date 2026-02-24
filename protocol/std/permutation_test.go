@@ -22,7 +22,7 @@ func TestPermutation(t *testing.T) {
 		prot := protocol.NewProtocol(S)
 
 		// call NewPermutationIOP on "P0" and "P1"
-		if err := EqualityUpToPermutation(&prot, []string{"P0"}, []string{"P1"}, "Z", "gamma"); err != nil {
+		if err := EqualityUpToPermutationIOP(&prot, []string{"P0"}, []string{"P1"}, "Z", "gamma"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -67,7 +67,7 @@ func TestPermutation(t *testing.T) {
 		prot := protocol.NewProtocol(S)
 
 		// call NewPermutationIOP on "P0" and "P1"
-		if err := EqualityUpToPermutation(&prot, []string{"P0"}, []string{"P1"}, "Z", "gamma", system.CacheMe()); err != nil {
+		if err := EqualityUpToPermutationIOP(&prot, []string{"P0"}, []string{"P1"}, "Z", "gamma", system.CacheMe()); err != nil {
 			t.Fatal(err)
 		}
 
@@ -165,7 +165,7 @@ func TestPermutationMultiSet(t *testing.T) {
 
 		prot := protocol.NewProtocol(S)
 
-		if err := MultiSetEqualityUpToPermutation(
+		if err := MultiSetEqualityUpToPermutationIOP(
 			&prot,
 			[][]string{{"A0", "A1"}, {"B0", "B1"}},
 			[][]string{{"C0", "C1"}, {"D0", "D1"}},
@@ -210,7 +210,7 @@ func TestPermutationMultiSet(t *testing.T) {
 
 		prot := protocol.NewProtocol(S)
 
-		if err := MultiSetEqualityUpToPermutation(
+		if err := MultiSetEqualityUpToPermutationIOP(
 			&prot,
 			[][]string{{"A0", "A1"}, {"B0", "B1"}},
 			[][]string{{"C0", "C1"}, {"D0", "D1"}},

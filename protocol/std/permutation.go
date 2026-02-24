@@ -36,7 +36,7 @@ import (
 //	|   C1: ∏_j(Q_j-γ)·Z_shifted - ∏_j(P_j-γ)·Z = 0 mod X^N-1                   |
 //	|   C2: (Z-1)·L_0 = 0  (enforces Z[0]=1)                                      |
 //	|-------------------------------–-----------------------------------------------|
-func EqualityUpToPermutation(prot *protocol.Protocol, ID1, ID2 []string, IDGrandProduct string, challengeName string, opts ...system.IOPOption) error {
+func EqualityUpToPermutationIOP(prot *protocol.Protocol, ID1, ID2 []string, IDGrandProduct string, challengeName string, opts ...system.IOPOption) error {
 
 	E1 := make([]sym.Expr, len(ID1))
 	for i, id := range ID1 {
@@ -119,7 +119,7 @@ func EqualityUpToPermutation(prot *protocol.Protocol, ID1, ID2 []string, IDGrand
 //	|   C1: ∏_s(F2_s-γ)·Z_shifted - ∏_s(F1_s-γ)·Z = 0 mod X^N-1                 |
 //	|   C2: (Z-1)·L_0 = 0  (enforces Z[0]=1)                                      |
 //	|-------------------------------–-----------------------------------------------|
-func MultiSetEqualityUpToPermutation(
+func MultiSetEqualityUpToPermutationIOP(
 	prot *protocol.Protocol,
 	ID1, ID2 [][]string,
 	IDGrandProduct string,
@@ -145,7 +145,7 @@ func MultiSetEqualityUpToPermutation(
 	E1 := make([]sym.Expr, len(ID1))
 	VID1 := make([]string, len(ID1))
 	for i, subset := range ID1 {
-		E1[i] = system.GetFoldingExpression(subset, alpha, "")
+		E1[i] = system.GetFoldingExpression(subset, alpha)
 		VID1[i] = fmt.Sprintf("F1_%d", i)
 		if err := system.NewVirtualColumn(&prot.S, VID1[i], E1[i]); err != nil {
 			return err
@@ -154,7 +154,7 @@ func MultiSetEqualityUpToPermutation(
 	E2 := make([]sym.Expr, len(ID2))
 	VID2 := make([]string, len(ID2))
 	for i, subset := range ID2 {
-		E2[i] = system.GetFoldingExpression(subset, alpha, "")
+		E2[i] = system.GetFoldingExpression(subset, alpha)
 		VID2[i] = fmt.Sprintf("F2_%d", i)
 		if err := system.NewVirtualColumn(&prot.S, VID2[i], E2[i]); err != nil {
 			return err
@@ -164,5 +164,5 @@ func MultiSetEqualityUpToPermutation(
 	// step 3: build the grand product constraint over the folded virtual columns.
 	// EqualityUpToPermutation looks up VID1/VID2 in VirtualColumns, collects the physical
 	// column IDs from their leaves, samples gamma, and also enforces R[0]=1.
-	return EqualityUpToPermutation(prot, VID1, VID2, IDGrandProduct, gamma, opts...)
+	return EqualityUpToPermutationIOP(prot, VID1, VID2, IDGrandProduct, gamma, opts...)
 }

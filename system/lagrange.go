@@ -22,7 +22,7 @@ func GetLagrangeID(entry int, N int) string {
 // NewLagrangeConstraint modifies S to add the constraint the S.Trace[ID][entry]=value
 func NewLagrangeConstraint(S *System, ID string, entry int, value koalabear.Element, opts ...IOPOption) error {
 
-	var config IOPConfig
+	var config Config
 	for _, opt := range opts {
 		err := opt(&config)
 		if err != nil {
