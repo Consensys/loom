@@ -6,16 +6,43 @@ import (
 	"github.com/consensys/iop/system"
 )
 
-// DegreeReductionIOP from C, a constraint of high degree, generated a list of constraints C' of degree
-// targetDegree, such that
-// C(Trace) = 0 <=> for all c in C', c(Trace') = 0 (Trace' is Trace, with the additionnal columns created in the process)
+// DegreeReductionIOP proves C(Trace) = 0 mod X^N−1 for a high-degree constraint C by flattening it
+// into a set of constraints C' = {C_0, …, C_m} each of degree ≤ targetDegree, introducing one
+// auxiliary column per extracted sub-expression.  The auxiliary constraints are folded into a single
+// polynomial identity with a Fiat-Shamir challenge α.
 //
-// The constraints in C' are folded with a challenge from the verifier.
-// The IOP is:
-// 1. prover Flatten C, generates columns in the process
-// Send commitments to all new columns and all columns appearing in C to the verifier
-// 2. Verifier sends a challenge \alpha based on all those commitments
-// 3. prover folds all generated constraints in C' with \alpha
+// It models the following Σ protocol (example: C = P0^4 − P1^2, targetDegree = 2):
+//
+//	|-------------------------------–-----------------------------------------------|
+//	| [prover]                      |              [verifier]                       |
+//	|-------------------------------–-----------------------------------------------|
+//	| Flatten C:                    |                                               |
+//	|   extract Q₁ := P1^2         |                                               |
+//	|   extract Q₂ := P0·P0        |                                               |
+//	|   C_reduced = Q₂^2 − Q₁      |                                               |
+//	|   (degree ≤ targetDegree)     |                                               |
+//	|                               |                                               |
+//	| Commit(auxiliary cols         |                                               |
+//	|   appearing in C_reduced)     |                                               |
+//	|   e.g. Commit(Q₁, Q₂) -----→ | [Com(Q₁), Com(Q₂)]                           | ROUND 1
+//	|-------------------------------–-----------------------------------------------|
+//	|                               ←-----  Sample random α (alpha)                |
+//	|                               |       (α = Fiat-Shamir(Com(Q₁), Com(Q₂)))    | ROUND 2
+//	|-------------------------------–-----------------------------------------------|
+//	| Fold C' with α:               |                                               |
+//	|   C_f = C_0                   |                                               |
+//	|       + α   · C_1             |                                               |
+//	|       + α²  · C_2             |                                               |
+//	|       + …                     |                                               |
+//	| e.g. C_f = (P1^2 − Q₁)       |                                               |
+//	|          + α · (P0^2 − Q₂)   |                                               |
+//	|          + α²· (Q₂^2 − Q₁)   |                                               |
+//	|-------------------------------–-----------------------------------------------|
+//	|       (done via Finalize + Verify)                                            |
+//	| Records one constraint:                                                       |
+//	|   C_f = 0  mod X^N−1                                                         |
+//	|   (equivalent to C = 0 with high probability for random α)                   |
+//	|-------------------------------–-----------------------------------------------|
 func DegreeReductionIOP(prot *protocol.Protocol, C system.Constraint, targetDegree int, alpha string, opts ...system.IOPOption) error {
 
 	var config system.Config
