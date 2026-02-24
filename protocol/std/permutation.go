@@ -10,7 +10,7 @@ import (
 )
 
 // EqualityUpToPermutation proves that the multiset { ID1[j][i] } equals { ID2[j][i] }.
-// Concretely, for every i there exists a permutation σ such that ID1[j][i] = ID2[j][σ(i)] for all j.
+// Concretely, for every i, j there is k, l such that ID1[i][j] = ID2[k][l].
 //
 // It models the following Σ protocol (N = domain size, P_j := ID1[j], Q_j := ID2[j]):
 //

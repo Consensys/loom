@@ -13,7 +13,7 @@ All three follow the same lifecycle:
 
 ### What it proves
 
-Given two lists of column names `ID1 = [P_0, …, P_k]` and `ID2 = [Q_0, …, Q_l]`, it proves that the multisets `{P_j[i]}` and `{Q_j[i]}` are equal, i.e. there exists a permutation σ such that `P_j[σ(i)] = Q_j[i]` for all i, j.
+Given two lists of column names `ID1 = [P_0, …, P_k]` and `ID2 = [Q_0, …, Q_l]`, it proves that the multisets `{P_j[i]}` and `{Q_j[i]}` are equal, i.e. there exists permutations σ_1, σ_2 such that `P_σ_1(j)[σ_2(i)] = Q_j[i]` for all i, j.
 
 ### Concrete example (`TestPermutation`, N = 16)
 
