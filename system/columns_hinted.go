@@ -29,9 +29,6 @@ func BuildGrandProductConstraint(S *System, E1, E2 []sym.Expr, IDGrandProduct st
 		}
 	}
 
-	if err := ensureChallengeInTrace(S, challenge); err != nil {
-		return err
-	}
 	challengeColumn := S.Trace[challenge.Name]
 
 	// build a trace map containing the variables in E1 and E2, including the placeholders column so EvalPointWise can resolve it

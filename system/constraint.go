@@ -61,13 +61,13 @@ func foldConstraints(S *System, challenge Challenge, inCache bool) error {
 	if inCache {
 		C = S.CachedConstraints[0]
 		for i := 1; i < len(S.CachedConstraints); i++ {
-			C = C.Add(sym.NewPlaceholder(challenge.Name).Pow(uint32(i)).Mul(S.CachedConstraints[i]))
+			C = C.Add(sym.NewChallenge(challenge.Name).Pow(uint32(i)).Mul(S.CachedConstraints[i]))
 		}
 		S.CachedConstraints = []Constraint{}
 	} else {
 		C = S.Constraints[0]
 		for i := 1; i < len(S.Constraints); i++ {
-			C = C.Add(sym.NewPlaceholder(challenge.Name).Pow(uint32(i)).Mul(S.Constraints[i]))
+			C = C.Add(sym.NewChallenge(challenge.Name).Pow(uint32(i)).Mul(S.Constraints[i]))
 		}
 		S.Constraints = []Constraint{}
 	}
@@ -85,9 +85,9 @@ func FlushCache(S *System) {
 }
 
 func FoldCachedConstraints(S *System, challenge Challenge) error {
-	if err := ensureChallengeInTrace(S, challenge); err != nil {
-		return err
-	}
+	// if err := addChallengeInTrace(S, challenge); err != nil {
+	// 	return err
+	// }
 	return foldConstraints(S, challenge, true)
 }
 
@@ -97,9 +97,11 @@ func FoldConstraints(S *System, challenge Challenge) error {
 	return foldConstraints(S, challenge, false)
 }
 
-func GetLagrangeConstraint(ColumnToCheck string, entry int, value koalabear.Element) Constraint {
-	lagrangeID := GetLagrangeID(entry)
-	C := sym.NewVar(ColumnToCheck).Sub(sym.NewConst(value)).Mul(sym.NewVar(lagrangeID))
+func GetLagrangeConstraint(ColumnToCheck string, entry int, value koalabear.Element, N int) Constraint {
+	lagrangeID := GetLagrangeID(entry, N)
+
+	// lagrange column is computable: we refer it as a ComputableColumn, so we don't commit to it, as it is retrieved by the verifier
+	C := sym.NewVar(ColumnToCheck).Sub(sym.NewConst(value)).Mul(sym.NewComputableColumn(lagrangeID))
 	return C
 }
 
@@ -112,11 +114,11 @@ func GetGrandProductConstraint(E1, E2 Constraint, R, RS string) Constraint {
 
 // GetProductExpression returns the expression Π_i (E[i] - challenge).
 // The first occurrence of challenge uses NewVar (degree 1); subsequent ones use
-// NewPlaceholder (degree 0), keeping the symbolic degree equal to len(ID).
+// NewChallenge (degree 0), keeping the symbolic degree equal to len(ID).
 func GetProductExpression(E []sym.Expr, challenge string) Constraint {
-	C := E[0].Sub(sym.NewPlaceholder(challenge))
+	C := E[0].Sub(sym.NewChallenge(challenge))
 	for i := 1; i < len(E); i++ {
-		C = C.Mul(E[i].Sub(sym.NewPlaceholder(challenge)))
+		C = C.Mul(E[i].Sub(sym.NewChallenge(challenge)))
 	}
 	return C
 }
@@ -128,7 +130,7 @@ func GetFoldingExpression(IDs []string, challenge, R string) Constraint {
 	one.SetOne()
 	C := sym.NewVar(IDs[0]).Mul(sym.NewConst(one))
 	for i := 1; i < len(IDs); i++ {
-		C = C.Add(sym.NewVar(IDs[i]).Mul(sym.NewPlaceholder(challenge).Pow(uint32(i))))
+		C = C.Add(sym.NewVar(IDs[i]).Mul(sym.NewChallenge(challenge).Pow(uint32(i))))
 	}
 	return C
 }

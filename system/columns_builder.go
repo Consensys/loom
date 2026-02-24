@@ -27,11 +27,11 @@ func CacheMe() IOPOption {
 	}
 }
 
-// ensureChallengeInTrace adds challenge as a constant column to S.Trace if it has a
+// addChallengeInTrace adds challenge as a constant column to S.Trace if it has a
 // name and is not already present. This allows functions like NewSimpleIOP and
 // NewGrandProductIOP to be called directly (without Protocol.SendMeAChallenge) while
 // still resolving placeholder references during pointwise evaluation and brute-force checks.
-func ensureChallengeInTrace(S *System, challenge Challenge) error {
+func addChallengeInTrace(S *System, challenge Challenge) error {
 	if challenge.Name == "" {
 		return nil
 	}
@@ -46,44 +46,35 @@ func ensureChallengeInTrace(S *System, challenge Challenge) error {
 	return nil
 }
 
-// NewColumn computes a new polynomial Q (new column in the trace) with that Q =E(IDs)
-// Record the constraint Q-E(IDs)=0
-func NewColumn(S *System, E sym.Expr, IDresult string, opts ...IOPOption) error {
-
-	// build the config file
-	var config IOPConfig
-	for _, opt := range opts {
-		err := opt(&config)
-		if err != nil {
-			return err
-		}
-	}
-
-	sum, err := univariate.EvalPointWise(S.Trace, E, S.N, univariate.WithOutputBasis(univariate.Lagrange))
-	if err != nil {
-		return err
-	}
-
-	// record the result polynomial
-	if _, ok := S.Trace[IDresult]; ok {
-		return fmt.Errorf("%s already recorded in the trace (name already taken)", IDresult)
-	}
-	S.Trace[IDresult] = &sum
-
-	// record the constraint
-	C := E.Sub(sym.NewVar(IDresult))
-	if config.CacheMe {
-		S.CachedConstraints = append(S.CachedConstraints, C)
-	} else {
-		S.Constraints = append(S.Constraints, C)
-	}
-
-	return nil
+// ComputableColumn special column that can be encoded with a formula F	, like Lagrange column.
+type ComputableColumn struct {
+	id  string                                    // ID of the computable column
+	F   func(koalabear.Element) koalabear.Element // function F encoding the column (e.g. ω^i/N (z^N-1)/(1-ω^i) for Lagrange_i_N)
+	Gen func() univariate.Polynomial              // generate the column -> it is the evaluation of F on the domain of size N
 }
 
-// BuildColumnWithChallenge computes a new polynomial Q (so new column in the trace) so that Q =E(IDs, Challenge), and adds the constraint
-// Q - E(IDs, Challenge)
-func BuildColumnWithChallenge(S *System, E sym.Expr, IDresult string, challenge koalabear.Element, opts ...IOPOption) error {
+// GetComputationableColumn atm there is only one type of computableColumns, but when there will be more
+// we need to switch on the id to know which type is it, and return the correct colum
+func GetComputationableColumn(id string) (ComputableColumn, error) {
+
+	// TODO when there is more than one type of computable column, switch on id to know which type is it
+	// atm there only one type, LagrangeColumn
+	return NewLagrangeColumn(id)
+}
+
+// AddComputableColumn returns a computable column, that is a column encoded by a formula.
+// If it exists, we don't throw an error, as the column might be generated from different IOPs.
+func AddComputableColumn(S *System, c ComputableColumn) {
+	col := c.Gen()
+	if _, ok := S.Trace[c.id]; ok {
+		return
+	}
+	S.Trace[c.id] = &col
+}
+
+// BuildColumn computes a new polynomial Q (new column in the trace) such that ith that Q =E(IDs)
+// Record the constraint Q-E(IDs)=0
+func BuildColumn(S *System, E sym.Expr, IDresult string, opts ...IOPOption) error {
 
 	// build the config file
 	var config IOPConfig
@@ -92,17 +83,6 @@ func BuildColumnWithChallenge(S *System, E sym.Expr, IDresult string, challenge 
 		if err != nil {
 			return err
 		}
-	}
-
-	// get the name of the challenge -> it is the unique placeholder in E. If E has more than one placeholder, throw an error
-	ph := sym.RemoveDuplicates(E.Placeholders())
-	if len(ph) != 1 {
-		return fmt.Errorf("expected exactly one placeholder for a challenge, got %d: %v", len(ph), ph)
-	}
-	challengeName := ph[0]
-
-	if err := ensureChallengeInTrace(S, Challenge{Name: challengeName, Value: challenge}); err != nil {
-		return err
 	}
 
 	sum, err := univariate.EvalPointWise(S.Trace, E, S.N, univariate.WithOutputBasis(univariate.Lagrange))

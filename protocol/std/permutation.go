@@ -59,10 +59,10 @@ func EqualityUpToPermutation(prot *protocol.Protocol, ID1, ID2 []string, IDGrand
 	// to derive the challenge via Fiat-Shamir
 	var physicalIDs []string
 	for _, e := range E1 {
-		physicalIDs = append(physicalIDs, e.LeavesWOPlaceholders()...)
+		physicalIDs = append(physicalIDs, e.Vars()...)
 	}
 	for _, e := range E2 {
-		physicalIDs = append(physicalIDs, e.LeavesWOPlaceholders()...)
+		physicalIDs = append(physicalIDs, e.Vars()...)
 	}
 	physicalIDs = sym.RemoveDuplicates(physicalIDs)
 

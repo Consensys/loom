@@ -153,15 +153,17 @@ Two active constraints are recorded:
 ```
 C2: ∏_s(F2_s−γ) · PlonkGrandProduct_shifted  −  ∏_s(F1_s−γ) · PlonkGrandProduct  =  0  mod X^N − 1
 
-C3: (PlonkGrandProduct − 1) · LAGRANGE_0  =  0  mod X^N − 1   (enforces Z[0]=1)
+C3: (PlonkGrandProduct − 1) · LAGRANGE_0_32  =  0  mod X^N − 1   (enforces Z[0]=1)
 ```
 
 where `F1_s` and `F2_s` are the inlined symbolic expressions (no separate trace columns).
 
+`LAGRANGE_0_32` is a **computable column** — it is materialised in the trace so the prover can evaluate `C3` row-by-row, but the prover does **not** commit to it (see [Computable Columns](#computable-columns)).
+
 ```
 Trace after γ-round: 19 columns
 
- ...15 columns...    gamma   PlonkGrandProduct   PlonkGrandProduct_shifted   LAGRANGE_0
+ ...15 columns...    gamma   PlonkGrandProduct   PlonkGrandProduct_shifted   LAGRANGE_0_32
  ...                  γ       1                   Z[1]                        1
  ...                  γ       Z[1]                Z[2]                        0
  ...                  γ       ...                 ...                         0
@@ -172,6 +174,36 @@ Trace after γ-round: 19 columns
 1. `QL·L + QR·R + QM·L·R + QO·O + QK`
 2. `∏_s(F2_s−γ)·PlonkGrandProduct_shifted − ∏_s(F1_s−γ)·PlonkGrandProduct`
 3. `(PlonkGrandProduct − 1)·LAGRANGE_0`
+
+---
+
+## Computable Columns
+
+A **computable column** is a trace column whose values are determined by a public, closed-form formula — every honest verifier can recompute them without help from the prover. The `LAGRANGE_0_32` column used in `C3` is the canonical example:
+
+```
+L_0(z) = (ω⁰ / N) · (z^N − 1) / (z − ω⁰)   =   (1/N) · (z^N − 1) / (z − 1)
+```
+
+Because the formula is public and deterministic, **the prover does not need to commit to computable columns**. This has two consequences:
+
+| Property | Regular column (e.g. `PlonkGrandProduct`) | Computable column (e.g. `LAGRANGE_0_32`) |
+|---|---|---|
+| Materialised in trace? | Yes (prover computes evaluations) | Yes (prover needs it for C3 row evaluation) |
+| Committed to? | **Yes** — `Com(P)` is sent | **No** — verifier recomputes |
+| Opened at ζ? | **Yes** — `P(ζ)` is sent | **No** — verifier evaluates `F(ζ)` itself |
+
+During verification, `LAGRANGE_0_32` is not looked up in `OpeningProofs`; instead the verifier calls:
+
+```go
+computationableColumn, _ := system.GetComputationableColumn("LAGRANGE_0_32")
+values[varindex["LAGRANGE_0_32"]] = computationableColumn.F(zeta)
+// = (1/N) · (ζ^N − 1) / (ζ − 1)
+```
+
+This reduces proof size (one fewer commitment and one fewer opening proof) and prover work (no need to run the commitment scheme on a column that is already public).
+
+In the constraint expression `C_folded`, `LAGRANGE_0_32` appears as a `ComputableColumn` AST node (distinct from `Var`). The verifier uses `P.Constraint.ComputableColumns()` to enumerate them and fills their values before checking the identity.
 
 ---
 
@@ -221,20 +253,29 @@ Prover  ──── Com(H)  ─────────────────
 Prover  ←──────────────────────────────────  ζ = FS(all commitments so far, Com(H))
 ```
 
-### 4c — Prover opens all polynomials at ζ
+### 4c — Prover opens all committed polynomials at ζ
 
-The prover evaluates every column appearing in `C_folded` and `H` at the single point ζ, and sends opening proofs.
+The prover evaluates every **committed** column appearing in `C_folded` and `H` at ζ, and sends opening proofs. Computable columns (`LAGRANGE_0_32`) are excluded — the verifier will recompute them.
 
 ```
-Prover  ──── { P(ζ) for every P in C_folded } ∪ { H(ζ) }  ──────────→  Verifier
+Prover  ──── { P(ζ) for every committed P in C_folded } ∪ { H(ζ) }  ──→  Verifier
 ```
+
+The committed columns in `C_folded` are: `QL, QR, QM, QO, QK, S1, S2, S3, ID1, ID2, ID3, L, R, O, beta, gamma, alpha, PlonkGrandProduct, PlonkGrandProduct_shifted`.  `LAGRANGE_0_32` is **not** in this list.
 
 ### 4d — Verifier checks the identity
 
-The verifier re-derives all challenges (β, γ, α, ζ) from the commitments using the same Fiat-Shamir hash, then checks:
+The verifier re-derives all challenges (β, γ, α, ζ) from the commitments using the same Fiat-Shamir hash. It then populates the remaining variable — the computable column — by evaluating the closed-form formula at ζ:
 
 ```
-C_folded( L(ζ), R(ζ), O(ζ), QL(ζ), …, Z(ζ), β, γ, α )  =  H(ζ) · (ζ^N − 1)
+LAGRANGE_0_32(ζ) = (1/N) · (ζ^N − 1) / (ζ − 1)      ← no prover input needed
+```
+
+Then checks:
+
+```
+C_folded( L(ζ), R(ζ), O(ζ), QL(ζ), …, Z(ζ), β, γ, α, LAGRANGE_0_32(ζ) )
+    =  H(ζ) · (ζ^N − 1)
 ```
 
 If this holds, the verifier is convinced (with overwhelming probability) that all 3 constraints vanish simultaneously on the entire domain.
@@ -253,13 +294,15 @@ protocol.Verify(&proof)
 | `AddConstraint`                    | same                                                                                                    | 1 (arithmetic)       |
 | `NewProtocol`                      | same                                                                                                    | 1                    |
 | `MultiSetEqualityUpToPermutation` β | + **beta** (virtual: F1_0 F1_1 F1_2 F2_0 F2_1 F2_2)                                                 | 1                    |
-| `EqualityUpToPermutation` γ        | + **gamma**, **PlonkGrandProduct**, **PlonkGrandProduct_shifted**, **LAGRANGE_0**                      | 3                    |
+| `EqualityUpToPermutation` γ        | + **gamma**, **PlonkGrandProduct**, **PlonkGrandProduct_shifted**, **LAGRANGE_0_32** *(computable, not committed)* | 3                    |
 | `FoldConstraints` α                | + **alpha**                                                                                             | 1 (folded)           |
 | `Finalize`                         | + **H** (quotient, on big domain)                                                                      | —                    |
 
 The final proof (`Proof`) contains:
-- One commitment digest per column (stored as the first coefficient in `dummycommitment`)
-- One opening proof per column at ζ (claimed value + proof)
-- The folded constraint expression `C_folded` (so the verifier can re-evaluate it)
+- One commitment digest per **committed** column (all trace columns except computable columns like `LAGRANGE_0_32`)
+- One opening proof per committed column at ζ (claimed value + proof), plus `H(ζ)`
+- The folded constraint expression `C_folded` (so the verifier can re-evaluate it, including identifying computable columns via `ComputableColumns()`)
 - The ordered list of `Rounds` (for FS replay)
 - The domain size N
+
+**`LAGRANGE_0_32` does not appear in the proof at all.** The verifier evaluates it independently at ζ.

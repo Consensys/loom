@@ -47,6 +47,8 @@ func TestGrandProductIOP(t *testing.T) {
 	gamma.SetUint64(42)
 	challenge := Challenge{Name: "gamma", Value: gamma}
 
+	addChallengeInTrace(&S, challenge)
+
 	var err error
 	err = BuildGrandProductConstraint(&S, []sym.Expr{sym.NewVar("P0")}, []sym.Expr{sym.NewVar("P1")}, "R", challenge)
 	if err != nil {
@@ -147,13 +149,12 @@ func TestFlatten(t *testing.T) {
 	}
 }
 
-func TestSimpleIOP(t *testing.T) {
+func TestColumnBuilder(t *testing.T) {
 
 	const size = 16
 
 	var alpha koalabear.Element
 	alpha.SetUint64(42)
-	challenge := Challenge{Name: "alpha", Value: alpha}
 
 	// makePoly creates a random Lagrange polynomial and returns its raw evaluations.
 	makePoly := func(name string) (univariate.Polynomial, []koalabear.Element) {
@@ -184,7 +185,7 @@ func TestSimpleIOP(t *testing.T) {
 		S := makeSystem(map[string]*univariate.Polynomial{"P0": &P0})
 
 		E := sym.NewVar("P0").Pow(2)
-		if err := NewColumn(&S, E, "Q"); err != nil {
+		if err := BuildColumn(&S, E, "Q"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -214,7 +215,7 @@ func TestSimpleIOP(t *testing.T) {
 		S := makeSystem(map[string]*univariate.Polynomial{"P0": &P0, "P1": &P1, "P2": &P2})
 
 		E := sym.NewVar("P0").Mul(sym.NewVar("P1")).Mul(sym.NewVar("P2"))
-		if err := NewColumn(&S, E, "Q"); err != nil {
+		if err := BuildColumn(&S, E, "Q"); err != nil {
 			t.Fatal(err)
 		}
 
@@ -237,17 +238,19 @@ func TestSimpleIOP(t *testing.T) {
 
 	// Sub-test 3: E = P0^2 + alpha*P1 - P2
 	// Q[i] = P0[i]^2 + alpha*P1[i] - P2[i], constraint P0^2 + alpha*P1 - P2 - Q = 0.
-	// Uses NewPlaceholder for alpha so it contributes degree 0, keeping the constraint degree 2.
+	// Uses NewChallenge for alpha so it contributes degree 0, keeping the constraint degree 2.
 	t.Run("QuadraticWithChallenge", func(t *testing.T) {
 		P0, raw0 := makePoly("P0")
 		P1, raw1 := makePoly("P1")
 		P2, raw2 := makePoly("P2")
 		S := makeSystem(map[string]*univariate.Polynomial{"P0": &P0, "P1": &P1, "P2": &P2})
 
+		addChallengeInTrace(&S, Challenge{Name: "alpha", Value: alpha})
+
 		E := sym.NewVar("P0").Pow(2).
-			Add(sym.NewPlaceholder("alpha").Mul(sym.NewVar("P1"))).
+			Add(sym.NewChallenge("alpha").Mul(sym.NewVar("P1"))).
 			Sub(sym.NewVar("P2"))
-		if err := BuildColumnWithChallenge(&S, E, "Q", challenge.Value); err != nil {
+		if err := BuildColumn(&S, E, "Q"); err != nil {
 			t.Fatal(err)
 		}
 

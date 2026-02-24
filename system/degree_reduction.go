@@ -35,7 +35,7 @@ func Flatten(S *System, C Constraint, targetDegree int) error {
 		}
 		CLowRecord[CLow.String()] = struct{}{}
 
-		err := NewColumn(S, CLow, CLow.String())
+		err := BuildColumn(S, CLow, CLow.String())
 		if err != nil {
 			return err
 		}

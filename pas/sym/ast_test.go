@@ -80,131 +80,62 @@ func TestPrune(t *testing.T) {
 
 }
 
-func TestLeavesWOPlaceholders(t *testing.T) {
+func TestComputableColumns(t *testing.T) {
 	var five koalabear.Element
 	five.SetUint64(5)
 
 	// Leaf nodes
-	assertSameSet(t, NewVar("x").LeavesWOPlaceholders(), []string{"x"})
-	assertSameSet(t, NewConst(five).LeavesWOPlaceholders(), []string{})
-	assertSameSet(t, NewPlaceholder("beta").LeavesWOPlaceholders(), []string{})
+	assertSameSet(t, NewComputableColumn("L0").ComputableColumns(), []string{"L0"})
+	assertSameSet(t, NewVar("x").ComputableColumns(), []string{})
+	assertSameSet(t, NewConst(five).ComputableColumns(), []string{})
+	assertSameSet(t, NewChallenge("beta").ComputableColumns(), []string{})
 
-	// Var mixed with Const — Const is excluded
+	// ComputableColumn mixed with Var — only ComputableColumn returned
 	assertSameSet(t,
-		NewVar("x").Add(NewConst(five)).LeavesWOPlaceholders(),
-		[]string{"x"},
+		NewComputableColumn("L0").Add(NewVar("x")).ComputableColumns(),
+		[]string{"L0"},
 	)
 
-	// Var mixed with Placeholder — Placeholder is excluded
+	// ComputableColumn mixed with Challenge — only ComputableColumn returned
 	assertSameSet(t,
-		NewVar("x").Add(NewPlaceholder("beta")).LeavesWOPlaceholders(),
-		[]string{"x"},
+		NewComputableColumn("L0").Mul(NewChallenge("gamma")).ComputableColumns(),
+		[]string{"L0"},
 	)
 
-	// Multiple Vars with a Placeholder — only Vars returned
+	// Multiple ComputableColumns
 	assertSameSet(t,
-		NewVar("x").Mul(NewVar("y")).Add(NewPlaceholder("beta")).LeavesWOPlaceholders(),
-		[]string{"x", "y"},
+		NewComputableColumn("L0").Add(NewComputableColumn("L1")).ComputableColumns(),
+		[]string{"L0", "L1"},
 	)
 
-	// Placeholder on the left — still excluded
+	// Sub: ComputableColumn on the right
 	assertSameSet(t,
-		NewPlaceholder("alpha").Mul(NewVar("x")).LeavesWOPlaceholders(),
-		[]string{"x"},
+		NewVar("x").Sub(NewComputableColumn("L0")).ComputableColumns(),
+		[]string{"L0"},
 	)
 
-	// Sub: only Vars, no Placeholders or Consts
+	// Pow: ComputableColumn inside
 	assertSameSet(t,
-		NewVar("a").Sub(NewPlaceholder("gamma")).Sub(NewConst(five)).LeavesWOPlaceholders(),
-		[]string{"a"},
+		NewComputableColumn("L0").Pow(2).ComputableColumns(),
+		[]string{"L0"},
 	)
 
-	// Pow: Var inside
+	// Pow: Var inside — no ComputableColumn
 	assertSameSet(t,
-		NewVar("x").Pow(3).LeavesWOPlaceholders(),
-		[]string{"x"},
-	)
-
-	// Pow: Placeholder inside — excluded
-	assertSameSet(t,
-		NewPlaceholder("beta").Pow(2).LeavesWOPlaceholders(),
+		NewVar("x").Pow(3).ComputableColumns(),
 		[]string{},
 	)
 
-	// Nested: (x + alpha) * (y - 5) — two Vars, one Placeholder, one Const
+	// Nested: (x + L0) * (y - alpha) — only L0 returned
 	assertSameSet(t,
-		NewVar("x").Add(NewPlaceholder("alpha")).Mul(NewVar("y").Sub(NewConst(five))).LeavesWOPlaceholders(),
-		[]string{"x", "y"},
+		NewVar("x").Add(NewComputableColumn("L0")).Mul(NewVar("y").Sub(NewChallenge("alpha"))).ComputableColumns(),
+		[]string{"L0"},
 	)
 
-	// Same Var appearing multiple times — deduplicated
+	// Same ComputableColumn appearing multiple times — deduplicated
 	assertSameSet(t,
-		NewVar("x").Add(NewVar("x")).LeavesWOPlaceholders(),
-		[]string{"x"},
-	)
-}
-
-func TestPlaceholders(t *testing.T) {
-	var five koalabear.Element
-	five.SetUint64(5)
-
-	// Leaf nodes
-	assertSameSet(t, NewVar("x").Placeholders(), []string{})
-	assertSameSet(t, NewConst(five).Placeholders(), []string{})
-	assertSameSet(t, NewPlaceholder("beta").Placeholders(), []string{"beta"})
-
-	// Var mixed with Placeholder — only Placeholder returned
-	assertSameSet(t,
-		NewVar("x").Add(NewPlaceholder("beta")).Placeholders(),
-		[]string{"beta"},
-	)
-
-	// Var mixed with Const — no Placeholder
-	assertSameSet(t,
-		NewVar("x").Add(NewConst(five)).Placeholders(),
-		[]string{},
-	)
-
-	// Multiple Placeholders
-	assertSameSet(t,
-		NewPlaceholder("alpha").Mul(NewPlaceholder("beta")).Placeholders(),
-		[]string{"alpha", "beta"},
-	)
-
-	// Placeholder on the right of Sub
-	assertSameSet(t,
-		NewVar("x").Sub(NewPlaceholder("gamma")).Placeholders(),
-		[]string{"gamma"},
-	)
-
-	// Vars with multiple Placeholders, no double-counting
-	assertSameSet(t,
-		NewVar("x").Mul(NewVar("y")).Add(NewPlaceholder("beta")).Mul(NewPlaceholder("alpha")).Placeholders(),
-		[]string{"beta", "alpha"},
-	)
-
-	// Pow: Placeholder inside
-	assertSameSet(t,
-		NewPlaceholder("beta").Pow(2).Placeholders(),
-		[]string{"beta"},
-	)
-
-	// Pow: Var inside — no Placeholder
-	assertSameSet(t,
-		NewVar("x").Pow(3).Placeholders(),
-		[]string{},
-	)
-
-	// Nested: (x + alpha) * (y - beta) — two Placeholders, two Vars
-	assertSameSet(t,
-		NewVar("x").Add(NewPlaceholder("alpha")).Mul(NewVar("y").Sub(NewPlaceholder("beta"))).Placeholders(),
-		[]string{"alpha", "beta"},
-	)
-
-	// Same Placeholder appearing multiple times — deduplicated
-	assertSameSet(t,
-		NewPlaceholder("alpha").Add(NewPlaceholder("alpha")).Placeholders(),
-		[]string{"alpha"},
+		NewComputableColumn("L0").Add(NewComputableColumn("L0")).ComputableColumns(),
+		[]string{"L0"},
 	)
 }
 
@@ -223,13 +154,13 @@ func TestReplaceLeafByExpression(t *testing.T) {
 		t.Errorf("expected 'x', got '%s'", got.String())
 	}
 
-	// Placeholder: matching name → replaced
-	if got := NewPlaceholder("alpha").ReplaceLeafByExpression("alpha", NewVar("y")); got.String() != "y" {
+	// Challenge: matching name → replaced
+	if got := NewChallenge("alpha").ReplaceLeafByExpression("alpha", NewVar("y")); got.String() != "y" {
 		t.Errorf("expected 'y', got '%s'", got.String())
 	}
 
-	// Placeholder: non-matching name → unchanged
-	if got := NewPlaceholder("alpha").ReplaceLeafByExpression("beta", NewVar("y")); got.String() != "alpha" {
+	// Challenge: non-matching name → unchanged
+	if got := NewChallenge("alpha").ReplaceLeafByExpression("beta", NewVar("y")); got.String() != "alpha" {
 		t.Errorf("expected 'alpha', got '%s'", got.String())
 	}
 
@@ -251,7 +182,7 @@ func TestReplaceLeafByExpression(t *testing.T) {
 	}
 
 	// Sub: alpha replaced by composite expression
-	e = NewVar("x").Sub(NewPlaceholder("alpha"))
+	e = NewVar("x").Sub(NewChallenge("alpha"))
 	if got := e.ReplaceLeafByExpression("alpha", NewVar("x").Mul(NewVar("y"))); got.String() != "(x - (x * y))" {
 		t.Errorf("expected '(x - (x * y))', got '%s'", got.String())
 	}
@@ -267,12 +198,6 @@ func TestReplaceLeafByExpression(t *testing.T) {
 	if got := e.ReplaceLeafByExpression("x", NewVar("y").Add(NewVar("z"))); got.String() != "((y + z) ^ 2)" {
 		t.Errorf("expected '((y + z) ^ 2)', got '%s'", got.String())
 	}
-
-	// Placeholder replaced by Var → no placeholders remain
-	e = NewPlaceholder("alpha").Mul(NewVar("x"))
-	got := e.ReplaceLeafByExpression("alpha", NewVar("beta"))
-	assertSameSet(t, got.Placeholders(), []string{})
-	assertSameSet(t, got.LeavesWOPlaceholders(), []string{"beta", "x"})
 
 	// Original expression is not modified by replacement
 	original := NewVar("x").Add(NewVar("y"))

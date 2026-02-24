@@ -226,7 +226,11 @@ func Convert(e Expr, varIndex VarIndex, n int) Polynomial {
 		idx := varIndex[node.Name]
 		return VarPoly(n, idx)
 
-	case *Placeholder:
+	case *Challenge:
+		idx := varIndex[node.Name]
+		return VarPoly(n, idx)
+
+	case *ComputableColumn:
 		idx := varIndex[node.Name]
 		return VarPoly(n, idx)
 

@@ -56,36 +56,6 @@ type Round struct {
 	Dependencies []string
 }
 
-// buildColumnWithChallenge records a new interaction in the protocol creating one columns along the way
-// (whose computation amounts to executing E, so it is automated)
-// It models the following Σ protocol:
-// 1 - Prover commits to the polys Pi whose ID are in E (without placeholders and constants)
-// 2 - Verifier sends a challenge α, depending on Pi
-// 3 - Prover compute a new polynomial Q = E(Pi, α). It records the constraint Q - E(Pi, α)
-func (p *Protocol) buildColumnWithChallenge(E sym.Expr, IDresult string, opts ...system.IOPOption) error {
-
-	var err error
-
-	// IDs of polynomials on which depend the challenge -> it consists of all the leaves (without placeholders) of E
-	IDs := sym.RemoveDuplicates(E.LeavesWOPlaceholders())
-
-	// retrieve the challenge in the expression
-	placeholders := E.Placeholders()
-	if len(placeholders) != 1 {
-		return fmt.Errorf("%s should contain exactly one placeholders, found %d", E.String(), len(placeholders))
-	}
-
-	// if challengeName=="", we don't generate a challenge. It means that we create a new polynomial Q=E(Pi) (E doesn't depend on a challenge)
-	var value koalabear.Element
-	challengeName := placeholders[0]
-	value, err = p.SendMeAChallenge(IDs, challengeName)
-	if err != nil {
-		return err
-	}
-
-	return system.BuildColumnWithChallenge(&p.S, E, IDresult, value, opts...)
-}
-
 // TODO see l.15 system/lagrange.go, special computable columns need not be committed, and should be recomputed by the verifier
 //
 // NewLagrangeConstraint special treatment for this constraint.
@@ -94,11 +64,11 @@ func (p *Protocol) NewLagrangeConstraint(ID string, entry int, value koalabear.E
 	return system.NewLagrangeConstraint(&p.S, ID, entry, value, opts...)
 }
 
-// getVarIdsFromConstraints returns the list of the names of Variable appearing in c
+// getVarIdsFromConstraints returns the list of the names of Vars appearing in c
 func getVarIdsFromConstraints(constraints []system.Constraint) []string {
 	var ids []string
 	for _, c := range constraints {
-		n := c.LeavesWOPlaceholders()
+		n := c.Vars()
 		sym.RemoveDuplicates(n) // avoid the expression to grow too big
 		ids = append(ids, n...)
 	}
@@ -173,8 +143,8 @@ func (p *Protocol) Finalize() (Proof, error) {
 		return Proof{}, fmt.Errorf("ComputeQuotient: %w", err)
 	}
 
-	// query the leaves (Without Placeholders and Const)
-	l := sym.RemoveDuplicates(C.LeavesWOPlaceholders())
+	// query the leaves (Without Challenges and Const)
+	l := sym.RemoveDuplicates(C.Vars())
 
 	// commit to any leaf polynomial not yet in OpeningProofs, and collect the IDs of non committed polynomials
 	zetaBindings := make([]string, 0)
@@ -211,6 +181,7 @@ func (p *Protocol) Finalize() (Proof, error) {
 	if err != nil {
 		return Proof{}, fmt.Errorf("SendMeAChallenge zeta: %w", err)
 	}
+	fmt.Println(zeta.String())
 
 	// open every leaf polynomial at zeta
 	d := fft.NewDomain(uint64(p.S.N))

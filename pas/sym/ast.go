@@ -9,6 +9,17 @@ import (
 
 const NegInf = math.MinInt
 
+// The type of the leaves:
+// * Var
+// * ComputableColumn
+// * Challenge
+// is used at the protocol/ level, because those types encode the status of a column -> is it a column that needs to be committed ?
+// Should we use this column for Fiat Shamir ? Is it a Challenge sent by the verifier (so not a column we need to commit)?
+// All this info is stored directly in the AST describing the constraint.
+//
+// It is not used as the system/ level, because at this level there is no verifier-prover interaction. We just have a trace,
+// and mathematical formulas encoding the constraints that the trace must fulfil.
+
 type Expr interface {
 	Degree() int
 	NumVars() int
@@ -22,13 +33,13 @@ type Expr interface {
 	// /!\ contains duplicates, use RemoveDuplicates to clean the slice
 	Leaves() []string
 
-	// return a slice containing the names of the leaves of Expr, except the constants AND the placeholders
+	// return a slice containing the names of the leaves of Expr which are of type Var
 	// /!\ contains duplicates, use RemoveDuplicates to clean the slice
-	LeavesWOPlaceholders() []string
+	Vars() []string
 
-	// return a slice containing ONLY the names of the placeholders
+	// return a slice containing the names of the leaves of Expr which are of type ComputableColumn
 	// /!\ contains duplicates, use RemoveDuplicates to clean the slice
-	Placeholders() []string
+	ComputableColumns() []string
 
 	// ReplaceLeafByExpression finds all occurence of leaf in the tree and replace it with e
 	ReplaceLeafByExpression(leaf string, e Expr) Expr
@@ -39,19 +50,63 @@ type Expr interface {
 	Prune(deg int) Expr
 }
 
-type Placeholder struct {
+// ComputableColumn leaf used to store columns which are not committed to, because they can be recomputed by the verifier
+// because their values can be retrieved with a formula, for instance Lagrange columns. Its degree is one.
+type ComputableColumn struct {
 	Name string
 }
 
-// Acts as a constant, but with an identifier, so it can be plugged in an expression. Its degree is zero.
-func NewPlaceholder(name string) *Placeholder {
-	return &Placeholder{Name: name}
+func NewComputableColumn(name string) *ComputableColumn {
+	return &ComputableColumn{Name: name}
 }
 
-func (v Placeholder) Degree() int    { return 0 } // Placeholder acts as a constant
-func (v Placeholder) String() string { return v.Name }
+func (v *ComputableColumn) Degree() int    { return 1 }
+func (v *ComputableColumn) String() string { return v.Name }
 
-func (v Placeholder) NumVars() int {
+func (v *ComputableColumn) NumVars() int {
+	vars := make(map[string]bool)
+	v.collectVars(vars)
+	return len(vars)
+}
+
+func (v *ComputableColumn) collectVars(vars map[string]bool) {
+	vars[v.Name] = true
+}
+
+func (v *ComputableColumn) Add(e Expr) Expr { return &Add{v, e} }
+func (v *ComputableColumn) Sub(e Expr) Expr { return &Sub{v, e} }
+func (v *ComputableColumn) Mul(e Expr) Expr { return &Mul{v, e} }
+func (v *ComputableColumn) Pow(n uint32) Expr {
+	if n > 2 {
+		return squareAndMultiply(v, n)
+	}
+	return &Pow{v, n}
+}
+
+func (v *ComputableColumn) ReplaceLeafByExpression(leaf string, e Expr) Expr {
+	if v.Name == leaf {
+		return e
+	}
+	return v
+}
+
+func (v *ComputableColumn) Prune(deg int) Expr { return pruneSearch(v, deg) }
+
+// Leaf storing a challenge
+type Challenge struct {
+	Name string
+}
+
+// Acts as a constant, but with an identifier, so it can be plugged in an expression. Its degree is zero. It is used to stored the
+// challenges in an algebraic expression
+func NewChallenge(name string) *Challenge {
+	return &Challenge{Name: name}
+}
+
+func (v Challenge) Degree() int    { return 0 } // Challenge acts as a constant
+func (v Challenge) String() string { return v.Name }
+
+func (v Challenge) NumVars() int {
 	// A single variable contributes 1 to the count
 	// The actual index assignment happens during Convert()
 	vars := make(map[string]bool)
@@ -59,7 +114,7 @@ func (v Placeholder) NumVars() int {
 	return len(vars)
 }
 
-func (v Placeholder) collectVars(vars map[string]bool) {
+func (v Challenge) collectVars(vars map[string]bool) {
 	vars[v.Name] = true
 }
 
@@ -233,10 +288,10 @@ func (v *Var) Pow(n uint32) Expr {
 	return &Pow{v, n}
 }
 
-func (c *Placeholder) Add(e Expr) Expr { return &Add{c, e} }
-func (c *Placeholder) Sub(e Expr) Expr { return &Sub{c, e} }
-func (c *Placeholder) Mul(e Expr) Expr { return &Mul{c, e} }
-func (c *Placeholder) Pow(n uint32) Expr {
+func (c *Challenge) Add(e Expr) Expr { return &Add{c, e} }
+func (c *Challenge) Sub(e Expr) Expr { return &Sub{c, e} }
+func (c *Challenge) Mul(e Expr) Expr { return &Mul{c, e} }
+func (c *Challenge) Pow(n uint32) Expr {
 	if n > 2 {
 		return squareAndMultiply(c, n)
 	}
@@ -315,11 +370,11 @@ func Prod(exprs ...Expr) Expr {
 	return result
 }
 
-// isPrunable returns true if e is a composite sub-expression (not a bare Var, Placeholder, or Const)
+// isPrunable returns true if e is a composite sub-expression (not a bare leaf or Const)
 // that is eligible to be extracted into a new intermediate polynomial.
 func isPrunable(e Expr) bool {
 	switch e.(type) {
-	case *Var, *Const, *Placeholder:
+	case *Var, *Const, *Challenge, *ComputableColumn:
 		return false
 	}
 	return true
@@ -331,7 +386,7 @@ func isPrunable(e Expr) bool {
 // Returns nil if no such sub-expression is found.
 func pruneSearch(expr Expr, deg int) Expr {
 	switch e := expr.(type) {
-	case *Var, *Const:
+	case *Var, *Const, *ComputableColumn:
 		return nil
 	case *Add:
 		if isPrunable(e.Left) && e.Left.Degree() <= deg {
@@ -389,23 +444,24 @@ func pruneSearch(expr Expr, deg int) Expr {
 	return nil
 }
 
-func (c *Placeholder) Prune(deg int) Expr { return pruneSearch(c, deg) }
-func (v *Var) Prune(deg int) Expr         { return pruneSearch(v, deg) }
-func (c *Const) Prune(deg int) Expr       { return pruneSearch(c, deg) }
-func (a *Add) Prune(deg int) Expr         { return pruneSearch(a, deg) }
-func (s *Sub) Prune(deg int) Expr         { return pruneSearch(s, deg) }
-func (m *Mul) Prune(deg int) Expr         { return pruneSearch(m, deg) }
-func (p *Pow) Prune(deg int) Expr         { return pruneSearch(p, deg) }
+func (c *Challenge) Prune(deg int) Expr { return pruneSearch(c, deg) }
+func (v *Var) Prune(deg int) Expr       { return pruneSearch(v, deg) }
+func (c *Const) Prune(deg int) Expr     { return pruneSearch(c, deg) }
+func (a *Add) Prune(deg int) Expr       { return pruneSearch(a, deg) }
+func (s *Sub) Prune(deg int) Expr       { return pruneSearch(s, deg) }
+func (m *Mul) Prune(deg int) Expr       { return pruneSearch(m, deg) }
+func (p *Pow) Prune(deg int) Expr       { return pruneSearch(p, deg) }
 
-func (c *Placeholder) Leaves() []string { return []string{c.String()} }
-func (v *Var) Leaves() []string         { return []string{v.Name} }
-func (c *Const) Leaves() []string       { return []string{} }
-func (a *Add) Leaves() []string         { return append(a.Left.Leaves(), a.Right.Leaves()...) }
-func (s *Sub) Leaves() []string         { return append(s.Left.Leaves(), s.Right.Leaves()...) }
-func (m *Mul) Leaves() []string         { return append(m.Left.Leaves(), m.Right.Leaves()...) }
-func (p *Pow) Leaves() []string         { return p.Base.Leaves() }
+func (v *ComputableColumn) Leaves() []string { return []string{v.Name} }
+func (c *Challenge) Leaves() []string        { return []string{c.String()} }
+func (v *Var) Leaves() []string              { return []string{v.Name} }
+func (c *Const) Leaves() []string            { return []string{} }
+func (a *Add) Leaves() []string              { return append(a.Left.Leaves(), a.Right.Leaves()...) }
+func (s *Sub) Leaves() []string              { return append(s.Left.Leaves(), s.Right.Leaves()...) }
+func (m *Mul) Leaves() []string              { return append(m.Left.Leaves(), m.Right.Leaves()...) }
+func (p *Pow) Leaves() []string              { return p.Base.Leaves() }
 
-func (c *Placeholder) ReplaceLeafByExpression(leaf string, e Expr) Expr {
+func (c *Challenge) ReplaceLeafByExpression(leaf string, e Expr) Expr {
 	if c.Name == leaf {
 		return e
 	} else {
@@ -433,33 +489,35 @@ func (p *Pow) ReplaceLeafByExpression(leaf string, e Expr) Expr {
 	return &Pow{p.Base.ReplaceLeafByExpression(leaf, e), p.Exp}
 }
 
-func (c *Placeholder) LeavesWOPlaceholders() []string { return []string{} }
-func (v *Var) LeavesWOPlaceholders() []string         { return []string{v.String()} }
-func (c *Const) LeavesWOPlaceholders() []string       { return []string{} }
-func (a *Add) LeavesWOPlaceholders() []string {
-	return append(a.Left.LeavesWOPlaceholders(), a.Right.LeavesWOPlaceholders()...)
+func (v *ComputableColumn) Vars() []string { return []string{v.Name} }
+func (c *Challenge) Vars() []string        { return []string{} }
+func (v *Var) Vars() []string              { return []string{v.String()} }
+func (c *Const) Vars() []string            { return []string{} }
+func (a *Add) Vars() []string {
+	return append(a.Left.Vars(), a.Right.Vars()...)
 }
-func (s *Sub) LeavesWOPlaceholders() []string {
-	return append(s.Left.LeavesWOPlaceholders(), s.Right.LeavesWOPlaceholders()...)
+func (s *Sub) Vars() []string {
+	return append(s.Left.Vars(), s.Right.Vars()...)
 }
-func (m *Mul) LeavesWOPlaceholders() []string {
-	return append(m.Left.LeavesWOPlaceholders(), m.Right.LeavesWOPlaceholders()...)
+func (m *Mul) Vars() []string {
+	return append(m.Left.Vars(), m.Right.Vars()...)
 }
-func (p *Pow) LeavesWOPlaceholders() []string { return p.Base.LeavesWOPlaceholders() }
+func (p *Pow) Vars() []string { return p.Base.Vars() }
 
-func (c *Placeholder) Placeholders() []string { return []string{c.String()} }
-func (v *Var) Placeholders() []string         { return []string{} }
-func (c *Const) Placeholders() []string       { return []string{} }
-func (a *Add) Placeholders() []string {
-	return append(a.Left.Placeholders(), a.Right.Placeholders()...)
+func (v *ComputableColumn) ComputableColumns() []string { return []string{v.Name} }
+func (c *Challenge) ComputableColumns() []string        { return []string{} }
+func (v *Var) ComputableColumns() []string              { return []string{} }
+func (c *Const) ComputableColumns() []string            { return []string{} }
+func (a *Add) ComputableColumns() []string {
+	return append(a.Left.ComputableColumns(), a.Right.ComputableColumns()...)
 }
-func (s *Sub) Placeholders() []string {
-	return append(s.Left.Placeholders(), s.Right.Placeholders()...)
+func (s *Sub) ComputableColumns() []string {
+	return append(s.Left.ComputableColumns(), s.Right.ComputableColumns()...)
 }
-func (m *Mul) Placeholders() []string {
-	return append(m.Left.Placeholders(), m.Right.Placeholders()...)
+func (m *Mul) ComputableColumns() []string {
+	return append(m.Left.ComputableColumns(), m.Right.ComputableColumns()...)
 }
-func (p *Pow) Placeholders() []string { return p.Base.Placeholders() }
+func (p *Pow) ComputableColumns() []string { return p.Base.ComputableColumns() }
 
 // Clone returns a deep copy of the expression tree with no shared nodes.
 //
@@ -493,8 +551,10 @@ func Clone(e Expr) Expr {
 	case *Const:
 		c := *v
 		return &c
-	case *Placeholder:
-		return &Placeholder{Name: v.Name}
+	case *Challenge:
+		return &Challenge{Name: v.Name}
+	case *ComputableColumn:
+		return &ComputableColumn{Name: v.Name}
 	case *Add:
 		return &Add{Left: Clone(v.Left), Right: Clone(v.Right)}
 	case *Sub:

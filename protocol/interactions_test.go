@@ -2,13 +2,42 @@ package protocol
 
 import (
 	"crypto/sha256"
+	"fmt"
 	"testing"
 
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/iop/system"
 	"github.com/consensys/iop/pas/univariate"
+	"github.com/consensys/iop/system"
 )
+
+// GenerateChallenges generate the challenges in the same order of generation than the prover
+func generateChallenges(P Proof, fs *fiatshamir.Transcript) ([]koalabear.Element, error) {
+
+	r := make([]koalabear.Element, len(P.Rounds))
+	for i := 0; i < len(P.Rounds); i++ {
+		err := fs.NewChallenge(P.Rounds[i].ChallengeName)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range P.Rounds[i].Dependencies {
+			com, ok := P.OpeningProofs[d]
+			if !ok {
+				return nil, fmt.Errorf("%s not found in the list of commitments", d)
+			}
+			err = fs.Bind(P.Rounds[i].ChallengeName, com.Digest.Marshal())
+			if err != nil {
+				return nil, err
+			}
+		}
+		br, err := fs.ComputeChallenge(P.Rounds[i].ChallengeName)
+		if err != nil {
+			return nil, err
+		}
+		r[i].SetBytes(br)
+	}
+	return r, nil
+}
 
 // TestChallengeGeneration checks that the challenge generated on prover and verifier side are the same
 func TestChallengeGeneration(t *testing.T) {
@@ -56,7 +85,7 @@ func TestChallengeGeneration(t *testing.T) {
 
 	// create a fresh Fiat-Shamir transcript and replay the rounds via GenerateChallenges
 	fs := fiatshamir.NewTranscript(sha256.New())
-	r, err := GenerateChallenges(prot.P, fs)
+	r, err := generateChallenges(prot.P, fs)
 	if err != nil {
 		t.Fatal(err)
 	}

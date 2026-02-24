@@ -8,6 +8,71 @@ import (
 	"github.com/consensys/iop/pas/univariate"
 )
 
+func TestParseLagrangeID(t *testing.T) {
+	cases := []struct {
+		entry, N int
+	}{
+		{0, 16},
+		{3, 16},
+		{15, 16},
+		{0, 32},
+		{7, 32},
+	}
+
+	for _, c := range cases {
+		id := GetLagrangeID(c.entry, c.N)
+		gotEntry, gotN, _ := ParseLagrangeID(id)
+		if gotEntry != int64(c.entry) || gotN != uint64(c.N) {
+			t.Errorf("ParseLagrangeID(%q) = (%d, %d), want (%d, %d)",
+				id, gotEntry, gotN, c.entry, c.N)
+		}
+	}
+}
+
+func TestGetLagrangeFunction(t *testing.T) {
+
+	N := 16
+	for i := 0; i < N; i++ {
+		lag := GetLagrangeID(i, N)
+		lagrangeColumn, err := NewLagrangeColumn(lag)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// ensure lagFunc is not zero
+		var z koalabear.Element
+		z.SetRandom()
+		u := lagrangeColumn.F(z)
+		if u.IsZero() {
+			t.Fatal("lagrange function is zero")
+		}
+		// ensure lagFunc(\omega^j) if zero for j!=i
+		w, _ := koalabear.Generator(uint64(N))
+		omegai := koalabear.One()
+		one := koalabear.One()
+
+		for j := 0; j < N; j++ {
+			col := lagrangeColumn.Gen()
+			if i == j {
+				c := col.GetCoefficient(j)
+				if !c.Equal(&one) {
+					t.Errorf("%d-th lagrange function in lagrange basis should 1 at %d", j, j)
+				}
+				continue
+			}
+			c := col.GetCoefficient(j)
+			if !c.IsZero() {
+				t.Errorf("%d-th lagrange function in lagrange basis should 0 at %d", i, j)
+			}
+			u := lagrangeColumn.F(omegai)
+			if !u.IsZero() {
+				t.Fatal("Lag_i(w^j) must be zero for i!=j")
+			}
+			omegai.Mul(&omegai, &w)
+		}
+	}
+
+}
+
 func TestAddConstraint(t *testing.T) {
 	const size = 16
 	const entry = 3
@@ -28,8 +93,9 @@ func TestAddConstraint(t *testing.T) {
 	}
 
 	// Get the Lagrange basis column for the entry and add it to the trace manually.
-	lagrangeCol := GetLagrangeColumn(entry, size)
-	lagrangeID := GetLagrangeID(entry)
+	lagrangeID := GetLagrangeID(entry, size)
+	lagGen, err := NewLagrangeColumn(lagrangeID)
+	lagrangeCol := lagGen.Gen()
 
 	S := System{
 		Trace: map[string]*univariate.Polynomial{
@@ -131,6 +197,7 @@ func TestFold(t *testing.T) {
 	var alpha koalabear.Element
 	alpha.SetUint64(5)
 	challenge := Challenge{Name: "alpha", Value: alpha}
+	addChallengeInTrace(&S, challenge)
 
 	if err := FoldCachedConstraints(&S, challenge); err != nil {
 		t.Fatal(err)

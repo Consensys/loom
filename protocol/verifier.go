@@ -11,34 +11,6 @@ import (
 	"github.com/consensys/iop/system"
 )
 
-// GenerateChallenges generate the challenges in the same order of generation than the prover
-func GenerateChallenges(P Proof, fs *fiatshamir.Transcript) ([]koalabear.Element, error) {
-
-	r := make([]koalabear.Element, len(P.Rounds))
-	for i := 0; i < len(P.Rounds); i++ {
-		err := fs.NewChallenge(P.Rounds[i].ChallengeName)
-		if err != nil {
-			return nil, err
-		}
-		for _, d := range P.Rounds[i].Dependencies {
-			com, ok := P.OpeningProofs[d]
-			if !ok {
-				return nil, fmt.Errorf("%s not found in the list of commitments", d)
-			}
-			err = fs.Bind(P.Rounds[i].ChallengeName, com.Digest.Marshal())
-			if err != nil {
-				return nil, err
-			}
-		}
-		br, err := fs.ComputeChallenge(P.Rounds[i].ChallengeName)
-		if err != nil {
-			return nil, err
-		}
-		r[i].SetBytes(br)
-	}
-	return r, nil
-}
-
 // Verify verifies a Proof P
 //
 // The Proof models the following Σ protocol:
@@ -92,7 +64,9 @@ func Verify(P *Proof, opts ...system.IOPOption) error {
 	// crreate FS instance
 	fs := fiatshamir.NewTranscript(sha256.New())
 
-	// create the variable index for evaluating P.Constraint. We get all the names, except the constants
+	// create the variable index for evaluating P.Constraint.
+	// The leaves appearing in P.Constraint.Leaves() must be the same as
+	// P.Constraint.ComputableColumns() || P.OpeningProofs || P.Round[#].ChallengeName
 	leaves := P.Constraint.Leaves()
 	leaves = sym.RemoveDuplicates(leaves)
 	varindex := make(sym.VarIndex)
@@ -100,8 +74,10 @@ func Verify(P *Proof, opts ...system.IOPOption) error {
 		varindex[l] = i
 	}
 
-	// populate the list of variables at which P.Constraint is evaluated
+	// list of variables appearing in P.Constraint
 	values := make([]koalabear.Element, len(leaves))
+
+	// populate the list of variables with the claimed values
 	for k, v := range P.OpeningProofs {
 		// FINAL_EVALUATION_POINT and FINAL_QUOTIENT do not appear as leaves of P.Constraint
 		// (the quotient is the RHS, not the LHS) and must be skipped here.
@@ -111,7 +87,9 @@ func Verify(P *Proof, opts ...system.IOPOption) error {
 		values[varindex[k]].Set(&v.OpeningProof.ClaimedValue)
 	}
 
-	// simulate each rounds with Fiat Shamir. The last round derives zeta, not used in P.C so we let the last round for later
+	// populate the list of variables with the values derived from fiat shamir, by
+	// simulating each rounds with Fiat Shamir. The last round derives zeta, not used
+	//  in P.Constraint so we let the last round for later
 	for i := 0; i < len(P.Rounds)-1; i++ {
 
 		round := P.Rounds[i]
@@ -130,11 +108,11 @@ func Verify(P *Proof, opts ...system.IOPOption) error {
 				return err
 			}
 		}
-		bithChallenge, err := fs.ComputeChallenge(round.ChallengeName)
+		ithChallenge, err := fs.ComputeChallenge(round.ChallengeName)
 		if err != nil {
 			return err
 		}
-		values[varindex[round.ChallengeName]].SetBytes(bithChallenge)
+		values[varindex[round.ChallengeName]].SetBytes(ithChallenge)
 	}
 
 	// derive zeta
@@ -158,6 +136,16 @@ func Verify(P *Proof, opts ...system.IOPOption) error {
 	}
 	var zeta koalabear.Element
 	zeta.SetBytes(bzeta)
+
+	// populate the variables corresponding to computationable columns, now that we have zeta
+	cv := sym.RemoveDuplicates(P.Constraint.ComputableColumns())
+	for _, v := range cv {
+		computationableColumn, err := system.GetComputationableColumn(v)
+		if err != nil {
+			return err
+		}
+		values[varindex[v]] = computationableColumn.F(zeta)
+	}
 
 	// check the relation P.C(evaluations) = q*(x^n-1)
 	ConstraintHorner := sym.ToHorner(sym.Convert(P.Constraint, varindex, len(leaves)))
