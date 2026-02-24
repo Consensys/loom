@@ -36,7 +36,7 @@ import (
 //	|   C1: ∏_j(Q_j-γ)·Z_shifted - ∏_j(P_j-γ)·Z = 0 mod X^N-1                   |
 //	|   C2: (Z-1)·L_0 = 0  (enforces Z[0]=1)                                      |
 //	|-------------------------------–-----------------------------------------------|
-func EqualityUpToPermutationIOP(prot *protocol.Protocol, ID1, ID2 []string, IDGrandProduct string, challengeName string, opts ...system.IOPOption) error {
+func EqualityUpToPermutationIOP(prot *protocol.Protocol, ID1, ID2 []string, IDGrandProduct string, challengeName string, opts ...system.Option) error {
 
 	E1 := make([]sym.Expr, len(ID1))
 	for i, id := range ID1 {
@@ -124,7 +124,7 @@ func MultiSetEqualityUpToPermutationIOP(
 	ID1, ID2 [][]string,
 	IDGrandProduct string,
 	alpha, gamma string,
-	opts ...system.IOPOption) error {
+	opts ...system.Option) error {
 
 	// step 1: collect all physical column IDs and sample alpha.
 	// SendMeAChallenge commits every physical column and derives alpha via Fiat-Shamir.

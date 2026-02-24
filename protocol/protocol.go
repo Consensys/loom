@@ -60,7 +60,7 @@ type Round struct {
 //
 // NewLagrangeConstraint special treatment for this constraint.
 // Syntactic sugar, the inner NewLagrangeConstraint is useful for testing, but it could have be defined directly on Protocol
-func (p *Protocol) NewLagrangeConstraint(ID string, entry int, value koalabear.Element, opts ...system.IOPOption) error {
+func (p *Protocol) NewLagrangeConstraint(ID string, entry int, value koalabear.Element, opts ...system.Option) error {
 	return system.NewLagrangeConstraint(&p.S, ID, entry, value, opts...)
 }
 

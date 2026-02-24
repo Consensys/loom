@@ -51,7 +51,7 @@ import (
 //	|	Open(P_i_j..) at zeta		----→		Verify opening proofs 				|
 //	|	Open(H) at zeta					Verify C(P_i(ζ),α_i)=H(ζ)(ζⁿ-1)				|ROUND 2n+4
 //	|-------------------------------–-----------------------------------------------|
-func Verify(P *Proof, opts ...system.IOPOption) error {
+func Verify(P *Proof, opts ...system.Option) error {
 
 	var config system.Config
 	for _, opt := range opts {

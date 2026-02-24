@@ -43,7 +43,7 @@ import (
 //	|   C_f = 0  mod X^N−1                                                         |
 //	|   (equivalent to C = 0 with high probability for random α)                   |
 //	|-------------------------------–-----------------------------------------------|
-func DegreeReductionIOP(prot *protocol.Protocol, C system.Constraint, targetDegree int, alpha string, opts ...system.IOPOption) error {
+func DegreeReductionIOP(prot *protocol.Protocol, C system.Constraint, targetDegree int, alpha string, opts ...system.Option) error {
 
 	var config system.Config
 	for _, opt := range opts {

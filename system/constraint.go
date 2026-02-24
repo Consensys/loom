@@ -12,7 +12,7 @@ import (
 type Constraint = sym.Expr
 
 // AddConstraint populates the constraints with C
-func AddConstraint(S *System, C Constraint, opts ...IOPOption) error {
+func AddConstraint(S *System, C Constraint, opts ...Option) error {
 
 	// build the config file
 	var config Config

@@ -18,9 +18,9 @@ type Config struct {
 	CacheMe bool
 }
 
-type IOPOption func(config *Config) error
+type Option func(config *Config) error
 
-func CacheMe() IOPOption {
+func CacheMe() Option {
 	return func(config *Config) error {
 		config.CacheMe = true
 		return nil

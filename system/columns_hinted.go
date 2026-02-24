@@ -19,7 +19,7 @@ import (
 //
 // It adds R and R_shifted (R[i+1 mod N]) to the trace, then records the constraint
 // E2 * R_shifted - E1 * R = 0 mod X^N-1.
-func BuildGrandProductConstraint(S *System, E1, E2 []sym.Expr, IDGrandProduct string, challenge Challenge, opts ...IOPOption) error {
+func BuildGrandProductConstraint(S *System, E1, E2 []sym.Expr, IDGrandProduct string, challenge Challenge, opts ...Option) error {
 
 	// build the config
 	var config Config
