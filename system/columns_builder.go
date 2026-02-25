@@ -76,7 +76,7 @@ func AddComputableColumn(S *System, c ComputableColumn) {
 // Returns the constraint Q-E(IDs), but does not record it. It is up to the caller to record it in the system.
 func BuildColumn(S *System, E sym.Expr, IDresult string) (Constraint, error) {
 
-	sum, err := univariate.EvalPointWise(S.Trace, E, S.N, univariate.WithOutputBasis(univariate.Lagrange))
+	sum, err := univariate.EvalPointWise(S.Trace, E, S.N)
 	if err != nil {
 		return nil, err
 	}

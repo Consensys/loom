@@ -69,7 +69,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := sym.NewVar("x0").Pow(2).Add(sym.NewVar("x1"))
 		P := map[string]*Polynomial{"x0": &P0, "x1": &P1}
 
-		R, err := EvalPointWise(P, C, size, WithOutputBasis(Lagrange))
+		R, err := EvalPointWise(P, C, size)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -98,7 +98,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := sym.NewVar("x0").Sub(sym.NewVar("x1"))
 		Pi := map[string]*Polynomial{"x0": P0, "x1": P1}
 
-		R, err := EvalPointWise(Pi, C, size, WithOutputBasis(Lagrange))
+		R, err := EvalPointWise(Pi, C, size)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -122,7 +122,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := sym.NewVar("x0").Mul(sym.NewVar("x1"))
 		Pi := map[string]*Polynomial{"x0": P0, "x1": P1}
 
-		R, err := EvalPointWise(Pi, C, size, WithOutputBasis(Lagrange))
+		R, err := EvalPointWise(Pi, C, size)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -150,7 +150,7 @@ func TestEvalPointWise(t *testing.T) {
 			Sub(sym.NewVar("x3"))
 		Pi := map[string]*Polynomial{"x0": P0, "x1": P1, "x2": P2, "x3": P3}
 
-		R, err := EvalPointWise(Pi, C, size, WithOutputBasis(Lagrange))
+		R, err := EvalPointWise(Pi, C, size)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -177,7 +177,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := sym.NewVar("x0").Mul(sym.NewVar("x0")).Sub(sym.NewVar("x0"))
 		Pi := map[string]*Polynomial{"x0": P0}
 
-		R, err := EvalPointWise(Pi, C, size, WithOutputBasis(Lagrange))
+		R, err := EvalPointWise(Pi, C, size)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -202,7 +202,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := sym.NewVar("x0").Sub(sym.NewVar("x1")).Mul(sym.NewVar("x2"))
 		Pi := map[string]*Polynomial{"x0": P0, "x1": P1, "x2": P2}
 
-		R, err := EvalPointWise(Pi, C, size, WithOutputBasis(Lagrange))
+		R, err := EvalPointWise(Pi, C, size)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -242,7 +242,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := sym.NewVar("x0").Sub(sym.NewVar("x1"))
 		Pi := map[string]*Polynomial{"x0": &P0, "x1": &P1}
 
-		R, err := EvalPointWise(Pi, C, size, WithOutputBasis(Lagrange))
+		R, err := EvalPointWise(Pi, C, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -267,7 +267,7 @@ func TestDivPointWise(t *testing.T) {
 		P1 := makeLagrangePoly(t, "P1", 2, 4, 6, 8, 10, 12, 14, 16)
 		P2 := makeLagrangePoly(t, "P2", 2, 2, 2, 2, 2, 2, 2, 2)
 
-		R, err := DivPointWise(P1, P2, size, WithOutputBasis(Lagrange))
+		R, err := DivPointWise(P1, P2, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -287,7 +287,7 @@ func TestDivPointWise(t *testing.T) {
 		P1 := makeLagrangePoly(t, "P1", 3, 7, 11, 5, 2, 9, 6, 4)
 		P2 := makeLagrangePoly(t, "P2", 1, 1, 1, 1, 1, 1, 1, 1)
 
-		R, err := DivPointWise(P1, P2, size, WithOutputBasis(Lagrange))
+		R, err := DivPointWise(P1, P2, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -305,7 +305,7 @@ func TestDivPointWise(t *testing.T) {
 		P1 := makeLagrangePoly(t, "P1", 5, 3, 9, 2, 7, 11, 4, 6)
 		P2 := makeLagrangePoly(t, "P2", 5, 3, 9, 2, 7, 11, 4, 6)
 
-		R, err := DivPointWise(P1, P2, size, WithOutputBasis(Lagrange))
+		R, err := DivPointWise(P1, P2, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -325,7 +325,7 @@ func TestDivPointWise(t *testing.T) {
 		P1 := makeLagrangePoly(t, "P1", 1, 2, 3, 4, 5, 6, 7, 8)
 		P2 := makeLagrangePoly(t, "P2", 1, 0, 1, 1, 1, 1, 1, 1) // zero at index 1
 
-		_, err := DivPointWise(P1, P2, size, WithOutputBasis(Lagrange))
+		_, err := DivPointWise(P1, P2, size)
 		if err == nil {
 			t.Fatal("expected error for division by zero, got nil")
 		}
@@ -353,7 +353,7 @@ func TestDivPointWise(t *testing.T) {
 
 		P2 := makeLagrangePoly(t, "P2", 1, 1, 1, 1, 1, 1, 1, 1)
 
-		R, err := DivPointWise(&P1, P2, size, WithOutputBasis(Lagrange))
+		R, err := DivPointWise(&P1, P2, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -381,7 +381,7 @@ func TestBuildGrandProduct(t *testing.T) {
 		E0 := sym.NewVar("x")
 		E1 := sym.NewVar("x")
 
-		R, err := BuildGrandProduct(Pi, [2]sym.Expr{E0, E1}, size, WithOutputBasis(Lagrange))
+		R, err := BuildGrandProduct(Pi, [2]sym.Expr{E0, E1}, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -414,7 +414,7 @@ func TestBuildGrandProduct(t *testing.T) {
 		E0 := sym.NewVar("x")
 		E1 := sym.NewVar("one")
 
-		R, err := BuildGrandProduct(Pi, [2]sym.Expr{E0, E1}, size, WithOutputBasis(Lagrange))
+		R, err := BuildGrandProduct(Pi, [2]sym.Expr{E0, E1}, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -441,7 +441,7 @@ func TestBuildGrandProduct(t *testing.T) {
 		E0 := sym.NewVar("x")
 		E1 := sym.NewVar("y")
 
-		R, err := BuildGrandProduct(Pi, [2]sym.Expr{E0, E1}, size, WithOutputBasis(Lagrange))
+		R, err := BuildGrandProduct(Pi, [2]sym.Expr{E0, E1}, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -466,7 +466,7 @@ func TestBuildGrandProduct(t *testing.T) {
 		E0 := sym.NewVar("x")
 		E1 := sym.NewVar("y")
 
-		R, err := BuildGrandProduct(Pi, [2]sym.Expr{E0, E1}, size, WithOutputBasis(Lagrange))
+		R, err := BuildGrandProduct(Pi, [2]sym.Expr{E0, E1}, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -509,7 +509,7 @@ func TestBuildGrandProduct(t *testing.T) {
 		E0 := sym.NewVar("x")
 		E1 := sym.NewVar("y")
 
-		_, err := BuildGrandProduct(Pi, [2]sym.Expr{E0, E1}, size, WithOutputBasis(Lagrange))
+		_, err := BuildGrandProduct(Pi, [2]sym.Expr{E0, E1}, size)
 		if err == nil {
 			t.Fatal("expected error for zero denominator, got nil")
 		}
@@ -524,7 +524,7 @@ func TestAccumulateProducts(t *testing.T) {
 		size := 8
 		P := makeLagrangePoly(t, "P", 2, 3, 4, 5, 1, 1, 1, 1)
 
-		R, err := AccumulateProducts(P, size, WithOutputBasis(Lagrange))
+		R, err := AccumulateProducts(P, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -543,7 +543,7 @@ func TestAccumulateProducts(t *testing.T) {
 		size := 8
 		P := makeLagrangePoly(t, "P", 1, 1, 1, 1, 1, 1, 1, 1)
 
-		R, err := AccumulateProducts(P, size, WithOutputBasis(Lagrange))
+		R, err := AccumulateProducts(P, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -562,7 +562,7 @@ func TestAccumulateProducts(t *testing.T) {
 		size := 8
 		P := makeLagrangePoly(t, "P", 7, 3, 11, 5, 2, 9, 4, 6)
 
-		R, err := AccumulateProducts(P, size, WithOutputBasis(Lagrange))
+		R, err := AccumulateProducts(P, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -581,7 +581,7 @@ func TestAccumulateProducts(t *testing.T) {
 		size := 8
 		P := makeLagrangePoly(t, "P", 2, 3, 4, 5, 6, 7, 8, 9)
 
-		R, err := AccumulateProducts(P, size, WithOutputBasis(Lagrange))
+		R, err := AccumulateProducts(P, size)
 		if err != nil {
 			t.Fatal(err)
 		}

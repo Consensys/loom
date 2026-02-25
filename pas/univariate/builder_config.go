@@ -5,9 +5,7 @@ type BuilderConfig struct {
 	OutputLayout Layout
 	OutputBasis  Basis
 	OutputName   string
-	// DomainSize, when > 0, pins the evaluation domain size and skips the automatic
-	// degree-based inflation. Useful when computing mod X^N-1 (e.g., in Flatten).
-	DomainSize int
+	// DomainSize int
 
 	// InputBasis
 	InputBasis Basis
@@ -36,16 +34,6 @@ func WithOutputBasis(basis Basis) BuilderOption {
 func WithInputBasis(basis Basis) BuilderOption {
 	return func(c *BuilderConfig) error {
 		c.InputBasis = basis
-		return nil
-	}
-}
-
-// WithDomainSize pins the evaluation domain size for ComputeSym, bypassing the
-// automatic degree-based inflation. Use this when computing polynomials mod X^N-1
-// where all values should stay on the original N-point domain.
-func WithDomainSize(n int) BuilderOption {
-	return func(c *BuilderConfig) error {
-		c.DomainSize = n
 		return nil
 	}
 }

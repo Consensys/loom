@@ -1,3 +1,5 @@
+// /!\ In this package, every inputs polynomials must be in lagrange basis (the inputs come from columns of a trace).
+
 package univariate
 
 import (
@@ -233,81 +235,79 @@ func (p *Polynomial) Evaluate(x koalabear.Element) (koalabear.Element, error) {
 	return p.EP.Evaluate(x)
 }
 
-// EvalPointWise computes the resulting polynomial from evaluating a symbolic expression Q at polynomials Pi.
-func EvalPointWise(Pi map[string]*Polynomial, E sym.Expr, targetSize int, opts ...BuilderOption) (Polynomial, error) {
-
-	config := NewBuilderConfig()
-
-	// ensure targetSize is a power of 2
-	targetSize = nextPowerOfTwo(targetSize)
-
-	// create varindex, and convert E to horner
+// evalPointWise eval point wise E on Pi, by picking the coefficient direclty (no conversion, no copies).
+// internal function only.
+// N is the size of the polynomials in Pi, assumed to have all the same size, except the constant (size 1)
+// nbVars is the number of variables in E
+func evalPointWise(Pi map[string]*Polynomial, E sym.Expr, N int) ([]koalabear.Element, error) {
 	varindex := make(sym.VarIndex)
 	leaves := sym.RemoveDuplicates(E.Leaves())
 	for i, l := range leaves {
 		varindex[l] = i
 	}
 	Q := sym.ToHorner(sym.Convert(E, varindex, len(leaves)))
-
-	// Apply options
-	for _, opt := range opts {
-		if err := opt(&config); err != nil {
-			return Polynomial{}, fmt.Errorf("invalid option: %w", err)
-		}
-	}
-	if config.InputBasis == Canonical {
-		return Polynomial{}, fmt.Errorf("EvalPointWise must be called only with inputs on Lagrange or Lagragne shifted basis")
-	}
-
-	// Create FFT domain
-	domain := fft.NewDomain(uint64(targetSize))
-
-	// Make copies of all polynomials and convert non-constant ones to Lagrange basis
-	piCopies := make(map[string]*Polynomial, len(Pi))
-	for name, p := range Pi {
-		var pCopy Polynomial
-		pCopy.EP = &EPolynomial{}
-		Copy(&pCopy, p)
-		if !pCopy.IsConstant() {
-			if err := pCopy.ToBasis(domain, config.InputBasis); err != nil {
-				return Polynomial{}, fmt.Errorf("failed to convert %s to Lagrange: %w", name, err)
-			}
-			pCopy.ToLayout(Normal)
-		}
-		piCopies[name] = &pCopy
-	}
-
-	// Build result polynomial pointwise: R[i] = Q(P_1[i], P_2[i], ...)
-	resultCoeffs := make([]koalabear.Element, targetSize)
+	resultCoeffs := make([]koalabear.Element, N)
 	values := make([]koalabear.Element, len(leaves))
-	for i := 0; i < targetSize; i++ {
+	for i := 0; i < N; i++ {
 		for name, idx := range varindex {
-			p, ok := piCopies[name]
+			p, ok := Pi[name]
 			if !ok {
-				return Polynomial{}, fmt.Errorf("polynomial %s not found in Pi", name)
+				return []koalabear.Element{}, fmt.Errorf("polynomial %s not found in Pi", name)
 			}
 			values[idx] = p.GetCoefficient(i)
 		}
 		resultCoeffs[i] = Q.Eval(values)
 	}
+	return resultCoeffs, nil
+}
+
+func getRefBasisAndRefLayout(P map[string]*Polynomial) (refBasis Basis, refLayout Layout, allConstants bool) {
+	allConstants = true
+	for _, k := range P {
+		if k.IsConstant() {
+			continue
+		}
+		allConstants = false
+		refBasis = k.EP.Basis
+		refLayout = k.EP.Layout
+		break
+	}
+	return
+}
+
+// ensurePolynomialsAreInLagrange if not all polynomials are in lagrange (except constants),
+// it throws an error
+func ensurePolynomialsAreInLagrange(P map[string]*Polynomial) error {
+	for name, k := range P {
+		if k.IsConstant() {
+			continue
+		}
+		if k.EP.Basis != Lagrange {
+			return fmt.Errorf("all polynomials must be in lagrange, %s is not in Lagrange basis", name)
+		}
+	}
+	return nil
+}
+
+// EvalPointWise computes the resulting polynomial from evaluating a symbolic expression Q at polynomials Pi point wise.
+// The Pi are converted in Lagrange basis if they are in canonical form. If they are in LagrangeShifted basis, we leave
+// them in this basis.
+// The result is in Normal layout
+// N: size of the polynomials in P
+func EvalPointWise(Pi map[string]*Polynomial, E sym.Expr, N int) (Polynomial, error) {
+
+	resultCoeffs, err := evalPointWise(Pi, E, N)
+	if err != nil {
+		return Polynomial{}, err
+	}
 
 	// The result is in the same basis as the inputs, Normal layout
 	result := &EPolynomial{
 		Coefficients: resultCoeffs,
-		Basis:        config.InputBasis,
+		Basis:        Lagrange,
 		Layout:       Normal,
-		Degree:       targetSize - 1,
+		Degree:       N - 1,
 	}
-
-	// Convert to desired basis
-	if config.OutputBasis != config.InputBasis {
-		if err := result.ToBasis(domain, config.OutputBasis); err != nil {
-			return Polynomial{}, fmt.Errorf("failed to convert result to basis %v: %w", config.OutputBasis, err)
-		}
-	}
-
-	// Adjust layout if needed
-	result.ToLayout(config.OutputLayout)
 
 	var R Polynomial
 	R.EP = result
@@ -315,40 +315,24 @@ func EvalPointWise(Pi map[string]*Polynomial, E sym.Expr, targetSize int, opts .
 }
 
 // DivPointWise computes the resulting polynomial from dividing pointwise.
-func DivPointWise(P1, P2 *Polynomial, targetSize int, opts ...BuilderOption) (Polynomial, error) {
+// N = size of polynomials. All polynomials must be of the same size, same basis, same layout
+func DivPointWise(P1, P2 *Polynomial, N int) (Polynomial, error) {
 
-	config := NewBuilderConfig()
-
-	// ensure targetSize is a power of 2
-	targetSize = nextPowerOfTwo(targetSize)
-
-	// Apply options
-	for _, opt := range opts {
-		if err := opt(&config); err != nil {
-			return Polynomial{}, fmt.Errorf("invalid option: %w", err)
-		}
+	if !P1.IsConstant() && P1.EP.Basis != Lagrange {
+		return Polynomial{}, fmt.Errorf("P1 is not in Lagrange basis")
 	}
-
-	// Create FFT domain
-	domain := fft.NewDomain(uint64(targetSize))
+	if !P2.IsConstant() && P2.EP.Basis != Lagrange {
+		return Polynomial{}, fmt.Errorf("P2 is not in Lagrange basis")
+	}
 
 	// Make copies of all polynomials and convert non-constant ones to Lagrange basis
 	var p1Copy, p2Copy Polynomial
 	Copy(&p1Copy, P1)
 	Copy(&p2Copy, P2)
 
-	if err := p1Copy.ToBasis(domain, Lagrange); err != nil {
-		return Polynomial{}, fmt.Errorf("failed to convert P1 to Lagrange: %w", err)
-	}
-	p2Copy.ToLayout(Normal)
-	if err := p1Copy.ToBasis(domain, Lagrange); err != nil {
-		return Polynomial{}, fmt.Errorf("failed to convert P2 to Lagrange: %w", err)
-	}
-	p2Copy.ToLayout(Normal)
-
 	// Build result polynomial pointwise: R[i] = P_1[i] / P_2[i]
-	resultCoeffs := make([]koalabear.Element, targetSize)
-	for i := 0; i < targetSize; i++ {
+	resultCoeffs := make([]koalabear.Element, N)
+	for i := 0; i < N; i++ {
 		p1i := p1Copy.GetCoefficient(i)
 		p2i := p2Copy.GetCoefficient(i)
 		if p2i.IsZero() {
@@ -362,18 +346,8 @@ func DivPointWise(P1, P2 *Polynomial, targetSize int, opts ...BuilderOption) (Po
 		Coefficients: resultCoeffs,
 		Basis:        Lagrange,
 		Layout:       Normal,
-		Degree:       targetSize - 1,
+		Degree:       N - 1,
 	}
-
-	// Convert to desired basis
-	if config.OutputBasis != Lagrange {
-		if err := result.ToBasis(domain, config.OutputBasis); err != nil {
-			return Polynomial{}, fmt.Errorf("failed to convert result to basis %v: %w", config.OutputBasis, err)
-		}
-	}
-
-	// Adjust layout if needed
-	result.ToLayout(config.OutputLayout)
 
 	var R Polynomial
 	R.EP = result
@@ -381,52 +355,29 @@ func DivPointWise(P1, P2 *Polynomial, targetSize int, opts ...BuilderOption) (Po
 }
 
 // AccumulateProducts returns R such that R[i+1] = R[i]*P[i], R[0]=1
-func AccumulateProducts(P *Polynomial, targetSize int, opts ...BuilderOption) (Polynomial, error) {
+// N = size of P
+func AccumulateProducts(P *Polynomial, N int) (Polynomial, error) {
 
-	config := NewBuilderConfig()
-	for _, opt := range opts {
-		if err := opt(&config); err != nil {
-			return Polynomial{}, fmt.Errorf("invalid option: %w", err)
-		}
-	}
-
-	// ensure targetSize is a power of two
-	targetSize = nextPowerOfTwo(targetSize)
-
-	// convert P in lagrange basis
-	domain := fft.NewDomain(uint64(targetSize))
-	var pCopy Polynomial
-	Copy(&pCopy, P)
-	if !pCopy.IsConstant() {
-		if err := pCopy.ToBasis(domain, Lagrange); err != nil {
-			return Polynomial{}, fmt.Errorf("failed to convert P to Lagrange: %w", err)
-		}
-		pCopy.ToLayout(Normal)
+	if P.EP.Basis == Canonical {
+		return Polynomial{}, fmt.Errorf("cannot accumulate ratios on canonical polynomial: must be in an evaluation basis (shifted or not)")
 	}
 
 	// build the result R in lagrange basis of size targetSize such that:
 	// R[0] = 1
 	// R[i] = R[i-1]*P[i-1] for i > 0
-	resultCoeffs := make([]koalabear.Element, targetSize)
+	resultCoeffs := make([]koalabear.Element, N)
 	resultCoeffs[0].SetOne()
-	for i := 1; i < targetSize; i++ {
-		pi := pCopy.GetCoefficient(i - 1)
+	for i := 1; i < N; i++ {
+		pi := P.GetCoefficient(i - 1)
 		resultCoeffs[i].Mul(&resultCoeffs[i-1], &pi)
 	}
 
 	result := &EPolynomial{
 		Coefficients: resultCoeffs,
-		Basis:        Lagrange,
-		Layout:       Normal,
-		Degree:       targetSize - 1,
+		Basis:        P.EP.Basis,
+		Layout:       P.EP.Layout,
+		Degree:       N - 1,
 	}
-
-	if config.OutputBasis != Lagrange {
-		if err := result.ToBasis(domain, config.OutputBasis); err != nil {
-			return Polynomial{}, fmt.Errorf("failed to convert result to basis %v: %w", config.OutputBasis, err)
-		}
-	}
-	result.ToLayout(config.OutputLayout)
 
 	var R Polynomial
 	R.EP = result
@@ -434,32 +385,45 @@ func AccumulateProducts(P *Polynomial, targetSize int, opts ...BuilderOption) (P
 }
 
 // BuildGrandProduct returns R such that R[0]=1, R[i+1] = R[i] * E[0](P[0][i]) / E[1](P[1][i])
-func BuildGrandProduct(P [2]map[string]*Polynomial, E [2]sym.Expr, targetSize int, opts ...BuilderOption) (Polynomial, error) {
+// N = size of the polynomials in P
+// Polynomials in P must have the same basis, same layout
+func BuildGrandProduct(P [2]map[string]*Polynomial, E [2]sym.Expr, N int) (Polynomial, error) {
 
-	lagrange := WithOutputBasis(Lagrange)
-
-	Q0, err := EvalPointWise(P[0], E[0], targetSize, lagrange)
+	Q0, err := EvalPointWise(P[0], E[0], N)
 	if err != nil {
 		return Polynomial{}, fmt.Errorf("failed to evaluate numerator expression: %w", err)
 	}
 
-	Q1, err := EvalPointWise(P[1], E[1], targetSize, lagrange)
+	Q1, err := EvalPointWise(P[1], E[1], N)
 	if err != nil {
 		return Polynomial{}, fmt.Errorf("failed to evaluate denominator expression: %w", err)
 	}
 
-	ratio, err := DivPointWise(&Q0, &Q1, targetSize, lagrange)
+	// When one side is all-constants, EvalPointWise returns a zero-value basis (Canonical).
+	// Align both results to the resolved refBasis/refLayout so DivPointWise can proceed.
+	Q0.EP.Basis = Lagrange
+	Q0.EP.Layout = Normal
+	Q1.EP.Basis = Lagrange
+	Q1.EP.Layout = Normal
+
+	// Div is not allowed in the AST (TODO should I allow it?)
+	ratio, err := DivPointWise(&Q0, &Q1, N)
 	if err != nil {
 		return Polynomial{}, fmt.Errorf("failed to compute pointwise ratio: %w", err)
 	}
 
-	return AccumulateProducts(&ratio, targetSize, opts...)
+	return AccumulateProducts(&ratio, N)
 }
 
-// ComputeQuotient computes E(Pi) / (X^N - 1) on a big enough domain.
-// It is the caller's responsibility to ensure E(Pi) is divisible by X^N - 1.
-// All Pi are of size N, the size of the vanishing domain.
-func ComputeQuotient(Pi map[string]*Polynomial, E sym.Expr, N int, opts ...BuilderOption) (Polynomial, error) {
+// ComputeQuotientLowMemory particular where E is of degree 4: we don't allocate one big-domain size slice for each
+// polynomial in Pi, but instead we put the Pi in 4 lagrange cosets of size N, and populate a single big-domain size
+// slice to build the numerator.
+func ComputeQuotientLowMemory(Pi map[string]*Polynomial, E sym.Expr, N int, opts ...BuilderOption) (Polynomial, error) {
+
+	err := ensurePolynomialsAreInLagrange(Pi)
+	if err != nil {
+		return Polynomial{}, err
+	}
 
 	config := NewBuilderConfig()
 	for _, opt := range opts {
@@ -480,34 +444,136 @@ func ComputeQuotient(Pi map[string]*Polynomial, E sym.Expr, N int, opts ...Build
 	}
 
 	bigDomain := fft.NewDomain(uint64(bigSize))
+	smallDomain := fft.NewDomain(uint64(N))
 
 	// Convert Pi to LagrangeShifted on the big domain (avoids zeros of X^N-1)
 	piCopies := make(map[string]*Polynomial, len(Pi))
 	for name, p := range Pi {
 		var pCopy Polynomial
-		pCopy.EP = &EPolynomial{}
+		// pCopy.EP = &EPolynomial{}
 		Copy(&pCopy, p)
-		if !pCopy.IsConstant() {
-			// Ensure Canonical before inflating to the big domain
-			if pCopy.EP.Basis != Canonical {
-				piDomain := fft.NewDomain(uint64(len(pCopy.EP.Coefficients)))
-				if err := pCopy.ToBasis(piDomain, Canonical); err != nil {
-					return Polynomial{}, fmt.Errorf("failed to convert %s to Canonical: %w", name, err)
-				}
-			}
-			// Normalize to Normal layout before padding — BitReversed order is domain-size-specific
-			// and cannot be safely zero-extended to a larger domain.
-			pCopy.ToLayout(Normal)
-			if err := pCopy.ToBasis(bigDomain, LagrangeShifted); err != nil {
-				return Polynomial{}, fmt.Errorf("failed to convert %s to LagrangeShifted: %w", name, err)
-			}
-			pCopy.ToLayout(Normal)
+		err := pCopy.ToBasis(smallDomain, Canonical)
+		if err != nil {
+			return Polynomial{}, err
+		}
+		pCopy.ToLayout(Normal) // TODO this stage is not needed for inflating pCopy, ok for the moment
+		err = pCopy.ToBasis(bigDomain, LagrangeShifted)
+		if err != nil {
+			return Polynomial{}, err
+		}
+		if err := pCopy.ToBasis(bigDomain, LagrangeShifted); err != nil {
+			return Polynomial{}, fmt.Errorf("failed to convert %s to LagrangeShifted: %w", name, err)
 		}
 		piCopies[name] = &pCopy
 	}
 
 	// Evaluate E pointwise on the shifted big domain
-	numerator, err := EvalPointWise(piCopies, E, bigSize, WithInputBasis(LagrangeShifted), WithOutputBasis(LagrangeShifted))
+	numerator, err := EvalPointWise(piCopies, E, bigSize)
+	if err != nil {
+		return Polynomial{}, err
+	}
+
+	// Divide by X^N-1 evaluated at each shifted point g*ω_big^i:
+	//   (g*ω_big^i)^N - 1 = g^N * (ω_big^N)^i - 1
+	// ω_big^N has order bigSize/N, so values repeat with that period.
+	var gN koalabear.Element
+	gN.Set(&bigDomain.FrMultiplicativeGen)
+	gN.Exp(gN, big.NewInt(int64(N)))
+
+	var wN koalabear.Element
+	wN.Set(&bigDomain.Generator)
+	wN.Exp(wN, big.NewInt(int64(N)))
+
+	var one koalabear.Element
+	one.SetOne()
+
+	quotientCoeffs := make([]koalabear.Element, bigSize)
+	var omegaNI koalabear.Element
+	omegaNI.SetOne()
+	for i := 0; i < bigSize; i++ {
+		var vanishingI koalabear.Element
+		vanishingI.Mul(&gN, &omegaNI)
+		vanishingI.Sub(&vanishingI, &one) // g^N * (ω_big^N)^i - 1
+		ni := numerator.GetCoefficient(i)
+		quotientCoeffs[i].Div(&ni, &vanishingI)
+		omegaNI.Mul(&omegaNI, &wN)
+	}
+
+	// Build quotient in LagrangeShifted basis, Normal layout
+	result := &EPolynomial{
+		Coefficients: quotientCoeffs,
+		Basis:        LagrangeShifted,
+		Layout:       Normal,
+		Degree:       bigSize - 1,
+	}
+
+	if config.OutputBasis != LagrangeShifted {
+		if err := result.ToBasis(bigDomain, config.OutputBasis); err != nil {
+			return Polynomial{}, fmt.Errorf("failed to convert quotient to %v: %w", config.OutputBasis, err)
+		}
+	}
+	result.ToLayout(config.OutputLayout)
+
+	var R Polynomial
+	R.EP = result
+	return R, nil
+
+}
+
+// ComputeQuotient computes E(Pi) / (X^N - 1) on a big enough domain.
+// It is the caller's responsibility to ensure E(Pi) is divisible by X^N - 1.
+// All Pi must be in Lagrange form, as this function is called from the prover, who as access to the trace in Lagrange form.
+func ComputeQuotient(Pi map[string]*Polynomial, E sym.Expr, N int, opts ...BuilderOption) (Polynomial, error) {
+
+	err := ensurePolynomialsAreInLagrange(Pi)
+	if err != nil {
+		return Polynomial{}, err
+	}
+
+	config := NewBuilderConfig()
+	for _, opt := range opts {
+		if err := opt(&config); err != nil {
+			return Polynomial{}, fmt.Errorf("invalid option: %w", err)
+		}
+	}
+
+	// Degree of E(Pi) is at most E.Degree() * sizePi
+	eDeg := E.Degree()
+	if eDeg <= 0 {
+		return Polynomial{}, fmt.Errorf("expression degree must be at least 1, got %d", eDeg)
+	}
+	N = nextPowerOfTwo(N)
+	bigSize := nextPowerOfTwo(eDeg * N)
+	if bigSize%N != 0 {
+		return Polynomial{}, fmt.Errorf("big domain size %d is not divisible by vanishing domain size %d", bigSize, N)
+	}
+
+	bigDomain := fft.NewDomain(uint64(bigSize))
+	smallDomain := fft.NewDomain(uint64(N))
+
+	// Convert Pi to LagrangeShifted on the big domain (avoids zeros of X^N-1)
+	piCopies := make(map[string]*Polynomial, len(Pi))
+	for name, p := range Pi {
+		var pCopy Polynomial
+		// pCopy.EP = &EPolynomial{}
+		Copy(&pCopy, p)
+		err := pCopy.ToBasis(smallDomain, Canonical)
+		if err != nil {
+			return Polynomial{}, err
+		}
+		pCopy.ToLayout(Normal) // TODO this stage is not needed for inflating pCopy, ok for the moment
+		err = pCopy.ToBasis(bigDomain, LagrangeShifted)
+		if err != nil {
+			return Polynomial{}, err
+		}
+		if err := pCopy.ToBasis(bigDomain, LagrangeShifted); err != nil {
+			return Polynomial{}, fmt.Errorf("failed to convert %s to LagrangeShifted: %w", name, err)
+		}
+		piCopies[name] = &pCopy
+	}
+
+	// Evaluate E pointwise on the shifted big domain
+	numerator, err := EvalPointWise(piCopies, E, bigSize)
 	if err != nil {
 		return Polynomial{}, err
 	}

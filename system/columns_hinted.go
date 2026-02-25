@@ -67,7 +67,6 @@ func BuildGrandProductConstraint(S *System, E1, E2 []sym.Expr, IDGrandProduct st
 		[2]map[string]*univariate.Polynomial{T1, T2},
 		[2]sym.Expr{Prod1, Prod2},
 		S.N,
-		univariate.WithOutputBasis(univariate.Lagrange),
 	)
 	if err != nil {
 		return err

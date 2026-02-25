@@ -59,8 +59,12 @@ github.com/cncf/udpa/go v0.0.0-20200629203442-efcf912fb354/go.mod h1:WmhPx2Nbnht
 github.com/cncf/udpa/go v0.0.0-20201120205902-5459f2c99403/go.mod h1:WmhPx2Nbnhtbo57+VJT5O0JRkEi1Wbu0z5j0R8u5Hbk=
 github.com/consensys/gnark v0.14.0 h1:RG+8WxRanFSFBSlmCDRJnYMYYKpH3Ncs5SMzg24B5HQ=
 github.com/consensys/gnark v0.14.0/go.mod h1:1IBpDPB/Rdyh55bQRR4b0z1WvfHQN1e0020jCvKP2Gk=
+github.com/consensys/gnark v0.14.1-0.20260224185952-e002a37bb76c h1:8TfWfD3VxRMuaIeeg6a5xPCIVAqa8d3obk74x3dNc2M=
+github.com/consensys/gnark v0.14.1-0.20260224185952-e002a37bb76c/go.mod h1:WO5JMTtKqULETq0ZEhdXu1DNnAcRD60SHLTom18lqqA=
 github.com/consensys/gnark-crypto v0.19.2 h1:qrEAIXq3T4egxqiliFFoNrepkIWVEeIYwt3UL0fvS80=
 github.com/consensys/gnark-crypto v0.19.2/go.mod h1:rT23F0XSZqE0mUA0+pRtnL56IbPxs6gp4CeRsBk4XS0=
+github.com/consensys/gnark-crypto v0.19.3-0.20260224184411-30b4255fd898 h1:m1OulZPukY0eUB+rJEW4xDW5f0+E3Jr41X5b0XBZ7ec=
+github.com/consensys/gnark-crypto v0.19.3-0.20260224184411-30b4255fd898/go.mod h1:LlrRbe6b7BIune9Un5L6sRTUUWrAIIqGK+L0duYwpoM=
 github.com/coreos/go-semver v0.3.0/go.mod h1:nnelYz7RCh+5ahJtPPxZlU+153eP4D4r3EedlOD2RNk=
 github.com/coreos/go-systemd/v22 v22.3.2/go.mod h1:Y58oyj3AT4RCenI/lSvhwexgC+NSVTIJ3seZv2GcEnc=
 github.com/coreos/go-systemd/v22 v22.5.0/go.mod h1:Y58oyj3AT4RCenI/lSvhwexgC+NSVTIJ3seZv2GcEnc=
