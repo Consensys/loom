@@ -366,9 +366,86 @@ func DivPointWise(P1, P2 *Polynomial, N int) (Polynomial, error) {
 	return R, nil
 }
 
-// AccumulateProducts returns R such that R[i+1] = R[i]*P[i], R[0]=1
+// BuildMultiplicityPolynomial returns P such that:
+// P[i] is the number of times T[i] appears in S.
+// S, T are assumed to be in Lagrange basis
+// S and T must be of the same size
+func BuildMultiplicityPolynomial(S, T *Polynomial) (Polynomial, error) {
+
+	if len(S.EP.Coefficients) != len(T.EP.Coefficients) {
+		return Polynomial{}, fmt.Errorf("S and T don't have equal size: len(S)%d, len(T)=%d", len(S.EP.Coefficients), len(T.EP.Coefficients))
+	}
+	if S.EP.Basis != Lagrange || T.EP.Basis != Lagrange {
+		return Polynomial{}, fmt.Errorf("both polynomials must be in Lagrange basis")
+	}
+
+	n := len(S.EP.Coefficients)
+	res := Polynomial{EP: &EPolynomial{
+		Basis:        Lagrange,
+		Layout:       Normal,
+		Coefficients: make([]koalabear.Element, n),
+		Degree:       n - 1,
+	}}
+
+	one := koalabear.One()
+
+	// we can probably do better :/
+	for i := 0; i < len(T.EP.Coefficients); i++ {
+		ct := T.GetCoefficient(i)
+		for j := 0; j < len(S.EP.Coefficients); j++ {
+			cd := S.GetCoefficient(j)
+			if cd.Equal(&ct) {
+				res.EP.Coefficients[i].Add(&res.EP.Coefficients[i], &one)
+			}
+		}
+	}
+
+	return res, nil
+
+}
+
+// InvertPointWise inverts in place P
+func InvertPointWiseInPlace(P *Polynomial) {
+	for i := 0; i < len(P.EP.Coefficients); i++ {
+		P.EP.Coefficients[i].Inverse(&P.EP.Coefficients[i])
+	}
+}
+
+// BuildGrandSum returns R such that R[0]=P[0] and R[i+1] = R[i]+P[i+1]
+// no condition on R[0] (there is no wraparound telling R[N-1]+P[N-1]=R[0] like in accumulateProducts)
 // N = size of P
-func AccumulateProducts(P *Polynomial, N int) (Polynomial, error) {
+func BuildGrandSum(P *Polynomial, N int) (Polynomial, error) {
+
+	if P.EP.Basis == Canonical {
+		return Polynomial{}, fmt.Errorf("cannot accumulate ratios on canonical polynomial: must be in an evaluation basis (shifted or not)")
+	}
+
+	// build the result R in lagrange basis of size N such that:
+	// R[0] = P[0]
+	// R[i] = R[i-1]+P[i] for i > 0
+	resultCoeffs := make([]koalabear.Element, N)
+	firstEntry := P.GetCoefficient(0)
+	resultCoeffs[0].Set(&firstEntry)
+	for i := 1; i < N; i++ {
+		pi := P.GetCoefficient(i)                    // <- the constant Polynomial case is handled in GetCoefficient
+		resultCoeffs[i].Add(&resultCoeffs[i-1], &pi) // <- we affect the i-th coeff, so the layout is Normal
+	}
+
+	result := &EPolynomial{
+		Coefficients: resultCoeffs,
+		Basis:        P.EP.Basis,
+		Layout:       Normal,
+		Degree:       N - 1,
+	}
+
+	var R Polynomial
+	R.EP = result
+	return R, nil
+}
+
+// accumulateProducts returns R such that R[i+1] = R[i]*P[i], R[0]=1
+// N = size of P
+func accumulateProducts(P *Polynomial, N int) (Polynomial, error) {
 
 	if P.EP.Basis == Canonical {
 		return Polynomial{}, fmt.Errorf("cannot accumulate ratios on canonical polynomial: must be in an evaluation basis (shifted or not)")
@@ -424,278 +501,5 @@ func BuildGrandProduct(P [2]map[string]*Polynomial, E [2]sym.Expr, N int) (Polyn
 		return Polynomial{}, fmt.Errorf("failed to compute pointwise ratio: %w", err)
 	}
 
-	return AccumulateProducts(&ratio, N)
+	return accumulateProducts(&ratio, N)
 }
-
-// ComputeQuotient computes E(PI)/X^N-1
-// /!\ all polynomials must be in normal layout, lagrange basis
-func ComputeQuotient(Pi map[string]*Polynomial, E sym.Expr, N int, opts ...BuilderOption) (Polynomial, error) {
-
-	err := ensurePolynomialsAreInLagrange(Pi)
-	if err != nil {
-		return Polynomial{}, err
-	}
-	err = ensurePolynomialsAreInNormalLayout(Pi)
-	if err != nil {
-		return Polynomial{}, err
-	}
-
-	config := NewBuilderConfig()
-	for _, opt := range opts {
-		if err := opt(&config); err != nil {
-			return Polynomial{}, fmt.Errorf("invalid option: %w", err)
-		}
-	}
-
-	// Degree of E(Pi) is at most E.Degree() * sizePi
-	eDeg := E.Degree()
-	if eDeg <= 0 {
-		return Polynomial{}, fmt.Errorf("expression degree must be at least 1, got %d", eDeg)
-	}
-	N = nextPowerOfTwo(N)
-	bigSize := nextPowerOfTwo(eDeg * N)
-	if bigSize%N != 0 {
-		return Polynomial{}, fmt.Errorf("big domain size %d is not divisible by vanishing domain size %d", bigSize, N)
-	}
-
-	// we do the evaluation manually (don't use EvalPointWise)
-	varindex := make(sym.VarIndex)
-	leaves := sym.RemoveDuplicates(E.Leaves())
-	for i, l := range leaves {
-		varindex[l] = i
-	}
-	Q := sym.ToHorner(sym.Convert(E, varindex, len(leaves)))
-
-	numerator := make([]koalabear.Element, bigSize)
-
-	// copy only the polynomials referenced by E (indexed by varindex).
-	// Pi may contain more entries than E.Leaves() (e.g. when the full trace is passed in),
-	// so we must NOT use len(Pi) as the slice size — unused slots would remain nil and crash FFTInverse.
-	nbPolys := len(leaves)
-	PiCopies := make([][]koalabear.Element, nbPolys)
-	for _, l := range leaves {
-		v := Pi[l]
-		PiCopies[varindex[l]] = make([]koalabear.Element, len(v.EP.Coefficients)) // len = N except for constant polynomials
-		copy(PiCopies[varindex[l]], v.EP.Coefficients)
-	}
-
-	// variables assignment
-	x := make([]koalabear.Element, len(leaves))
-
-	// create domains
-	bigDomain := fft.NewDomain(uint64(bigSize))
-	smallDomain := fft.NewDomain(uint64(N))
-
-	// number of cosets of smalldomain in bigdomain
-	rho := bigSize / N
-
-	// create the twiddles of size N (not bigSize):
-	// after IFFT(DIF) of size N, output is BitReversed w.r.t. N, so twiddle[bitrev_N(k)] = g^k,
-	// i.e. build powers of g then BitReverse with length N.
-	twiddleFrMultiplicativeGen := make([]koalabear.Element, N)
-	fft.BuildExpTable(bigDomain.FrMultiplicativeGen, twiddleFrMultiplicativeGen)
-	fft.BitReverse(twiddleFrMultiplicativeGen)
-	twiddleGeneratorBigDomain := make([]koalabear.Element, N)
-	fft.BuildExpTable(bigDomain.Generator, twiddleGeneratorBigDomain)
-	fft.BitReverse(twiddleGeneratorBigDomain)
-	scaleByTwiddles := func(a, b []koalabear.Element) {
-		for i := 0; i < N; i++ {
-			a[i].Mul(&a[i], &b[i])
-		}
-	}
-
-	// at this stage, all polynomials in PiCopies are in Lagrange form. We write them in canonical basis, shifted by twiddles[i][0]
-	// to prepare the FFT on the cosets (twiddles[i][0] is <bigDomain.FrMultiplicativeGen^i>), used to avoid the zeroes on X^N-1).
-	for _, pCopy := range PiCopies {
-
-		if len(pCopy) == 1 { // /!\ polynomials coming from challenges are constants -> the size of coeff is 1 in that case
-			continue
-		}
-
-		// shift coset manually
-		smallDomain.FFTInverse(pCopy, fft.DIF)             // PiCopies[j] bit reversed, canonical
-		scaleByTwiddles(pCopy, twiddleFrMultiplicativeGen) // PiCopies[j] are scaled by <bigDomain.FrMultiplicativeGen^i> to avoid zeroes of X^N-1
-	}
-
-	// at this stage, all the polynomials c[i] in c are in canonical, bit reverse, scaled by <bigDomain.FrMultiplicativeGen^i>
-	for i := 0; i < rho; i++ {
-
-		// evaluate the polys shifted by <bigDomain.FrMultiplicativeGen> on  <bigDomain.Generator^i> -> the result is the polys
-		// evaluated on the coset bigDomain.FrMultiplicativeGen*<bigDomain.Generator^i>
-		for _, pCopy := range PiCopies {
-			if len(pCopy) == 1 { // /!\ polynomials coming from challenges are constants -> the size of coeff is 1 in that case
-				continue
-			}
-			// shift coset manually
-			smallDomain.FFT(pCopy, fft.DIT) // PiCopies[j] bit reversed, canonical
-		}
-
-		// at this stage, the polys are evaluated on bigDomain.FrMultiplicativeGen*<bigDomain.Generator^i>. We can compute the rho-ith
-		// component of the numerator
-		for j := 0; j < N; j++ {
-			for k, pCopy := range PiCopies { // assign variables
-				if len(pCopy) == 1 { // /!\ polynomials coming from challenges are constants -> the size of coeff is 1 in that case
-					x[k].Set(&pCopy[0])
-					continue
-				}
-				x[k].Set(&pCopy[j])
-			}
-			numerator[rho*j+i] = Q.Eval(x)
-		}
-
-		// FFTInv on PiCopies -> the PiCopies become in canonical, the k-th coeffs are shifted by bigDomain.FrMultiplicativeGen^k*<bigDomain.Generator^ik>
-		for _, pCopy := range PiCopies {
-			if len(pCopy) == 1 { // /!\ polynomials coming from challenges are constants -> the size of coeff is 1 in that case
-				continue
-			}
-			// shift coset manually
-			smallDomain.FFTInverse(pCopy, fft.DIF)            // PiCopies[j] bit reversed, canonical
-			scaleByTwiddles(pCopy, twiddleGeneratorBigDomain) // the k-th coeffs are now shifted by bigDomain.FrMultiplicativeGen^k*<bigDomain.Generator^(i+1)k>
-		}
-	}
-
-	// X^N-1 evaluated at coset representative FrGen·bigDomain.Generator^i:
-	//   (FrGen·bigDomain.Generator^i)^N = FrGen^N · (bigDomain.Generator^N)^i
-	// bigDomain.Generator^N has order rho, so only rho distinct values.
-	// numerator[rho*j+i] was evaluated on coset i, so it must be divided by xnMinusOne[i].
-	xnMinusOne := make([]koalabear.Element, rho)
-	one := koalabear.One()
-	var gn, frn koalabear.Element
-	NBigInt := big.NewInt(int64(N))
-	frn.Exp(bigDomain.FrMultiplicativeGen, NBigInt) // FrGen^N
-	gn.Exp(bigDomain.Generator, NBigInt)            // bigDomain.Generator^N, has order rho
-	accgn := koalabear.One()
-	for i := 0; i < rho; i++ {
-		xnMinusOne[i].Mul(&frn, &accgn).Sub(&xnMinusOne[i], &one) // FrGen^N · gn^i - 1
-		accgn.Mul(&accgn, &gn)
-	}
-
-	// do the division
-	for i := 0; i < bigSize; i++ {
-		numerator[i].Div(&numerator[i], &xnMinusOne[i%rho])
-	}
-
-	// Build quotient in LagrangeShifted basis, Normal layout
-	result := &EPolynomial{
-		Coefficients: numerator,
-		Basis:        LagrangeShifted,
-		Layout:       Normal,
-		Degree:       bigSize - 1,
-	}
-
-	if config.OutputBasis != LagrangeShifted {
-		if err := result.ToBasis(bigDomain, config.OutputBasis); err != nil {
-			return Polynomial{}, fmt.Errorf("failed to convert quotient to %v: %w", config.OutputBasis, err)
-		}
-	}
-	result.ToLayout(config.OutputLayout)
-
-	var R Polynomial
-	R.EP = result
-	return R, nil
-
-}
-
-// ComputeQuotient computes E(Pi) / (X^N - 1) on a big enough domain.
-// It is the caller's responsibility to ensure E(Pi) is divisible by X^N - 1.
-// All Pi must be in Lagrange form, as this function is called from the prover, who as access to the trace in Lagrange form.
-// func ComputeQuotient(Pi map[string]*Polynomial, E sym.Expr, N int, opts ...BuilderOption) (Polynomial, error) {
-
-// 	err := ensurePolynomialsAreInLagrange(Pi)
-// 	if err != nil {
-// 		return Polynomial{}, err
-// 	}
-
-// 	config := NewBuilderConfig()
-// 	for _, opt := range opts {
-// 		if err := opt(&config); err != nil {
-// 			return Polynomial{}, fmt.Errorf("invalid option: %w", err)
-// 		}
-// 	}
-
-// 	// Degree of E(Pi) is at most E.Degree() * sizePi
-// 	eDeg := E.Degree()
-// 	if eDeg <= 0 {
-// 		return Polynomial{}, fmt.Errorf("expression degree must be at least 1, got %d", eDeg)
-// 	}
-// 	N = nextPowerOfTwo(N)
-// 	bigSize := nextPowerOfTwo(eDeg * N)
-// 	if bigSize%N != 0 {
-// 		return Polynomial{}, fmt.Errorf("big domain size %d is not divisible by vanishing domain size %d", bigSize, N)
-// 	}
-
-// 	bigDomain := fft.NewDomain(uint64(bigSize))
-// 	smallDomain := fft.NewDomain(uint64(N))
-
-// 	// Convert Pi to LagrangeShifted on the big domain (avoids zeros of X^N-1)
-// 	piCopies := make(map[string]*Polynomial, len(Pi))
-// 	for name, p := range Pi {
-// 		var pCopy Polynomial
-// 		// pCopy.EP = &EPolynomial{}
-// 		Copy(&pCopy, p)
-// 		err := pCopy.ToBasis(smallDomain, Canonical)
-// 		if err != nil {
-// 			return Polynomial{}, err
-// 		}
-// 		pCopy.ToLayout(Normal) // TODO this stage is not needed for inflating pCopy, ok for the moment
-// 		err = pCopy.ToBasis(bigDomain, LagrangeShifted)
-// 		if err != nil {
-// 			return Polynomial{}, err
-// 		}
-// 		if err := pCopy.ToBasis(bigDomain, LagrangeShifted); err != nil {
-// 			return Polynomial{}, fmt.Errorf("failed to convert %s to LagrangeShifted: %w", name, err)
-// 		}
-// 		piCopies[name] = &pCopy
-// 	}
-
-// 	// Evaluate E pointwise on the shifted big domain
-// 	numerator, err := EvalPointWise(piCopies, E, bigSize)
-// 	if err != nil {
-// 		return Polynomial{}, err
-// 	}
-
-// 	// Divide by X^N-1 evaluated at each shifted point g*ω_big^i:
-// 	//   (g*ω_big^i)^N - 1 = g^N * (ω_big^N)^i - 1
-// 	// ω_big^N has order bigSize/N, so values repeat with that period.
-// 	var gN koalabear.Element
-// 	gN.Set(&bigDomain.FrMultiplicativeGen)
-// 	gN.Exp(gN, big.NewInt(int64(N)))
-
-// 	var wN koalabear.Element
-// 	wN.Set(&bigDomain.Generator)
-// 	wN.Exp(wN, big.NewInt(int64(N)))
-
-// 	var one koalabear.Element
-// 	one.SetOne()
-
-// 	quotientCoeffs := make([]koalabear.Element, bigSize)
-// 	var omegaNI koalabear.Element
-// 	omegaNI.SetOne()
-// 	for i := 0; i < bigSize; i++ {
-// 		var vanishingI koalabear.Element
-// 		vanishingI.Mul(&gN, &omegaNI)
-// 		vanishingI.Sub(&vanishingI, &one) // g^N * (ω_big^N)^i - 1
-// 		ni := numerator.GetCoefficient(i)
-// 		quotientCoeffs[i].Div(&ni, &vanishingI)
-// 		omegaNI.Mul(&omegaNI, &wN)
-// 	}
-
-// 	// Build quotient in LagrangeShifted basis, Normal layout
-// 	result := &EPolynomial{
-// 		Coefficients: quotientCoeffs,
-// 		Basis:        LagrangeShifted,
-// 		Layout:       Normal,
-// 		Degree:       bigSize - 1,
-// 	}
-
-// 	if config.OutputBasis != LagrangeShifted {
-// 		if err := result.ToBasis(bigDomain, config.OutputBasis); err != nil {
-// 			return Polynomial{}, fmt.Errorf("failed to convert quotient to %v: %w", config.OutputBasis, err)
-// 		}
-// 	}
-// 	result.ToLayout(config.OutputLayout)
-
-// 	var R Polynomial
-// 	R.EP = result
-// 	return R, nil
-// }

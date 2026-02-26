@@ -15,6 +15,7 @@ import (
 // process, when a "Computable" Expr is found in the expression, we should have map [Lagrange_i]->func(i) koalabear.Element, so the verifier can recompute its value at zeta
 const Lagrange = "LAGRANGE"
 
+// GetLagrangeID ensures the lagrange name is the same accross protocols
 func GetLagrangeID(entry int, N int) string {
 	return fmt.Sprintf("%s_%d_%d", Lagrange, entry, N)
 }

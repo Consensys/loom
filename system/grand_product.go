@@ -10,7 +10,7 @@ import (
 
 // TODO It is a particular case of a column which need to be hinted... Should I make this pattern general ?
 
-// BuildGrandProductConstraint computes the grand product polynomial R such that:
+// BuildGrandProductAndRegisterConstraints computes the grand product polynomial R such that:
 //
 //	R[0] = 1
 //	R[i+1] = R[i] * E1(ID1[i]) / E2(ID2[i])
@@ -19,7 +19,7 @@ import (
 //
 // It adds R and R_shifted (R[i+1 mod N]) to the trace, then records the constraint
 // E2 * R_shifted - E1 * R = 0 mod X^N-1.
-func BuildGrandProductConstraint(S *System, E1, E2 []sym.Expr, IDGrandProduct string, challenge Challenge, opts ...Option) error {
+func BuildGrandProductAndRegisterConstraints(S *System, E1, E2 []sym.Expr, IDGrandProduct string, challenge string, opts ...Option) error {
 
 	// build the config
 	var config Config
@@ -29,7 +29,7 @@ func BuildGrandProductConstraint(S *System, E1, E2 []sym.Expr, IDGrandProduct st
 		}
 	}
 
-	challengeColumn := S.Trace[challenge.Name]
+	challengeColumn := S.Trace[challenge]
 
 	// build a trace map containing the variables in E1 and E2, including the placeholders column so EvalPointWise can resolve it
 	// (all the placeholders must be in the trace, ensureChallengeInTrace ensures that challenge is in the trace, but some other challenge
@@ -44,7 +44,7 @@ func BuildGrandProductConstraint(S *System, E1, E2 []sym.Expr, IDGrandProduct st
 			T1[l] = S.Trace[l]
 		}
 	}
-	T1[challenge.Name] = challengeColumn
+	T1[challenge] = challengeColumn
 
 	T2 := make(map[string]*univariate.Polynomial, len(E2)+1)
 	for _, id := range E2 {
@@ -56,11 +56,11 @@ func BuildGrandProductConstraint(S *System, E1, E2 []sym.Expr, IDGrandProduct st
 			T2[l] = S.Trace[l]
 		}
 	}
-	T2[challenge.Name] = challengeColumn
+	T2[challenge] = challengeColumn
 
 	// build E1 = Π_j (E1[j] - gamma), E2 = Π_j (E2[j] - gamma)
-	Prod1 := GetProductExpression(E1, challenge.Name)
-	Prod2 := GetProductExpression(E2, challenge.Name)
+	Prod1 := GetProductExpression(E1, challenge)
+	Prod2 := GetProductExpression(E2, challenge)
 
 	// compute R in Lagrange basis
 	R, err := univariate.BuildGrandProduct(
@@ -79,7 +79,7 @@ func BuildGrandProductConstraint(S *System, E1, E2 []sym.Expr, IDGrandProduct st
 	// build RS as an explicit Lagrange polynomial with RS[i] = R[i+1 mod N].
 	// We store it as a regular polynomial (not a ShallowCopy+Shift) so that FFT-based
 	// operations in ComputeQuotient see the correct shifted evaluations directly.
-	rsID := IDGrandProduct + "_shifted"
+	rsID := IDGrandProduct + GetShiftSuffix(1)
 	RSCoeffs := make([]koalabear.Element, S.N)
 	for i := 0; i < S.N; i++ {
 		RSCoeffs[i] = R.GetCoefficient((i + 1) % S.N)

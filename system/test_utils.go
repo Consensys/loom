@@ -155,3 +155,38 @@ func BuildPermutationCircuit(t *testing.T, size int) System {
 	}
 	return S
 }
+
+func BuildLookupCircuit(t *testing.T, size int) System {
+	tCoeffs := make([]koalabear.Element, size)
+	for i := range tCoeffs {
+		tCoeffs[i].SetUint64(uint64(i + 1))
+	}
+	T, err := univariate.NewInterpolatedPolynomial(tCoeffs, "T")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// S: lookup values — each appears in T, some repeated.
+	// Multiplicities: T[0]=1 appears 2x, T[1]=2 appears 1x, T[2]=3 appears 1x,
+	// T[3]=4 appears 2x, T[4]=5..T[7]=8 appear 1x each, T[6]=7 appears 2x,
+	// T[8]=9..T[12]=13 appear 1x each, T[13]=14..T[15]=16 appear 0x.
+	// Total: 2+1+1+2+1+1+2+1+1+1+1+1+1+0+0+0 = 16 = size. ✓
+	sVals := []uint64{1, 1, 2, 3, 4, 4, 5, 6, 7, 7, 8, 9, 10, 11, 12, 13}
+	sCoeffs := make([]koalabear.Element, size)
+	for i, v := range sVals {
+		sCoeffs[i].SetUint64(v)
+	}
+	S, err := univariate.NewInterpolatedPolynomial(sCoeffs, "S")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sys := System{
+		Trace:             map[string]*univariate.Polynomial{"S": &S, "T": &T},
+		Constraints:       []Constraint{},
+		CachedConstraints: []Constraint{},
+		N:                 size,
+	}
+
+	return sys
+}

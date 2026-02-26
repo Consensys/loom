@@ -66,13 +66,12 @@ func EqualityUpToPermutationIOP(prot *protocol.Protocol, ID1, ID2 []string, IDGr
 	}
 	physicalIDs = sym.RemoveDuplicates(physicalIDs)
 
-	challengeVal, err := prot.SendMeAChallenge(physicalIDs, challengeName)
+	_, err := prot.SendMeAChallenge(physicalIDs, challengeName) // <- the challenge column is allocated here, we can refer to it by name from now
 	if err != nil {
 		return err
 	}
-	challenge := system.Challenge{Name: challengeName, Value: challengeVal}
 
-	if err := system.BuildGrandProductConstraint(&prot.S, E1, E2, IDGrandProduct, challenge, opts...); err != nil {
+	if err := system.BuildGrandProductAndRegisterConstraints(&prot.S, E1, E2, IDGrandProduct, challengeName, opts...); err != nil {
 		return err
 	}
 

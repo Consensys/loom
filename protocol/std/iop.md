@@ -157,6 +157,82 @@ The eight physical columns are committed in Round 1. α and γ are constant colu
 
 ---
 
+## `InclusionCheckIOP`
+
+### What it proves
+
+Given a lookup column `S` and a table column `T` (with distinct values), it proves that every value in `S` appears in `T` (i.e. `S ⊂ T` as multisets), using the LogUp grand-sum argument. `M[i]` counts how many times `T[i]` appears in `S`.
+
+### Concrete example (`TestInclusion`, N = 16)
+
+```
+T : [ 1   2   3   4   5   6   7   8   9  10  11  12  13  14  15  16 ]  (distinct)
+S : [ 1   1   2   3   4   4   5   6   7   7   8   9  10  11  12  13 ]  (lookup, with repeats)
+M : [ 2   1   1   2   1   1   2   1   1   1   1   1   1   0   0   0 ]  (M[i] = #{j : S[j]=T[i]})
+```
+
+`Σ_j 1/(S[j]−γ) = Σ_i M[i]/(T[i]−γ)` holds for any γ not in {1,…,16}.
+
+### Σ-protocol
+
+```
+|------------------------------------------------------------------------------|
+| [prover]                        | [verifier]                                |
+|------------------------------------------------------------------------------|
+| Compute M s.t.                  |                                           |
+|   M[i] = #{j : S[j] = T[i]}    |                                           |
+|                                 |                                           |
+| Commit(S, T, M)       ------->  | [Com(S), Com(T), Com(M)]                 | ROUND 1
+|------------------------------------------------------------------------------|
+|                                 <-----  γ = FS(Com(S), Com(T), Com(M))     |
+|------------------------------------------------------------------------------|
+| Compute running sums:           |                                           |
+|   Σ_S[i] = Σ_{j⩽i} 1/(S[j]−γ)        (lookup side)                       |
+|   Σ_T[i] = Σ_{j⩽i} M[j]/(T[j]−γ)    (table side)                         |
+|                                 |                                           |
+| Commit(Σ_S, Σ_T)      ------->  | [Com(Σ_S), Com(Σ_T)]                    | ROUND 2
+|------------------------------------------------------------------------------|
+| (done via FoldConstraints + Finalize + Verify)                              |
+| Records four constraints (L₀ = LAGRANGE_0_N):                              |
+|   C1: (1−L₀)·((Σ_T−Σ_T(ω⁻¹X))·(T−γ) − M) = 0  mod X^N−1                |
+|   C2: (1−L₀)·((Σ_S−Σ_S(ω⁻¹X))·(S−γ) − 1) = 0  mod X^N−1                |
+|   C3: L₀·(Σ_T·(T−γ) − M) = 0        (enforces Σ_T[0] = M[0]/(T[0]−γ))  |
+|   C4: L₀·(Σ_S·(S−γ) − 1) = 0        (enforces Σ_S[0] = 1/(S[0]−γ))     |
+|------------------------------------------------------------------------------|
+```
+
+`LAGRANGE_0_N` is a computable column: the verifier evaluates `L₀(ζ) = (1/N)·(ζ^N−1)/(ζ−1)` directly, without a commitment from the prover.
+
+### Trace evolution
+
+```
+              S     T     M     γ     Σ_S       Σ_T       Σ_S_prev  Σ_T_prev  L₀
+       ┌─────────────────────────────────────────────────────────────────────────┐
+row 0  │  1     1     2     γ    1/(1−γ)  2/(1−γ)  Σ_S[15]  Σ_T[15]  1        │
+row 1  │  1     2     1     γ    Σ_S[0]+… Σ_T[0]+… Σ_S[0]   Σ_T[0]   0        │
+row 2  │  2     3     1     γ    …        …         …         …         0        │
+ ⋮     │  ⋮     ⋮     ⋮     ⋮    ⋮        ⋮         ⋮         ⋮         ⋮        │
+row 15 │ 13    16     0     γ    Σ_S[15]  Σ_T[15]  Σ_S[14]  Σ_T[14]  0        │
+       └─────────────────────────────────────────────────────────────────────────┘
+```
+
+C1/C2 enforce the recurrence at every row except row 0 (masked by `1−L₀`). C3/C4 pin the initial values at row 0. At row N−1, `Σ_S[N−1] = Σ_T[N−1]` is the LogUp identity — it is not an explicit constraint but follows from soundness: if S ⊄ T, a random γ makes the final sums differ with high probability.
+
+### After the IOP
+
+```
+prot.S.Constraints = [ C1, C2, C3, C4 ]   (four constraints, or four CachedConstraints with CacheMe())
+```
+
+The caller must fold them before `Finalize`:
+```go
+prot.FoldConstraints("alpha")   // or FoldCachedConstraints if CacheMe was used
+proof, _ := prot.Finalize()
+protocol.Verify(&proof)
+```
+
+---
+
 ## `DegreeReductionIOP`
 
 ### What it proves
@@ -291,4 +367,5 @@ This is exactly how `TestPermutation` runs in its "with caching" variant.
 |----------------------------------|----------------------|----------------------|
 | `EqualityUpToPermutationIOP`    | 2 (C1 grand product, C2 Lagrange)   | Yes — caller calls `FoldConstraints` |
 | `MultiSetEqualityUpToPermutationIOP` | 2 (same as above)  | Yes — caller calls `FoldConstraints` |
+| `InclusionCheckIOP`             | 4 (C1–C4 grand sum) | Yes — caller calls `FoldConstraints` |
 | `DegreeReductionIOP`            | 1 (already folded internally with α) | No                   |

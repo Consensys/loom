@@ -35,8 +35,49 @@ func prettyPrintTrace(T Trace) {
 	fmt.Println("")
 }
 
-// TestGrandProductIOP tests that a system with the grand product constraints vanished on X^n-1
-func TestGrandProductIOP(t *testing.T) {
+func TestGrandSumConstraint(t *testing.T) {
+
+	// T: 16 distinct values [1, 2, ..., 16]
+	const size = 16
+	sys := BuildLookupCircuit(t, size)
+
+	// build M, the multiplicities polynomial: M[i] = number of times T[i] appears in S
+	M, err := univariate.BuildMultiplicityPolynomial(sys.Trace["S"], sys.Trace["T"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys.Trace["M"] = &M
+
+	// gamma = 42, not in S or T (S/T only contain values 1..16), so no division by zero
+	var gamma koalabear.Element
+	gamma.SetUint64(42)
+	if err := addChallengeInTrace(&sys, Challenge{Name: "gamma", Value: gamma}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := BuildGrandSumAndRegisterConstraints(&sys, "S", "T", "M", "SigmaS", "SigmaT", "gamma"); err != nil {
+		t.Fatal(err)
+	}
+
+	// verify the LogUp identity: Σ_S[N-1] == Σ_T[N-1]
+	// i.e. Σ_j 1/(S[j]-γ) == Σ_j M[j]/(T[j]-γ)
+	lastS := sys.Trace["SigmaS"].GetCoefficient(size - 1)
+	lastT := sys.Trace["SigmaT"].GetCoefficient(size - 1)
+	if !lastS.Equal(&lastT) {
+		t.Fatalf("LogUp identity failed: SigmaS[%d]=%s != SigmaT[%d]=%s",
+			size-1, lastS.String(), size-1, lastT.String())
+	}
+
+	if err := BruteForceChecker(sys); err != nil {
+		t.Fatal(err)
+	}
+	if err := QuotientChecker(sys); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestGrandProductConstraint tests that a system with the grand product constraints vanished on X^n-1
+func TestGrandProductConstraint(t *testing.T) {
 
 	size := 16
 
@@ -47,10 +88,10 @@ func TestGrandProductIOP(t *testing.T) {
 	gamma.SetUint64(42)
 	challenge := Challenge{Name: "gamma", Value: gamma}
 
-	addChallengeInTrace(&S, challenge)
+	addChallengeInTrace(&S, challenge) // <- simulate SendMeAChallenge
 
 	var err error
-	err = BuildGrandProductConstraint(&S, []sym.Expr{sym.NewVar("P0")}, []sym.Expr{sym.NewVar("P1")}, "R", challenge)
+	err = BuildGrandProductAndRegisterConstraints(&S, []sym.Expr{sym.NewVar("P0")}, []sym.Expr{sym.NewVar("P1")}, "R", "gamma")
 	if err != nil {
 		t.Fatal(err)
 	}

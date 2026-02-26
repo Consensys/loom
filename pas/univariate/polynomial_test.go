@@ -524,7 +524,7 @@ func TestAccumulateProducts(t *testing.T) {
 		size := 8
 		P := makeLagrangePoly(t, "P", 2, 3, 4, 5, 1, 1, 1, 1)
 
-		R, err := AccumulateProducts(P, size)
+		R, err := accumulateProducts(P, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -543,7 +543,7 @@ func TestAccumulateProducts(t *testing.T) {
 		size := 8
 		P := makeLagrangePoly(t, "P", 1, 1, 1, 1, 1, 1, 1, 1)
 
-		R, err := AccumulateProducts(P, size)
+		R, err := accumulateProducts(P, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -562,7 +562,7 @@ func TestAccumulateProducts(t *testing.T) {
 		size := 8
 		P := makeLagrangePoly(t, "P", 7, 3, 11, 5, 2, 9, 4, 6)
 
-		R, err := AccumulateProducts(P, size)
+		R, err := accumulateProducts(P, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -581,7 +581,7 @@ func TestAccumulateProducts(t *testing.T) {
 		size := 8
 		P := makeLagrangePoly(t, "P", 2, 3, 4, 5, 6, 7, 8, 9)
 
-		R, err := AccumulateProducts(P, size)
+		R, err := accumulateProducts(P, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -597,6 +597,36 @@ func TestAccumulateProducts(t *testing.T) {
 		if !got.Equal(&expected) {
 			t.Errorf("R[%d]: got %s, want %s", size-1, got.String(), expected.String())
 		}
+	})
+}
+
+func TestBuildGrandSum(t *testing.T) {
+
+	t.Run("TriangularNumbers", func(t *testing.T) {
+		// P = [1, 2, 3, ..., 8] in Lagrange basis.
+		// BuildGrandSum gives R[k] = 1+2+...+(k+1) = (k+1)(k+2)/2.
+		// In particular R[n-1] = n(n+1)/2 (sum of the first n naturals).
+		size := 8
+		P := makeLagrangePoly(t, "P", 1, 2, 3, 4, 5, 6, 7, 8)
+
+		R, err := BuildGrandSum(P, size)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// R[k] = (k+1)(k+2)/2: check every entry
+		var two, twoInv koalabear.Element
+		two.SetUint64(2)
+		twoInv.Inverse(&two)
+		expected := make([]koalabear.Element, size)
+		for k := 0; k < size; k++ {
+			// (k+1)(k+2)/2 in the field
+			var a, b koalabear.Element
+			a.SetUint64(uint64(k + 1))
+			b.SetUint64(uint64(k + 2))
+			expected[k].Mul(&a, &b).Mul(&expected[k], &twoInv)
+		}
+		checkPointwise(t, &R, expected)
 	})
 }
 
