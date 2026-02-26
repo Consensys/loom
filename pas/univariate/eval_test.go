@@ -16,7 +16,7 @@ func makeLagrangePoly(t *testing.T, id string, vals ...uint64) *Polynomial {
 	for i, v := range vals {
 		coeffs[i].SetUint64(v)
 	}
-	p, err := NewPolynomial(coeffs, WithBasis(Lagrange))
+	p, err := NewPolynomial(coeffs, WithBasis(Lagrange), WithLayout(Normal))
 	if err != nil {
 		t.Fatalf("makeLagrangePoly(%s): %v", id, err)
 	}
