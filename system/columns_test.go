@@ -55,7 +55,12 @@ func TestGrandSumConstraint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := BuildGrandSumAndRegisterConstraints(&sys, "S", "T", "M", "SigmaS", "SigmaT", "gamma"); err != nil {
+	if err := BuildGrandSumAndRegisterConstraints(
+		&sys,
+		sym.NewVar("S").Sub(sym.NewChallenge("gamma")),
+		sym.NewVar("T").Sub(sym.NewChallenge("gamma")),
+		"M",
+		"SigmaS", "SigmaT"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,8 +95,12 @@ func TestGrandProductConstraint(t *testing.T) {
 
 	addChallengeInTrace(&S, challenge) // <- simulate SendMeAChallenge
 
+	E1 := sym.NewVar("P0").Sub(sym.NewChallenge("gamma"))
+	E2 := sym.NewVar("P1").Sub(sym.NewChallenge("gamma"))
+
 	var err error
-	err = BuildGrandProductAndRegisterConstraints(&S, []sym.Expr{sym.NewVar("P0")}, []sym.Expr{sym.NewVar("P1")}, "R", "gamma")
+	err = BuildGrandProductAndRegisterConstraints(
+		&S, []sym.Expr{E1}, []sym.Expr{E2}, "R")
 	if err != nil {
 		t.Fatal(err)
 	}

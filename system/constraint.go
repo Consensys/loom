@@ -33,13 +33,13 @@ func AddConstraint(S *System, C Constraint, opts ...Option) error {
 
 // NewVirtualColumn registers a new virtual column, that is a column that can be referenced, and whose content is not computed
 // yet, but expressed as a function of other columns.
-func NewVirtualColumn(S *System, ID string, E sym.Expr) error {
-	if _, ok := S.VirtualColumns[ID]; ok {
-		return fmt.Errorf("virtual column %s already referenced", ID)
-	}
-	S.VirtualColumns[ID] = E
-	return nil
-}
+// func NewVirtualColumn(S *System, ID string, E sym.Expr) error {
+// 	if _, ok := S.VirtualColumns[ID]; ok {
+// 		return fmt.Errorf("virtual column %s already referenced", ID)
+// 	}
+// 	S.VirtualColumns[ID] = E
+// 	return nil
+// }
 
 // foldConstraints folds all the constraints in S.CachedConstraints with challenge. Record the folded
 // constraint (i.e. store it in S.Constraint)
@@ -122,12 +122,12 @@ func GetProductExpression(E []sym.Expr, challenge string) Constraint {
 
 // GetFoldingExpression returns the expression Σ_i αⁱ Pi
 // where challenge is registered as a placeholder
-func GetFoldingExpression(IDs []string, challenge string) Constraint {
+func GetFoldingExpression(E []sym.Expr, challenge string) Constraint {
 	var one koalabear.Element
 	one.SetOne()
-	C := sym.NewVar(IDs[0]).Mul(sym.NewConst(one))
-	for i := 1; i < len(IDs); i++ {
-		C = C.Add(sym.NewVar(IDs[i]).Mul(sym.NewChallenge(challenge).Pow(uint32(i))))
+	C := E[0]
+	for i := 1; i < len(E); i++ {
+		C = C.Add(E[i]).Mul(sym.NewChallenge(challenge).Pow(uint32(i)))
 	}
 	return C
 }

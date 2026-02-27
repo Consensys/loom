@@ -181,7 +181,6 @@ func (p *Protocol) Finalize() (Proof, error) {
 	if err != nil {
 		return Proof{}, fmt.Errorf("SendMeAChallenge zeta: %w", err)
 	}
-	fmt.Println(zeta.String())
 
 	// open every leaf polynomial at zeta
 	d := fft.NewDomain(uint64(p.S.N))

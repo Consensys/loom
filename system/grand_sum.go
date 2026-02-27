@@ -1,25 +1,19 @@
 package system
 
 import (
-	"fmt"
-
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/iop/pas/sym"
 	"github.com/consensys/iop/pas/univariate"
 )
 
-// BuildGrandSumAndRegisterConstraints creates two polynomials Σ_S and Σ_T such that:
-// Σ_S[i] = \Sum_{j⩽i} 1/(S[j]-γ)
-// Σ_T[i] = \Sum_{j⩽i} M[j]/(T[j]-γ)
-// T = Table (distinct values), S = lookup values appearing in T, M[i] = number of times T[i] appears in S
-// M_ID must be built prior to calling this function.
+// buildGrandSumAndRegisterConstraints constructs ΣE such that:
+// ΣE[0] = M[0]/E[0], ΣE[i] = ΣE[i-1] + M[i]/E[i]
+// (the notation E[i] means the i-th entry of E evaluated on S.Trace)
 //
-// BuildGrandSum records the following constraints:
-// 1. (1-LAGRANGE_0)*((Σ_T - Σ_T(ω^-1 X))((T-γ)) - M) = 0 (Σ_T[i] = Σ_T[i-1]+M[i]/(T[i]-γ), without wraparound at 0)
-// 2. (1-LAGRANGE_0)*((Σ_S - Σ_S(ω^-1 X))((S-γ)) - 1) = 0 (Σ_S[i] = Σ_S[i-1]+1/(S[i]-γ), without wraparound at 0)
-// 3. LAGRANGE_0*(Σ_T*(T-γ) - M) = 0 (<- ensures Σ_T[0] = M[0]/(T[0]-γ))
-// 4. LAGRANGE_0*(Σ_S*(S-γ) - 1) = 0 (<- ensures Σ_S[0] = 1/(S[0]-γ))
-func BuildGrandSumAndRegisterConstraints(S *System, S_ID, T_ID, M_ID string, Σ_S_ID, Σ_T_ID string, gamma string, opts ...Option) error {
+// It registers the following constraints, ensuring that ΣE is built correctly:
+// 1. (1-LAGRANGE_0)*((ΣE - ΣE(ω^-1 X))*E - M) = 0
+// 2. LAGRANGE_0*(ΣE*E - M) = 0
+func buildGrandSumAndRegisterConstraints(S *System, E, M sym.Expr, ΣE string, opts ...Option) error {
 
 	// build the config
 	var config Config
@@ -29,125 +23,78 @@ func BuildGrandSumAndRegisterConstraints(S *System, S_ID, T_ID, M_ID string, Σ_
 		}
 	}
 
-	// S and T must already be in the trace (they are input columns)
-	if _, ok := S.Trace[S_ID]; !ok {
-		return fmt.Errorf("column %s not found in the trace", S_ID)
-	}
-	if _, ok := S.Trace[T_ID]; !ok {
-		return fmt.Errorf("column %s not found in the trace", T_ID)
-	}
-
-	// gamma is already registered in the trace (either from addChallengeInTrace or SendMeAChallenge)
-	if _, ok := S.Trace[gamma]; !ok {
-		return fmt.Errorf("challenge %s not in the trace", gamma)
-	}
-
-	// symbolic expressions for S-γ and T-γ (reused in constraints below)
-	sMinusGamma := sym.NewVar(S_ID).Sub(sym.NewChallenge(gamma))
-	tMinusGamma := sym.NewVar(T_ID).Sub(sym.NewChallenge(gamma))
-
-	// compute 1/(S-γ) pointwise
-	localTraceS := map[string]*univariate.Polynomial{
-		S_ID:  S.Trace[S_ID],
-		gamma: S.Trace[gamma],
-	}
-	sMinusGammaP, err := univariate.EvalPointWise(localTraceS, sMinusGamma, S.N)
+	// build the polynomial ΣE, ΣE(ω^-1 X)
+	ΣEp, err := univariate.BuildGrandSum(S.Trace, E, M, S.N)
 	if err != nil {
 		return err
 	}
-	univariate.InvertPointWiseInPlace(&sMinusGammaP)
-
-	// build Σ_S = cumulative sum of 1/(S-γ)
-	sigmaS, err := univariate.BuildGrandSum(&sMinusGammaP, S.N)
-	if err != nil {
-		return err
-	}
-	err = RegisterColumn(S, Σ_S_ID, &sigmaS)
-	if err != nil {
-		return err
-	}
-
-	// compute T-γ pointwise
-	localTraceT := map[string]*univariate.Polynomial{
-		T_ID:  S.Trace[T_ID],
-		gamma: S.Trace[gamma],
-	}
-	tMinusGammaP, err := univariate.EvalPointWise(localTraceT, tMinusGamma, S.N)
-	if err != nil {
-		return err
-	}
-
-	// compute M/(T-γ) pointwise
-	mDivTMinusGamma, err := univariate.DivPointWise(S.Trace[M_ID], &tMinusGammaP, S.N)
-	if err != nil {
-		return err
-	}
-
-	// build Σ_T = cumulative sum of M/(T-γ)
-	sigmaT, err := univariate.BuildGrandSum(&mDivTMinusGamma, S.N)
-	if err != nil {
-		return err
-	}
-	err = RegisterColumn(S, Σ_T_ID, &sigmaT)
-	if err != nil {
-		return err
-	}
-
-	// build explicit shifted polynomials: Σ_S_shifted[i] = Σ_S[i-1], Σ_T_shifted[i] = Σ_T[i-1]
-	// (wrap-around at i=0 is handled by multiplying by (1-LAGRANGE_0) in C1/C2)
-	Σ_T_ID_shifted := Σ_T_ID + GetShiftSuffix(-1)
-	sigmaTShiftedCoeffs := make([]koalabear.Element, S.N)
+	ΣEpShiftedCoeffs := make([]koalabear.Element, S.N)
 	for i := 0; i < S.N; i++ {
-		sigmaTShiftedCoeffs[i] = sigmaT.GetCoefficient((i - 1 + S.N) % S.N)
+		ΣEpShiftedCoeffs[i] = ΣEp.GetCoefficient((i - 1 + S.N) % S.N)
 	}
-	sigmaTShifted, err := univariate.NewInterpolatedPolynomial(sigmaTShiftedCoeffs, Σ_T_ID_shifted)
-	if err != nil {
-		return err
-	}
-	err = RegisterColumn(S, Σ_T_ID_shifted, &sigmaTShifted)
+	ΣEpShifted, err := univariate.NewPolynomial(ΣEpShiftedCoeffs, univariate.WithBasis(univariate.Lagrange), univariate.WithLayout(univariate.Normal))
 	if err != nil {
 		return err
 	}
 
-	Σ_S_ID_shifted := Σ_S_ID + GetShiftSuffix(-1)
-	sigmaSShiftedCoeffs := make([]koalabear.Element, S.N)
-	for i := 0; i < S.N; i++ {
-		sigmaSShiftedCoeffs[i] = sigmaS.GetCoefficient((i - 1 + S.N) % S.N)
-	}
-	sigmaSShifted, err := univariate.NewInterpolatedPolynomial(sigmaSShiftedCoeffs, Σ_S_ID_shifted)
+	// register the polynomials
+	err = RegisterColumn(S, ΣE, &ΣEp)
 	if err != nil {
 		return err
 	}
-	err = RegisterColumn(S, Σ_S_ID_shifted, &sigmaSShifted)
+	ΣEShifted := ΣE + GetShiftSuffix(-1)
+	err = RegisterColumn(S, ΣEShifted, &ΣEpShifted)
 	if err != nil {
 		return err
 	}
 
-	// add Lagrange column L0 to the trace
+	// ensure the Lagrange column is in the trace so BruteForceChecker can resolve it
 	lagrangeID := GetLagrangeID(0, S.N)
-	cc, err := GetComputationableColumn(lagrangeID)
+	lagrangeCC, err := GetComputationableColumn(lagrangeID)
 	if err != nil {
 		return err
 	}
-	AddComputableColumn(S, cc)
+	AddComputableColumn(S, lagrangeCC)
 
-	// 1. (1-LAGRANGE_0)*((Σ_T - Σ_T(ω^-1 X))(T-γ)) - M) = 0
-	// 2. (1-LAGRANGE_0)*((Σ_S - Σ_S(ω^-1 X))((S-γ)) - 1) = 0
-	// 3. LAGRANGE_0*(Σ_T*(T-γ) - M) = 0  (<- initial condition: Σ_T[0] = M[0]/(T[0]-γ))
-	// 4. LAGRANGE_0*(Σ_S*(S-γ) - 1) = 0  (<- initial condition: Σ_S[0] = 1/(S[0]-γ))
+	// register the two constraints
 	symLagrange := sym.NewVar(lagrangeID)
 	oneMinusLagrange := sym.NewConst(koalabear.One()).Sub(symLagrange)
-	diffΣ_T := sym.NewVar(Σ_T_ID).Sub(sym.NewVar(Σ_T_ID_shifted))
-	diffΣ_S := sym.NewVar(Σ_S_ID).Sub(sym.NewVar(Σ_S_ID_shifted))
-	C1 := oneMinusLagrange.Mul(diffΣ_T.Mul(tMinusGamma).Sub(sym.NewVar(M_ID)))
-	C2 := oneMinusLagrange.Mul(diffΣ_S.Mul(sMinusGamma).Sub(sym.NewConst(koalabear.One())))
-	C3 := symLagrange.Mul(sym.NewVar(Σ_T_ID).Mul(tMinusGamma).Sub(sym.NewVar(M_ID)))
-	C4 := symLagrange.Mul(sym.NewVar(Σ_S_ID).Mul(sMinusGamma).Sub(sym.NewConst(koalabear.One())))
+	diffΣE := sym.NewVar(ΣE).Sub(sym.NewVar(ΣEShifted))
+	diffΣETimesE := diffΣE.Mul(E)
+	C1 := oneMinusLagrange.Mul(diffΣETimesE.Sub(M))       //(1-LAGRANGE_0)*((ΣE - ΣE(ω^-1 X))*E - M) = 0
+	C2 := symLagrange.Mul((sym.NewVar(ΣE).Mul(E)).Sub(M)) // LAGRANGE_0*(Σ_T*(T-γ) - M)
 
 	if config.CacheMe {
-		S.CachedConstraints = append(S.CachedConstraints, C1, C2, C3, C4)
+		S.CachedConstraints = append(S.CachedConstraints, C1, C2)
 	} else {
-		S.Constraints = append(S.Constraints, C1, C2, C3, C4)
+		S.Constraints = append(S.Constraints, C1, C2)
+	}
+
+	return nil
+
+}
+
+// BuildGrandSumAndRegisterConstraints creates two polynomials Σ_S and Σ_T such that:
+// Σ_S[0] = ES[0],  Σ_S[i] = Σ_S[i-1] + ES[i]
+// Σ_T[0] = M[0]*ET[0],  Σ_T[i] = Σ_T[i-1] + M[i]*ET[i]
+// (the notation Ei[j] means the j-th entry of Ei evaluated on S.Trace)
+// M[i] counts the number of occurences of ET[i] in ES.
+//
+// BuildGrandSum records the following constraints:
+// 1. (1-LAGRANGE_0)*((Σ_T - Σ_T(ω^-1 X))((ET-γ)) - M) = 0 (Σ_T[i] = Σ_T[i-1]+M[i]/(T[i]-γ), without wraparound at 0)
+// 2. (1-LAGRANGE_0)*((Σ_S - Σ_S(ω^-1 X))((ES-γ)) - 1) = 0 (Σ_S[i] = Σ_S[i-1]+1/(S[i]-γ), without wraparound at 0)
+// 3. LAGRANGE_0*(Σ_T*(T-γ) - M) = 0 (<- ensures Σ_T[0] = M[0]/(T[0]-γ))
+// 4. LAGRANGE_0*(Σ_S*(S-γ) - 1) = 0 (<- ensures Σ_S[0] = 1/(S[0]-γ))
+func BuildGrandSumAndRegisterConstraints(S *System, ES, ET sym.Expr, M, ΣS, ΣT string, opts ...Option) error {
+
+	err := buildGrandSumAndRegisterConstraints(S, ES, sym.NewConst(koalabear.One()), ΣS, opts...)
+	if err != nil {
+		return err
+	}
+
+	err = buildGrandSumAndRegisterConstraints(S, ET, sym.NewVar(M), ΣT, opts...)
+	if err != nil {
+		return err
 	}
 
 	return nil

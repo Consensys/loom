@@ -302,9 +302,9 @@ func ensurePolynomialsAreInNormalLayout(P map[string]*Polynomial) error {
 }
 
 // EvalPointWise computes the resulting polynomial from evaluating a symbolic expression Q at polynomials Pi point wise.
-// The Pi are converted in Lagrange basis if they are in canonical form. If they are in LagrangeShifted basis, we leave
-// them in this basis.
-// The result is in Normal layout
+// The Pi are converted in Lagrange basis if they are in canonical form.
+// If they are in LagrangeShifted basis, we leave them in this basis (might lead to error, this situation should not happen)
+// The result is in Normal layout, Lagrange
 // N: size of the polynomials in P
 func EvalPointWise(Pi map[string]*Polynomial, E sym.Expr, N int) (Polynomial, error) {
 
@@ -411,36 +411,53 @@ func InvertPointWiseInPlace(P *Polynomial) {
 	}
 }
 
-// BuildGrandSum returns R such that R[0]=P[0] and R[i+1] = R[i]+P[i+1]
-// no condition on R[0] (there is no wraparound telling R[N-1]+P[N-1]=R[0] like in accumulateProducts)
+// accumulateProducts returns R such that R[0] = P[0], R[i] = R[i-1] + P[i]
 // N = size of P
-func BuildGrandSum(P *Polynomial, N int) (Polynomial, error) {
+func accumulateSums(P *Polynomial, N int) (Polynomial, error) {
 
-	if P.EP.Basis == Canonical {
-		return Polynomial{}, fmt.Errorf("cannot accumulate ratios on canonical polynomial: must be in an evaluation basis (shifted or not)")
-	}
-
-	// build the result R in lagrange basis of size N such that:
-	// R[0] = P[0]
-	// R[i] = R[i-1]+P[i] for i > 0
+	// build the result R in lagrange basis of size targetSize such that:
+	// R[0] = P[0], R[i] = R[i-1] + P[i] for i>0
 	resultCoeffs := make([]koalabear.Element, N)
-	firstEntry := P.GetCoefficient(0)
-	resultCoeffs[0].Set(&firstEntry)
+	c := P.GetCoefficient(0)
+	resultCoeffs[0].Set(&c)
 	for i := 1; i < N; i++ {
-		pi := P.GetCoefficient(i)                    // <- the constant Polynomial case is handled in GetCoefficient
-		resultCoeffs[i].Add(&resultCoeffs[i-1], &pi) // <- we affect the i-th coeff, so the layout is Normal
+		c = P.GetCoefficient(i)
+		resultCoeffs[i].Add(&resultCoeffs[i-1], &c)
 	}
 
-	result := &EPolynomial{
-		Coefficients: resultCoeffs,
-		Basis:        P.EP.Basis,
-		Layout:       Normal,
-		Degree:       N - 1,
+	result, err := NewPolynomial(resultCoeffs, WithBasis(Lagrange), WithLayout(Normal))
+	if err != nil {
+		return Polynomial{}, nil
 	}
 
-	var R Polynomial
-	R.EP = result
-	return R, nil
+	return result, nil
+}
+
+// BuildGrandSum returns R such that
+// R[0]=M[0]/E[0]
+// R[i] = R[i-1]+M[i]/E[i]
+// The notation E[i] means the i-th entry of E evaluated on P (same for M).
+func BuildGrandSum(P map[string]*Polynomial, E, M sym.Expr, N int) (Polynomial, error) {
+
+	// D stores the denominators 1/E(P)
+	D, err := EvalPointWise(P, E, N)
+	if err != nil {
+		return Polynomial{}, err
+	}
+	InvertPointWiseInPlace(&D)
+
+	// multiply by M(P) to get M(P)/E(P)
+	Mp, err := EvalPointWise(P, M, N)
+	if err != nil {
+		return Polynomial{}, err
+	}
+	for i := 0; i < N; i++ {
+		di := D.GetCoefficient(i)
+		mi := Mp.GetCoefficient(i)
+		D.EP.Coefficients[i].Mul(&di, &mi)
+	}
+
+	return accumulateSums(&D, N)
 }
 
 // accumulateProducts returns R such that R[i+1] = R[i]*P[i], R[0]=1
@@ -461,29 +478,26 @@ func accumulateProducts(P *Polynomial, N int) (Polynomial, error) {
 		resultCoeffs[i].Mul(&resultCoeffs[i-1], &pi)
 	}
 
-	result := &EPolynomial{
-		Coefficients: resultCoeffs,
-		Basis:        P.EP.Basis,
-		Layout:       P.EP.Layout,
-		Degree:       N - 1,
+	result, err := NewPolynomial(resultCoeffs, WithBasis(Lagrange), WithLayout(Normal))
+	if err != nil {
+		return Polynomial{}, nil
 	}
 
-	var R Polynomial
-	R.EP = result
-	return R, nil
+	return result, nil
 }
 
-// BuildGrandProduct returns R such that R[0]=1, R[i+1] = R[i] * E[0](P[0][i]) / E[1](P[1][i])
+// BuildGrandProduct returns R such that R[0]=1, R[i+1] = R[i] * E1(P[i]) / E2(P[i])
 // N = size of the polynomials in P
 // Polynomials in P must have the same basis, same layout
-func BuildGrandProduct(P [2]map[string]*Polynomial, E [2]sym.Expr, N int) (Polynomial, error) {
+// TODO we can make a single map here... not sure if it is useful
+func BuildGrandProduct(P map[string]*Polynomial, E1, E2 sym.Expr, N int) (Polynomial, error) {
 
-	Q0, err := EvalPointWise(P[0], E[0], N)
+	Q0, err := EvalPointWise(P, E1, N)
 	if err != nil {
 		return Polynomial{}, fmt.Errorf("failed to evaluate numerator expression: %w", err)
 	}
 
-	Q1, err := EvalPointWise(P[1], E[1], N)
+	Q1, err := EvalPointWise(P, E2, N)
 	if err != nil {
 		return Polynomial{}, fmt.Errorf("failed to evaluate denominator expression: %w", err)
 	}

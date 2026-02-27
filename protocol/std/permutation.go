@@ -1,8 +1,6 @@
 package std
 
 import (
-	"fmt"
-
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/iop/pas/sym"
 	"github.com/consensys/iop/protocol"
@@ -11,6 +9,7 @@ import (
 
 // EqualityUpToPermutation proves that the multiset { ID1[j][i] } equals { ID2[j][i] }.
 // Concretely, for every i, j there is k, l such that ID1[i][j] = ID2[k][l].
+// TODO this is syntactic sugar for equalityUpToPermutationIOP (which uses Expr instead of string). Should I let only the original function ?
 //
 // It models the following Σ protocol (N = domain size, P_j := ID1[j], Q_j := ID2[j]):
 //
@@ -36,24 +35,22 @@ import (
 //	|   C1: ∏_j(Q_j-γ)·Z_shifted - ∏_j(P_j-γ)·Z = 0 mod X^N-1                   |
 //	|   C2: (Z-1)·L_0 = 0  (enforces Z[0]=1)                                      |
 //	|-------------------------------–-----------------------------------------------|
-func EqualityUpToPermutationIOP(prot *protocol.Protocol, ID1, ID2 []string, IDGrandProduct string, challengeName string, opts ...system.Option) error {
+func EqualityUpToPermutationIOP(prot *protocol.Protocol, ID1, ID2 []string, IDGrandProduct string, gamma string, opts ...system.Option) error {
 
 	E1 := make([]sym.Expr, len(ID1))
 	for i, id := range ID1 {
-		if expr, ok := prot.S.VirtualColumns[id]; ok {
-			E1[i] = expr
-		} else {
-			E1[i] = sym.NewVar(id)
-		}
+		E1[i] = sym.NewVar(id)
 	}
 	E2 := make([]sym.Expr, len(ID2))
 	for i, id := range ID2 {
-		if expr, ok := prot.S.VirtualColumns[id]; ok {
-			E2[i] = expr
-		} else {
-			E2[i] = sym.NewVar(id)
-		}
+		E2[i] = sym.NewVar(id)
 	}
+
+	return equalityUpToPermutationIOP(prot, E1, E2, IDGrandProduct, gamma, opts...)
+
+}
+
+func equalityUpToPermutationIOP(prot *protocol.Protocol, E1, E2 []sym.Expr, IDGrandProduct string, gamma string, opts ...system.Option) error {
 
 	// collect the physical column IDs (leaves of the expressions, excluding placeholders)
 	// to derive the challenge via Fiat-Shamir
@@ -66,12 +63,21 @@ func EqualityUpToPermutationIOP(prot *protocol.Protocol, ID1, ID2 []string, IDGr
 	}
 	physicalIDs = sym.RemoveDuplicates(physicalIDs)
 
-	_, err := prot.SendMeAChallenge(physicalIDs, challengeName) // <- the challenge column is allocated here, we can refer to it by name from now
+	_, err := prot.SendMeAChallenge(physicalIDs, gamma) // <- the challenge column is allocated here, we can refer to it by name from now
 	if err != nil {
 		return err
 	}
 
-	if err := system.BuildGrandProductAndRegisterConstraints(&prot.S, E1, E2, IDGrandProduct, challengeName, opts...); err != nil {
+	E1MinusGamma := make([]sym.Expr, len(E1))
+	E2MinusGamma := make([]sym.Expr, len(E2))
+	for i := 0; i < len(E1); i++ {
+		E1MinusGamma[i] = E1[i].Sub(sym.NewChallenge(gamma))
+	}
+	for i := 0; i < len(E1); i++ {
+		E2MinusGamma[i] = E1[i].Sub(sym.NewChallenge(gamma))
+	}
+
+	if err := system.BuildGrandProductAndRegisterConstraints(&prot.S, E1MinusGamma, E2MinusGamma, IDGrandProduct, opts...); err != nil {
 		return err
 	}
 
@@ -84,6 +90,7 @@ func EqualityUpToPermutationIOP(prot *protocol.Protocol, ID1, ID2 []string, IDGr
 // MultiSetEqualityUpToPermutation proves that the multiset of tuples { (ID1[i][0][j], ID1[i][1][j], ..) }
 // equals the multiset of tuples { (ID2[i][0][j], ID2[i][1][j], ..) }.
 // Tuples are first compressed into scalars with α, then EqualityUpToPermutation is applied on the scalars.
+// TODO this is syntactic sugar for multiSetEqualityUpToPermutationIOP (which uses Expr instead of string). Should I let only the original function ?
 //
 // It models the following Σ protocol (N = domain size, P_s := ID1[s], Q_s := ID2[s]):
 //
@@ -125,14 +132,44 @@ func MultiSetEqualityUpToPermutationIOP(
 	alpha, gamma string,
 	opts ...system.Option) error {
 
+	E1 := make([][]sym.Expr, len(ID1))
+	E2 := make([][]sym.Expr, len(ID2))
+	for i, id := range ID1 {
+		E1[i] = make([]sym.Expr, len(id))
+		for j, iid := range id {
+			E1[i][j] = sym.NewVar(iid)
+		}
+	}
+	for i, id := range ID2 {
+		E2[i] = make([]sym.Expr, len(id))
+		for j, iid := range id {
+			E2[i][j] = sym.NewVar(iid)
+		}
+	}
+
+	return multiSetEqualityUpToPermutationIOP(prot, E1, E2, IDGrandProduct, alpha, gamma, opts...)
+
+}
+
+func multiSetEqualityUpToPermutationIOP(
+	prot *protocol.Protocol,
+	E1, E2 [][]sym.Expr,
+	IDGrandProduct string,
+	alpha, gamma string,
+	opts ...system.Option) error {
+
 	// step 1: collect all physical column IDs and sample alpha.
 	// SendMeAChallenge commits every physical column and derives alpha via Fiat-Shamir.
 	var allIDs []string
-	for _, subset := range ID1 {
-		allIDs = append(allIDs, subset...)
+	for _, EE1 := range E1 {
+		for _, EEE1 := range EE1 {
+			allIDs = append(allIDs, EEE1.Leaves()...)
+		}
 	}
-	for _, subset := range ID2 {
-		allIDs = append(allIDs, subset...)
+	for _, EE2 := range E2 {
+		for _, EEE2 := range EE2 {
+			allIDs = append(allIDs, EEE2.Leaves()...)
+		}
 	}
 	allIDs = sym.RemoveDuplicates(allIDs)
 	if _, err := prot.SendMeAChallenge(allIDs, alpha); err != nil {
@@ -141,27 +178,17 @@ func MultiSetEqualityUpToPermutationIOP(
 
 	// step 2: fold each subset into a single expression and register it as a virtual column.
 	// F1[i] = ID1[i][0] + alpha * ID1[i][1] + alpha^2 * ID1[i][2] + ...
-	E1 := make([]sym.Expr, len(ID1))
-	VID1 := make([]string, len(ID1))
-	for i, subset := range ID1 {
-		E1[i] = system.GetFoldingExpression(subset, alpha)
-		VID1[i] = fmt.Sprintf("F1_%d", i)
-		if err := system.NewVirtualColumn(&prot.S, VID1[i], E1[i]); err != nil {
-			return err
-		}
+	F1 := make([]sym.Expr, len(E1))
+	for i, subset := range E1 {
+		F1[i] = system.GetFoldingExpression(subset, alpha)
 	}
-	E2 := make([]sym.Expr, len(ID2))
-	VID2 := make([]string, len(ID2))
-	for i, subset := range ID2 {
-		E2[i] = system.GetFoldingExpression(subset, alpha)
-		VID2[i] = fmt.Sprintf("F2_%d", i)
-		if err := system.NewVirtualColumn(&prot.S, VID2[i], E2[i]); err != nil {
-			return err
-		}
+	F2 := make([]sym.Expr, len(E2))
+	for i, subset := range E2 {
+		F2[i] = system.GetFoldingExpression(subset, alpha)
 	}
 
 	// step 3: build the grand product constraint over the folded virtual columns.
 	// EqualityUpToPermutation looks up VID1/VID2 in VirtualColumns, collects the physical
 	// column IDs from their leaves, samples gamma, and also enforces R[0]=1.
-	return EqualityUpToPermutationIOP(prot, VID1, VID2, IDGrandProduct, gamma, opts...)
+	return equalityUpToPermutationIOP(prot, F1, F2, IDGrandProduct, gamma, opts...)
 }

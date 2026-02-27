@@ -374,14 +374,13 @@ func TestBuildGrandProduct(t *testing.T) {
 		// ratio[i] = P[i]/P[i] = 1, so R = [1, 1, ..., 1]
 		size := 8
 		P := makeLagrangePoly(t, "x", 2, 3, 4, 5, 6, 7, 8, 9)
-		Pi := [2]map[string]*Polynomial{
-			{"x": P},
-			{"x": P},
+		Pi := map[string]*Polynomial{
+			"x": P,
 		}
 		E0 := sym.NewVar("x")
 		E1 := sym.NewVar("x")
 
-		R, err := BuildGrandProduct(Pi, [2]sym.Expr{E0, E1}, size)
+		R, err := BuildGrandProduct(Pi, E0, E1, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -407,14 +406,14 @@ func TestBuildGrandProduct(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		Pi := [2]map[string]*Polynomial{
-			{"x": P},
-			{"one": &constOne},
+		Pi := map[string]*Polynomial{
+			"x":   P,
+			"one": &constOne,
 		}
 		E0 := sym.NewVar("x")
 		E1 := sym.NewVar("one")
 
-		R, err := BuildGrandProduct(Pi, [2]sym.Expr{E0, E1}, size)
+		R, err := BuildGrandProduct(Pi, E0, E1, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -434,14 +433,14 @@ func TestBuildGrandProduct(t *testing.T) {
 		size := 8
 		P0 := makeLagrangePoly(t, "x", 7, 3, 11, 5, 2, 9, 4, 6)
 		P1 := makeLagrangePoly(t, "y", 1, 2, 3, 4, 5, 6, 7, 8)
-		Pi := [2]map[string]*Polynomial{
-			{"x": P0},
-			{"y": P1},
+		Pi := map[string]*Polynomial{
+			"x": P0,
+			"y": P1,
 		}
 		E0 := sym.NewVar("x")
 		E1 := sym.NewVar("y")
 
-		R, err := BuildGrandProduct(Pi, [2]sym.Expr{E0, E1}, size)
+		R, err := BuildGrandProduct(Pi, E0, E1, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -459,14 +458,14 @@ func TestBuildGrandProduct(t *testing.T) {
 		size := 8
 		P0 := makeLagrangePoly(t, "x", 6, 10, 3, 15, 2, 8, 5, 9)
 		P1 := makeLagrangePoly(t, "y", 2, 5, 1, 3, 2, 4, 1, 3)
-		Pi := [2]map[string]*Polynomial{
-			{"x": P0},
-			{"y": P1},
+		Pi := map[string]*Polynomial{
+			"x": P0,
+			"y": P1,
 		}
 		E0 := sym.NewVar("x")
 		E1 := sym.NewVar("y")
 
-		R, err := BuildGrandProduct(Pi, [2]sym.Expr{E0, E1}, size)
+		R, err := BuildGrandProduct(Pi, E0, E1, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -502,14 +501,14 @@ func TestBuildGrandProduct(t *testing.T) {
 		size := 8
 		P0 := makeLagrangePoly(t, "x", 1, 2, 3, 4, 5, 6, 7, 8)
 		P1 := makeLagrangePoly(t, "y", 1, 0, 1, 1, 1, 1, 1, 1) // zero at index 1
-		Pi := [2]map[string]*Polynomial{
-			{"x": P0},
-			{"y": P1},
+		Pi := map[string]*Polynomial{
+			"x": P0,
+			"y": P1,
 		}
 		E0 := sym.NewVar("x")
 		E1 := sym.NewVar("y")
 
-		_, err := BuildGrandProduct(Pi, [2]sym.Expr{E0, E1}, size)
+		_, err := BuildGrandProduct(Pi, E0, E1, size)
 		if err == nil {
 			t.Fatal("expected error for zero denominator, got nil")
 		}
@@ -603,13 +602,19 @@ func TestAccumulateProducts(t *testing.T) {
 func TestBuildGrandSum(t *testing.T) {
 
 	t.Run("TriangularNumbers", func(t *testing.T) {
-		// P = [1, 2, 3, ..., 8] in Lagrange basis.
+		// P = [1, 1/2, 1/3, ..., 1/8] in Lagrange basis.
 		// BuildGrandSum gives R[k] = 1+2+...+(k+1) = (k+1)(k+2)/2.
 		// In particular R[n-1] = n(n+1)/2 (sum of the first n naturals).
 		size := 8
 		P := makeLagrangePoly(t, "P", 1, 2, 3, 4, 5, 6, 7, 8)
+		for i := 0; i < len(P.EP.Coefficients); i++ {
+			P.EP.Coefficients[i].Inverse(&P.EP.Coefficients[i])
+		}
 
-		R, err := BuildGrandSum(P, size)
+		E := sym.NewVar("P")
+		M := sym.NewConst(koalabear.One())
+		T := map[string]*Polynomial{"P": P}
+		R, err := BuildGrandSum(T, E, M, size)
 		if err != nil {
 			t.Fatal(err)
 		}
