@@ -3,8 +3,8 @@ package cs
 import (
 	"fmt"
 
-	"github.com/consensys/iop/pas/univariate"
-	"github.com/consensys/iop/trace"
+	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/giop/trace"
 )
 
 // GetShiftSuffix returns a suffix for identifying shifted polynomials. i tells by how much a polynomial is shifted,

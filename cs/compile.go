@@ -1,9 +1,9 @@
 package cs
 
 import (
-	"github.com/consensys/iop/constants"
-	"github.com/consensys/iop/crypto/dummycommitment"
-	"github.com/consensys/iop/pas/sym"
+	"github.com/consensys/giop/constants"
+	"github.com/consensys/giop/crypto/dummycommitment"
+	"github.com/consensys/giop/pas/sym"
 )
 
 // Round an IOP is a list of rounds. At each round, a challenge (referenced by ChallengeName) is sent by the verifier
@@ -65,8 +65,8 @@ func Compile(system *System) CompiledIOP {
 	// 1. symoblically fold all the constraints using the folding challenge. The actual challenge is derived in prover/.
 	C := Fold(system.Constraints, sym.NewChallenge(constants.FINAL_FOLDING_CHALLENGE))
 	return CompiledIOP{
-		ProverActions: system.ProverActions,
-		Constraint:    C,
-		N:             system.N,
+		ProverActions:     system.ProverActions,
+		VanishingRelation: C,
+		N:                 system.N,
 	}
 }

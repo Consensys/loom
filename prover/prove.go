@@ -6,14 +6,14 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/consensys/giop/constants"
+	"github.com/consensys/giop/crypto/dummycommitment"
+	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/giop/trace"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/iop/constants"
-	"github.com/consensys/iop/crypto/dummycommitment"
-	"github.com/consensys/iop/cs"
-	"github.com/consensys/iop/pas/sym"
-	"github.com/consensys/iop/pas/univariate"
-	"github.com/consensys/iop/trace"
 )
 
 // Runtime contains the data needed to run the CompiledIOP to generate the proof.
@@ -134,7 +134,7 @@ func FinalChallenges(rounds []cs.Round) []string {
 // cannot have been derived derived prior to any of the prover<->interactions and commitments
 func (runtime Runtime) DeriveFinalFoldingChallenge(proof *cs.Proof) error {
 
-	proof.VanishingRelation = runtime.CompiledIOP.Constraint
+	proof.VanishingRelation = runtime.CompiledIOP.VanishingRelation
 
 	// generate the folding challenge whose name is constants.FINAL_FOLDING_CHALLENGE, and which must be be bound to all the necessary
 	// data to ensure it cannot have been derived prior to running all the previous IOPs and commitments
@@ -210,10 +210,12 @@ func (runtime Runtime) DeriveFinalFoldingChallenge(proof *cs.Proof) error {
 	return err
 }
 
-// ComputeQuotient computes H:=runtime.CompiledIOP.Constraint(runtime.Trace)/X^N-1 and commit to it
+// ComputeQuotient computes H:=runtime.CompiledIOP.Constraint(runtime.Trace)/X^N-1 and commit to it, and
+//
+//	and store it in the trace, it is needed to be opened later
 func (runtime Runtime) ComputeQuotient(proof *cs.Proof) error {
 
-	H, err := univariate.ComputeQuotient(runtime.Trace, runtime.CompiledIOP.Constraint, runtime.CompiledIOP.N)
+	H, err := univariate.ComputeQuotient(runtime.Trace, runtime.CompiledIOP.VanishingRelation, runtime.CompiledIOP.N)
 	if err != nil {
 		return fmt.Errorf("ComputeQuotient: %w", err)
 	}
@@ -223,6 +225,9 @@ func (runtime Runtime) ComputeQuotient(proof *cs.Proof) error {
 		return err
 	}
 	proof.OpeningProofs[constants.FINAL_QUOTIENT] = dummycommitment.PackedProof{Digest: digest}
+
+	// Store H in the trace so OpenCommitments can evaluate it at zeta later
+	runtime.Trace[constants.FINAL_QUOTIENT] = &H
 
 	return nil
 }
@@ -270,24 +275,19 @@ func (runtime Runtime) DeriveOpeningChallenge(proof *cs.Proof) (koalabear.Elemen
 
 // OpenCommitments open all columns at zeta
 func (runtime Runtime) OpenCommitments(proof *cs.Proof, zeta koalabear.Element) error {
-	committedColumns := runtime.CompiledIOP.Constraint.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutComputableColumns()))
-	sym.RemoveDuplicates(committedColumns)
 	var err error
-	for _, l := range committedColumns {
-		com, ok := proof.OpeningProofs[l]
+	for k, com := range proof.OpeningProofs {
+		poly, ok := runtime.Trace[k]
 		if !ok {
-			return fmt.Errorf("commitment %s not found in the proof", l)
-		}
-		poly, ok := runtime.Trace[l]
-		if !ok {
-			return fmt.Errorf("column %s not found in the trace", l)
+			return fmt.Errorf("column %s not found in the trace", k)
 		}
 		com.OpeningProof, err = dummycommitment.Open(*poly, zeta)
 		if err != nil {
 			return err
 		}
-		proof.OpeningProofs[l] = com
+		proof.OpeningProofs[k] = com
 	}
+
 	return nil
 }
 
@@ -307,7 +307,7 @@ func (runtime Runtime) Prove(knownColumns map[string]bool, nbWorkers int) (cs.Pr
 		return proof, err
 	}
 
-	// 3. compute quotient
+	// 3. compute quotient, and store it in the trace
 	err = runtime.ComputeQuotient(&proof)
 	if err != nil {
 		return proof, err

@@ -6,7 +6,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
-	"github.com/consensys/iop/pas/sym"
+	"github.com/consensys/giop/pas/sym"
 )
 
 // ComputeQuotient computes E(PI)/X^N-1

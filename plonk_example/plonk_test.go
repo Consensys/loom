@@ -1,40 +1,53 @@
 package plonk_example
 
 import (
-	"fmt"
 	"testing"
 
-	"github.com/consensys/iop/pas/sym"
-	"github.com/consensys/iop/protocol"
-	"github.com/consensys/iop/protocol/std"
-	"github.com/consensys/iop/system"
+	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/prover"
+	"github.com/consensys/giop/std"
+	"github.com/consensys/giop/verifier"
 )
 
 func TestPlonk(t *testing.T) {
 
 	// This would be the result of a tracer in a real life example (here we use gnark as a tracer)
-	S, err := GetPlonkSystem()
+	trace, N, err := GetPlonkTrace()
 	if err != nil {
 		t.Fatal(nil)
 	}
+
+	knowncolumns := make(map[string]bool)
+	knowncolumns[ID_L] = true
+	knowncolumns[ID_R] = true
+	knowncolumns[ID_O] = true
+	knowncolumns[ID_Ql] = true
+	knowncolumns[ID_Qr] = true
+	knowncolumns[ID_Qm] = true
+	knowncolumns[ID_Qo] = true
+	knowncolumns[ID_Qk] = true
+	knowncolumns[ID_ID1] = true
+	knowncolumns[ID_ID2] = true
+	knowncolumns[ID_ID3] = true
+	knowncolumns[ID_S1] = true
+	knowncolumns[ID_S2] = true
+	knowncolumns[ID_S3] = true
+
+	system := cs.NewSystem(N)
 
 	// This is the result of the constraint (lisp ?) file in a real life example. Here we know in advance the shape of the constraints
 	// QL*L + QR*R + QM*L*R + QO*O + QK = 0
 	// ( (L, ID1), (R, ID2), (O, ID3)) and ( (L, S1), (R, S2), (O, S3)) must be equal as multisets
 
-	// in a real life example, this would be parsed from the constraint file
 	C := sym.NewCommittedColumn(ID_Ql).Mul(sym.NewCommittedColumn(ID_L)).
 		Add(sym.NewCommittedColumn(ID_Qr).Mul(sym.NewCommittedColumn(ID_R))).
 		Add(sym.NewCommittedColumn(ID_Qm).Mul(sym.NewCommittedColumn(ID_L)).Mul(sym.NewCommittedColumn(ID_R))).
 		Add(sym.NewCommittedColumn(ID_Qo).Mul(sym.NewCommittedColumn(ID_O))).
 		Add(sym.NewCommittedColumn(ID_Qk))
 
-	system.AddConstraint(&S, C)
+	system.RegisterConstraint(C)
 
-	// 2 - we begin the protocol
-	prot := protocol.NewProtocol(S)
-
-	// in a real life example, the lisp parser would build such multi sets
 	multiSetIds1 := [][]string{
 		[]string{ID_L, ID_ID1},
 		[]string{ID_R, ID_ID2},
@@ -47,28 +60,21 @@ func TestPlonk(t *testing.T) {
 		[]string{ID_O, ID_S3},
 	}
 
-	err = std.MultiSetEqualityUpToPermutationIOP(&prot, multiSetIds1, multiSetIds2, "PlonkGrandProduct", "beta", "gamma")
+	err = std.MultiSetEqualityUpToPermutationIOP(&system, multiSetIds1, multiSetIds2, "PlonkGrandProduct", "beta", "gamma")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	prot.FoldConstraints("alpha")
+	cciop := cs.Compile(&system)
 
-	fmt.Println(prot.S.Constraints[0].String())
-
-	proof, err := prot.Finalize()
+	proverRunTime := prover.NewRuntime(cciop, trace)
+	proof, err := proverRunTime.Prove(knowncolumns, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// sanity check
-	err = system.BruteForceChecker(prot.S)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Verify the proof
-	err = protocol.Verify(&proof)
+	verifierRunTime := verifier.NewRunTime(cciop)
+	err = verifierRunTime.Verify(&proof)
 	if err != nil {
 		t.Fatal(err)
 	}

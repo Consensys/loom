@@ -6,7 +6,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
-	"github.com/consensys/iop/pas/sym"
+	"github.com/consensys/giop/pas/sym"
 )
 
 // makeLagrangePoly builds a polynomial in Lagrange basis from raw uint64 evaluations.

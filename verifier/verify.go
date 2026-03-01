@@ -7,12 +7,12 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/consensys/giop/constants"
+	"github.com/consensys/giop/crypto/dummycommitment"
+	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/pas/sym"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/iop/constants"
-	"github.com/consensys/iop/crypto/dummycommitment"
-	"github.com/consensys/iop/cs"
-	"github.com/consensys/iop/pas/sym"
 )
 
 // Runtime stores the variables to plug in the final relation to check.
@@ -23,14 +23,13 @@ type Runtime struct {
 }
 
 // NewRunTime creates the NewRunTime and knownColumns, which are the committedColumns
-func NewRunTime(proof *cs.Proof) Runtime {
+func NewRunTime(cciop cs.CompiledIOP) Runtime {
 	var res Runtime
 	res.Varindex = make(sym.VarIndex)
-	allLeaves := proof.VanishingRelation.Leaves(sym.NewConfig())
+	allLeaves := cciop.VanishingRelation.Leaves(sym.NewConfig())
 	allLeaves = sym.RemoveDuplicates(allLeaves)
 	res.Vars = make([]koalabear.Element, len(allLeaves))
 	for i, l := range allLeaves {
-		fmt.Println(i)
 		res.Varindex[l] = i
 	}
 
@@ -245,13 +244,8 @@ func (runtime *Runtime) CheckRelation(proof *cs.Proof) error {
 }
 
 func (runtime *Runtime) VerifyOpeningProofs(proof *cs.Proof) error {
-	_, ok := runtime.Varindex[constants.FINAL_EVALUATION_POINT]
-	if !ok {
-		return fmt.Errorf("%s does not appear in the verifier var index", constants.FINAL_EVALUATION_POINT)
-	}
-	zeta := runtime.Vars[runtime.Varindex[constants.FINAL_EVALUATION_POINT]]
 	for _, op := range proof.OpeningProofs {
-		err := dummycommitment.Verify(op.Digest, op.OpeningProof, zeta)
+		err := dummycommitment.Verify(op.Digest, op.OpeningProof, runtime.Zeta)
 		if err != nil {
 			return err
 		}

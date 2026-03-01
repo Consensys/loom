@@ -2,8 +2,8 @@ package std
 
 import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/iop/cs"
-	"github.com/consensys/iop/pas/sym"
+	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/pas/sym"
 )
 
 // Adds a the constrait that the column whose ID is ID is equal to value at i-th entry

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/iop/pas/sym"
+	"github.com/consensys/giop/pas/sym"
 )
 
 func TestGrandProductConstraint(t *testing.T) {

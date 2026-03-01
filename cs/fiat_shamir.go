@@ -6,10 +6,10 @@ import (
 
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/iop/crypto/dummycommitment"
-	"github.com/consensys/iop/pas/sym"
-	"github.com/consensys/iop/pas/univariate"
-	"github.com/consensys/iop/trace"
+	"github.com/consensys/giop/crypto/dummycommitment"
+	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/giop/trace"
 )
 
 // GetCommittedColumnsID returns the list of the names appearing in E

@@ -1,4 +1,4 @@
-module github.com/consensys/iop
+module github.com/consensys/giop
 
 go 1.25.6
 

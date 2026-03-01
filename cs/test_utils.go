@@ -7,9 +7,9 @@ import (
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
-	"github.com/consensys/iop/pas/sym"
-	"github.com/consensys/iop/pas/univariate"
-	"github.com/consensys/iop/trace"
+	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/giop/trace"
 )
 
 type Challenge struct {
@@ -94,6 +94,50 @@ func BuildPermutationCircuit(t *testing.T, size int) trace.Trace {
 		"P1": &P1,
 	}
 
+}
+
+// BuildPermutationMultiSet creates a trace with four columns P0, P1, Q0, Q1 where
+// the tuple multiset {(P0[i], P1[i])} equals {(Q0[i], Q1[i])} up to permutation.
+// (Q0, Q1) is a cyclic shift of (P0, P1): Q0[i]=P0[(i+1)%size], Q1[i]=P1[(i+1)%size].
+func BuildPermutationMultiSet(t *testing.T, size int) trace.Trace {
+
+	coeffs0 := make([]koalabear.Element, size)
+	coeffs1 := make([]koalabear.Element, size)
+	for i := range coeffs0 {
+		coeffs0[i].SetRandom()
+		coeffs1[i].SetRandom()
+	}
+	P0, err := univariate.NewPolynomial(coeffs0, univariate.WithBasis(univariate.Lagrange))
+	if err != nil {
+		t.Fatalf("Failed to create P0: %v", err)
+	}
+	P1, err := univariate.NewPolynomial(coeffs1, univariate.WithBasis(univariate.Lagrange))
+	if err != nil {
+		t.Fatalf("Failed to create P1: %v", err)
+	}
+
+	// Q0[i] = P0[(i+1)%size], Q1[i] = P1[(i+1)%size]: cyclic shift of the pairs
+	coeffsQ0 := make([]koalabear.Element, size)
+	coeffsQ1 := make([]koalabear.Element, size)
+	for i := range coeffsQ0 {
+		coeffsQ0[i] = coeffs0[(i+1)%size]
+		coeffsQ1[i] = coeffs1[(i+1)%size]
+	}
+	Q0, err := univariate.NewPolynomial(coeffsQ0, univariate.WithBasis(univariate.Lagrange))
+	if err != nil {
+		t.Fatalf("Failed to create Q0: %v", err)
+	}
+	Q1, err := univariate.NewPolynomial(coeffsQ1, univariate.WithBasis(univariate.Lagrange))
+	if err != nil {
+		t.Fatalf("Failed to create Q1: %v", err)
+	}
+
+	return map[string]*univariate.Polynomial{
+		"P0": &P0,
+		"P1": &P1,
+		"Q0": &Q0,
+		"Q1": &Q1,
+	}
 }
 
 // BruteForceChecker checks rows by rows a system by evaluating on the domain X^n-1,

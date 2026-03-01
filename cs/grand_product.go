@@ -4,9 +4,9 @@ import (
 	"fmt"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/iop/pas/sym"
-	"github.com/consensys/iop/pas/univariate"
-	"github.com/consensys/iop/trace"
+	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/giop/trace"
 )
 
 // EnforceGrandProduct IDGrandProductShifted*E2-IDGrandProduct*E1=0

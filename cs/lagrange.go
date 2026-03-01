@@ -5,7 +5,7 @@ import (
 	"math/big"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/iop/pas/univariate"
+	"github.com/consensys/giop/pas/univariate"
 )
 
 // Lagrange standard identifier across systems for Lagrange polynomial, suffixed by an integer to specify which Lagrange polynomial

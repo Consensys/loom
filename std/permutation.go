@@ -2,8 +2,8 @@ package std
 
 import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/iop/cs"
-	"github.com/consensys/iop/pas/sym"
+	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/pas/sym"
 )
 
 // EqualityUpToPermutation proves that the multiset { ID1[j][i] } equals { ID2[j][i] }, up to permutation.

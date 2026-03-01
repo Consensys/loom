@@ -2,7 +2,8 @@ package dummycommitment
 
 import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/iop/pas/univariate"
+	"github.com/consensys/gnark-crypto/field/koalabear/fft"
+	"github.com/consensys/giop/pas/univariate"
 )
 
 // dummycommitment should wrap an existing commitment
@@ -30,17 +31,19 @@ func Commit(p *univariate.Polynomial) (Digest, error) {
 // fft.Domain Cardinality must be larger than p.Degree()
 func Open(p univariate.Polynomial, point koalabear.Element) (OpeningProof, error) {
 
-	// TODO when the wrapper is done (for instance, KZG) make a trivial opening if p is constant
+	// Convert to Canonical basis if needed so Evaluate can use Horner's method
+	if !p.IsConstant() && p.EP.Basis != univariate.Canonical {
+		d := fft.NewDomain(uint64(len(p.EP.Coefficients)))
+		if err := p.ToBasis(d, univariate.Canonical); err != nil {
+			return OpeningProof{}, err
+		}
+	}
 
-	// build the proof
 	y, err := p.Evaluate(point)
 	if err != nil {
 		return OpeningProof{}, err
 	}
-	res := OpeningProof{
-		ClaimedValue: y,
-	}
-	return res, nil
+	return OpeningProof{ClaimedValue: y}, nil
 }
 
 // Verify verifies a KZG opening proof at a single point

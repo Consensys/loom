@@ -10,8 +10,8 @@ import (
 	gnark_cs "github.com/consensys/gnark/constraint/koalabear"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/scs"
-	"github.com/consensys/iop/pas/univariate"
-	"github.com/consensys/iop/system"
+	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/giop/trace"
 )
 
 const (
@@ -82,11 +82,11 @@ func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial) (*univariate.Polynomial,
 // where Ql[i]=-1), with the explicit note "to be completed by the prover". The prover
 // must set Qk[i]=L[i] so that the vanishing relation Ql[i]*L[i]+Qk[i] = -L[i]+L[i] = 0
 // holds on those rows.
-func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1CSSolution, nbPublicInputs int) (system.Trace, error) {
+func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1CSSolution, nbPublicInputs int) (trace.Trace, error) {
 
 	// ql, qr, qm, qo, qk, id1, id2, id3, s1, s2, s3, l, r, o = 14 columns (z and zs are created in a separate system)
 	nbColumns := 16
-	T := make(system.Trace, nbColumns)
+	T := make(trace.Trace, nbColumns)
 	var err error
 	T[ID_Ql], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Ql)
 	if err != nil {
@@ -212,7 +212,7 @@ func (c *Circuit) Define(api frontend.API) error {
 	return nil
 }
 
-func GetPlonkSystem() (system.System, error) {
+func GetPlonkTrace() (trace.Trace, int, error) {
 
 	assignment := Circuit{
 		A: 3,
@@ -222,18 +222,18 @@ func GetPlonkSystem() (system.System, error) {
 	}
 	witness, err := frontend.NewWitness(&assignment, koalabear.Modulus())
 	if err != nil {
-		return system.System{}, err
+		return nil, 0, err
 	}
 
 	var circuit Circuit
 
 	ccs, err := frontend.CompileU32(koalabear.Modulus(), scs.NewBuilder, &circuit)
 	if err != nil {
-		return system.System{}, err
+		return nil, 0, err
 	}
 	spr, ok := ccs.(*gnark_cs.SparseR1CS)
 	if !ok {
-		return system.System{}, fmt.Errorf("cannot cast ccs to *gnark_cs.SparseR1CS")
+		return nil, 0, fmt.Errorf("cannot cast ccs to *gnark_cs.SparseR1CS")
 
 	}
 
@@ -249,20 +249,18 @@ func GetPlonkSystem() (system.System, error) {
 
 	isolution, err := spr.Solve(witness)
 	if err != nil {
-		return system.System{}, err
+		return nil, size, err
 	}
 	solution, ok := isolution.(*gnark_cs.SparseR1CSSolution)
 	if !ok {
-		return system.System{}, fmt.Errorf("cannot cast isolution to *gnark_cs.SparseR1CSSolution")
+		return nil, size, fmt.Errorf("cannot cast isolution to *gnark_cs.SparseR1CSSolution")
 	}
 
 	T, err := BuildTrace(publicTrace, solution, nbPublic)
 	if err != nil {
-		return system.System{}, err
+		return nil, size, err
 	}
 
-	S := system.NewSystem(T, []system.Constraint{}, []system.Constraint{}, size)
-
-	return S, nil
+	return T, size, nil
 
 }

@@ -3,9 +3,9 @@ package cs
 import (
 	"fmt"
 
-	"github.com/consensys/iop/pas/sym"
-	"github.com/consensys/iop/pas/univariate"
-	"github.com/consensys/iop/trace"
+	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/giop/trace"
 )
 
 // GetComputationableColumn atm there is only one type of computableColumns, but when there will be more

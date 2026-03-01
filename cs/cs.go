@@ -1,16 +1,16 @@
 package cs
 
 import (
-	"github.com/consensys/iop/pas/sym"
-	"github.com/consensys/iop/trace"
+	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/trace"
 )
 
 // CompiledIOP DAG containing all tha proverActions, and the final constraint that must vanish
 // on X^N-1
 type CompiledIOP struct {
-	ProverActions []ProverAction
-	Constraint    Constraint
-	N             int
+	ProverActions     []ProverAction
+	VanishingRelation Constraint
+	N                 int
 }
 
 type Constraint = sym.Expr
