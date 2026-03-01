@@ -60,7 +60,7 @@ func DegreeReductionIOP(prot *protocol.Protocol, C system.Constraint, targetDegr
 	}
 
 	// IDs to commit
-	IDtoCommit := sym.RemoveDuplicates(C.Vars())
+	IDtoCommit := sym.RemoveDuplicates(C.CommittedColumns())
 	if _, err := prot.SendMeAChallenge(IDtoCommit, alpha); err != nil {
 		return err
 	}

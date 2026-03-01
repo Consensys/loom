@@ -23,11 +23,11 @@ func TestPlonk(t *testing.T) {
 	// ( (L, ID1), (R, ID2), (O, ID3)) and ( (L, S1), (R, S2), (O, S3)) must be equal as multisets
 
 	// in a real life example, this would be parsed from the constraint file
-	C := sym.NewVar(ID_Ql).Mul(sym.NewVar(ID_L)).
-		Add(sym.NewVar(ID_Qr).Mul(sym.NewVar(ID_R))).
-		Add(sym.NewVar(ID_Qm).Mul(sym.NewVar(ID_L)).Mul(sym.NewVar(ID_R))).
-		Add(sym.NewVar(ID_Qo).Mul(sym.NewVar(ID_O))).
-		Add(sym.NewVar(ID_Qk))
+	C := sym.NewCommittedColumn(ID_Ql).Mul(sym.NewCommittedColumn(ID_L)).
+		Add(sym.NewCommittedColumn(ID_Qr).Mul(sym.NewCommittedColumn(ID_R))).
+		Add(sym.NewCommittedColumn(ID_Qm).Mul(sym.NewCommittedColumn(ID_L)).Mul(sym.NewCommittedColumn(ID_R))).
+		Add(sym.NewCommittedColumn(ID_Qo).Mul(sym.NewCommittedColumn(ID_O))).
+		Add(sym.NewCommittedColumn(ID_Qk))
 
 	system.AddConstraint(&S, C)
 

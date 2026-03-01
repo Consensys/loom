@@ -1,0 +1,326 @@
+package prover
+
+import (
+	"crypto/sha256"
+	"fmt"
+	"sync"
+	"sync/atomic"
+
+	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
+	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/iop/constants"
+	"github.com/consensys/iop/crypto/dummycommitment"
+	"github.com/consensys/iop/cs"
+	"github.com/consensys/iop/pas/sym"
+	"github.com/consensys/iop/pas/univariate"
+	"github.com/consensys/iop/trace"
+)
+
+// Runtime contains the data needed to run the CompiledIOP to generate the proof.
+type Runtime struct {
+	CompiledIOP cs.CompiledIOP
+	Trace       trace.Trace
+}
+
+func NewRuntime(cciop cs.CompiledIOP, trace trace.Trace) Runtime {
+	return Runtime{
+		CompiledIOP: cciop,
+		Trace:       trace,
+	}
+}
+
+// Kahn’s style scheduler for Functions (with parallel schedule)
+func (runtime Runtime) Solve(knownColumns map[string]bool, proof *cs.Proof, nbWorker int) error {
+
+	funcs := runtime.CompiledIOP.ProverActions
+	n := len(funcs)
+
+	inDegree := make([]int32, n)
+	consumers := make(map[string][]int)
+
+	// Build dependency tracking
+	for i, f := range funcs {
+		leaves := cs.GetColumnsId(f.Inputs)
+		for _, l := range leaves {
+			if !knownColumns[l] {
+				inDegree[i]++
+			}
+			consumers[l] = append(consumers[l], i)
+		}
+	}
+
+	readyQueue := make(chan int, n)
+	var wg sync.WaitGroup
+
+	// Count how many functions executed
+	var executed int32
+
+	// Worker logic
+	worker := func() {
+		for i := range readyQueue {
+			err := funcs[i].Execute(runtime.Trace, proof)
+			if err != nil {
+				panic(err)
+			}
+
+			atomic.AddInt32(&executed, 1)
+
+			// Mark outputs known and release consumers
+			for _, out := range funcs[i].Outputs {
+				knownColumns[out] = true
+
+				for _, j := range consumers[out] {
+					if atomic.AddInt32(&inDegree[j], -1) == 0 {
+						wg.Add(1) // whenever we populate teh chan, we need to add one more task to the wait group
+						readyQueue <- j
+					}
+				}
+			}
+
+			wg.Done()
+		}
+	}
+
+	// Start workers
+	for i := 0; i < nbWorker; i++ {
+		go worker()
+	}
+
+	// Seed initial ready functions
+	for i := range funcs {
+		if inDegree[i] == 0 {
+			wg.Add(1) // whenever we populate teh chan, we need to add one more task to the wait group
+			readyQueue <- i
+		}
+	}
+
+	// Wait until all scheduled work completes
+	wg.Wait()
+	close(readyQueue)
+
+	// Detect cycle / unsatisfied dependencies
+	if int(executed) != n {
+		return fmt.Errorf("cycle detected or missing initialization")
+	}
+
+	return nil
+}
+
+// FinalChallenges returns the last challenges in the DAG whose nodes are
+// {inputs: rounds[i].DependenciesChallenges, output: rounds[i].ChallengeName}
+func FinalChallenges(rounds []cs.Round) []string {
+	usedAsInput := make(map[string]bool)
+	produced := make(map[string]bool)
+
+	for _, f := range rounds {
+		for _, in := range f.DependenciesChallenges {
+			usedAsInput[in] = true
+		}
+		produced[f.ChallengeName] = true
+
+	}
+
+	finals := []string{}
+	for v := range produced {
+		if !usedAsInput[v] {
+			finals = append(finals, v)
+		}
+	}
+
+	return finals
+}
+
+// Fold all the constraints by sampling a random challenge, derived from the necessary data to ensure that this challenge
+// cannot have been derived derived prior to any of the prover<->interactions and commitments
+func (runtime Runtime) DeriveFinalFoldingChallenge(proof *cs.Proof) error {
+
+	proof.VanishingRelation = runtime.CompiledIOP.Constraint
+
+	// generate the folding challenge whose name is constants.FINAL_FOLDING_CHALLENGE, and which must be be bound to all the necessary
+	// data to ensure it cannot have been derived prior to running all the previous IOPs and commitments
+
+	// 1. create the dependencies of the folding challenge to all the polynomials not committed
+	var round cs.Round
+	round.ChallengeName = constants.FINAL_FOLDING_CHALLENGE
+	leaves := proof.VanishingRelation.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutComputableColumns()))
+	round.DependenciesCommittedColumns = make([]string, 0, len(leaves))
+	for _, l := range leaves {
+		if _, ok := proof.OpeningProofs[l]; !ok { // <- the column whose ID is l is not committed, we add it to bindings
+			round.DependenciesCommittedColumns = append(round.DependenciesCommittedColumns, l)
+		}
+	}
+
+	// 2. create the dependencies of the folding challenge to the challenges which are the outputs of the DAG whose inputs/outputs are challenges
+	round.DependenciesChallenges = FinalChallenges(proof.Rounds)
+	proof.Rounds = append(proof.Rounds, round)
+
+	// Now 1. and 2. guarantee the order: now we know that teh challenge cannot have been generated prior to committing to everything and prior to running every sub protocols
+
+	// 3. Commit to all the polynomials whose name matches round.DependenciesCommittedColumns. Record the commitments in the proof, and update FS along the way
+	fs := fiatshamir.NewTranscript(sha256.New())
+	err := fs.NewChallenge(constants.FINAL_FOLDING_CHALLENGE)
+	if err != nil {
+		return err
+	}
+	for _, id := range round.DependenciesCommittedColumns {
+		poly, ok := runtime.Trace[id]
+		if !ok {
+			return fmt.Errorf("polynomial %s not found in the trace", id)
+		}
+		com, err := dummycommitment.Commit(poly)
+		err = fs.Bind(constants.FINAL_FOLDING_CHALLENGE, com.Marshal())
+		if err != nil {
+			return err
+		}
+		proof.OpeningProofs[id] = dummycommitment.PackedProof{Digest: com}
+	}
+
+	// 4. Bind the challenge to the other challenges it depends on
+	for _, id := range round.DependenciesChallenges {
+		c, ok := runtime.Trace[id]
+		if !ok {
+			return fmt.Errorf("challenge %s not found in the trace", id)
+		}
+		cVal := c.EP.Coefficients[0]
+		err := fs.Bind(constants.FINAL_FOLDING_CHALLENGE, cVal.Marshal())
+		if err != nil {
+			return err
+		}
+	}
+
+	// 5. Derive the challenge
+	bc, err := fs.ComputeChallenge(constants.FINAL_FOLDING_CHALLENGE)
+	if err != nil {
+		return err
+	}
+	var c koalabear.Element
+	c.SetBytes(bc)
+
+	// 6. add the challenge as a constant column, since it might appear in other constraints
+	challengeColumn, err := univariate.NewConstantPolynomial(c)
+	if err != nil {
+		return err
+	}
+
+	err = cs.RegisterColumn(runtime.Trace, constants.FINAL_FOLDING_CHALLENGE, &challengeColumn)
+	if err != nil {
+		return err
+	}
+
+	return err
+}
+
+// ComputeQuotient computes H:=runtime.CompiledIOP.Constraint(runtime.Trace)/X^N-1 and commit to it
+func (runtime Runtime) ComputeQuotient(proof *cs.Proof) error {
+
+	H, err := univariate.ComputeQuotient(runtime.Trace, runtime.CompiledIOP.Constraint, runtime.CompiledIOP.N)
+	if err != nil {
+		return fmt.Errorf("ComputeQuotient: %w", err)
+	}
+
+	digest, err := dummycommitment.Commit(&H)
+	if err != nil {
+		return err
+	}
+	proof.OpeningProofs[constants.FINAL_QUOTIENT] = dummycommitment.PackedProof{Digest: digest}
+
+	return nil
+}
+
+// DeriveOpeningChallenge register the final round for deriving the opening challenge, and compute it
+func (runtime Runtime) DeriveOpeningChallenge(proof *cs.Proof) (koalabear.Element, error) {
+
+	// register the round in the proof
+	var round cs.Round
+	round.ChallengeName = constants.FINAL_EVALUATION_POINT
+	round.DependenciesCommittedColumns = []string{constants.FINAL_QUOTIENT}
+	proof.Rounds = append(proof.Rounds, round)
+
+	// derive the challenge, depending on proof.OpeningProofs[constants.FINAL_QUOTIENT].Digest
+	fs := fiatshamir.NewTranscript(sha256.New())
+	fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
+	if _, ok := proof.OpeningProofs[constants.FINAL_QUOTIENT]; !ok {
+		return koalabear.Element{}, fmt.Errorf("%s not found in the list of digests", constants.FINAL_QUOTIENT)
+	}
+	com := proof.OpeningProofs[constants.FINAL_QUOTIENT]
+	err := fs.Bind(constants.FINAL_EVALUATION_POINT, com.Digest.Marshal())
+	if err != nil {
+		return koalabear.Element{}, err
+	}
+
+	bzeta, err := fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
+	if err != nil {
+		return koalabear.Element{}, err
+	}
+	var zeta koalabear.Element
+	zeta.SetBytes(bzeta)
+
+	// register zeta in the trace
+	zetaColumn, err := univariate.NewConstantPolynomial(zeta)
+	if err != nil {
+		return koalabear.Element{}, err
+	}
+	err = cs.RegisterColumn(runtime.Trace, constants.FINAL_EVALUATION_POINT, &zetaColumn)
+	if err != nil {
+		return koalabear.Element{}, err
+	}
+
+	return zeta, nil
+}
+
+// OpenCommitments open all columns at zeta
+func (runtime Runtime) OpenCommitments(proof *cs.Proof, zeta koalabear.Element) error {
+	committedColumns := runtime.CompiledIOP.Constraint.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutComputableColumns()))
+	sym.RemoveDuplicates(committedColumns)
+	var err error
+	for _, l := range committedColumns {
+		com, ok := proof.OpeningProofs[l]
+		if !ok {
+			return fmt.Errorf("commitment %s not found in the proof", l)
+		}
+		poly, ok := runtime.Trace[l]
+		if !ok {
+			return fmt.Errorf("column %s not found in the trace", l)
+		}
+		com.OpeningProof, err = dummycommitment.Open(*poly, zeta)
+		if err != nil {
+			return err
+		}
+		proof.OpeningProofs[l] = com
+	}
+	return nil
+}
+
+func (runtime Runtime) Prove(knownColumns map[string]bool, nbWorkers int) (cs.Proof, error) {
+
+	proof := cs.NewProof(runtime.CompiledIOP.N)
+
+	// 1. Solve
+	err := runtime.Solve(knownColumns, &proof, nbWorkers)
+	if err != nil {
+		return proof, err
+	}
+
+	// 2. Derive folding challenge
+	err = runtime.DeriveFinalFoldingChallenge(&proof)
+	if err != nil {
+		return proof, err
+	}
+
+	// 3. compute quotient
+	err = runtime.ComputeQuotient(&proof)
+	if err != nil {
+		return proof, err
+	}
+
+	// 4. derive opening challenge
+	zeta, err := runtime.DeriveOpeningChallenge(&proof)
+	if err != nil {
+		return proof, err
+	}
+
+	// 5. compute opening proof
+	err = runtime.OpenCommitments(&proof, zeta)
+
+	return proof, err
+}

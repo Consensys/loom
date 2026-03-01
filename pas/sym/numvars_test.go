@@ -6,7 +6,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
-func TestExprNumVars(t *testing.T) {
+func TestExprNumCommittedColumns(t *testing.T) {
 	var one koalabear.Element
 	one.SetOne()
 
@@ -16,17 +16,17 @@ func TestExprNumVars(t *testing.T) {
 		expected int
 	}{
 		{"constant", NewConst(one), 0},
-		{"single var", NewVar("X"), 1},
-		{"two vars", NewVar("X").Add(NewVar("Y")), 2},
-		{"three vars", NewVar("X").Mul(NewVar("Y")).Add(NewVar("Z")), 3},
-		{"repeated var", NewVar("X").Add(NewVar("X")), 1},
-		{"x^2 + y", NewVar("X").Pow(2).Add(NewVar("Y")), 2},
-		{"x*y*z", Prod(NewVar("X"), NewVar("Y"), NewVar("Z")), 3},
+		{"single var", NewCommittedColumn("X"), 1},
+		{"two vars", NewCommittedColumn("X").Add(NewCommittedColumn("Y")), 2},
+		{"three vars", NewCommittedColumn("X").Mul(NewCommittedColumn("Y")).Add(NewCommittedColumn("Z")), 3},
+		{"repeated var", NewCommittedColumn("X").Add(NewCommittedColumn("X")), 1},
+		{"x^2 + y", NewCommittedColumn("X").Pow(2).Add(NewCommittedColumn("Y")), 2},
+		{"x*y*z", Prod(NewCommittedColumn("X"), NewCommittedColumn("Y"), NewCommittedColumn("Z")), 3},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := tc.expr.NumVars()
+			result := tc.expr.NumCommittedColumns()
 			if result != tc.expected {
 				t.Errorf("%s: got %d variables, expected %d", tc.name, result, tc.expected)
 			}
@@ -34,10 +34,10 @@ func TestExprNumVars(t *testing.T) {
 	}
 }
 
-func TestPolynomialNumVars(t *testing.T) {
+func TestPolynomialNumCommittedColumns(t *testing.T) {
 	testCases := []struct {
 		name     string
-		numVars  int
+		numCommittedColumns  int
 		expected int
 	}{
 		{"0 vars", 0, 0},
@@ -51,8 +51,8 @@ func TestPolynomialNumVars(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var one koalabear.Element
 			one.SetOne()
-			poly := ConstPoly(tc.numVars, one)
-			result := poly.NumVars()
+			poly := ConstPoly(tc.numCommittedColumns, one)
+			result := poly.NumCommittedColumns()
 			if result != tc.expected {
 				t.Errorf("%s: got %d variables, expected %d", tc.name, result, tc.expected)
 			}
@@ -60,10 +60,10 @@ func TestPolynomialNumVars(t *testing.T) {
 	}
 }
 
-func TestHornerNumVars(t *testing.T) {
+func TestHornerNumCommittedColumns(t *testing.T) {
 	testCases := []struct {
 		name     string
-		numVars  int
+		numCommittedColumns  int
 		expected int
 	}{
 		{"0 vars constant", 0, 0},
@@ -79,14 +79,14 @@ func TestHornerNumVars(t *testing.T) {
 
 			// Create a polynomial with the specified number of variables
 			var poly Polynomial
-			if tc.numVars == 0 {
+			if tc.numCommittedColumns == 0 {
 				poly = ConstPoly(0, one)
 			} else {
-				poly = VarPoly(tc.numVars, 0) // Use first variable
+				poly = VarPoly(tc.numCommittedColumns, 0) // Use first variable
 			}
 
 			horner := ToHorner(poly)
-			result := horner.NumVars()
+			result := horner.NumCommittedColumns()
 			if result != tc.expected {
 				t.Errorf("%s: got %d variables, expected %d", tc.name, result, tc.expected)
 			}
@@ -94,19 +94,19 @@ func TestHornerNumVars(t *testing.T) {
 	}
 }
 
-func TestNumVarsConsistency(t *testing.T) {
+func TestNumCommittedColumnsConsistency(t *testing.T) {
 	var one koalabear.Element
 	one.SetOne()
 
 	// Create variables
-	x0 := NewVar("X0")
-	x1 := NewVar("X1")
-	x2 := NewVar("X2")
+	x0 := NewCommittedColumn("X0")
+	x1 := NewCommittedColumn("X1")
+	x2 := NewCommittedColumn("X2")
 
 	testCases := []struct {
 		name    string
 		expr    Expr
-		numVars int
+		numCommittedColumns int
 	}{
 		{"constant", NewConst(one), 1},
 		{"x0", x0, 2},
@@ -121,7 +121,7 @@ func TestNumVarsConsistency(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Get number of variables from expression
-			exprVars := tc.expr.NumVars()
+			exprCommittedColumns := tc.expr.NumCommittedColumns()
 
 			// Create varindex mapping
 			varindex := make(VarIndex)
@@ -130,33 +130,33 @@ func TestNumVarsConsistency(t *testing.T) {
 			varindex["X2"] = 2
 
 			// Convert to polynomial
-			poly := Convert(tc.expr, varindex, tc.numVars)
-			polyVars := poly.NumVars()
+			poly := Convert(tc.expr, varindex, tc.numCommittedColumns)
+			polyCommittedColumns := poly.NumCommittedColumns()
 
 			// Convert to Horner
 			horner := ToHorner(poly)
-			hornerVars := horner.NumVars()
+			hornerCommittedColumns := horner.NumCommittedColumns()
 
 			// Verify consistency
-			if polyVars != tc.numVars {
-				t.Errorf("%s: Polynomial.NumVars() = %d, expected %d",
-					tc.name, polyVars, tc.numVars)
+			if polyCommittedColumns != tc.numCommittedColumns {
+				t.Errorf("%s: Polynomial.NumCommittedColumns() = %d, expected %d",
+					tc.name, polyCommittedColumns, tc.numCommittedColumns)
 			}
 
-			if hornerVars != tc.numVars {
-				t.Errorf("%s: Horner.NumVars() = %d, expected %d",
-					tc.name, hornerVars, tc.numVars)
+			if hornerCommittedColumns != tc.numCommittedColumns {
+				t.Errorf("%s: Horner.NumCommittedColumns() = %d, expected %d",
+					tc.name, hornerCommittedColumns, tc.numCommittedColumns)
 			}
 
-			// Expr.NumVars() might be less than or equal to the polynomial space size
+			// Expr.NumCommittedColumns() might be less than or equal to the polynomial space size
 			// since the polynomial space size is determined by the varindex
-			if exprVars > tc.numVars {
-				t.Errorf("%s: Expr.NumVars() = %d > polynomial space size %d",
-					tc.name, exprVars, tc.numVars)
+			if exprCommittedColumns > tc.numCommittedColumns {
+				t.Errorf("%s: Expr.NumCommittedColumns() = %d > polynomial space size %d",
+					tc.name, exprCommittedColumns, tc.numCommittedColumns)
 			}
 
-			t.Logf("%s: Expr.NumVars()=%d, Polynomial.NumVars()=%d, Horner.NumVars()=%d",
-				tc.name, exprVars, polyVars, hornerVars)
+			t.Logf("%s: Expr.NumCommittedColumns()=%d, Polynomial.NumCommittedColumns()=%d, Horner.NumCommittedColumns()=%d",
+				tc.name, exprCommittedColumns, polyCommittedColumns, hornerCommittedColumns)
 		})
 	}
 }

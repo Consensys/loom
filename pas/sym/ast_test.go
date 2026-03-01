@@ -34,7 +34,7 @@ func TestString(t *testing.T) {
 	var five koalabear.Element
 	five.SetUint64(5)
 
-	a := NewVar("x")
+	a := NewCommittedColumn("x")
 	b := NewConst(five)
 	c := &Add{Left: a, Right: b}
 	d := &Mul{Left: a, Right: c}
@@ -59,8 +59,8 @@ func TestString(t *testing.T) {
 
 func TestPrune(t *testing.T) {
 
-	x0 := NewVar("x_0")
-	x1 := NewVar("x_1")
+	x0 := NewCommittedColumn("x_0")
+	x1 := NewCommittedColumn("x_1")
 	e := x0.Add(x1).Pow(8)
 
 	degreeBefore := e.Degree()
@@ -80,63 +80,75 @@ func TestPrune(t *testing.T) {
 
 }
 
-func TestComputableColumns(t *testing.T) {
+func TestLeaves(t *testing.T) {
 	var five koalabear.Element
 	five.SetUint64(5)
 
-	// Leaf nodes
-	assertSameSet(t, NewComputableColumn("L0").ComputableColumns(), []string{"L0"})
-	assertSameSet(t, NewVar("x").ComputableColumns(), []string{})
-	assertSameSet(t, NewConst(five).ComputableColumns(), []string{})
-	assertSameSet(t, NewChallenge("beta").ComputableColumns(), []string{})
+	all := NewConfig()
+	woCC := NewConfig(WithoutComputableColumns())
+	woChal := NewConfig(WithoutChallenges())
+	woAll := NewConfig(WithoutComputableColumns(), WithoutChallenges())
 
-	// ComputableColumn mixed with Var — only ComputableColumn returned
-	assertSameSet(t,
-		NewComputableColumn("L0").Add(NewVar("x")).ComputableColumns(),
-		[]string{"L0"},
-	)
+	// --- Leaf nodes ---
 
-	// ComputableColumn mixed with Challenge — only ComputableColumn returned
-	assertSameSet(t,
-		NewComputableColumn("L0").Mul(NewChallenge("gamma")).ComputableColumns(),
-		[]string{"L0"},
-	)
+	// ComputableColumn: present by default, absent when excluded
+	assertSameSet(t, NewComputableColumn("L0").Leaves(all), []string{"L0"})
+	assertSameSet(t, NewComputableColumn("L0").Leaves(woCC), []string{})
+
+	// CommittedColumn: always present regardless of config
+	assertSameSet(t, NewCommittedColumn("x").Leaves(all), []string{"x"})
+	assertSameSet(t, NewCommittedColumn("x").Leaves(woCC), []string{"x"})
+	assertSameSet(t, NewCommittedColumn("x").Leaves(woChal), []string{"x"})
+
+	// Const: never present
+	assertSameSet(t, NewConst(five).Leaves(all), []string{})
+
+	// Challenge: present by default, absent when excluded
+	assertSameSet(t, NewChallenge("beta").Leaves(all), []string{"beta"})
+	assertSameSet(t, NewChallenge("beta").Leaves(woChal), []string{})
+
+	// --- Composite expressions ---
+
+	// ComputableColumn + CommittedColumn
+	e := NewComputableColumn("L0").Add(NewCommittedColumn("x"))
+	assertSameSet(t, e.Leaves(all), []string{"L0", "x"})
+	assertSameSet(t, e.Leaves(woCC), []string{"x"})
+
+	// ComputableColumn * Challenge
+	e = NewComputableColumn("L0").Mul(NewChallenge("gamma"))
+	assertSameSet(t, e.Leaves(all), []string{"L0", "gamma"})
+	assertSameSet(t, e.Leaves(woCC), []string{"gamma"})
+	assertSameSet(t, e.Leaves(woChal), []string{"L0"})
+	assertSameSet(t, e.Leaves(woAll), []string{})
 
 	// Multiple ComputableColumns
-	assertSameSet(t,
-		NewComputableColumn("L0").Add(NewComputableColumn("L1")).ComputableColumns(),
-		[]string{"L0", "L1"},
-	)
+	e = NewComputableColumn("L0").Add(NewComputableColumn("L1"))
+	assertSameSet(t, e.Leaves(all), []string{"L0", "L1"})
+	assertSameSet(t, e.Leaves(woCC), []string{})
 
 	// Sub: ComputableColumn on the right
-	assertSameSet(t,
-		NewVar("x").Sub(NewComputableColumn("L0")).ComputableColumns(),
-		[]string{"L0"},
-	)
+	e = NewCommittedColumn("x").Sub(NewComputableColumn("L0"))
+	assertSameSet(t, e.Leaves(all), []string{"x", "L0"})
+	assertSameSet(t, e.Leaves(woCC), []string{"x"})
 
 	// Pow: ComputableColumn inside
-	assertSameSet(t,
-		NewComputableColumn("L0").Pow(2).ComputableColumns(),
-		[]string{"L0"},
-	)
+	assertSameSet(t, NewComputableColumn("L0").Pow(2).Leaves(all), []string{"L0"})
+	assertSameSet(t, NewComputableColumn("L0").Pow(2).Leaves(woCC), []string{})
 
-	// Pow: Var inside — no ComputableColumn
-	assertSameSet(t,
-		NewVar("x").Pow(3).ComputableColumns(),
-		[]string{},
-	)
+	// Pow: CommittedColumn inside — no ComputableColumn
+	assertSameSet(t, NewCommittedColumn("x").Pow(3).Leaves(all), []string{"x"})
+	assertSameSet(t, NewCommittedColumn("x").Pow(3).Leaves(woCC), []string{"x"})
 
-	// Nested: (x + L0) * (y - alpha) — only L0 returned
-	assertSameSet(t,
-		NewVar("x").Add(NewComputableColumn("L0")).Mul(NewVar("y").Sub(NewChallenge("alpha"))).ComputableColumns(),
-		[]string{"L0"},
-	)
+	// Nested: (x + L0) * (y - alpha) — all four leaf types interact
+	e = NewCommittedColumn("x").Add(NewComputableColumn("L0")).Mul(NewCommittedColumn("y").Sub(NewChallenge("alpha")))
+	assertSameSet(t, e.Leaves(all), []string{"x", "L0", "y", "alpha"})
+	assertSameSet(t, e.Leaves(woCC), []string{"x", "y", "alpha"})
+	assertSameSet(t, e.Leaves(woChal), []string{"x", "L0", "y"})
+	assertSameSet(t, e.Leaves(woAll), []string{"x", "y"})
 
 	// Same ComputableColumn appearing multiple times — deduplicated
-	assertSameSet(t,
-		NewComputableColumn("L0").Add(NewComputableColumn("L0")).ComputableColumns(),
-		[]string{"L0"},
-	)
+	e = NewComputableColumn("L0").Add(NewComputableColumn("L0"))
+	assertSameSet(t, e.Leaves(all), []string{"L0"})
 }
 
 func TestReplaceLeafByExpression(t *testing.T) {
@@ -145,64 +157,64 @@ func TestReplaceLeafByExpression(t *testing.T) {
 	five.SetUint64(5)
 
 	// Var: matching name → replaced
-	if got := NewVar("x").ReplaceLeafByExpression("x", NewVar("y")); got.String() != "y" {
+	if got := NewCommittedColumn("x").ReplaceLeafByExpression("x", NewCommittedColumn("y")); got.String() != "y" {
 		t.Errorf("expected 'y', got '%s'", got.String())
 	}
 
 	// Var: non-matching name → unchanged
-	if got := NewVar("x").ReplaceLeafByExpression("z", NewVar("y")); got.String() != "x" {
+	if got := NewCommittedColumn("x").ReplaceLeafByExpression("z", NewCommittedColumn("y")); got.String() != "x" {
 		t.Errorf("expected 'x', got '%s'", got.String())
 	}
 
 	// Challenge: matching name → replaced
-	if got := NewChallenge("alpha").ReplaceLeafByExpression("alpha", NewVar("y")); got.String() != "y" {
+	if got := NewChallenge("alpha").ReplaceLeafByExpression("alpha", NewCommittedColumn("y")); got.String() != "y" {
 		t.Errorf("expected 'y', got '%s'", got.String())
 	}
 
 	// Challenge: non-matching name → unchanged
-	if got := NewChallenge("alpha").ReplaceLeafByExpression("beta", NewVar("y")); got.String() != "alpha" {
+	if got := NewChallenge("alpha").ReplaceLeafByExpression("beta", NewCommittedColumn("y")); got.String() != "alpha" {
 		t.Errorf("expected 'alpha', got '%s'", got.String())
 	}
 
 	// Const: never replaced regardless of the leaf name
-	if got := NewConst(five).ReplaceLeafByExpression("5", NewVar("y")); got.String() != "5" {
+	if got := NewConst(five).ReplaceLeafByExpression("5", NewCommittedColumn("y")); got.String() != "5" {
 		t.Errorf("expected '5', got '%s'", got.String())
 	}
 
 	// Add: only the matching child is replaced
-	e := NewVar("x").Add(NewConst(five))
-	if got := e.ReplaceLeafByExpression("x", NewVar("y")); got.String() != "(y + 5)" {
+	e := NewCommittedColumn("x").Add(NewConst(five))
+	if got := e.ReplaceLeafByExpression("x", NewCommittedColumn("y")); got.String() != "(y + 5)" {
 		t.Errorf("expected '(y + 5)', got '%s'", got.String())
 	}
 
 	// All occurrences replaced: x + x with x→y gives y + y
-	e = NewVar("x").Add(NewVar("x"))
-	if got := e.ReplaceLeafByExpression("x", NewVar("y")); got.String() != "(y + y)" {
+	e = NewCommittedColumn("x").Add(NewCommittedColumn("x"))
+	if got := e.ReplaceLeafByExpression("x", NewCommittedColumn("y")); got.String() != "(y + y)" {
 		t.Errorf("expected '(y + y)', got '%s'", got.String())
 	}
 
 	// Sub: alpha replaced by composite expression
-	e = NewVar("x").Sub(NewChallenge("alpha"))
-	if got := e.ReplaceLeafByExpression("alpha", NewVar("x").Mul(NewVar("y"))); got.String() != "(x - (x * y))" {
+	e = NewCommittedColumn("x").Sub(NewChallenge("alpha"))
+	if got := e.ReplaceLeafByExpression("alpha", NewCommittedColumn("x").Mul(NewCommittedColumn("y"))); got.String() != "(x - (x * y))" {
 		t.Errorf("expected '(x - (x * y))', got '%s'", got.String())
 	}
 
 	// Mul: nested replacement — x in x*(x+y) with x→a gives a*(a+y)
-	e = NewVar("x").Mul(NewVar("x").Add(NewVar("y")))
-	if got := e.ReplaceLeafByExpression("x", NewVar("a")); got.String() != "(a * (a + y))" {
+	e = NewCommittedColumn("x").Mul(NewCommittedColumn("x").Add(NewCommittedColumn("y")))
+	if got := e.ReplaceLeafByExpression("x", NewCommittedColumn("a")); got.String() != "(a * (a + y))" {
 		t.Errorf("expected '(a * (a + y))', got '%s'", got.String())
 	}
 
 	// Pow: base replaced by composite
-	e = &Pow{Base: NewVar("x"), Exp: 2}
-	if got := e.ReplaceLeafByExpression("x", NewVar("y").Add(NewVar("z"))); got.String() != "((y + z) ^ 2)" {
+	e = &Pow{Base: NewCommittedColumn("x"), Exp: 2}
+	if got := e.ReplaceLeafByExpression("x", NewCommittedColumn("y").Add(NewCommittedColumn("z"))); got.String() != "((y + z) ^ 2)" {
 		t.Errorf("expected '((y + z) ^ 2)', got '%s'", got.String())
 	}
 
 	// Original expression is not modified by replacement
-	original := NewVar("x").Add(NewVar("y"))
+	original := NewCommittedColumn("x").Add(NewCommittedColumn("y"))
 	originalStr := original.String()
-	_ = original.ReplaceLeafByExpression("x", NewVar("z"))
+	_ = original.ReplaceLeafByExpression("x", NewCommittedColumn("z"))
 	if original.String() != originalStr {
 		t.Errorf("original modified: expected '%s', got '%s'", originalStr, original.String())
 	}
@@ -210,12 +222,12 @@ func TestReplaceLeafByExpression(t *testing.T) {
 
 func TestEval(t *testing.T) {
 
-	x0 := NewVar("x_0")
-	x1 := NewVar("x_1")
-	x2 := NewVar("x_2")
-	x3 := NewVar("x_3")
+	x0 := NewCommittedColumn("x_0")
+	x1 := NewCommittedColumn("x_1")
+	x2 := NewCommittedColumn("x_2")
+	x3 := NewCommittedColumn("x_3")
 
-	nbVars := 4
+	nbCommittedColumns := 4
 
 	varindex := make(VarIndex)
 	varindex[x0.Name] = 0
@@ -231,7 +243,7 @@ func TestEval(t *testing.T) {
 
 	e := x0.Mul(x1).Add(x2).Mul(x3).Add(NewConst(one)).Mul(NewConst(two)).Add(NewConst(three)).Mul(NewConst(four))
 
-	poly := Convert(e, varindex, nbVars)
+	poly := Convert(e, varindex, nbCommittedColumns)
 
 	horner := ToHorner(poly)
 

@@ -57,12 +57,12 @@ func buildGrandSumAndRegisterConstraints(S *System, E, M sym.Expr, ΣE string, o
 	AddComputableColumn(S, lagrangeCC)
 
 	// register the two constraints
-	symLagrange := sym.NewVar(lagrangeID)
+	symLagrange := sym.NewCommittedColumn(lagrangeID)
 	oneMinusLagrange := sym.NewConst(koalabear.One()).Sub(symLagrange)
-	diffΣE := sym.NewVar(ΣE).Sub(sym.NewVar(ΣEShifted))
+	diffΣE := sym.NewCommittedColumn(ΣE).Sub(sym.NewCommittedColumn(ΣEShifted))
 	diffΣETimesE := diffΣE.Mul(E)
 	C1 := oneMinusLagrange.Mul(diffΣETimesE.Sub(M))       //(1-LAGRANGE_0)*((ΣE - ΣE(ω^-1 X))*E - M) = 0
-	C2 := symLagrange.Mul((sym.NewVar(ΣE).Mul(E)).Sub(M)) // LAGRANGE_0*(Σ_T*(T-γ) - M)
+	C2 := symLagrange.Mul((sym.NewCommittedColumn(ΣE).Mul(E)).Sub(M)) // LAGRANGE_0*(Σ_T*(T-γ) - M)
 
 	if config.CacheMe {
 		S.CachedConstraints = append(S.CachedConstraints, C1, C2)
@@ -92,7 +92,7 @@ func BuildGrandSumAndRegisterConstraints(S *System, ES, ET sym.Expr, M, ΣS, ΣT
 		return err
 	}
 
-	err = buildGrandSumAndRegisterConstraints(S, ET, sym.NewVar(M), ΣT, opts...)
+	err = buildGrandSumAndRegisterConstraints(S, ET, sym.NewCommittedColumn(M), ΣT, opts...)
 	if err != nil {
 		return err
 	}

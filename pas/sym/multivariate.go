@@ -39,22 +39,22 @@ func decode(s string) []uint32 {
 }
 
 type Polynomial struct {
-	numVars int
-	Coeff   map[string]koalabear.Element
+	numCommittedColumns int
+	Coeff               map[string]koalabear.Element
 }
 
 type VarIndex map[string]int
 
 func ConstPoly(n int, c koalabear.Element) Polynomial {
 	if c.IsZero() {
-		return Polynomial{numVars: n, Coeff: map[string]koalabear.Element{}}
+		return Polynomial{numCommittedColumns: n, Coeff: map[string]koalabear.Element{}}
 	}
 
 	zero := make([]uint32, n)
 	m := encode(zero)
 
 	return Polynomial{
-		numVars: n,
+		numCommittedColumns: n,
 		Coeff: map[string]koalabear.Element{
 			m: c,
 		},
@@ -68,7 +68,7 @@ func VarPoly(n, idx int) Polynomial {
 	var one koalabear.Element
 	one.SetOne()
 	return Polynomial{
-		numVars: n,
+		numCommittedColumns: n,
 		Coeff: map[string]koalabear.Element{
 			encode(exp): one,
 		},
@@ -97,7 +97,7 @@ func (p Polynomial) Add(q Polynomial) Polynomial {
 		}
 	}
 
-	return Polynomial{numVars: p.numVars, Coeff: result}
+	return Polynomial{numCommittedColumns: p.numCommittedColumns, Coeff: result}
 }
 
 func (p Polynomial) Sub(q Polynomial) Polynomial {
@@ -126,7 +126,7 @@ func (p Polynomial) Sub(q Polynomial) Polynomial {
 		}
 	}
 
-	return Polynomial{numVars: p.numVars, Coeff: result}
+	return Polynomial{numCommittedColumns: p.numCommittedColumns, Coeff: result}
 }
 
 func (p Polynomial) Mul(q Polynomial) Polynomial {
@@ -138,8 +138,8 @@ func (p Polynomial) Mul(q Polynomial) Polynomial {
 		for m2, c2 := range q.Coeff {
 			exp2 := decode(m2)
 
-			newExp := make([]uint32, p.numVars)
-			for i := 0; i < p.numVars; i++ {
+			newExp := make([]uint32, p.numCommittedColumns)
+			for i := 0; i < p.numCommittedColumns; i++ {
 				newExp[i] = exp1[i] + exp2[i]
 			}
 
@@ -161,7 +161,7 @@ func (p Polynomial) Mul(q Polynomial) Polynomial {
 		}
 	}
 
-	return Polynomial{numVars: p.numVars, Coeff: result}
+	return Polynomial{numCommittedColumns: p.numCommittedColumns, Coeff: result}
 }
 
 func (p Polynomial) Pow(k uint32) Polynomial {
@@ -170,13 +170,13 @@ func (p Polynomial) Pow(k uint32) Polynomial {
 	one.SetOne()
 
 	if k == 0 {
-		return ConstPoly(p.numVars, one)
+		return ConstPoly(p.numCommittedColumns, one)
 	}
 	if k == 1 {
 		return p
 	}
 
-	result := ConstPoly(p.numVars, one)
+	result := ConstPoly(p.numCommittedColumns, one)
 	base := p
 
 	for k > 0 {
@@ -211,9 +211,9 @@ func (p Polynomial) Degree() int {
 	return maxDegree
 }
 
-// NumVars returns the number of variables in the polynomial
-func (p Polynomial) NumVars() int {
-	return p.numVars
+// NumCommittedColumns returns the number of variables in the polynomial
+func (p Polynomial) NumCommittedColumns() int {
+	return p.numCommittedColumns
 }
 
 func Convert(e Expr, varIndex VarIndex, n int) Polynomial {
@@ -222,7 +222,7 @@ func Convert(e Expr, varIndex VarIndex, n int) Polynomial {
 	case *Const:
 		return ConstPoly(n, node.Value)
 
-	case *Var:
+	case *CommittedColumn:
 		idx := varIndex[node.Name]
 		return VarPoly(n, idx)
 

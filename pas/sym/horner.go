@@ -18,15 +18,15 @@ type Horner struct {
 }
 
 func ToHorner(p Polynomial) *Horner {
-	return buildHorner(p, p.numVars)
+	return buildHorner(p, p.numCommittedColumns)
 }
 
-func buildHorner(p Polynomial, numVars int) *Horner {
+func buildHorner(p Polynomial, numCommittedColumns int) *Horner {
 
 	var zero koalabear.Element
 
 	// Base case: no variables left → scalar
-	if numVars == 0 {
+	if numCommittedColumns == 0 {
 		if len(p.Coeff) == 0 {
 			return &Horner{
 				IsLeaf:   true,
@@ -48,11 +48,11 @@ func buildHorner(p Polynomial, numVars int) *Horner {
 
 	for key, coeff := range p.Coeff {
 		exp := decode(key)
-		last := exp[numVars-1]
+		last := exp[numCommittedColumns-1]
 
 		// remove last coordinate
-		subExp := make([]uint32, numVars-1)
-		copy(subExp, exp[:numVars-1])
+		subExp := make([]uint32, numCommittedColumns-1)
+		copy(subExp, exp[:numCommittedColumns-1])
 
 		subKey := encode(subExp)
 
@@ -87,11 +87,11 @@ func buildHorner(p Polynomial, numVars int) *Horner {
 		}
 
 		subPoly := Polynomial{
-			numVars: numVars - 1,
+			numCommittedColumns: numCommittedColumns - 1,
 			Coeff:   subMap,
 		}
 
-		coeffs[k] = buildHorner(subPoly, numVars-1)
+		coeffs[k] = buildHorner(subPoly, numCommittedColumns-1)
 	}
 
 	return &Horner{
@@ -104,20 +104,20 @@ func (h *Horner) Eval(values []koalabear.Element) koalabear.Element {
 	return evalRecursive(h, values, len(values))
 }
 
-func evalRecursive(h *Horner, values []koalabear.Element, numVars int) koalabear.Element {
+func evalRecursive(h *Horner, values []koalabear.Element, numCommittedColumns int) koalabear.Element {
 
 	if h.IsLeaf {
 		return h.Constant
 	}
 
-	x := values[numVars-1]
+	x := values[numCommittedColumns-1]
 
 	// Horner evaluation
 	var result koalabear.Element
 
 	for i := len(h.Coeffs) - 1; i >= 0; i-- {
 		result.Mul(&result, &x)
-		c := evalRecursive(h.Coeffs[i], values, numVars-1)
+		c := evalRecursive(h.Coeffs[i], values, numCommittedColumns-1)
 		result.Add(&result, &c)
 	}
 
@@ -150,8 +150,8 @@ func (h *Horner) Degree() int {
 	return maxDegree
 }
 
-// NumVars returns the number of variables in the Horner form
-func (h *Horner) NumVars() int {
+// NumCommittedColumns returns the number of variables in the Horner form
+func (h *Horner) NumCommittedColumns() int {
 	if h.IsLeaf {
 		return 0 // Leaf nodes (constants) use no variables
 	}
@@ -162,14 +162,14 @@ func (h *Horner) NumVars() int {
 	}
 
 	// Recursively get the number of variables from coefficients
-	maxVars := 0
+	maxCommittedColumns := 0
 	for _, coeff := range h.Coeffs {
-		vars := coeff.NumVars()
-		if vars > maxVars {
-			maxVars = vars
+		vars := coeff.NumCommittedColumns()
+		if vars > maxCommittedColumns {
+			maxCommittedColumns = vars
 		}
 	}
 
 	// This level adds one more variable
-	return maxVars + 1
+	return maxCommittedColumns + 1
 }

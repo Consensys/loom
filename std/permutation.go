@@ -2,16 +2,14 @@ package std
 
 import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/iop/cs"
 	"github.com/consensys/iop/pas/sym"
-	"github.com/consensys/iop/protocol"
-	"github.com/consensys/iop/system"
 )
 
-// EqualityUpToPermutation proves that the multiset { ID1[j][i] } equals { ID2[j][i] }.
-// Concretely, for every i, j there is k, l such that ID1[i][j] = ID2[k][l].
-// TODO this is syntactic sugar for equalityUpToPermutationIOP (which uses Expr instead of string). Should I let only the original function ?
+// EqualityUpToPermutation proves that the multiset { ID1[j][i] } equals { ID2[j][i] }, up to permutation.
+// For every i, j there is k, l such that ID1[i][j] = ID2[k][l].
 //
-// It models the following Σ protocol (N = domain size, P_j := ID1[j], Q_j := ID2[j]):
+// It models the following Σ systemocol (N = domain size, P_j := ID1[j], Q_j := ID2[j]):
 //
 //	|-------------------------------–-----------------------------------------------|
 //	| [prover]                      |              [verifier]                       |
@@ -35,64 +33,52 @@ import (
 //	|   C1: ∏_j(Q_j-γ)·Z_shifted - ∏_j(P_j-γ)·Z = 0 mod X^N-1                   |
 //	|   C2: (Z-1)·L_0 = 0  (enforces Z[0]=1)                                      |
 //	|-------------------------------–-----------------------------------------------|
-func EqualityUpToPermutationIOP(prot *protocol.Protocol, ID1, ID2 []string, IDGrandProduct string, gamma string, opts ...system.Option) error {
+func EqualityUpToPermutationIOP(system *cs.System, ID1, ID2 []string, IDGrandProduct string, gamma string) {
 
+	// 1. sample gamma: register the prover action SendMeAChallenge
 	E1 := make([]sym.Expr, len(ID1))
-	for i, id := range ID1 {
-		E1[i] = sym.NewVar(id)
+	for i := 0; i < len(ID1); i++ {
+		E1[i] = sym.NewCommittedColumn(ID1[i])
 	}
 	E2 := make([]sym.Expr, len(ID2))
-	for i, id := range ID2 {
-		E2[i] = sym.NewVar(id)
+	for i := 0; i < len(ID2); i++ {
+		E2[i] = sym.NewCommittedColumn(ID2[i])
+	}
+	system.RegisterProverAction(append(E1, E2...), []string{gamma}, cs.SendMeAChallenge)
+
+	// 2. register the symbolic constraint \Pi_i (Id1[i]-\gamma), \Pi_i (Id2[i]-\gamma) in the system
+	E1MinusGamma := E1[0].Sub(sym.NewChallenge(gamma))
+	for i := 1; i < len(E1); i++ {
+		E1MinusGamma = E1MinusGamma.Mul(E1[i].Sub(sym.NewChallenge(gamma)))
+	}
+	E2MinusGamma := E2[0].Sub(sym.NewChallenge(gamma))
+	for i := 1; i < len(E2); i++ {
+		E2MinusGamma = E2MinusGamma.Mul(E2[i].Sub(sym.NewChallenge(gamma)))
 	}
 
-	return equalityUpToPermutationIOP(prot, E1, E2, IDGrandProduct, gamma, opts...)
+	equalityUpToPermutationIOP(system, E1MinusGamma, E2MinusGamma, IDGrandProduct)
 
 }
 
-func equalityUpToPermutationIOP(prot *protocol.Protocol, E1, E2 []sym.Expr, IDGrandProduct string, gamma string, opts ...system.Option) error {
+func equalityUpToPermutationIOP(system *cs.System, E1, E2 sym.Expr, IDGrandProduct string) {
 
-	// collect the physical column IDs (leaves of the expressions, excluding placeholders)
-	// to derive the challenge via Fiat-Shamir
-	var physicalIDs []string
-	for _, e := range E1 {
-		physicalIDs = append(physicalIDs, e.Vars()...)
-	}
-	for _, e := range E2 {
-		physicalIDs = append(physicalIDs, e.Vars()...)
-	}
-	physicalIDs = sym.RemoveDuplicates(physicalIDs)
+	system.RegisterConstraint(cs.EnforceGrandProduct(E1, E2, IDGrandProduct, system.N))
 
-	_, err := prot.SendMeAChallenge(physicalIDs, gamma) // <- the challenge column is allocated here, we can refer to it by name from now
-	if err != nil {
-		return err
-	}
+	// 1. register the prover action for creating the grand product and grand product shifted
+	system.RegisterProverAction([]sym.Expr{E1, E2}, []string{IDGrandProduct}, cs.GrandProduct)
 
-	E1MinusGamma := make([]sym.Expr, len(E1))
-	E2MinusGamma := make([]sym.Expr, len(E2))
-	for i := 0; i < len(E1); i++ {
-		E1MinusGamma[i] = E1[i].Sub(sym.NewChallenge(gamma))
-	}
-	for i := 0; i < len(E1); i++ {
-		E2MinusGamma[i] = E1[i].Sub(sym.NewChallenge(gamma))
-	}
+	// 2. register the local constraint (symbolic relation + prover action)
+	LocalConstraint(system, IDGrandProduct, 0, koalabear.One())
 
-	if err := system.BuildGrandProductAndRegisterConstraints(&prot.S, E1MinusGamma, E2MinusGamma, IDGrandProduct, opts...); err != nil {
-		return err
-	}
-
-	// enforce R[0] = 1 (Lagrange constraint at entry 0)
-	var one koalabear.Element
-	one.SetOne()
-	return prot.NewLagrangeConstraint(IDGrandProduct, 0, one, opts...)
 }
 
 // MultiSetEqualityUpToPermutation proves that the multiset of tuples { (ID1[i][0][j], ID1[i][1][j], ..) }
 // equals the multiset of tuples { (ID2[i][0][j], ID2[i][1][j], ..) }.
-// Tuples are first compressed into scalars with α, then EqualityUpToPermutation is applied on the scalars.
-// TODO this is syntactic sugar for multiSetEqualityUpToPermutationIOP (which uses Expr instead of string). Should I let only the original function ?
+// It means that for each i, j there is k, l such that (ID1[i][0][j], ID1[i][1][j], ..) = (ID2[k][0][l], ID2[k][1][l], ..)
 //
-// It models the following Σ protocol (N = domain size, P_s := ID1[s], Q_s := ID2[s]):
+// Tuples are first compressed into scalars with α, then EqualityUpToPermutation is applied on the scalars.
+//
+// It models the following Σ systemocol (N = domain size, P_s := ID1[s], Q_s := ID2[s]):
 //
 //	|-------------------------------–-----------------------------------------------|
 //	| [prover]                      |              [verifier]                       |
@@ -125,70 +111,54 @@ func equalityUpToPermutationIOP(prot *protocol.Protocol, E1, E2 []sym.Expr, IDGr
 //	|   C1: ∏_s(F2_s-γ)·Z_shifted - ∏_s(F1_s-γ)·Z = 0 mod X^N-1                 |
 //	|   C2: (Z-1)·L_0 = 0  (enforces Z[0]=1)                                      |
 //	|-------------------------------–-----------------------------------------------|
-func MultiSetEqualityUpToPermutationIOP(
-	prot *protocol.Protocol,
-	ID1, ID2 [][]string,
-	IDGrandProduct string,
-	alpha, gamma string,
-	opts ...system.Option) error {
+func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string, IDGrandProduct string, alpha, gamma string) error {
 
+	// 1. sample alpha: register the prover action SendMeAChallenge, depending on all ids in ID1, ID2
+	var deps []sym.Expr
 	E1 := make([][]sym.Expr, len(ID1))
+	for i := 0; i < len(E1); i++ {
+		E1[i] = make([]sym.Expr, len(ID1[i]))
+		for j := 0; j < len(ID1[i]); j++ {
+			E1[i][j] = sym.NewCommittedColumn(ID1[i][j])
+		}
+		deps = append(deps, E1[i]...)
+	}
 	E2 := make([][]sym.Expr, len(ID2))
-	for i, id := range ID1 {
-		E1[i] = make([]sym.Expr, len(id))
-		for j, iid := range id {
-			E1[i][j] = sym.NewVar(iid)
+	for i := 0; i < len(E2); i++ {
+		E2[i] = make([]sym.Expr, len(ID2[i]))
+		for j := 0; j < len(ID2[i]); j++ {
+			E2[i][j] = sym.NewCommittedColumn(ID2[i][j])
 		}
+		deps = append(deps, E2[i]...)
 	}
-	for i, id := range ID2 {
-		E2[i] = make([]sym.Expr, len(id))
-		for j, iid := range id {
-			E2[i][j] = sym.NewVar(iid)
-		}
-	}
+	system.RegisterProverAction(deps, []string{alpha}, cs.SendMeAChallenge)
 
-	return multiSetEqualityUpToPermutationIOP(prot, E1, E2, IDGrandProduct, alpha, gamma, opts...)
-
-}
-
-func multiSetEqualityUpToPermutationIOP(
-	prot *protocol.Protocol,
-	E1, E2 [][]sym.Expr,
-	IDGrandProduct string,
-	alpha, gamma string,
-	opts ...system.Option) error {
-
-	// step 1: collect all physical column IDs and sample alpha.
-	// SendMeAChallenge commits every physical column and derives alpha via Fiat-Shamir.
-	var allIDs []string
-	for _, EE1 := range E1 {
-		for _, EEE1 := range EE1 {
-			allIDs = append(allIDs, EEE1.Leaves()...)
-		}
-	}
-	for _, EE2 := range E2 {
-		for _, EEE2 := range EE2 {
-			allIDs = append(allIDs, EEE2.Leaves()...)
-		}
-	}
-	allIDs = sym.RemoveDuplicates(allIDs)
-	if _, err := prot.SendMeAChallenge(allIDs, alpha); err != nil {
-		return err
-	}
-
-	// step 2: fold each subset into a single expression and register it as a virtual column.
-	// F1[i] = ID1[i][0] + alpha * ID1[i][1] + alpha^2 * ID1[i][2] + ...
+	// 2. fold ID1[i], ID2[i] for all i with alpha
+	alphaExpr := sym.NewChallenge(alpha)
 	F1 := make([]sym.Expr, len(E1))
-	for i, subset := range E1 {
-		F1[i] = system.GetFoldingExpression(subset, alpha)
+	for i := 0; i < len(E1); i++ {
+		F1[i] = cs.Fold(E1[i], alphaExpr)
 	}
 	F2 := make([]sym.Expr, len(E2))
-	for i, subset := range E2 {
-		F2[i] = system.GetFoldingExpression(subset, alpha)
+	for i := 0; i < len(E2); i++ {
+		F2[i] = cs.Fold(E2[i], alphaExpr)
 	}
 
-	// step 3: build the grand product constraint over the folded virtual columns.
-	// EqualityUpToPermutation looks up VID1/VID2 in VirtualColumns, collects the physical
-	// column IDs from their leaves, samples gamma, and also enforces R[0]=1.
-	return equalityUpToPermutationIOP(prot, F1, F2, IDGrandProduct, gamma, opts...)
+	// 3. sample gamma: register the prover action SendMeAChallenge, depending on alpha
+	system.RegisterProverAction([]sym.Expr{alphaExpr}, []string{gamma}, cs.SendMeAChallenge)
+
+	// 4. build the relations \Pi_i (F1[i]-\gamma), \Pi_i (F2[i]-\gamma)
+	F1MinusGamma := F1[0].Sub(sym.NewChallenge(gamma))
+	for i := 1; i < len(F1); i++ {
+		F1MinusGamma = F1MinusGamma.Mul(F1[i].Sub(sym.NewChallenge(gamma)))
+	}
+	F2MinusGamma := F2[0].Sub(sym.NewChallenge(gamma))
+	for i := 1; i < len(F2); i++ {
+		F2MinusGamma = F2MinusGamma.Mul(F2[i].Sub(sym.NewChallenge(gamma)))
+	}
+
+	// 5. register the grand production constraint and grandproduct prover action + Lagrange constraint
+	equalityUpToPermutationIOP(system, F1MinusGamma, F2MinusGamma, IDGrandProduct)
+
+	return nil
 }

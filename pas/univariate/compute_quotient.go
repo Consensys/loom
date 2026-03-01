@@ -42,7 +42,7 @@ func ComputeQuotient(Pi map[string]*Polynomial, E sym.Expr, N int, opts ...Build
 
 	// we do the evaluation manually (don't use EvalPointWise)
 	varindex := make(sym.VarIndex)
-	leaves := sym.RemoveDuplicates(E.Leaves())
+	leaves := sym.RemoveDuplicates(E.Leaves(sym.Config{}))
 	for i, l := range leaves {
 		varindex[l] = i
 	}

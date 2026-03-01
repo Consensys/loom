@@ -9,6 +9,44 @@ import (
 
 const NegInf = math.MinInt
 
+// Config useful for querying the leaves
+type Config struct {
+	WoCommittedColumns  bool
+	WoComputableColumns bool
+	WoChallenges        bool
+}
+
+type Option func(*Config)
+
+// Leaves() doesnt return the CommittedColumns
+func WithoutCommittedColumns() Option {
+	return func(c *Config) {
+		c.WoCommittedColumns = true
+	}
+}
+
+// Leaves() doesnt return the ComputableColumns
+func WithoutComputableColumns() Option {
+	return func(c *Config) {
+		c.WoComputableColumns = true
+	}
+}
+
+// Leaves() doesnt return the Challenge
+func WithoutChallenges() Option {
+	return func(c *Config) {
+		c.WoChallenges = true
+	}
+}
+
+func NewConfig(opts ...Option) Config {
+	var res Config
+	for _, opt := range opts {
+		opt(&res)
+	}
+	return res
+}
+
 // The type of the leaves:
 // * Var
 // * ComputableColumn
@@ -22,30 +60,20 @@ const NegInf = math.MinInt
 
 type Expr interface {
 	Degree() int
-	NumVars() int
+	NumCommittedColumns() int
 	String() string
 	Add(Expr) Expr
 	Sub(Expr) Expr
 	Mul(Expr) Expr
 	Pow(uint32) Expr
 
-	// return a slice containing the names of the leaves of Expr, except the constants
-	// /!\ contains duplicates, use RemoveDuplicates to clean the slice
-	Leaves() []string
-
-	// return a slice containing the names of the leaves of Expr which are of type Var
-	// /!\ contains duplicates, use RemoveDuplicates to clean the slice
-	Vars() []string
-
-	// return a slice containing the names of the leaves of Expr which are of type ComputableColumn
-	// /!\ contains duplicates, use RemoveDuplicates to clean the slice
-	ComputableColumns() []string
+	Leaves(config Config) []string
 
 	// ReplaceLeafByExpression finds all occurence of leaf in the tree and replace it with e
 	ReplaceLeafByExpression(leaf string, e Expr) Expr
 
 	// recurse through expr, until an Expr (call it E) of degree <= deg is found.
-	// When E is found, remove E from expr and replace this subexpression with NewVar(E.String())
+	// When E is found, remove E from expr and replace this subexpression with NewCommittedColumn(E.String())
 	// Return E.
 	Prune(deg int) Expr
 }
@@ -63,13 +91,13 @@ func NewComputableColumn(name string) *ComputableColumn {
 func (v *ComputableColumn) Degree() int    { return 1 }
 func (v *ComputableColumn) String() string { return v.Name }
 
-func (v *ComputableColumn) NumVars() int {
+func (v *ComputableColumn) NumCommittedColumns() int {
 	vars := make(map[string]bool)
-	v.collectVars(vars)
+	v.collectCommittedColumns(vars)
 	return len(vars)
 }
 
-func (v *ComputableColumn) collectVars(vars map[string]bool) {
+func (v *ComputableColumn) collectCommittedColumns(vars map[string]bool) {
 	vars[v.Name] = true
 }
 
@@ -106,39 +134,39 @@ func NewChallenge(name string) *Challenge {
 func (v Challenge) Degree() int    { return 0 } // Challenge acts as a constant
 func (v Challenge) String() string { return v.Name }
 
-func (v Challenge) NumVars() int {
+func (v Challenge) NumCommittedColumns() int {
 	// A single variable contributes 1 to the count
 	// The actual index assignment happens during Convert()
 	vars := make(map[string]bool)
-	v.collectVars(vars)
+	v.collectCommittedColumns(vars)
 	return len(vars)
 }
 
-func (v Challenge) collectVars(vars map[string]bool) {
+func (v Challenge) collectCommittedColumns(vars map[string]bool) {
 	vars[v.Name] = true
 }
 
-type Var struct {
+type CommittedColumn struct {
 	Name string
 }
 
-func NewVar(name string) *Var {
-	return &Var{Name: name}
+func NewCommittedColumn(name string) *CommittedColumn {
+	return &CommittedColumn{Name: name}
 }
 
-func (v Var) Degree() int    { return 1 }
-func (v Var) String() string { return v.Name }
+func (c CommittedColumn) Degree() int    { return 1 }
+func (c CommittedColumn) String() string { return c.Name }
 
-func (v Var) NumVars() int {
+func (c CommittedColumn) NumCommittedColumns() int {
 	// A single variable contributes 1 to the count
 	// The actual index assignment happens during Convert()
 	vars := make(map[string]bool)
-	v.collectVars(vars)
+	c.collectCommittedColumns(vars)
 	return len(vars)
 }
 
-func (v Var) collectVars(vars map[string]bool) {
-	vars[v.Name] = true
+func (c CommittedColumn) collectCommittedColumns(vars map[string]bool) {
+	vars[c.Name] = true
 }
 
 type Const struct {
@@ -158,11 +186,11 @@ func (c Const) Degree() int {
 
 func (c Const) String() string { return c.Value.String() }
 
-func (c Const) NumVars() int {
+func (c Const) NumCommittedColumns() int {
 	return 0 // Constants don't use any variables
 }
 
-func (c Const) collectVars(vars map[string]bool) {
+func (c Const) collectCommittedColumns(vars map[string]bool) {
 	// Constants don't contribute any variables
 }
 
@@ -180,18 +208,18 @@ func (a Add) String() string {
 	return "(" + a.Left.String() + " + " + a.Right.String() + ")"
 }
 
-func (a Add) NumVars() int {
+func (a Add) NumCommittedColumns() int {
 	vars := make(map[string]bool)
-	a.collectVars(vars)
+	a.collectCommittedColumns(vars)
 	return len(vars)
 }
 
-func (a Add) collectVars(vars map[string]bool) {
-	if collector, ok := a.Left.(interface{ collectVars(map[string]bool) }); ok {
-		collector.collectVars(vars)
+func (a Add) collectCommittedColumns(vars map[string]bool) {
+	if collector, ok := a.Left.(interface{ collectCommittedColumns(map[string]bool) }); ok {
+		collector.collectCommittedColumns(vars)
 	}
-	if collector, ok := a.Right.(interface{ collectVars(map[string]bool) }); ok {
-		collector.collectVars(vars)
+	if collector, ok := a.Right.(interface{ collectCommittedColumns(map[string]bool) }); ok {
+		collector.collectCommittedColumns(vars)
 	}
 }
 
@@ -209,18 +237,18 @@ func (s Sub) String() string {
 	return "(" + s.Left.String() + " - " + s.Right.String() + ")"
 }
 
-func (s Sub) NumVars() int {
+func (s Sub) NumCommittedColumns() int {
 	vars := make(map[string]bool)
-	s.collectVars(vars)
+	s.collectCommittedColumns(vars)
 	return len(vars)
 }
 
-func (s Sub) collectVars(vars map[string]bool) {
-	if collector, ok := s.Left.(interface{ collectVars(map[string]bool) }); ok {
-		collector.collectVars(vars)
+func (s Sub) collectCommittedColumns(vars map[string]bool) {
+	if collector, ok := s.Left.(interface{ collectCommittedColumns(map[string]bool) }); ok {
+		collector.collectCommittedColumns(vars)
 	}
-	if collector, ok := s.Right.(interface{ collectVars(map[string]bool) }); ok {
-		collector.collectVars(vars)
+	if collector, ok := s.Right.(interface{ collectCommittedColumns(map[string]bool) }); ok {
+		collector.collectCommittedColumns(vars)
 	}
 }
 
@@ -238,18 +266,18 @@ func (m Mul) String() string {
 	return "(" + m.Left.String() + " * " + m.Right.String() + ")"
 }
 
-func (m Mul) NumVars() int {
+func (m Mul) NumCommittedColumns() int {
 	vars := make(map[string]bool)
-	m.collectVars(vars)
+	m.collectCommittedColumns(vars)
 	return len(vars)
 }
 
-func (m Mul) collectVars(vars map[string]bool) {
-	if collector, ok := m.Left.(interface{ collectVars(map[string]bool) }); ok {
-		collector.collectVars(vars)
+func (m Mul) collectCommittedColumns(vars map[string]bool) {
+	if collector, ok := m.Left.(interface{ collectCommittedColumns(map[string]bool) }); ok {
+		collector.collectCommittedColumns(vars)
 	}
-	if collector, ok := m.Right.(interface{ collectVars(map[string]bool) }); ok {
-		collector.collectVars(vars)
+	if collector, ok := m.Right.(interface{ collectCommittedColumns(map[string]bool) }); ok {
+		collector.collectCommittedColumns(vars)
 	}
 }
 
@@ -266,22 +294,22 @@ func (p Pow) String() string {
 	return "(" + p.Base.String() + " ^ " + fmt.Sprintf("%d", p.Exp) + ")"
 }
 
-func (p Pow) NumVars() int {
+func (p Pow) NumCommittedColumns() int {
 	vars := make(map[string]bool)
-	p.collectVars(vars)
+	p.collectCommittedColumns(vars)
 	return len(vars)
 }
 
-func (p Pow) collectVars(vars map[string]bool) {
-	if collector, ok := p.Base.(interface{ collectVars(map[string]bool) }); ok {
-		collector.collectVars(vars)
+func (p Pow) collectCommittedColumns(vars map[string]bool) {
+	if collector, ok := p.Base.(interface{ collectCommittedColumns(map[string]bool) }); ok {
+		collector.collectCommittedColumns(vars)
 	}
 }
 
-func (v *Var) Add(e Expr) Expr { return &Add{v, e} }
-func (v *Var) Sub(e Expr) Expr { return &Sub{v, e} }
-func (v *Var) Mul(e Expr) Expr { return &Mul{v, e} }
-func (v *Var) Pow(n uint32) Expr {
+func (v *CommittedColumn) Add(e Expr) Expr { return &Add{v, e} }
+func (v *CommittedColumn) Sub(e Expr) Expr { return &Sub{v, e} }
+func (v *CommittedColumn) Mul(e Expr) Expr { return &Mul{v, e} }
+func (v *CommittedColumn) Pow(n uint32) Expr {
 	if n > 2 {
 		return squareAndMultiply(v, n)
 	}
@@ -374,29 +402,29 @@ func Prod(exprs ...Expr) Expr {
 // that is eligible to be extracted into a new intermediate polynomial.
 func isPrunable(e Expr) bool {
 	switch e.(type) {
-	case *Var, *Const, *Challenge, *ComputableColumn:
+	case *CommittedColumn, *Const, *Challenge, *ComputableColumn:
 		return false
 	}
 	return true
 }
 
 // pruneSearch recurses through expr looking for a composite child node E with degree <= deg.
-// When found, E is replaced in-place with NewVar(E.String()) and E is returned.
+// When found, E is replaced in-place with NewCommittedColumn(E.String()) and E is returned.
 // Var and Const children are skipped (they are already leaves; replacing them is a no-op).
 // Returns nil if no such sub-expression is found.
 func pruneSearch(expr Expr, deg int) Expr {
 	switch e := expr.(type) {
-	case *Var, *Const, *ComputableColumn:
+	case *CommittedColumn, *Const, *ComputableColumn:
 		return nil
 	case *Add:
 		if isPrunable(e.Left) && e.Left.Degree() <= deg {
 			found := e.Left
-			e.Left = NewVar(found.String())
+			e.Left = NewCommittedColumn(found.String())
 			return found
 		}
 		if isPrunable(e.Right) && e.Right.Degree() <= deg {
 			found := e.Right
-			e.Right = NewVar(found.String())
+			e.Right = NewCommittedColumn(found.String())
 			return found
 		}
 		if r := pruneSearch(e.Left, deg); r != nil {
@@ -406,12 +434,12 @@ func pruneSearch(expr Expr, deg int) Expr {
 	case *Sub:
 		if isPrunable(e.Left) && e.Left.Degree() <= deg {
 			found := e.Left
-			e.Left = NewVar(found.String())
+			e.Left = NewCommittedColumn(found.String())
 			return found
 		}
 		if isPrunable(e.Right) && e.Right.Degree() <= deg {
 			found := e.Right
-			e.Right = NewVar(found.String())
+			e.Right = NewCommittedColumn(found.String())
 			return found
 		}
 		if r := pruneSearch(e.Left, deg); r != nil {
@@ -421,12 +449,12 @@ func pruneSearch(expr Expr, deg int) Expr {
 	case *Mul:
 		if isPrunable(e.Left) && e.Left.Degree() <= deg {
 			found := e.Left
-			e.Left = NewVar(found.String())
+			e.Left = NewCommittedColumn(found.String())
 			return found
 		}
 		if isPrunable(e.Right) && e.Right.Degree() <= deg {
 			found := e.Right
-			e.Right = NewVar(found.String())
+			e.Right = NewCommittedColumn(found.String())
 			return found
 		}
 		if r := pruneSearch(e.Left, deg); r != nil {
@@ -436,7 +464,7 @@ func pruneSearch(expr Expr, deg int) Expr {
 	case *Pow:
 		if isPrunable(e.Base) && e.Base.Degree() <= deg {
 			found := e.Base
-			e.Base = NewVar(found.String())
+			e.Base = NewCommittedColumn(found.String())
 			return found
 		}
 		return pruneSearch(e.Base, deg)
@@ -444,22 +472,46 @@ func pruneSearch(expr Expr, deg int) Expr {
 	return nil
 }
 
-func (c *Challenge) Prune(deg int) Expr { return pruneSearch(c, deg) }
-func (v *Var) Prune(deg int) Expr       { return pruneSearch(v, deg) }
-func (c *Const) Prune(deg int) Expr     { return pruneSearch(c, deg) }
-func (a *Add) Prune(deg int) Expr       { return pruneSearch(a, deg) }
-func (s *Sub) Prune(deg int) Expr       { return pruneSearch(s, deg) }
-func (m *Mul) Prune(deg int) Expr       { return pruneSearch(m, deg) }
-func (p *Pow) Prune(deg int) Expr       { return pruneSearch(p, deg) }
+func (c *Challenge) Leaves(config Config) []string {
+	if config.WoChallenges {
+		return []string{}
+	} else {
+		return []string{c.Name}
+	}
+}
+func (v *CommittedColumn) Leaves(config Config) []string {
+	if config.WoCommittedColumns {
+		return []string{}
+	} else {
+		return []string{v.Name}
+	}
+}
+func (v *ComputableColumn) Leaves(config Config) []string {
+	if config.WoComputableColumns {
+		return []string{}
+	} else {
+		return []string{v.Name}
+	}
+}
+func (c *Const) Leaves(config Config) []string { return []string{} }
+func (a *Add) Leaves(config Config) []string {
+	return append(a.Left.Leaves(config), a.Right.Leaves(config)...)
+}
+func (s *Sub) Leaves(config Config) []string {
+	return append(s.Left.Leaves(config), s.Right.Leaves(config)...)
+}
+func (m *Mul) Leaves(config Config) []string {
+	return append(m.Left.Leaves(config), m.Right.Leaves(config)...)
+}
+func (p *Pow) Leaves(config Config) []string { return p.Base.Leaves(config) }
 
-func (v *ComputableColumn) Leaves() []string { return []string{v.Name} }
-func (c *Challenge) Leaves() []string        { return []string{c.String()} }
-func (v *Var) Leaves() []string              { return []string{v.Name} }
-func (c *Const) Leaves() []string            { return []string{} }
-func (a *Add) Leaves() []string              { return append(a.Left.Leaves(), a.Right.Leaves()...) }
-func (s *Sub) Leaves() []string              { return append(s.Left.Leaves(), s.Right.Leaves()...) }
-func (m *Mul) Leaves() []string              { return append(m.Left.Leaves(), m.Right.Leaves()...) }
-func (p *Pow) Leaves() []string              { return p.Base.Leaves() }
+func (c *Challenge) Prune(deg int) Expr       { return pruneSearch(c, deg) }
+func (v *CommittedColumn) Prune(deg int) Expr { return pruneSearch(v, deg) }
+func (c *Const) Prune(deg int) Expr           { return pruneSearch(c, deg) }
+func (a *Add) Prune(deg int) Expr             { return pruneSearch(a, deg) }
+func (s *Sub) Prune(deg int) Expr             { return pruneSearch(s, deg) }
+func (m *Mul) Prune(deg int) Expr             { return pruneSearch(m, deg) }
+func (p *Pow) Prune(deg int) Expr             { return pruneSearch(p, deg) }
 
 func (c *Challenge) ReplaceLeafByExpression(leaf string, e Expr) Expr {
 	if c.Name == leaf {
@@ -468,7 +520,7 @@ func (c *Challenge) ReplaceLeafByExpression(leaf string, e Expr) Expr {
 		return c
 	}
 }
-func (v *Var) ReplaceLeafByExpression(leaf string, e Expr) Expr {
+func (v *CommittedColumn) ReplaceLeafByExpression(leaf string, e Expr) Expr {
 	if v.Name == leaf {
 		return e
 	} else {
@@ -488,36 +540,6 @@ func (m *Mul) ReplaceLeafByExpression(leaf string, e Expr) Expr {
 func (p *Pow) ReplaceLeafByExpression(leaf string, e Expr) Expr {
 	return &Pow{p.Base.ReplaceLeafByExpression(leaf, e), p.Exp}
 }
-
-func (v *ComputableColumn) Vars() []string { return []string{v.Name} }
-func (c *Challenge) Vars() []string        { return []string{} }
-func (v *Var) Vars() []string              { return []string{v.String()} }
-func (c *Const) Vars() []string            { return []string{} }
-func (a *Add) Vars() []string {
-	return append(a.Left.Vars(), a.Right.Vars()...)
-}
-func (s *Sub) Vars() []string {
-	return append(s.Left.Vars(), s.Right.Vars()...)
-}
-func (m *Mul) Vars() []string {
-	return append(m.Left.Vars(), m.Right.Vars()...)
-}
-func (p *Pow) Vars() []string { return p.Base.Vars() }
-
-func (v *ComputableColumn) ComputableColumns() []string { return []string{v.Name} }
-func (c *Challenge) ComputableColumns() []string        { return []string{} }
-func (v *Var) ComputableColumns() []string              { return []string{} }
-func (c *Const) ComputableColumns() []string            { return []string{} }
-func (a *Add) ComputableColumns() []string {
-	return append(a.Left.ComputableColumns(), a.Right.ComputableColumns()...)
-}
-func (s *Sub) ComputableColumns() []string {
-	return append(s.Left.ComputableColumns(), s.Right.ComputableColumns()...)
-}
-func (m *Mul) ComputableColumns() []string {
-	return append(m.Left.ComputableColumns(), m.Right.ComputableColumns()...)
-}
-func (p *Pow) ComputableColumns() []string { return p.Base.ComputableColumns() }
 
 // Clone returns a deep copy of the expression tree with no shared nodes.
 //
@@ -546,8 +568,8 @@ func (p *Pow) ComputableColumns() []string { return p.Base.ComputableColumns() }
 // ================================================
 func Clone(e Expr) Expr {
 	switch v := e.(type) {
-	case *Var:
-		return &Var{Name: v.Name}
+	case *CommittedColumn:
+		return &CommittedColumn{Name: v.Name}
 	case *Const:
 		c := *v
 		return &c

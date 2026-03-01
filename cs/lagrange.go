@@ -1,4 +1,4 @@
-package system
+package cs
 
 import (
 	"fmt"
@@ -15,39 +15,16 @@ import (
 // process, when a "Computable" Expr is found in the expression, we should have map [Lagrange_i]->func(i) koalabear.Element, so the verifier can recompute its value at zeta
 const Lagrange = "LAGRANGE"
 
+// ComputableColumn special column that can be encoded with a formula F	, like Lagrange column.
+type ComputableColumn struct {
+	id  string                                    // ID of the computable column
+	F   func(koalabear.Element) koalabear.Element // function F encoding the column (e.g. ω^i/N (z^N-1)/(1-ω^i) for Lagrange_i_N)
+	Gen func() univariate.Polynomial              // generate the column -> it is the evaluation of F on the domain of size N
+}
+
 // GetLagrangeID ensures the lagrange name is the same accross protocols
 func GetLagrangeID(entry int, N int) string {
 	return fmt.Sprintf("%s_%d_%d", Lagrange, entry, N)
-}
-
-// NewLagrangeConstraint modifies S to add the constraint the S.Trace[ID][entry]=value
-func NewLagrangeConstraint(S *System, ID string, entry int, value koalabear.Element, opts ...Option) error {
-
-	var config Config
-	for _, opt := range opts {
-		err := opt(&config)
-		if err != nil {
-			return err
-		}
-	}
-
-	// lagrangeID := GetLagrangeID(entry, S.N)
-
-	// if the lagrange column is not in the trace, we add it. No need for a sigma protocol to check that the column is correctly formed
-	// As it is public column known by the verifier
-	lagrangeCC, err := GetComputationableColumn(GetLagrangeID(entry, S.N))
-	if err != nil {
-		return err
-	}
-	AddComputableColumn(S, lagrangeCC)
-
-	if config.CacheMe {
-		S.CachedConstraints = append(S.CachedConstraints, GetLagrangeConstraint(ID, entry, value, S.N))
-	} else {
-		S.Constraints = append(S.Constraints, GetLagrangeConstraint(ID, entry, value, S.N))
-	}
-
-	return nil
 }
 
 // ParseLagrangeID parses an id produced by GetLagrangeID (format: LAGRANGE__<entry>_<N>)

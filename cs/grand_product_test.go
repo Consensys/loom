@@ -1,0 +1,71 @@
+package cs
+
+import (
+	"testing"
+
+	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/iop/pas/sym"
+)
+
+func TestGrandProductConstraint(t *testing.T) {
+
+	size := 16
+
+	trace := BuildPermutationCircuit(t, size)
+
+	// fix a challenge value (gamma for the grand product)
+	var gamma koalabear.Element
+	gamma.SetUint64(42)
+	challenge := Challenge{Name: "gamma", Value: gamma}
+
+	addChallengeInTrace(trace, challenge) // <- simulate SendMeAChallenge
+
+	E1 := sym.NewCommittedColumn("P0").Sub(sym.NewChallenge("gamma"))
+	E2 := sym.NewCommittedColumn("P1").Sub(sym.NewChallenge("gamma"))
+
+	err := AddComputableColumn(trace, nil, nil, []string{GetLagrangeID(0, size)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// add the constraint that the grand product is computed correctly to the system
+	system := NewSystem(size)
+	system.RegisterConstraint(EnforceGrandProduct(E1, E2, "R", size))
+	proof := NewProof(size)
+	GrandProduct(trace, &proof, []sym.Expr{E1, E2}, []string{"R"})
+
+	// R[0] must equal 1
+	var one koalabear.Element
+	one.SetOne()
+	R0 := trace["R"].GetCoefficient(0)
+	if !R0.Equal(&one) {
+		t.Fatalf("R[0] should be 1, got %s", R0.String())
+	}
+
+	// verify recurrence R[i+1] = R[i] * (P0[i]-gamma) / (P1[i]-gamma) at every row
+	for i := 0; i < size; i++ {
+		Ri := trace["R"].GetCoefficient(i)
+		Ri1 := trace["R"].GetCoefficient((i + 1) % size)
+		Ri1Expected := new(koalabear.Element).Set(&Ri)
+		c := trace["P0"].GetCoefficient(i)
+		num := new(koalabear.Element).Sub(&c, &gamma)
+		c = trace["P1"].GetCoefficient(i)
+		den := new(koalabear.Element).Sub(&c, &gamma)
+		Ri1Expected.Mul(Ri1Expected, num)
+		Ri1Expected.Div(Ri1Expected, den)
+		if !Ri1.Equal(Ri1Expected) {
+			t.Fatalf("R[%d]: expected %s, got %s", (i+1)%size, Ri1Expected.String(), Ri1.String())
+		}
+	}
+
+	err = BruteForceChecker(trace, system.Constraints, system.N)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = QuotientChecker(trace, system.Constraints, system.N)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+}

@@ -238,10 +238,10 @@ func (p *Polynomial) Evaluate(x koalabear.Element) (koalabear.Element, error) {
 // evalPointWise eval point wise E on Pi, by picking the coefficient direclty (no conversion, no copies).
 // internal function only.
 // N is the size of the polynomials in Pi, assumed to have all the same size, except the constant (size 1)
-// nbVars is the number of variables in E
+// nbCommittedColumns is the number of variables in E
 func evalPointWise(Pi map[string]*Polynomial, E sym.Expr, N int) ([]koalabear.Element, error) {
 	varindex := make(sym.VarIndex)
-	leaves := sym.RemoveDuplicates(E.Leaves())
+	leaves := sym.RemoveDuplicates(E.Leaves(sym.NewConfig()))
 	for i, l := range leaves {
 		varindex[l] = i
 	}
