@@ -3,12 +3,12 @@ package std
 import (
 	"testing"
 
-	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/prover"
 	"github.com/consensys/giop/verifier"
+	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
 func sanityCheck(proverRunTime *prover.Runtime, constraints []cs.Constraint, N int, t *testing.T) {
@@ -131,11 +131,11 @@ func TestPermutationMultiSet(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	knowncolumns := map[string]bool{"P0": true, "P1": true, "Q0": true, "Q1": true}
 	cciop := cs.Compile(&system)
 
 	proverRunTime := prover.NewRuntime(cciop, trace)
 
-	knowncolumns := map[string]bool{"P0": true, "P1": true, "Q0": true, "Q1": true}
 	proof := cs.NewProof(system.N)
 
 	// 1. Solve + sanity checks

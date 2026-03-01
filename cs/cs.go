@@ -5,14 +5,6 @@ import (
 	"github.com/consensys/giop/trace"
 )
 
-// CompiledIOP DAG containing all tha proverActions, and the final constraint that must vanish
-// on X^N-1
-type CompiledIOP struct {
-	ProverActions     []ProverAction
-	VanishingRelation Constraint
-	N                 int
-}
-
 type Constraint = sym.Expr
 
 // Constraints list of constraints, that the Columns in a trace must fulfil. The constraints

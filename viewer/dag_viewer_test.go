@@ -9,7 +9,34 @@ import (
 	"github.com/consensys/giop/std"
 )
 
-func TestWriteDagToHTML_Permutation(t *testing.T) {
+func TestWriteProverActionsDagToHTML(t *testing.T) {
+	size := 16
+	system := cs.NewSystem(size)
+	if err := std.MultiSetEqualityUpToPermutationIOP(
+		&system,
+		[][]string{{"P0", "P1"}},
+		[][]string{{"Q0", "Q1"}},
+		"GrandProduct", "alpha", "gamma",
+	); err != nil {
+		t.Fatal(err)
+	}
+	cciop := cs.Compile(&system)
+
+	out := t.TempDir() + "/prover_dag.html"
+	if err := WriteProverActionsDagToHTML(cciop, out); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) < 100 {
+		t.Fatalf("output file is suspiciously small (%d bytes)", len(data))
+	}
+	t.Logf("Prover actions DAG HTML written to %s (%d bytes)", out, len(data))
+}
+
+func TestWriteProofRoundsDagToHTML_Permutation(t *testing.T) {
 	size := 16
 	trace := cs.BuildPermutationCircuit(t, size)
 	system := cs.NewSystem(size)
@@ -23,7 +50,7 @@ func TestWriteDagToHTML_Permutation(t *testing.T) {
 	}
 
 	out := t.TempDir() + "/dag_permutation.html"
-	if err := WriteDagToHTML(proof.Rounds, out); err != nil {
+	if err := WriteProofRoundsDagToHTML(proof.Rounds, out); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(out)
@@ -36,7 +63,7 @@ func TestWriteDagToHTML_Permutation(t *testing.T) {
 	t.Logf("DAG HTML written to %s (%d bytes)", out, len(data))
 }
 
-func TestWriteDagToHTML_MultiSet(t *testing.T) {
+func TestWriteProofRoundsDagToHTML_MultiSet(t *testing.T) {
 	size := 16
 	trace := cs.BuildPermutationMultiSet(t, size)
 	system := cs.NewSystem(size)
@@ -57,7 +84,7 @@ func TestWriteDagToHTML_MultiSet(t *testing.T) {
 	}
 
 	out := t.TempDir() + "/dag_multiset.html"
-	if err := WriteDagToHTML(proof.Rounds, out); err != nil {
+	if err := WriteProofRoundsDagToHTML(proof.Rounds, out); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(out)

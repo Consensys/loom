@@ -58,6 +58,14 @@ func Fold(E []sym.Expr, alpha sym.Expr) sym.Expr {
 	return res
 }
 
+// CompiledIOP DAG containing all tha proverActions, and the final constraint that must vanish
+// on X^N-1
+type CompiledIOP struct {
+	ProverActions     []ProverAction
+	VanishingRelation Constraint
+	N                 int
+}
+
 // Fold all the constraints by sampling a random challenge, derived from the necessary data to ensure that this challenge
 // cannot have been derived derived prior to any of the prover<->interactions and commitments
 func Compile(system *System) CompiledIOP {
