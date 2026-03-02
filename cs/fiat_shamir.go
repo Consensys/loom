@@ -4,12 +4,12 @@ import (
 	"crypto/sha256"
 	"fmt"
 
-	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
-	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/giop/crypto/dummycommitment"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/pas/univariate"
 	"github.com/consensys/giop/trace"
+	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
+	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
 // GetCommittedColumnsID returns the list of the names appearing in E
@@ -36,9 +36,9 @@ func GetChallengesID(E []sym.Expr) []string {
 	return ids
 }
 
-// SendMeAChallenge type of ProverAction creates a challenge named GP[0] which is derived via FS
+// ComputeChallenge type of ProverAction creates a challenge named GP[0] which is derived via FS
 // from the commitments of all the leaves appearing in E.
-func SendMeAChallenge(trace trace.Trace, proof *Proof, E []sym.Expr, GP []string) error {
+func ComputeChallenge(trace trace.Trace, proof *Proof, E []sym.Expr, GP []string) error {
 
 	if len(GP) == 0 {
 		return fmt.Errorf("len(GP)=0, it must contain the name of the challenge")

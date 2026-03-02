@@ -1,0 +1,35 @@
+package cs
+
+import (
+	"testing"
+
+	"github.com/consensys/giop/pas/sym"
+)
+
+func TestGrandSumConstraint(t *testing.T) {
+
+	size := 16
+
+	trace := BuildRandomTrace(t, size)
+	system := NewSystem(size)
+	EnforceGrandSumConstraint(&system, sym.NewCommittedColumn("M"), sym.NewCommittedColumn("E"), "GrandSum", size)
+	proof := NewProof(size)
+	E := sym.NewCommittedColumn("E")
+	M := sym.NewCommittedColumn("M")
+	err := ComputeGrandSum(trace, &proof, []sym.Expr{M, E}, []string{"GrandSum"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ComputeLagrangeColumn(trace, nil, nil, []string{GetLagrangeID(0, size)})
+
+	err = BruteForceChecker(trace, system.Constraints, system.N)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = QuotientChecker(trace, system.Constraints, system.N)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+}

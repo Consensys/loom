@@ -5,11 +5,11 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/pas/univariate"
 	"github.com/consensys/giop/trace"
+	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 )
 
 type Challenge struct {
@@ -44,7 +44,7 @@ func BuildRandomTrace(t *testing.T, size int) trace.Trace {
 	for i := range coeffs0 {
 		coeffs0[i].SetRandom()
 	}
-	P0, err := univariate.NewPolynomial(coeffs0, univariate.WithBasis(univariate.Lagrange))
+	E, err := univariate.NewPolynomial(coeffs0, univariate.WithBasis(univariate.Lagrange))
 	if err != nil {
 		t.Fatalf("Failed to create P0: %v", err)
 	}
@@ -53,14 +53,14 @@ func BuildRandomTrace(t *testing.T, size int) trace.Trace {
 	for i := range coeffs0 {
 		coeffs1[i].SetRandom()
 	}
-	P1, err := univariate.NewPolynomial(coeffs1, univariate.WithBasis(univariate.Lagrange))
+	M, err := univariate.NewPolynomial(coeffs1, univariate.WithBasis(univariate.Lagrange))
 	if err != nil {
 		t.Fatalf("Failed to create P0: %v", err)
 	}
 
 	return map[string]*univariate.Polynomial{
-		"P0": &P0,
-		"P1": &P1,
+		"E": &E,
+		"M": &M,
 	}
 
 }

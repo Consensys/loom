@@ -7,9 +7,9 @@ import (
 	"math/big"
 	"math/bits"
 
+	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
-	"github.com/consensys/giop/pas/sym"
 )
 
 // Polynomial is a wrapper around EPolynomial that includes additional metadata such as shift.
@@ -434,8 +434,7 @@ func accumulateSums(P *Polynomial, N int) (Polynomial, error) {
 }
 
 // BuildGrandSum returns R such that
-// R[0]=M[0]/E[0]
-// R[i] = R[i-1]+M[i]/E[i]
+// R[i] = \Sigma_{j<=i}M[j]/E[j]
 // The notation E[i] means the i-th entry of E evaluated on P (same for M).
 func BuildGrandSum(P map[string]*Polynomial, E, M sym.Expr, N int) (Polynomial, error) {
 

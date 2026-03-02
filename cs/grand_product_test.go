@@ -3,8 +3,8 @@ package cs
 import (
 	"testing"
 
-	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
 func TestGrandProductConstraint(t *testing.T) {
@@ -23,16 +23,16 @@ func TestGrandProductConstraint(t *testing.T) {
 	E1 := sym.NewCommittedColumn("P0").Sub(sym.NewChallenge("gamma"))
 	E2 := sym.NewCommittedColumn("P1").Sub(sym.NewChallenge("gamma"))
 
-	err := AddComputableColumn(trace, nil, nil, []string{GetLagrangeID(0, size)})
+	err := ComputeLagrangeColumn(trace, nil, nil, []string{GetLagrangeID(0, size)})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// add the constraint that the grand product is computed correctly to the system
 	system := NewSystem(size)
-	system.RegisterConstraint(EnforceGrandProduct(E1, E2, "R", size))
+	EnforceGrandProductConstraint(&system, E1, E2, "R", size)
 	proof := NewProof(size)
-	GrandProduct(trace, &proof, []sym.Expr{E1, E2}, []string{"R"})
+	ComputeGrandProduct(trace, &proof, []sym.Expr{E1, E2}, []string{"R"})
 
 	// R[0] must equal 1
 	var one koalabear.Element

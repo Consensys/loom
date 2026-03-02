@@ -1,9 +1,9 @@
 package std
 
 import (
-	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
 // EqualityUpToPermutation proves that the multiset { ID1[j][i] } equals { ID2[j][i] }, up to permutation.
@@ -35,7 +35,7 @@ import (
 //	|-------------------------------–-----------------------------------------------|
 func EqualityUpToPermutationIOP(system *cs.System, ID1, ID2 []string, IDGrandProduct string, gamma string) {
 
-	// 1. sample gamma: register the prover action SendMeAChallenge
+	// 1. sample gamma: register the prover action ComputeChallenge
 	E1 := make([]sym.Expr, len(ID1))
 	for i := 0; i < len(ID1); i++ {
 		E1[i] = sym.NewCommittedColumn(ID1[i])
@@ -44,7 +44,7 @@ func EqualityUpToPermutationIOP(system *cs.System, ID1, ID2 []string, IDGrandPro
 	for i := 0; i < len(ID2); i++ {
 		E2[i] = sym.NewCommittedColumn(ID2[i])
 	}
-	system.RegisterProverAction(append(E1, E2...), []string{gamma}, cs.SendMeAChallenge)
+	system.RegisterProverAction(append(E1, E2...), []string{gamma}, cs.ComputeChallenge)
 
 	// 2. register the symbolic constraint \Pi_i (Id1[i]-\gamma), \Pi_i (Id2[i]-\gamma) in the system
 	E1MinusGamma := E1[0].Sub(sym.NewChallenge(gamma))
@@ -62,13 +62,14 @@ func EqualityUpToPermutationIOP(system *cs.System, ID1, ID2 []string, IDGrandPro
 
 func equalityUpToPermutationIOP(system *cs.System, E1, E2 sym.Expr, IDGrandProduct string) {
 
-	system.RegisterConstraint(cs.EnforceGrandProduct(E1, E2, IDGrandProduct, system.N))
+	// 0. rgister the grand product constraint
+	cs.EnforceGrandProductConstraint(system, E1, E2, IDGrandProduct, system.N)
 
 	// 1. register the prover action for creating the grand product and grand product shifted
-	system.RegisterProverAction([]sym.Expr{E1, E2}, []string{IDGrandProduct}, cs.GrandProduct)
+	system.RegisterProverAction([]sym.Expr{E1, E2}, []string{IDGrandProduct}, cs.ComputeGrandProduct)
 
-	// 2. register the local constraint (symbolic relation + prover action)
-	LocalConstraint(system, IDGrandProduct, 0, koalabear.One())
+	// 2. register the local constraint: GrandProduct[0] = 1
+	cs.EnforceLocalConstraintAndRegisterLagrangeColumn(system, sym.NewCommittedColumn(IDGrandProduct), sym.NewConst(koalabear.One()), 0)
 
 }
 
@@ -113,7 +114,7 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 sym.Expr, IDGrandProdu
 //	|-------------------------------–-----------------------------------------------|
 func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string, IDGrandProduct string, alpha, gamma string) error {
 
-	// 1. sample alpha: register the prover action SendMeAChallenge, depending on all ids in ID1, ID2
+	// 1. sample alpha: register the prover action ComputeChallenge, depending on all ids in ID1, ID2
 	var deps []sym.Expr
 	E1 := make([][]sym.Expr, len(ID1))
 	for i := 0; i < len(E1); i++ {
@@ -131,7 +132,7 @@ func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string, 
 		}
 		deps = append(deps, E2[i]...)
 	}
-	system.RegisterProverAction(deps, []string{alpha}, cs.SendMeAChallenge)
+	system.RegisterProverAction(deps, []string{alpha}, cs.ComputeChallenge)
 
 	// 2. fold ID1[i], ID2[i] for all i with alpha
 	alphaExpr := sym.NewChallenge(alpha)
@@ -144,8 +145,8 @@ func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string, 
 		F2[i] = cs.Fold(E2[i], alphaExpr)
 	}
 
-	// 3. sample gamma: register the prover action SendMeAChallenge, depending on alpha
-	system.RegisterProverAction([]sym.Expr{alphaExpr}, []string{gamma}, cs.SendMeAChallenge)
+	// 3. sample gamma: register the prover action ComputeChallenge, depending on alpha
+	system.RegisterProverAction([]sym.Expr{alphaExpr}, []string{gamma}, cs.ComputeChallenge)
 
 	// 4. build the relations \Pi_i (F1[i]-\gamma), \Pi_i (F2[i]-\gamma)
 	F1MinusGamma := F1[0].Sub(sym.NewChallenge(gamma))

@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
 // Lagrange standard identifier across systems for Lagrange polynomial, suffixed by an integer to specify which Lagrange polynomial
@@ -81,4 +82,18 @@ func NewLagrangeColumn(id string) (ComputableColumn, error) {
 	}
 
 	return res, nil
+}
+
+// EnforceLocalConstraint registers the constraint lagrange_i * (E - M)
+// which ensures that E[i] = M[i]
+// Syntactic sugar merging the EnforceLocalConstraint and the prover action of registering the lagrange column
+func EnforceLocalConstraintAndRegisterLagrangeColumn(system *System, E, M sym.Expr, i int) {
+
+	// 1. register the symbolic constraint in the system
+	lagrangeID := GetLagrangeID(i, system.N)
+	GPIsOneAtFirstEntry := sym.NewComputableColumn(lagrangeID).Mul(E.Sub(M)) // Lagrange_i * (E - M)
+	system.RegisterConstraint(GPIsOneAtFirstEntry)
+
+	// 2. register the prover action: creation of the column i-th-Lagrange
+	system.RegisterithLagrangeColumn(i) // <- syntactic sugar to add a prover action for creating the i-th lagrange column
 }

@@ -2,171 +2,164 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
-
-`github.com/consensys/iop` is a Go library for Interactive Oracle Proofs (IOP) and polynomial-based constraint systems over the Koalabear finite field. It depends on `gnark-crypto` for field arithmetic and FFT, and `gnark` for PLONK circuit compilation in `plonk_example/`.
-
-## Building and Testing
+## Commands
 
 ```bash
-# Build all packages
+# Build / check compilation
 go build ./...
 
 # Run all tests
 go test ./...
 
-# Run tests for a specific package
+# Run a single package
 go test ./cs/...
-go test ./pas/univariate/...
-go test ./pas/sym/...
-go test ./plonk_example/...
+go test ./std/...
+go test ./viewer/...
 
-# Run a specific test
-go test ./cs/... -run TestGrandProductIOP -v
-go test ./plonk_example/... -run TestPlonk -v
+# Run a single test
+go test ./std/... -run TestPermutationMultiSet -v
+
+# Format and vet
+go fmt ./...
+go vet ./...
 ```
 
-## Package Architecture
+## Architecture
 
-### `cs/` — Constraint System and IOP Protocol
+`github.com/consensys/giop` is a Go library for Interactive Oracle Proofs (IOPs) over the **Koalabear** finite field (`github.com/consensys/gnark-crypto/field/koalabear`). It proves that a **Trace** (a map of named polynomial columns) satisfies a set of algebraic constraints that vanish on `X^N - 1`.
 
-**Core types (`data.go`):**
+### Layer overview (bottom → top)
+
+| Package | Role |
+|---|---|
+| `pas/sym/` | Symbolic AST for multivariate polynomial expressions |
+| `pas/univariate/` | Univariate polynomial arithmetic, FFT, basis conversion |
+| `trace/` | `Trace = map[string]*univariate.Polynomial` |
+| `cs/` | Constraint system: types, Fiat-Shamir, grand product, Lagrange |
+| `std/` | Standard IOP gadgets (permutation, multiset equality) |
+| `prover/` | Prover pipeline: solve → fold → quotient → open |
+| `verifier/` | Verifier pipeline: replay FS → check algebraic relation |
+| `crypto/dummycommitment/` | Toy commitment (digest = first coefficient) |
+| `viewer/` | HTML DAG visualisers, CSV trace viewer |
+| `plonk_example/` | Bridge from gnark PLONK traces to this IOP library |
+
+### `pas/sym` — symbolic expressions
+
+`Expr` is an AST interface supporting `Add/Sub/Mul/Pow`. Three leaf types encode column status:
+- `CommittedColumn` — a trace column the prover commits to
+- `Challenge` — a Fiat-Shamir challenge (degree 0, treated as a constant during evaluation)
+- `ComputableColumn` — recomputable by the verifier (e.g., Lagrange basis columns)
+
+`Leaves(config)` traverses the AST and returns column IDs, filtered by `WithoutCommittedColumns()` / `WithoutChallenges()` / `WithoutComputableColumns()`.
+
+`Convert(expr, varindex, nvars)` → dense multivariate `Polynomial`; `ToHorner(p)` → efficient `*Horner` for evaluation via `h.Eval([]Element)`.
+
+### `pas/univariate` — univariate polynomials
+
+`Polynomial` wraps `*EPolynomial` (coefficients + basis + layout + degree) with an integer `Shift` for `P(ω^shift · X)`.
+
+Three bases: `Canonical`, `Lagrange`, `LagrangeShifted`. Two layouts: `Normal`, `BitReversed`.
+
+Critical operations:
+- `GetCoefficient(i)` — works in Lagrange/LagrangeShifted and for constant polynomials; **panics** in Canonical (non-constant)
+- `Evaluate(x)` — Horner evaluation; **requires Canonical basis**
+- `ToBasis(domain, targetBasis)` — in-place basis conversion via FFT
+- `EvalPointWise(trace, E, N)` — computes `E(trace)` row-by-row in Lagrange basis
+- `ComputeQuotient(trace, E, N)` — computes `E(trace) / (X^N - 1)`; returns **LagrangeShifted** by default — call `ToBasis(domain, Canonical)` before `Evaluate`
+- `BuildGrandProduct(trace, E1, E2, N)` — constructs `R` with `R[0]=1, R[i+1]=R[i]·E1[i]/E2[i]`
+
+### `cs` — constraint system
+
+**Core types** (`cs.go`, `compile.go`):
 ```go
-type Trace = map[string]*univariate.Polynomial   // columns indexed by name
-type Constraint = sym.Expr                        // symbolic polynomial expression
+type Trace = map[string]*univariate.Polynomial  // trace/trace.go
+type Constraint = sym.Expr
 
-type System struct {
-    Trace             Trace
-    Constraints       []Constraint  // active constraints (must be folded to 1 before Finalize)
-    CachedConstraints []Constraint  // accumulated constraints to be folded later
-    N                 int           // domain size (power of two)
+type ProverAction struct {
+    Inputs  []sym.Expr  // symbolic inputs; leaves give the required column IDs
+    Outputs []string    // column IDs produced
+    Exec    Action      // func(Trace, *Proof, []sym.Expr, []string) error
 }
 
-func NewSystem(T Trace, C, CC []Constraint, N int) System
-
-type Proof struct {
-    OpeningProofs map[string]dummycommitment.PackedProof
-    Constraint    Constraint
-    Rounds        []Round   // ordered Fiat-Shamir rounds
+type System struct {
+    Constraints   []Constraint
+    ProverActions []ProverAction
     N             int
 }
 
 type Round struct {
-    ChallengeName string
-    Dependencies  []string  // IDs whose commitments feed this challenge
+    ChallengeName                string
+    DependenciesCommittedColumns []string
+    DependenciesChallenges       []string
 }
 
-type Challenge struct {
-    Name  string
-    Value koalabear.Element
+type Proof struct {
+    OpeningProofs     map[string]dummycommitment.PackedProof
+    VanishingRelation Constraint
+    Rounds            []Round
+    N                 int
+}
+
+type CompiledIOP struct {
+    ProverActions     []ProverAction
+    VanishingRelation Constraint  // Fold(system.Constraints, alpha)
+    N                 int
 }
 ```
 
-**IOP building blocks** — lower-level functions that operate directly on `*System`:
-- `AddConstraint(S, C, opts...)`: adds C to active or cached constraints
-- `NewSimpleIOP(S, E, IDresult, challenge, opts...)`: evaluates E pointwise → stores result polynomial in trace as `IDresult`, records constraint `E - IDresult = 0`
-- `NewGrandProductIOP(S, IDs, IDresult, challenge, opts...)`: grand product permutation argument; IDs must be even-length (first half = numerator, second half = denominator); adds `IDresult` and `IDresult_shifted` to trace
-- `NewLagrangeConstraint(S, ID, entry, value, opts...)`: proves `Trace[ID][entry] = value`; auto-inserts the Lagrange basis column `LAGRANGE_<entry>` into the trace
-- `FoldCachedConstraints(S, challenge)`: folds all `CachedConstraints` into one using `Σᵢ αⁱ·Cᵢ`, appends it to `Constraints`, clears the cache
-- `Flatten(S, C, targetDegree)`: degree reduction — splits C into low-degree intermediate polynomials via repeated `NewSimpleIOP` calls, adds intermediate constraints to `S.Constraints`
+`cs.Compile(&system)` folds all constraints symbolically with `constants.FINAL_FOLDING_CHALLENGE` (the actual challenge value is derived at prove-time).
 
-**`IOPOption` / `WithCaching()`**: pass `WithCaching()` to any IOP builder to route its constraint to `CachedConstraints` instead of `Constraints`. Required when building up constraints that will be folded together before `Finalize`.
+**Key functions** in `cs/`:
+- `SendMeAChallenge(trace, proof, E, outputs)` — commits to columns in `E`, derives FS challenge, appends a `Round` to `proof.Rounds`, stores challenge as constant column in trace
+- `GrandProduct(trace, proof, E, outputs)` — builds grand product column `R` and shifted version `R(w^1X)`, registers both in trace
+- `GetColumnsId(E, opts...)` — extracts leaf column IDs from `[]sym.Expr`, with optional filtering
+- `GetLagrangeID(i, N)` — canonical ID for the i-th Lagrange basis column
 
-**`Protocol` struct (`protocol.go`)** — orchestrates Fiat-Shamir and combines the building blocks:
-```go
-type Protocol struct{ S System; P Proof; I Interactions }
-func NewProtocol(S System) Protocol
-```
-Key methods:
-- `protocol.SendMeAChallenge(IDs []string, name string) (Element, error)`: commits to polynomials in `IDs`, derives a Fiat-Shamir challenge, adds it as a constant column in `S.Trace` under `name`
-- `protocol.NewIOP(F NewIOP, E sym.Expr, IDresult, challengeName string, opts...)`: if `challengeName != ""`, calls `SendMeAChallenge` first, then calls `F`
-- `protocol.NewHintedIOP(F NewHintedIOP, IDs []string, IDresult, challengeName string, opts...)`: always calls `SendMeAChallenge`, then calls `F`
-- `protocol.NewLagrangeConstraint(ID, entry, value, opts...)`: syntactic sugar over the standalone function
-- `protocol.FoldCachedConstraints(challengeName string)`: derives challenge via FS, folds cached constraints
-- `protocol.Finalize() (Proof, error)`: requires exactly one active constraint; computes quotient H, commits, derives zeta, opens all polynomials at zeta
-- `Verify(P *Proof) error`: replays FS rounds, re-derives zeta, checks `C(openings) = H(ζ)·(ζⁿ−1)`
+**Constants** (`constants/const.go`): `FINAL_FOLDING_CHALLENGE`, `FINAL_EVALUATION_POINT`, `FINAL_QUOTIENT` — prefixed with `github.com/consensys/giop@` to avoid namespace collisions.
 
-**Fiat-Shamir ordering is strict**: `FS.NewChallenge(name)` must always be followed by `FS.ComputeChallenge(name)` before any subsequent `NewChallenge`. If `SendMeAChallenge` fails mid-way (e.g., a referenced polynomial is missing), the FS transcript is left in a broken state. All IDs referenced in a `NewHintedIOP` call must already be in `S.Trace` at call time.
+### `std` — standard gadgets
 
-**Constraint lifecycle in `Protocol`:**
-1. Pass active constraints as `CC` (third arg) in `NewSystem` with `WithCaching()` intent, or use `AddConstraint`
-2. Use `WithCaching()` on every IOP builder that should contribute to the final folded constraint
-3. Call `FoldCachedConstraints` to reduce to one constraint (ends up in `Constraints`)
-4. Call `Finalize` — requires `len(S.Constraints) == 1`
+- `EqualityUpToPermutationIOP(system, ID1, ID2, IDGrandProduct, gamma)` — proves `{ID1[i]}` = `{ID2[i]}` as multisets via a grand product argument
+- `MultiSetEqualityUpToPermutationIOP(system, ID1, ID2, IDGrandProduct, alpha, gamma)` — same for tuples; uses `alpha` to compress tuples into scalars first, then `gamma` for the grand product
+- `LocalConstraint(system, ID, i, value)` — constrains `Trace[ID][i] == value` using the Lagrange basis column `L_i`
 
-**Checkers (`test_utils.go`)** — for debugging:
-- `BruteForceChecker(S System) error`: evaluates each constraint row-by-row at ωⁱ; requires Lagrange-basis polynomials in trace
-- `QuotientChecker(S System) error`: verifies C(T) = H·(Xⁿ−1) at a random point; converts H from LagrangeShifted to Canonical internally
+### Prover pipeline (`prover/prove.go`)
 
-**`ensureChallengeInTrace`**: called automatically inside `NewSimpleIOP`, `NewGrandProductIOP`, and `FoldCachedConstraints`. When these functions are called directly (not through `Protocol`), they add the challenge as a constant column so `BruteForceChecker` and `EvalPointWise` can resolve it.
+`Runtime.Prove(knownColumns, nbWorkers)` runs:
+1. **`Solve`** — Kahn's scheduler executes `ProverActions` in topological order; `knownColumns` seeds the initial ready set
+2. **`DeriveFinalFoldingChallenge`** — commits all not-yet-committed trace columns, binds them to FS, derives `alpha`, registers it in trace and proof
+3. **`ComputeQuotient`** — computes `H = VanishingRelation(trace) / (X^N - 1)`, commits to `H`, stores in trace
+4. **`DeriveOpeningChallenge`** — derives `zeta` from commitment to `H`, registers in trace
+5. **`OpenCommitments`** — evaluates all entries in `proof.OpeningProofs` at `zeta`
 
-### `pas/univariate/` — Univariate Polynomial Operations
+### Verifier pipeline (`verifier/verify.go`)
 
-Two-layer representation:
-- `EPolynomial`: coefficients, basis (`Canonical`/`Lagrange`/`LagrangeShifted`), layout (`Normal`/`BitReversed`), degree, `IsConstant` flag
-- `Polynomial`: wraps `*EPolynomial` with an integer `Shift` for P(ωˢ·X)
+`NewRunTime(cciop)` builds a `Runtime` with `Varindex` populated from `cciop.VanishingRelation.Leaves()`.
 
-Constructors:
-- `NewPolynomial(coeffs, opts...)`: use `WithBasis`, `WithLayout`, `WithID`
-- `NewInterpolatedPolynomial(evals, id, opts...)`: Lagrange basis, Normal layout
-- `NewConstantPolynomial(value, opts...)`: `IsConstant=true`; `GetCoefficient(i)` always returns the same value
+`Runtime.Verify(&proof)` runs:
+1. **`ComputeChallenges`** — Kahn's scheduler replays FS rounds to re-derive all challenges into `runtime.Vars`
+2. **`ComputeOpeningPoint`** — re-derives `zeta` from commitment to quotient
+3. **`EvaluateComputableColumns`** — evaluates Lagrange-type columns at `zeta`
+4. **`FillClaimedValues`** — copies prover-claimed opening values into `runtime.Vars`
+5. **`CheckRelation`** — verifies `VanishingRelation(openings) = H(zeta) · (zeta^N - 1)` using `sym.ToHorner` + `Eval`
+6. **`VerifyOpeningProofs`** — calls `dummycommitment.Verify` for each opening (currently a no-op)
 
-Key operations:
-- `GetCoefficient(i)`: returns the i-th evaluation for Lagrange/LagrangeShifted; **panics** for non-constant Canonical
-- `ToBasis(domain, targetBasis)` / `ToLayout(layout)`: in-place conversions
-- `Evaluate(x)`: evaluates at a field element; **requires Canonical basis** (panics otherwise)
-- `EvalPointWise(Pi map[string]*Polynomial, E sym.Expr, targetSize, opts...)`: Q(P₁[i],...,Pₙ[i]) pointwise over all i; inputs must be Lagrange or LagrangeShifted (use `WithInputBasis`, `WithOutputBasis`)
-- `ComputeQuotient(Pi map[string]*Polynomial, E sym.Expr, N int, opts...)`: computes E(Pi)/(Xⁿ−1) on a big domain; returns LagrangeShifted by default — convert to Canonical before calling `Evaluate`
-- `BuildGrandProduct(P1/P2, E1/E2, N, opts...)`: R[0]=1, R[i+1]=R[i]·E1(P1[i])/E2(P2[i])
-- `NextPowerOfTwo(n int) int`: utility
+### `viewer` — HTML visualisers
 
-**`CopyE` does not preserve `IsConstant`** — copies of constant polynomials lose the flag and behave as 1-coefficient Canonical polynomials (which FFT to all-constant Lagrange on `ToBasis`). This is intentional and used by `BuildGrandProduct`.
+- `WriteProofRoundsDagToHTML(rounds []cs.Round, filename)` — DAG of verifier FS rounds: committed-column leaf nodes → challenge nodes
+- `WriteProverActionsDagToHTML(cciop cs.CompiledIOP, filename)` — bipartite DAG: known columns → action nodes → computed columns
+- `WriteTraceToCSV(filename, trace, N)` — dumps all trace columns as CSV
 
-**FFT layout convention**: DIF produces BitReversed output from Normal input; DIT produces Normal output from BitReversed input. `ToBasis` chooses FFT mode to minimize redundant bit-reversals.
+## Key gotchas
 
-### `pas/sym/` — Symbolic Multivariate Expressions
+**Polynomial basis discipline**: `Evaluate(x)` requires `Canonical` basis. `GetCoefficient(i)` requires `Lagrange`/`LagrangeShifted` or a constant polynomial. `dummycommitment.Open` converts to Canonical automatically. `ComputeQuotient` returns `LagrangeShifted` — call `ToBasis(domain, Canonical)` before evaluating at a point.
 
-- `Expr` interface: `Add()`, `Sub()`, `Mul()`, `Pow(uint32)`, `Degree()`, `Leaves()`, `LeavesWOPlaceholders()`
-- Leaf types: `Var` (trace column reference), `Const` (field constant), `Placeholder` (challenge reference — same as `Var` for evaluation but excluded from `LeavesWOPlaceholders()`)
-- `Convert(expr, varindex, nvars) Polynomial`: converts to dense multivariate polynomial
-- `ToHorner(p Polynomial) *Horner`: efficient evaluation form; `h.Eval([]Element)`
-- `RemoveDuplicates([]string) []string`: deduplicates while preserving order
+**`squareAndMultiply` builds trees, not DAGs**: `Expr.Pow(n)` uses binary exponentiation with `Clone` on every step to ensure no shared nodes. Shared nodes break `Prune` (which rewrites in-place).
 
-### `plonk_example/` — PLONK Integration Example
+**Fiat-Shamir transcript**: challenges must be derived in the exact order they were registered. A failed `SendMeAChallenge` mid-loop leaves the transcript in a broken state.
 
-Bridges gnark's PLONK circuit compilation to the IOP library:
-- `BuildTrace(plonkTrace *gnark_plonk.Trace, solution *gnark_cs.SparseR1CSSolution, nbPublicInputs int) (cs.Trace, error)`: produces a 16-column trace (QL, QR, QM, QO, QK, S1, S2, S3, L, R, O, ID1, ID2, ID3 + Z/ZS slots)
-  - Completes `Qk[i] = L[i]` for `i < nbPublicInputs` (gnark's `NewTrace` leaves these zero)
-  - Domain size must be `NextPowerOfTwo(nbConstraints + nbPublicInputs)` to match `gnark`'s `evaluateLROSmallDomain`
-  - **Use distinct named variables** for each polynomial local — reusing a single `p` variable and taking `&p` makes all map entries alias the same address
+**`ProverActions` are in topological order**: `Solve` relies on this. The Kahn scheduler merely parallelises execution; the ordering must be correct at registration time.
 
-### `crypto/dummycommitment/`
+**Lagrange column IDs**: `GetLagrangeID(i, N)` generates a canonical ID. The same Lagrange column registered from different gadgets is idempotent (`AddComputableColumn` is a no-op if the column already exists).
 
-Toy commitment scheme for testing:
-- `Commit(p)`: returns `Coefficients[0]` as digest — works in any basis
-- `Open(p, point)`: evaluates at point; requires Canonical basis
-- `Verify(...)`: always returns nil
-
-## Important Gotchas
-
-**`Trace` is a `map[string]*Polynomial`**, not a slice. All column lookups are by name string.
-
-**`Finalize` requires exactly one active constraint** (`len(S.Constraints) == 1`). Every constraint added outside `WithCaching()` bypasses the fold and counts separately. When using `Protocol`, use `WithCaching()` on all IOP builders and `NewLagrangeConstraint`, then call `FoldCachedConstraints` once before `Finalize`.
-
-**Lagrange polynomial degree**: `NewPolynomial` strips trailing zeros when computing degree, which is wrong for Lagrange basis (each evaluation point is real data). After constructing a Lagrange polynomial from a slice, set `p.EP.Degree = len(p.EP.Coefficients) - 1`.
-
-**`ComputeQuotient` returns `LagrangeShifted`** by default. Call `H.ToBasis(hDomain, Canonical)` before `H.Evaluate(zeta)`.
-
-**FS challenge ordering**: every `SendMeAChallenge` call registers a new challenge name in the gnark-crypto FS transcript. Challenges must be derived strictly in order. A failed `SendMeAChallenge` (mid-loop, before `ComputeChallenge`) leaves the transcript broken for all subsequent challenges.
-
-## Import Paths
-
-```go
-import (
-    "github.com/consensys/iop/cs"
-    "github.com/consensys/iop/pas/univariate"
-    "github.com/consensys/iop/pas/sym"
-    "github.com/consensys/iop/plonk_example"
-    "github.com/consensys/iop/crypto/dummycommitment"
-)
-```
+**`VarIndex` scope**: `verifier.Runtime.Varindex` is built from `cciop.VanishingRelation.Leaves()`. `FINAL_EVALUATION_POINT` (zeta) is stored in `runtime.Zeta` and is NOT in `Varindex`.

@@ -30,7 +30,7 @@ func (system *System) RegisterConstraints(C []Constraint) {
 
 // RegisterithLagrangeColumn syntactic sugar to add a prover action for creating the i-th lagrange column
 func (system *System) RegisterithLagrangeColumn(i int) {
-	system.RegisterProverAction(nil, []string{GetLagrangeID(i, system.N)}, AddComputableColumn)
+	system.RegisterProverAction(nil, []string{GetLagrangeID(i, system.N)}, ComputeLagrangeColumn)
 }
 
 // RegisterProverAction adds a prover action to the underlying System
