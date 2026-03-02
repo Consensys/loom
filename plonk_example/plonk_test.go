@@ -8,6 +8,7 @@ import (
 	"github.com/consensys/giop/prover"
 	"github.com/consensys/giop/std"
 	"github.com/consensys/giop/verifier"
+	"github.com/consensys/giop/viewer"
 )
 
 func TestPlonk(t *testing.T) {
@@ -66,9 +67,41 @@ func TestPlonk(t *testing.T) {
 	}
 
 	cciop := cs.Compile(&system)
+	viewer.WriteProverActionsDagToHTML(cciop, "plonk_dag.html")
 
 	proverRunTime := prover.NewRuntime(cciop, trace)
-	proof, err := proverRunTime.Prove(knowncolumns, 1)
+	proof := cs.NewProof(N)
+
+	// Step 1: Solve — compute all intermediate columns (beta, gamma, Z, Z_shifted, LAGRANGE_0)
+	viewer.WriteTraceToCSV("trace_0_known.csv", proverRunTime.Trace, N)
+	err = proverRunTime.Solve(knowncolumns, &proof, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer.WriteTraceToCSV("trace_1_after_solve.csv", proverRunTime.Trace, N)
+
+	// Step 2: DeriveFinalFoldingChallenge — derive alpha, fold constraints
+	err = proverRunTime.DeriveFinalFoldingChallenge(&proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer.WriteTraceToCSV("trace_2_after_folding.csv", proverRunTime.Trace, N)
+
+	// Step 3: ComputeQuotient — compute H = C(trace) / (X^N - 1)
+	err = proverRunTime.ComputeQuotient(&proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer.WriteTraceToCSV("trace_3_after_quotient.csv", proverRunTime.Trace, N)
+
+	// Step 4: DeriveOpeningChallenge — derive zeta
+	zeta, err := proverRunTime.DeriveOpeningChallenge(&proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Step 5: OpenCommitments — evaluate all polynomials at zeta
+	err = proverRunTime.OpenCommitments(&proof, zeta)
 	if err != nil {
 		t.Fatal(err)
 	}
