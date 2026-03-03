@@ -41,28 +41,22 @@ func ComputeQuotient(Pi map[string]*Polynomial, E sym.Expr, N int, opts ...Build
 	}
 
 	// we do the evaluation manually (don't use EvalPointWise)
-	varindex := make(sym.VarIndex)
 	leaves := sym.RemoveDuplicates(E.Leaves(sym.Config{}))
-	for i, l := range leaves {
-		varindex[l] = i
-	}
-	Q := sym.ToHorner(sym.Convert(E, varindex, len(leaves)))
 
 	numerator := make([]koalabear.Element, bigSize)
 
-	// copy only the polynomials referenced by E (indexed by varindex).
-	// Pi may contain more entries than E.Leaves() (e.g. when the full trace is passed in),
-	// so we must NOT use len(Pi) as the slice size — unused slots would remain nil and crash FFTInverse.
-	nbPolys := len(leaves)
-	PiCopies := make([][]koalabear.Element, nbPolys)
-	for _, l := range leaves {
-		v := Pi[l]
-		PiCopies[varindex[l]] = make([]koalabear.Element, len(v.EP.Coefficients)) // len = N except for constant polynomials
-		copy(PiCopies[varindex[l]], v.EP.Coefficients)
+	// copy only the polynomials referenced by E.
+	// Pi may contain more entries than E.Leaves() (e.g. when the full trace is passed in).
+	PiCopies := make(map[string][]koalabear.Element, len(leaves))
+	for _, name := range leaves {
+		v := Pi[name]
+		coeffs := make([]koalabear.Element, len(v.EP.Coefficients)) // len = N except for constant polynomials
+		copy(coeffs, v.EP.Coefficients)
+		PiCopies[name] = coeffs
 	}
 
 	// variables assignment
-	x := make([]koalabear.Element, len(leaves))
+	vals := make(map[string]koalabear.Element, len(leaves))
 
 	// create domains
 	bigDomain := fft.NewDomain(uint64(bigSize))
@@ -115,14 +109,14 @@ func ComputeQuotient(Pi map[string]*Polynomial, E sym.Expr, N int, opts ...Build
 		// at this stage, the polys are evaluated on bigDomain.FrMultiplicativeGen*<bigDomain.Generator^i>. We can compute the rho-ith
 		// component of the numerator
 		for j := 0; j < N; j++ {
-			for k, pCopy := range PiCopies { // assign variables
+			for name, pCopy := range PiCopies { // assign variables
 				if len(pCopy) == 1 { // /!\ polynomials coming from challenges are constants -> the size of coeff is 1 in that case
-					x[k].Set(&pCopy[0])
+					vals[name] = pCopy[0]
 					continue
 				}
-				x[k].Set(&pCopy[j])
+				vals[name] = pCopy[j]
 			}
-			numerator[rho*j+i] = Q.Eval(x)
+			numerator[rho*j+i] = E.Evaluate(vals)
 		}
 
 		// FFTInv on PiCopies -> the PiCopies become in canonical, the k-th coeffs are shifted by bigDomain.FrMultiplicativeGen^k*<bigDomain.Generator^ik>

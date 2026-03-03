@@ -146,29 +146,21 @@ func BruteForceChecker(T trace.Trace, constraints []Constraint, N int) error {
 
 	for _, C := range constraints {
 
-		leaves := C.Leaves(sym.NewConfig())
+		leaves := sym.RemoveDuplicates(C.Leaves(sym.NewConfig()))
 
-		varindex := make(sym.VarIndex)
-		for i, l := range leaves {
-			varindex[l] = i
+		// validate all leaves are present before touching any row
+		for _, l := range leaves {
+			if _, ok := T[l]; !ok {
+				return fmt.Errorf("%s not found in the trace", l)
+			}
 		}
 
-		// evaluate C rows by rows
-		CHorner := sym.ToHorner(sym.Convert(C, varindex, len(leaves)))
-		values := make([]koalabear.Element, len(leaves))
-
+		vals := make(map[string]koalabear.Element, len(leaves))
 		for i := 0; i < N; i++ {
-
 			for _, l := range leaves {
-				if _, ok := T[l]; !ok {
-					return fmt.Errorf("%s not found in the trace", l)
-				}
-				values[varindex[l]] = T[l].GetCoefficient(i)
+				vals[l] = T[l].GetCoefficient(i)
 			}
-
-			z := CHorner.Eval(values)
-
-			if !z.IsZero() {
+			if z := C.Evaluate(vals); !z.IsZero() {
 				return fmt.Errorf("%s should vanish on the trace, but failed at row %d\n", C.String(), i)
 			}
 		}
@@ -211,14 +203,10 @@ func QuotientChecker(T trace.Trace, constraints []Constraint, N int) error {
 			return fmt.Errorf("failed to evaluate quotient at z: %w", err)
 		}
 
-		// Build varindex from constraint leaves; for each leaf, copy the trace polynomial,
-		// convert to Canonical (copies avoid mutating the original trace), and evaluate at z.
+		// For each leaf, copy the trace polynomial, convert to Canonical
+		// (copies avoid mutating the original trace), and evaluate at z.
 		leaves := sym.RemoveDuplicates(C.Leaves(sym.NewConfig()))
-		varindex := make(sym.VarIndex)
-		for i, l := range leaves {
-			varindex[l] = i
-		}
-		values := make([]koalabear.Element, len(leaves))
+		vals := make(map[string]koalabear.Element, len(leaves))
 		for _, l := range leaves {
 			var pCopy univariate.Polynomial
 			univariate.Copy(&pCopy, T[l])
@@ -229,12 +217,11 @@ func QuotientChecker(T trace.Trace, constraints []Constraint, N int) error {
 			if err != nil {
 				return fmt.Errorf("failed to evaluate %s at z: %w", l, err)
 			}
-			values[varindex[l]] = val
+			vals[l] = val
 		}
 
 		// Evaluate C at the column evaluations: cz = C(traces(z))
-		CHorner := sym.ToHorner(sym.Convert(C, varindex, len(leaves)))
-		cz := CHorner.Eval(values)
+		cz := C.Evaluate(vals)
 
 		// Check C(T)(z) == H(z) * (z^N - 1)
 		var zN, one koalabear.Element

@@ -240,23 +240,19 @@ func (p *Polynomial) Evaluate(x koalabear.Element) (koalabear.Element, error) {
 // N is the size of the polynomials in Pi, assumed to have all the same size, except the constant (size 1)
 // nbCommittedColumns is the number of variables in E
 func evalPointWise(Pi map[string]*Polynomial, E sym.Expr, N int) ([]koalabear.Element, error) {
-	varindex := make(sym.VarIndex)
 	leaves := sym.RemoveDuplicates(E.Leaves(sym.NewConfig()))
-	for i, l := range leaves {
-		varindex[l] = i
-	}
-	Q := sym.ToHorner(sym.Convert(E, varindex, len(leaves)))
-	resultCoeffs := make([]koalabear.Element, N)
-	values := make([]koalabear.Element, len(leaves))
-	for i := 0; i < N; i++ {
-		for name, idx := range varindex {
-			p, ok := Pi[name]
-			if !ok {
-				return []koalabear.Element{}, fmt.Errorf("polynomial %s not found in Pi", name)
-			}
-			values[idx] = p.GetCoefficient(i)
+	for _, name := range leaves {
+		if _, ok := Pi[name]; !ok {
+			return nil, fmt.Errorf("polynomial %s not found in Pi", name)
 		}
-		resultCoeffs[i] = Q.Eval(values)
+	}
+	resultCoeffs := make([]koalabear.Element, N)
+	vals := make(map[string]koalabear.Element, len(leaves))
+	for i := 0; i < N; i++ {
+		for _, name := range leaves {
+			vals[name] = Pi[name].GetCoefficient(i)
+		}
+		resultCoeffs[i] = E.Evaluate(vals)
 	}
 	return resultCoeffs, nil
 }

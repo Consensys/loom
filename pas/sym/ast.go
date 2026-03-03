@@ -76,6 +76,10 @@ type Expr interface {
 	// When E is found, remove E from expr and replace this subexpression with NewCommittedColumn(E.String())
 	// Return E.
 	Prune(deg int) Expr
+
+	// Evaluate substitutes each leaf name with the corresponding field element
+	// from vals and returns the result. Panics if a required name is absent.
+	Evaluate(vals map[string]koalabear.Element) koalabear.Element
 }
 
 // ComputableColumn leaf used to store columns which are not committed to, because they can be recomputed by the verifier
@@ -615,6 +619,72 @@ func squareAndMultiply(base Expr, exp uint32) Expr {
 		}
 	}
 	return result
+}
+
+func (c *CommittedColumn) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
+	v, ok := vals[c.Name]
+	if !ok {
+		panic("Evaluate: missing value for CommittedColumn " + c.Name)
+	}
+	return v
+}
+
+func (c *Challenge) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
+	v, ok := vals[c.Name]
+	if !ok {
+		panic("Evaluate: missing value for Challenge " + c.Name)
+	}
+	return v
+}
+
+func (c *ComputableColumn) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
+	v, ok := vals[c.Name]
+	if !ok {
+		panic("Evaluate: missing value for ComputableColumn " + c.Name)
+	}
+	return v
+}
+
+func (c *Const) Evaluate(_ map[string]koalabear.Element) koalabear.Element {
+	return c.Value
+}
+
+func (a *Add) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
+	l := a.Left.Evaluate(vals)
+	r := a.Right.Evaluate(vals)
+	l.Add(&l, &r)
+	return l
+}
+
+func (s *Sub) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
+	l := s.Left.Evaluate(vals)
+	r := s.Right.Evaluate(vals)
+	l.Sub(&l, &r)
+	return l
+}
+
+func (m *Mul) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
+	l := m.Left.Evaluate(vals)
+	r := m.Right.Evaluate(vals)
+	l.Mul(&l, &r)
+	return l
+}
+
+// Evaluate uses binary exponentiation so that large exponents (as produced by
+// squareAndMultiply trees) are still handled in O(log exp) multiplications.
+func (p *Pow) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
+	base := p.Base.Evaluate(vals)
+	var res koalabear.Element
+	res.SetOne()
+	exp := p.Exp
+	for exp > 0 {
+		if exp&1 == 1 {
+			res.Mul(&res, &base)
+		}
+		base.Mul(&base, &base)
+		exp >>= 1
+	}
+	return res
 }
 
 // RemoveDuplicates removes duplicates in input

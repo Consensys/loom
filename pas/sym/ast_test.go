@@ -227,36 +227,23 @@ func TestEval(t *testing.T) {
 	x2 := NewCommittedColumn("x_2")
 	x3 := NewCommittedColumn("x_3")
 
-	nbCommittedColumns := 4
-
-	varindex := make(VarIndex)
-	varindex[x0.Name] = 0
-	varindex[x1.Name] = 1
-	varindex[x2.Name] = 2
-	varindex[x3.Name] = 3
+	input := make(map[string]koalabear.Element)
 
 	var one, two, three, four koalabear.Element
 	one.SetUint64(1)
 	two.SetUint64(2)
 	three.SetUint64(3)
 	four.SetUint64(4)
+	input[x0.Name] = one
+	input[x1.Name] = two
+	input[x2.Name] = three
+	input[x3.Name] = four
 
 	e := x0.Mul(x1).Add(x2).Mul(x3).Add(NewConst(one)).Mul(NewConst(two)).Add(NewConst(three)).Mul(NewConst(four))
 
-	poly := Convert(e, varindex, nbCommittedColumns)
-
-	horner := ToHorner(poly)
-
-	// Evaluate at (1, 2, 3, 4)
-	var input [4]koalabear.Element
-	input[varindex[x0.Name]] = one
-	input[varindex[x1.Name]] = two
-	input[varindex[x2.Name]] = three
-	input[varindex[x3.Name]] = four
-
 	var expected, result koalabear.Element
 	expected.SetUint64(180) // (((((((x_0 * x_1) + x_2) * x_3) + 1) * 2) + 3) * 4)
-	result = horner.Eval(input[:])
+	result = e.Evaluate(input)
 
 	if !result.Equal(&expected) {
 		t.Errorf("Expected %s, got %s", expected.String(), result.String())

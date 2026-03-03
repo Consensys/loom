@@ -4,9 +4,9 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
-	"github.com/consensys/giop/pas/sym"
 )
 
 // makeLagrangePoly builds a polynomial in Lagrange basis from raw uint64 evaluations.
@@ -639,21 +639,15 @@ func TestBuildGrandSum(t *testing.T) {
 func verifyQuotientIdentity(t *testing.T, Pi map[string]*Polynomial, E sym.Expr, Q Polynomial, N int) {
 	t.Helper()
 
-	// Build Horner form of E
-	varindex := make(sym.VarIndex)
 	leaves := sym.RemoveDuplicates(E.Leaves(sym.NewConfig()))
-	for i, l := range leaves {
-		varindex[l] = i
-	}
-	EHorner := sym.ToHorner(sym.Convert(E, varindex, len(leaves)))
 
 	// Pick a random evaluation point
 	var x koalabear.Element
 	x.SetRandom()
 
 	// Evaluate each Pi at x (convert to Canonical using its own domain)
-	piAtX := make([]koalabear.Element, len(leaves))
-	for name, idx := range varindex {
+	piAtX := make(map[string]koalabear.Element, len(leaves))
+	for _, name := range leaves {
 		p := Pi[name]
 		var pCopy Polynomial
 		pCopy.EP = &EPolynomial{}
@@ -668,11 +662,11 @@ func verifyQuotientIdentity(t *testing.T, Pi map[string]*Polynomial, E sym.Expr,
 		if err != nil {
 			t.Fatalf("failed to evaluate Pi[%s] at x: %v", name, err)
 		}
-		piAtX[idx] = val
+		piAtX[name] = val
 	}
 
 	// E(Pi(x))
-	numeratorAtX := EHorner.Eval(piAtX)
+	numeratorAtX := E.Evaluate(piAtX)
 
 	// Q(x)
 	qAtX, err := Q.Evaluate(x)
@@ -752,11 +746,11 @@ func TestComputeQuotient(t *testing.T) {
 		}
 
 		// x3[i] = -(x0[i]^3 + x1[i]*x2[i])
-		varindex3 := sym.VarIndex{"x0": 0, "x1": 1, "x2": 2}
 		trunc := sym.NewCommittedColumn("x0").Pow(3).Add(sym.NewCommittedColumn("x1").Mul(sym.NewCommittedColumn("x2")))
-		truncH := sym.ToHorner(sym.Convert(trunc, varindex3, 3))
+		truncVals := make(map[string]koalabear.Element, 3)
 		for i := 0; i < size; i++ {
-			c3[i] = truncH.Eval([]koalabear.Element{c0[i], c1[i], c2[i]})
+			truncVals["x0"], truncVals["x1"], truncVals["x2"] = c0[i], c1[i], c2[i]
+			c3[i] = trunc.Evaluate(truncVals)
 			c3[i].Neg(&c3[i])
 		}
 

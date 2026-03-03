@@ -35,7 +35,7 @@ func CheckFiatShamir(proverRunTime *prover.Runtime, verifierRunTime *verifier.Ru
 
 	mapVerifierChallenges := make(map[string]koalabear.Element)
 	for _, r := range proof.Rounds {
-		mapVerifierChallenges[r.ChallengeName] = verifierRunTime.Vars[verifierRunTime.Varindex[r.ChallengeName]]
+		mapVerifierChallenges[r.ChallengeName] = verifierRunTime.Vars[r.ChallengeName]
 	}
 	if len(mapVerifierChallenges) != len(mapProverChallenges) {
 		t.Errorf("prover and verifier did not derive the same number of challenge: got %d and %d", len(mapProverChallenges), len(mapVerifierChallenges))

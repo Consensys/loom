@@ -17,23 +17,15 @@ import (
 
 // Runtime stores the variables to plug in the final relation to check.
 type Runtime struct {
-	Varindex sym.VarIndex
-	Vars     []koalabear.Element // variables appearing in the vanishing relation
-	Zeta     koalabear.Element   // final opening point
+	Vars map[string]koalabear.Element // values keyed by leaf name
+	Zeta koalabear.Element            // final opening point
 }
 
-// NewRunTime creates the NewRunTime and knownColumns, which are the committedColumns
+// NewRunTime creates the Runtime for the given compiled IOP.
 func NewRunTime(cciop cs.CompiledIOP) Runtime {
-	var res Runtime
-	res.Varindex = make(sym.VarIndex)
-	allLeaves := cciop.VanishingRelation.Leaves(sym.NewConfig())
-	allLeaves = sym.RemoveDuplicates(allLeaves)
-	res.Vars = make([]koalabear.Element, len(allLeaves))
-	for i, l := range allLeaves {
-		res.Varindex[l] = i
+	return Runtime{
+		Vars: make(map[string]koalabear.Element),
 	}
-
-	return res
 }
 
 // DeriveChallenge derive the challenge of corresponding to proof.Rounds[i]
@@ -58,11 +50,10 @@ func (runtime *Runtime) DeriveChallenge(proof *cs.Proof, i int) error {
 
 	// bind the challenge to its other challenges dependencies
 	for _, l := range proof.Rounds[i].DependenciesChallenges {
-		idx, ok := runtime.Varindex[l]
+		challenge, ok := runtime.Vars[l]
 		if !ok {
-			return fmt.Errorf("challenge %s not registered in varindex", l)
+			return fmt.Errorf("challenge %s not registered in vars", l)
 		}
-		challenge := runtime.Vars[idx]
 		fs.Bind(proof.Rounds[i].ChallengeName, challenge.Marshal())
 	}
 
@@ -73,7 +64,7 @@ func (runtime *Runtime) DeriveChallenge(proof *cs.Proof, i int) error {
 	}
 	var c koalabear.Element
 	c.SetBytes(bc)
-	runtime.Vars[runtime.Varindex[proof.Rounds[i].ChallengeName]] = c
+	runtime.Vars[proof.Rounds[i].ChallengeName] = c
 
 	return nil
 }
@@ -177,8 +168,7 @@ func (runtime *Runtime) ComputeChallenges(proof *cs.Proof, nbWorkers int) error 
 
 }
 
-// EvaluateComputableColumns evaluates the computable columns at zeta and populates the list of vars
-// corresponding to those columns
+// EvaluateComputableColumns evaluates the computable columns at zeta and stores the results in runtime.Vars.
 func (runtime *Runtime) EvaluateComputableColumns(proof *cs.Proof) error {
 
 	ccLeaves := proof.VanishingRelation.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutCommittedColumns()))
@@ -189,12 +179,7 @@ func (runtime *Runtime) EvaluateComputableColumns(proof *cs.Proof) error {
 		if err != nil {
 			return err
 		}
-		val := cc.F(runtime.Zeta)
-		_, ok := runtime.Varindex[l]
-		if !ok {
-			return fmt.Errorf("%s does not appear in the verifier var index", l)
-		}
-		runtime.Vars[runtime.Varindex[l]] = val
+		runtime.Vars[l] = cc.F(runtime.Zeta)
 	}
 
 	return nil
@@ -211,7 +196,7 @@ func (runtime *Runtime) FillClaimedValues(proof *cs.Proof) error {
 		if !ok {
 			return fmt.Errorf("Opening proof for column %s not found in proof", l)
 		}
-		runtime.Vars[runtime.Varindex[l]] = com.OpeningProof.ClaimedValue
+		runtime.Vars[l] = com.OpeningProof.ClaimedValue
 	}
 
 	return nil
@@ -232,8 +217,7 @@ func (runtime *Runtime) CheckRelation(proof *cs.Proof) error {
 	one := koalabear.One()
 	zetaNMinusOne.Set(&zeta).Exp(zetaNMinusOne, big.NewInt(int64(proof.N))).Sub(&zetaNMinusOne, &one)
 
-	Q := sym.ToHorner(sym.Convert(proof.VanishingRelation, runtime.Varindex, len(runtime.Varindex)))
-	vanishingConstraintAtZeta := Q.Eval(runtime.Vars)
+	vanishingConstraintAtZeta := proof.VanishingRelation.Evaluate(runtime.Vars)
 
 	hzeta.Mul(&zetaNMinusOne, &hzeta)
 	if !vanishingConstraintAtZeta.Equal(&hzeta) {
