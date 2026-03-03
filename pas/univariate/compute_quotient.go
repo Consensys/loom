@@ -4,14 +4,15 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/consensys/giop/pas/dag"
+	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
-	"github.com/consensys/giop/pas/sym"
 )
 
 // ComputeQuotient computes E(PI)/X^N-1
 // /!\ all polynomials must be in normal layout, lagrange basis
-func ComputeQuotient(Pi map[string]*Polynomial, E sym.Expr, N int, opts ...BuilderOption) (Polynomial, error) {
+func ComputeQuotient(Pi map[string]*Polynomial, vanishingRelation dag.DAG, N int, opts ...BuilderOption) (Polynomial, error) {
 
 	err := ensurePolynomialsAreInLagrange(Pi)
 	if err != nil {
@@ -30,7 +31,7 @@ func ComputeQuotient(Pi map[string]*Polynomial, E sym.Expr, N int, opts ...Build
 	}
 
 	// Degree of E(Pi) is at most E.Degree() * sizePi
-	eDeg := E.Degree()
+	eDeg := vanishingRelation.Degree()
 	if eDeg <= 0 {
 		return Polynomial{}, fmt.Errorf("expression degree must be at least 1, got %d", eDeg)
 	}
@@ -41,7 +42,7 @@ func ComputeQuotient(Pi map[string]*Polynomial, E sym.Expr, N int, opts ...Build
 	}
 
 	// we do the evaluation manually (don't use EvalPointWise)
-	leaves := sym.RemoveDuplicates(E.Leaves(sym.Config{}))
+	leaves := vanishingRelation.Leaves(sym.Config{})
 
 	numerator := make([]koalabear.Element, bigSize)
 
@@ -116,7 +117,7 @@ func ComputeQuotient(Pi map[string]*Polynomial, E sym.Expr, N int, opts ...Build
 				}
 				vals[name] = pCopy[j]
 			}
-			numerator[rho*j+i] = E.Evaluate(vals)
+			numerator[rho*j+i] = vanishingRelation.Eval(vals)
 		}
 
 		// FFTInv on PiCopies -> the PiCopies become in canonical, the k-th coeffs are shifted by bigDomain.FrMultiplicativeGen^k*<bigDomain.Generator^ik>

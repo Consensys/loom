@@ -1,33 +1,10 @@
 package sym
 
 import (
-	"sort"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
-
-// sortedUniq returns a sorted, deduplicated copy — order-independent comparison helper.
-func sortedUniq(s []string) []string {
-	s = RemoveDuplicates(s)
-	out := make([]string, len(s))
-	copy(out, s)
-	sort.Strings(out)
-	return out
-}
-
-func assertSameSet(t *testing.T, got, want []string) {
-	t.Helper()
-	g, w := sortedUniq(got), sortedUniq(want)
-	if len(g) != len(w) {
-		t.Fatalf("got %v, want %v", g, w)
-	}
-	for i := range g {
-		if g[i] != w[i] {
-			t.Fatalf("got %v, want %v", g, w)
-		}
-	}
-}
 
 func TestString(t *testing.T) {
 
@@ -92,63 +69,63 @@ func TestLeaves(t *testing.T) {
 	// --- Leaf nodes ---
 
 	// ComputableColumn: present by default, absent when excluded
-	assertSameSet(t, NewComputableColumn("L0").Leaves(all), []string{"L0"})
-	assertSameSet(t, NewComputableColumn("L0").Leaves(woCC), []string{})
+	AssertSameSet(t, NewComputableColumn("L0").Leaves(all), []string{"L0"})
+	AssertSameSet(t, NewComputableColumn("L0").Leaves(woCC), []string{})
 
 	// CommittedColumn: always present regardless of config
-	assertSameSet(t, NewCommittedColumn("x").Leaves(all), []string{"x"})
-	assertSameSet(t, NewCommittedColumn("x").Leaves(woCC), []string{"x"})
-	assertSameSet(t, NewCommittedColumn("x").Leaves(woChal), []string{"x"})
+	AssertSameSet(t, NewCommittedColumn("x").Leaves(all), []string{"x"})
+	AssertSameSet(t, NewCommittedColumn("x").Leaves(woCC), []string{"x"})
+	AssertSameSet(t, NewCommittedColumn("x").Leaves(woChal), []string{"x"})
 
 	// Const: never present
-	assertSameSet(t, NewConst(five).Leaves(all), []string{})
+	AssertSameSet(t, NewConst(five).Leaves(all), []string{})
 
 	// Challenge: present by default, absent when excluded
-	assertSameSet(t, NewChallenge("beta").Leaves(all), []string{"beta"})
-	assertSameSet(t, NewChallenge("beta").Leaves(woChal), []string{})
+	AssertSameSet(t, NewChallenge("beta").Leaves(all), []string{"beta"})
+	AssertSameSet(t, NewChallenge("beta").Leaves(woChal), []string{})
 
 	// --- Composite expressions ---
 
 	// ComputableColumn + CommittedColumn
 	e := NewComputableColumn("L0").Add(NewCommittedColumn("x"))
-	assertSameSet(t, e.Leaves(all), []string{"L0", "x"})
-	assertSameSet(t, e.Leaves(woCC), []string{"x"})
+	AssertSameSet(t, e.Leaves(all), []string{"L0", "x"})
+	AssertSameSet(t, e.Leaves(woCC), []string{"x"})
 
 	// ComputableColumn * Challenge
 	e = NewComputableColumn("L0").Mul(NewChallenge("gamma"))
-	assertSameSet(t, e.Leaves(all), []string{"L0", "gamma"})
-	assertSameSet(t, e.Leaves(woCC), []string{"gamma"})
-	assertSameSet(t, e.Leaves(woChal), []string{"L0"})
-	assertSameSet(t, e.Leaves(woAll), []string{})
+	AssertSameSet(t, e.Leaves(all), []string{"L0", "gamma"})
+	AssertSameSet(t, e.Leaves(woCC), []string{"gamma"})
+	AssertSameSet(t, e.Leaves(woChal), []string{"L0"})
+	AssertSameSet(t, e.Leaves(woAll), []string{})
 
 	// Multiple ComputableColumns
 	e = NewComputableColumn("L0").Add(NewComputableColumn("L1"))
-	assertSameSet(t, e.Leaves(all), []string{"L0", "L1"})
-	assertSameSet(t, e.Leaves(woCC), []string{})
+	AssertSameSet(t, e.Leaves(all), []string{"L0", "L1"})
+	AssertSameSet(t, e.Leaves(woCC), []string{})
 
 	// Sub: ComputableColumn on the right
 	e = NewCommittedColumn("x").Sub(NewComputableColumn("L0"))
-	assertSameSet(t, e.Leaves(all), []string{"x", "L0"})
-	assertSameSet(t, e.Leaves(woCC), []string{"x"})
+	AssertSameSet(t, e.Leaves(all), []string{"x", "L0"})
+	AssertSameSet(t, e.Leaves(woCC), []string{"x"})
 
 	// Pow: ComputableColumn inside
-	assertSameSet(t, NewComputableColumn("L0").Pow(2).Leaves(all), []string{"L0"})
-	assertSameSet(t, NewComputableColumn("L0").Pow(2).Leaves(woCC), []string{})
+	AssertSameSet(t, NewComputableColumn("L0").Pow(2).Leaves(all), []string{"L0"})
+	AssertSameSet(t, NewComputableColumn("L0").Pow(2).Leaves(woCC), []string{})
 
 	// Pow: CommittedColumn inside — no ComputableColumn
-	assertSameSet(t, NewCommittedColumn("x").Pow(3).Leaves(all), []string{"x"})
-	assertSameSet(t, NewCommittedColumn("x").Pow(3).Leaves(woCC), []string{"x"})
+	AssertSameSet(t, NewCommittedColumn("x").Pow(3).Leaves(all), []string{"x"})
+	AssertSameSet(t, NewCommittedColumn("x").Pow(3).Leaves(woCC), []string{"x"})
 
 	// Nested: (x + L0) * (y - alpha) — all four leaf types interact
 	e = NewCommittedColumn("x").Add(NewComputableColumn("L0")).Mul(NewCommittedColumn("y").Sub(NewChallenge("alpha")))
-	assertSameSet(t, e.Leaves(all), []string{"x", "L0", "y", "alpha"})
-	assertSameSet(t, e.Leaves(woCC), []string{"x", "y", "alpha"})
-	assertSameSet(t, e.Leaves(woChal), []string{"x", "L0", "y"})
-	assertSameSet(t, e.Leaves(woAll), []string{"x", "y"})
+	AssertSameSet(t, e.Leaves(all), []string{"x", "L0", "y", "alpha"})
+	AssertSameSet(t, e.Leaves(woCC), []string{"x", "y", "alpha"})
+	AssertSameSet(t, e.Leaves(woChal), []string{"x", "L0", "y"})
+	AssertSameSet(t, e.Leaves(woAll), []string{"x", "y"})
 
 	// Same ComputableColumn appearing multiple times — deduplicated
 	e = NewComputableColumn("L0").Add(NewComputableColumn("L0"))
-	assertSameSet(t, e.Leaves(all), []string{"L0"})
+	AssertSameSet(t, e.Leaves(all), []string{"L0"})
 }
 
 func TestReplaceLeafByExpression(t *testing.T) {

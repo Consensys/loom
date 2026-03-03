@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/consensys/giop/pas/dag"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/pas/univariate"
 	"github.com/consensys/giop/trace"
@@ -182,7 +183,8 @@ func QuotientChecker(T trace.Trace, constraints []Constraint, N int) error {
 	for _, C := range constraints {
 
 		// Compute H = C(trace) / (X^N - 1) in canonical form
-		H, err := univariate.ComputeQuotient(T, C, N)
+		Cdag := dag.ExprToDAG(C)
+		H, err := univariate.ComputeQuotient(T, *Cdag, N)
 		if err != nil {
 			return fmt.Errorf("ComputeQuotient failed: %w", err)
 		}

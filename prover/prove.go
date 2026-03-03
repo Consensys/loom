@@ -134,7 +134,7 @@ func FinalChallenges(rounds []cs.Round) []string {
 // cannot have been derived derived prior to any of the prover<->interactions and commitments
 func (runtime Runtime) DeriveFinalFoldingChallenge(proof *cs.Proof) error {
 
-	proof.VanishingRelation = runtime.CompiledIOP.VanishingRelation
+	// proof.VanishingRelation = runtime.CompiledIOP.VanishingRelation
 
 	// generate the folding challenge whose name is constants.FINAL_FOLDING_CHALLENGE, and which must be be bound to all the necessary
 	// data to ensure it cannot have been derived prior to running all the previous IOPs and commitments
@@ -142,7 +142,7 @@ func (runtime Runtime) DeriveFinalFoldingChallenge(proof *cs.Proof) error {
 	// 1. create the dependencies of the folding challenge to all the polynomials not committed
 	var round cs.Round
 	round.ChallengeName = constants.FINAL_FOLDING_CHALLENGE
-	leaves := proof.VanishingRelation.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutComputableColumns()))
+	leaves := runtime.CompiledIOP.VanishingRelation.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutComputableColumns()))
 	round.DependenciesCommittedColumns = make([]string, 0, len(leaves))
 	for _, l := range leaves {
 		if _, ok := proof.OpeningProofs[l]; !ok { // <- the column whose ID is l is not committed, we add it to bindings

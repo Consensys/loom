@@ -4,6 +4,7 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/consensys/giop/pas/dag"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
@@ -697,8 +698,9 @@ func TestComputeQuotient(t *testing.T) {
 		P := makeLagrangePoly(t, "f", 1, 2, 3, 4, 5, 6, 7, 8)
 		Pi := map[string]*Polynomial{"f": P, "g": P}
 		E := sym.NewCommittedColumn("f").Sub(sym.NewCommittedColumn("g"))
+		EDag := dag.ExprToDAG(E)
 
-		Q, err := ComputeQuotient(Pi, E, size, WithOutputBasis(Canonical))
+		Q, err := ComputeQuotient(Pi, *EDag, size, WithOutputBasis(Canonical))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -722,8 +724,9 @@ func TestComputeQuotient(t *testing.T) {
 		var minusOne koalabear.Element
 		minusOne.Neg(&one)
 		E := sym.NewCommittedColumn("f").Mul(sym.NewCommittedColumn("f").Add(sym.NewConst(minusOne)))
+		EDag := dag.ExprToDAG(E)
 
-		Q, err := ComputeQuotient(Pi, E, size, WithOutputBasis(Canonical))
+		Q, err := ComputeQuotient(Pi, *EDag, size, WithOutputBasis(Canonical))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -763,8 +766,9 @@ func TestComputeQuotient(t *testing.T) {
 		E := sym.NewCommittedColumn("x0").Pow(3).
 			Add(sym.NewCommittedColumn("x1").Mul(sym.NewCommittedColumn("x2"))).
 			Add(sym.NewCommittedColumn("x3"))
+		EDag := dag.ExprToDAG(E)
 
-		Q, err := ComputeQuotient(Pi, E, size, WithOutputBasis(Canonical))
+		Q, err := ComputeQuotient(Pi, *EDag, size, WithOutputBasis(Canonical))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -786,8 +790,9 @@ func TestComputeQuotient(t *testing.T) {
 		}
 		Pi := map[string]*Polynomial{"f": P, "gamma": &gamma}
 		E := sym.NewCommittedColumn("f").Sub(sym.NewCommittedColumn("gamma"))
+		EDag := dag.ExprToDAG(E)
 
-		Q, err := ComputeQuotient(Pi, E, size, WithOutputBasis(Canonical))
+		Q, err := ComputeQuotient(Pi, *EDag, size, WithOutputBasis(Canonical))
 		if err != nil {
 			t.Fatal(err)
 		}

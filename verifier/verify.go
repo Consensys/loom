@@ -10,6 +10,7 @@ import (
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/crypto/dummycommitment"
 	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/pas/dag"
 	"github.com/consensys/giop/pas/sym"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -17,14 +18,16 @@ import (
 
 // Runtime stores the variables to plug in the final relation to check.
 type Runtime struct {
-	Vars map[string]koalabear.Element // values keyed by leaf name
-	Zeta koalabear.Element            // final opening point
+	Vars              map[string]koalabear.Element // values keyed by leaf name
+	Zeta              koalabear.Element            // final opening point
+	VanishingRelation dag.DAG
 }
 
 // NewRunTime creates the Runtime for the given compiled IOP.
 func NewRunTime(cciop cs.CompiledIOP) Runtime {
 	return Runtime{
-		Vars: make(map[string]koalabear.Element),
+		Vars:              make(map[string]koalabear.Element),
+		VanishingRelation: cciop.VanishingRelation,
 	}
 }
 
@@ -171,7 +174,7 @@ func (runtime *Runtime) ComputeChallenges(proof *cs.Proof, nbWorkers int) error 
 // EvaluateComputableColumns evaluates the computable columns at zeta and stores the results in runtime.Vars.
 func (runtime *Runtime) EvaluateComputableColumns(proof *cs.Proof) error {
 
-	ccLeaves := proof.VanishingRelation.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutCommittedColumns()))
+	ccLeaves := runtime.VanishingRelation.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutCommittedColumns()))
 	ccLeaves = sym.RemoveDuplicates(ccLeaves)
 
 	for _, l := range ccLeaves {
@@ -188,7 +191,7 @@ func (runtime *Runtime) EvaluateComputableColumns(proof *cs.Proof) error {
 // FillClaimedValues fill runtime.Vars with the claimed values from the prover
 func (runtime *Runtime) FillClaimedValues(proof *cs.Proof) error {
 
-	ccLeaves := proof.VanishingRelation.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutComputableColumns()))
+	ccLeaves := runtime.VanishingRelation.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutComputableColumns()))
 	ccLeaves = sym.RemoveDuplicates(ccLeaves)
 
 	for _, l := range ccLeaves {
@@ -217,7 +220,7 @@ func (runtime *Runtime) CheckRelation(proof *cs.Proof) error {
 	one := koalabear.One()
 	zetaNMinusOne.Set(&zeta).Exp(zetaNMinusOne, big.NewInt(int64(proof.N))).Sub(&zetaNMinusOne, &one)
 
-	vanishingConstraintAtZeta := proof.VanishingRelation.Evaluate(runtime.Vars)
+	vanishingConstraintAtZeta := runtime.VanishingRelation.Eval(runtime.Vars)
 
 	hzeta.Mul(&zetaNMinusOne, &hzeta)
 	if !vanishingConstraintAtZeta.Equal(&hzeta) {
