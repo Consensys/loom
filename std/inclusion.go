@@ -81,9 +81,56 @@ func inclusionCheckIOP(system *cs.System, S, T sym.Expr, M, grandSumS, grandSumT
 
 }
 
-// InclusionCheckMultiSetIOP proves that  the rows of [S[0], S[1], ..] for a subset of the rows of
-// [T[0], T[1], ..]. It runs by folding the S[i] and the T[i] with a random challenge, and then run
-// the InclusionCheckIOP on the result
+// InclusionCheckMultiSetIOP proves that every row-tuple (S[0][i], …, S[k−1][i])
+// appears in the multiset of row-tuples {(T[0][j], …, T[m−1][j])}.
+//
+// Tuples are compressed into scalars via a Fiat-Shamir folding challenge α:
+//
+//	S_fold[i] = Σ_{0≤j<k} α^j · S[j][i]
+//	T_fold[i] = Σ_{0≤j<m} α^j · T[j][i]
+//
+// By Schwartz-Zippel, tuple inclusion holds iff (with overwhelming probability
+// over α) {S_fold[i]} ⊆ {T_fold[i]}. This scalar inclusion is then checked via
+// InclusionCheckIOP using the core identity:
+//
+//	Σ_i M[i]/(T_fold[i]−γ) = Σ_j 1/(S_fold[j]−γ)
+//
+// where M[i] = #{j | S_fold[j] = T_fold[i]} is the multiplicity of T_fold[i] in S_fold.
+//
+//	|----------------------------------–---------------------------------------------|
+//	| [prover]                         |              [verifier]                     |
+//	|----------------------------------–---------------------------------------------|
+//	| Commit(S[0],…,S[k−1],            |                                             |
+//	|        T[0],…,T[m−1])    -----→  | [Com(S[0]),…,Com(S[k−1]),                   | ROUND 1
+//	|                                  |  Com(T[0]),…,Com(T[m−1])]                   |
+//	|----------------------------------–---------------------------------------------|
+//	|                                  ←-----  Sample random α (folding)             |
+//	|                                  |  (α = Fiat-Shamir(Com(S[·]), Com(T[·])))    |
+//	|----------------------------------–---------------------------------------------|
+//	| Compute:                         |                                             |
+//	|   S_fold = Σ_j α^j · S[j]       |                                             |
+//	|   T_fold = Σ_j α^j · T[j]       |                                             |
+//	|   M[i] = #{j | S_fold[j]=T_fold[i]} |                                         |
+//	| Commit(M)                 -----→ | [Com(M)]                                    | ROUND 2
+//	|----------------------------------–---------------------------------------------|
+//	|                                  ←-----  Sample random γ (gamma)               |
+//	|                                  |  (γ = Fiat-Shamir(Com(S[·]), Com(T[·]),     |
+//	|                                  |                   Com(M)))                  |
+//	|----------------------------------–---------------------------------------------|
+//	| Compute running sums:            |                                             |
+//	|   GrandSumT[i] = Σ_{j≤i} M[j]/(T_fold[j]−γ)                                  |
+//	|   GrandSumS[i] = Σ_{j≤i} 1/(S_fold[j]−γ)                                     |
+//	| Commit(GrandSumT, GrandSumS)     |                                             |
+//	|                          -----→  | [Com(GrandSumT), Com(GrandSumS)]            | ROUND 3
+//	|----------------------------------–---------------------------------------------|
+//	|       (done via FoldConstraints + Finalize + Verify)                           |
+//	| Records five constraints:        |                                             |
+//	|   C1: (1−L_0)·((GrandSumT−GrandSumT_{ω^{−1}X})·(T_fold−γ) − M) = 0          |
+//	|   C2: L_0·(GrandSumT·(T_fold−γ) − M) = 0                                     |
+//	|   C3: (1−L_0)·((GrandSumS−GrandSumS_{ω^{−1}X})·(S_fold−γ) − 1) = 0          |
+//	|   C4: L_0·(GrandSumS·(S_fold−γ) − 1) = 0                                     |
+//	|   C5: L_{N−1}·(GrandSumS − GrandSumT) = 0  (total sums equal)                |
+//	|----------------------------------–---------------------------------------------|
 func InclusionCheckMultiSetIOP(system *cs.System, S, T []string, M, grandSumS, grandSumT string, gamma string, folding string) {
 
 	// 1. sample a challenge for folding

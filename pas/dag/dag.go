@@ -127,6 +127,11 @@ func (b *dagBuilder) build(e sym.Expr) *DAGNode {
 	panic(fmt.Sprintf("ExprToDAG: unknown Expr type %T", e))
 }
 
+// Key returns a unique ID characterising the node
+func (d *DAGNode) Key() string {
+	return d.key
+}
+
 // Flatten returns a new DAG where every chain of binary Add nodes is collapsed
 // into a single n-ary Add node, and every chain of binary Mul nodes into a
 // single n-ary Mul node. For example:

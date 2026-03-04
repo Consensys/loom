@@ -92,8 +92,8 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 sym.Expr, IDGrandProdu
 //	|                               |       (α = Fiat-Shamir(Com(P_s[k]),Com(Q_s[k])))| ROUND 2
 //	|-------------------------------–-----------------------------------------------|
 //	| Fold each subset into a scalar column:                                        |
-//	|   F1_s[i] = Σ_k α^k · P_s[k][i]                                             |
-//	|   F2_s[i] = Σ_k α^k · Q_s[k][i]                                             |
+//	|   F1_s[i] = Σ_k α^k · P_s[i][k]                                             |
+//	|   F2_s[i] = Σ_k α^k · Q_s[i][k]                                             |
 //	| (reduces tuple equality to scalar equality)                                   |
 //	|-------------------------------–-----------------------------------------------|
 //	|                               ←-----  Sample random γ (gamma)                 |

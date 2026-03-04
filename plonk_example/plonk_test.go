@@ -101,7 +101,7 @@ func TestPlonk(t *testing.T) {
 	}
 
 	verifierRunTime := verifier.NewRunTime(cciop)
-	err = verifierRunTime.Verify(&proof)
+	err = verifierRunTime.Verify(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

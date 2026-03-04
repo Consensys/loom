@@ -33,12 +33,12 @@ func ComputeLagrangeColumn(trace trace.Trace, _ *Proof, _ []sym.Expr, output []s
 	return nil
 }
 
-// BuildColumn simplest prover action: build a new column whose name is output[0] and whose computation
+// ComputeColumn simplest prover action: build a new column whose name is output[0] and whose computation
 // requires executing E on trace
-// BuildColumn computes a new polynomial Q (new column in the trace) such that ith that Q =E(IDs)
+// ComputeColumn computes a new polynomial Q (new column in the trace) such that ith that Q =E(IDs)
 // Returns the constraint Q-E(IDs), but does not record it. It is up to the caller to record it in the system.
-// func BuildColumn(S *System, E sym.Expr, IDresult string) (Constraint, error) {
-func BuildColumn(trace trace.Trace, proof *Proof, E []sym.Expr, output []string) error {
+// func ComputeColumn(S *System, E sym.Expr, IDresult string) (Constraint, error) {
+func ComputeColumn(trace trace.Trace, proof *Proof, E []sym.Expr, output []string) error {
 
 	if len(output) == 0 {
 		return fmt.Errorf("output needs to contain at list a name")

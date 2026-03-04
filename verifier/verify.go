@@ -172,7 +172,7 @@ func (runtime *Runtime) ComputeChallenges(proof *cs.Proof, nbWorkers int) error 
 }
 
 // EvaluateComputableColumns evaluates the computable columns at zeta and stores the results in runtime.Vars.
-func (runtime *Runtime) EvaluateComputableColumns(proof *cs.Proof) error {
+func (runtime *Runtime) EvaluateComputableColumns() error {
 
 	ccLeaves := runtime.VanishingRelation.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutCommittedColumns()))
 	ccLeaves = sym.RemoveDuplicates(ccLeaves)
@@ -240,9 +240,9 @@ func (runtime *Runtime) VerifyOpeningProofs(proof *cs.Proof) error {
 	return nil
 }
 
-func (runtime *Runtime) Verify(proof *cs.Proof) error {
+func (runtime *Runtime) Verify(proof *cs.Proof, nbWorkers int) error {
 
-	err := runtime.ComputeChallenges(proof, 1)
+	err := runtime.ComputeChallenges(proof, nbWorkers)
 	if err != nil {
 		return err
 	}
@@ -252,7 +252,7 @@ func (runtime *Runtime) Verify(proof *cs.Proof) error {
 		return err
 	}
 
-	err = runtime.EvaluateComputableColumns(proof)
+	err = runtime.EvaluateComputableColumns()
 	if err != nil {
 		return err
 	}

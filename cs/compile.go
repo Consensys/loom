@@ -23,9 +23,31 @@ type CompiledIOP struct {
 	N                 int
 }
 
+type Config struct {
+	targetDegree int
+}
+
+type Option func(c *Config)
+
+func WithTargetDegree(targetDegree int) Option {
+	return func(c *Config) {
+		c.targetDegree = targetDegree
+	}
+}
+
 // Fold all the constraints by sampling a random challenge, derived from the necessary data to ensure that this challenge
 // cannot have been derived derived prior to any of the prover<->interactions and commitments
-func Compile(system *System) CompiledIOP {
+func Compile(system *System, opts ...Option) CompiledIOP {
+
+	var config Config
+	for _, opt := range opts {
+		opt(&config)
+	}
+
+	// 0. if config.targetDegree > 0 it means targetDegree is set: we reduce the constraints degree before folding them
+	if config.targetDegree > 0 {
+		reduceDegree(system, config.targetDegree)
+	}
 
 	// 1. symoblically fold all the constraints using the folding challenge. The actual challenge is derived in prover/.
 	C := Fold(system.Constraints, sym.NewChallenge(constants.FINAL_FOLDING_CHALLENGE))

@@ -113,7 +113,7 @@ func TestPermutation(t *testing.T) {
 	CheckFiatShamir(&proverRunTime, &verifierRunTime, &proof, zeta, t)
 
 	// 6. verify
-	err = verifierRunTime.Verify(&proof)
+	err = verifierRunTime.Verify(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestPermutationMultiSet(t *testing.T) {
 	CheckFiatShamir(&proverRunTime, &verifierRunTime, &proof, zeta, t)
 
 	// 6. Verify
-	err = verifierRunTime.Verify(&proof)
+	err = verifierRunTime.Verify(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

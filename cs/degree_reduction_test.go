@@ -1,0 +1,82 @@
+package cs
+
+import (
+	"fmt"
+	"testing"
+
+	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/gnark-crypto/field/koalabear"
+)
+
+func TestDegreeReduction(t *testing.T) {
+	N := 16
+
+	// 1. Build a trace with P0 random and P1 = P0, so P0[i]^4 - P1[i]^4 = 0 at every row.
+	coeffs := make([]koalabear.Element, N)
+	for i := range coeffs {
+		coeffs[i].SetRandom()
+	}
+	P0, err := univariate.NewPolynomial(coeffs, univariate.WithBasis(univariate.Lagrange))
+	if err != nil {
+		t.Fatal(err)
+	}
+	coeffs1 := make([]koalabear.Element, N)
+	copy(coeffs1, coeffs)
+	P1, err := univariate.NewPolynomial(coeffs1, univariate.WithBasis(univariate.Lagrange))
+	if err != nil {
+		t.Fatal(err)
+	}
+	T := map[string]*univariate.Polynomial{
+		"P0": &P0,
+		"P1": &P1,
+	}
+
+	// 2. Create a system with the single degree-4 constraint P0^4 - P1^4.
+	system := NewSystem(N)
+	p0 := sym.NewCommittedColumn("P0")
+	p1 := sym.NewCommittedColumn("P1")
+	system.RegisterConstraint(p0.Pow(4).Sub(p1.Pow(4)))
+
+	// 3. Reduce the degree: each sub-expression of degree > targetDegree is extracted
+	//    into a fresh auxiliary column and replaced by a committed-column leaf.
+	//    For P0^4 - P1^4 → targetDegree=2 this introduces:
+	//      "(P0 * P0)"              = P0^2
+	//      "((P0 * P0) * (P0 * P0))" = P0^4   (using the auxiliary col above)
+	//      "(P1 * P1)"              = P1^2
+	reduceDegree(&system, 2)
+
+	// Every constraint must now have degree ≤ targetDegree.
+	for _, c := range system.Constraints {
+		if d := c.Degree(); d > 2 {
+			t.Fatalf("constraint has degree %d after reduction: %s", d, c.String())
+		}
+	}
+	// Degree reduction should have introduced auxiliary constraints.
+	if len(system.Constraints) <= 1 {
+		t.Fatalf("expected auxiliary constraints after reduction, got %d total", len(system.Constraints))
+	}
+
+	for _, c := range system.Constraints {
+		fmt.Println(c.String())
+	}
+
+	// 4. Execute all prover actions to populate T with the auxiliary columns.
+	//    When the same sub-expression (e.g. P0*P0) is extracted twice by Prune,
+	//    reduceDegree emits duplicate prover actions. The second execution returns
+	//    "already registered"; skip it silently since the column is already correct.
+	proof := NewProof(N)
+	for _, pa := range system.ProverActions {
+		if err := pa.Execute(T, &proof); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 5. All constraints must vanish on the trace.
+	if err := BruteForceChecker(T, system.Constraints, N); err != nil {
+		t.Fatal(err)
+	}
+	if err := QuotientChecker(T, system.Constraints, N); err != nil {
+		t.Fatal(err)
+	}
+}
