@@ -7,4 +7,4 @@ import "github.com/consensys/giop/pas/univariate"
 
 // Trace contains a list of columns, which are interpreted as interpolated polynomials.
 // E.g: Trace[i] is a polynomial such that Trace[i](\omega^j) = Trace[i][j]
-type Trace = map[string]univariate.PolynomialRefactor
+type Trace = map[string]univariate.Polynomial

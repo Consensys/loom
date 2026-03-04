@@ -12,17 +12,17 @@ import (
 
 // ComputeQuotient computes E(PI)/X^N-1
 // /!\ all polynomials must be in normal layout, lagrange basis
-func ComputeQuotient(Pi map[string]PolynomialRefactor, vanishingRelation dag.DAG, N int) (PolynomialRefactor, error) {
+func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int) (Polynomial, error) {
 
 	// Degree of E(Pi) is at most E.Degree() * sizePi
 	eDeg := vanishingRelation.Degree()
 	if eDeg <= 0 {
-		return PolynomialRefactor{}, fmt.Errorf("expression degree must be at least 1, got %d", eDeg)
+		return Polynomial{}, fmt.Errorf("expression degree must be at least 1, got %d", eDeg)
 	}
 	N = nextPowerOfTwo(N)
 	bigSize := nextPowerOfTwo(eDeg * N)
 	if bigSize%N != 0 {
-		return PolynomialRefactor{}, fmt.Errorf("big domain size %d is not divisible by vanishing domain size %d", bigSize, N)
+		return Polynomial{}, fmt.Errorf("big domain size %d is not divisible by vanishing domain size %d", bigSize, N)
 	}
 
 	// we do the evaluation manually (don't use EvalPointWise)

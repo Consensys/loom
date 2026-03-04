@@ -33,9 +33,9 @@ const (
 	ID_ID3 string = "ID3"
 )
 
-// gnarkCryptoPolyToUnivariatePoly converts *iop.Polynomial to univariate.PolynomialRefactor
+// gnarkCryptoPolyToUnivariatePoly converts *iop.Polynomial to univariate.Polynomial
 // (i.e., []koalabear.Element in Lagrange Normal form).
-func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial) (univariate.PolynomialRefactor, error) {
+func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial) (univariate.Polynomial, error) {
 	c := p.Coefficients()
 	coeffs := make([]koalabear.Element, len(c))
 	copy(coeffs, c)

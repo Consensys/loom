@@ -11,13 +11,13 @@ import (
 )
 
 // Polynomial is a wrapper around EPolynomial that includes additional metadata such as shift.
-type PolynomialRefactor = []koalabear.Element
+type Polynomial = []koalabear.Element
 
 // EvalPointWise eval point wise E on Pi, by picking the coefficient direclty (no conversion, no copies).
 // internal function only.
 // N is the size of the polynomials in Pi, assumed to have all the same size, except the constant (size 1)
 // nbCommittedColumns is the number of variables in E
-func EvalPointWise(Pi map[string]PolynomialRefactor, E sym.Expr, N int) ([]koalabear.Element, error) {
+func EvalPointWise(Pi map[string]Polynomial, E sym.Expr, N int) ([]koalabear.Element, error) {
 	leaves := sym.RemoveDuplicates(E.Leaves(sym.NewConfig()))
 	for _, name := range leaves {
 		if _, ok := Pi[name]; !ok {
@@ -41,13 +41,13 @@ func EvalPointWise(Pi map[string]PolynomialRefactor, E sym.Expr, N int) ([]koala
 
 // DivPointWise computes the resulting polynomial from dividing pointwise.
 // N = size of polynomials. All polynomials must be of the same size, same basis, same layout
-func DivPointWise(P1, P2 PolynomialRefactor, N int) (PolynomialRefactor, error) {
+func DivPointWise(P1, P2 Polynomial, N int) (Polynomial, error) {
 
 	// Build result polynomial pointwise: R[i] = P_1[i] / P_2[i]
 	res := make([]koalabear.Element, N)
 	for i := 0; i < N; i++ {
 		if P2[i].IsZero() {
-			return PolynomialRefactor{}, fmt.Errorf("division by zero at index %d", i)
+			return Polynomial{}, fmt.Errorf("division by zero at index %d", i)
 		}
 		res[i].Div(&P1[i], &P2[i])
 	}
@@ -58,14 +58,14 @@ func DivPointWise(P1, P2 PolynomialRefactor, N int) (PolynomialRefactor, error) 
 // P[i] is the number of times T[i] appears in S.
 // S, T are assumed to be in Lagrange basis
 // S and T must be of the same size
-func BuildMultiplicityPolynomial(S, T PolynomialRefactor) (PolynomialRefactor, error) {
+func BuildMultiplicityPolynomial(S, T Polynomial) (Polynomial, error) {
 
 	if len(S) != len(T) {
-		return PolynomialRefactor{}, fmt.Errorf("S and T don't have equal size: len(S)%d, len(T)=%d", len(S), len(T))
+		return Polynomial{}, fmt.Errorf("S and T don't have equal size: len(S)%d, len(T)=%d", len(S), len(T))
 	}
 
 	n := len(S)
-	res := make(PolynomialRefactor, n)
+	res := make(Polynomial, n)
 
 	one := koalabear.One()
 
@@ -85,7 +85,7 @@ func BuildMultiplicityPolynomial(S, T PolynomialRefactor) (PolynomialRefactor, e
 }
 
 // InvertPointWiseInPlace inverts in place P
-func InvertPointWiseInPlace(P PolynomialRefactor) {
+func InvertPointWiseInPlace(P Polynomial) {
 	for i := 0; i < len(P); i++ {
 		P[i].Inverse(&P[i])
 	}
@@ -93,11 +93,11 @@ func InvertPointWiseInPlace(P PolynomialRefactor) {
 
 // accumulateSums returns R such that R[0] = P[0], R[i] = R[i-1] + P[i]
 // N = size of P
-func accumulateSums(P PolynomialRefactor, N int) (PolynomialRefactor, error) {
+func accumulateSums(P Polynomial, N int) (Polynomial, error) {
 
 	// build the result R in lagrange basis of size targetSize such that:
 	// R[0] = P[0], R[i] = R[i-1] + P[i] for i>0
-	result := make(PolynomialRefactor, N)
+	result := make(Polynomial, N)
 	c := P[0]
 	result[0].Set(&c)
 	for i := 1; i < N; i++ {
@@ -111,19 +111,19 @@ func accumulateSums(P PolynomialRefactor, N int) (PolynomialRefactor, error) {
 // BuildGrandSum returns R such that
 // R[i] = \Sigma_{j<=i}M[j]/E[j]
 // The notation E[i] means the i-th entry of E evaluated on P (same for M).
-func BuildGrandSum(P map[string]PolynomialRefactor, E, M sym.Expr, N int) (PolynomialRefactor, error) {
+func BuildGrandSum(P map[string]Polynomial, E, M sym.Expr, N int) (Polynomial, error) {
 
 	// D stores the denominators 1/E(P)
 	D, err := EvalPointWise(P, E, N)
 	if err != nil {
-		return PolynomialRefactor{}, err
+		return Polynomial{}, err
 	}
 	InvertPointWiseInPlace(D)
 
 	// multiply by M(P) to get M(P)/E(P)
 	Mp, err := EvalPointWise(P, M, N)
 	if err != nil {
-		return PolynomialRefactor{}, err
+		return Polynomial{}, err
 	}
 	for i := 0; i < N; i++ {
 		di := D[i]
@@ -136,7 +136,7 @@ func BuildGrandSum(P map[string]PolynomialRefactor, E, M sym.Expr, N int) (Polyn
 
 // accumulateProducts returns R such that R[i+1] = R[i]*P[i], R[0]=1
 // N = size of P
-func accumulateProducts(P PolynomialRefactor, N int) (PolynomialRefactor, error) {
+func accumulateProducts(P Polynomial, N int) (Polynomial, error) {
 
 	// build the result R in lagrange basis of size targetSize such that:
 	// R[0] = 1
@@ -153,22 +153,22 @@ func accumulateProducts(P PolynomialRefactor, N int) (PolynomialRefactor, error)
 // BuildGrandProduct returns R such that R[0]=1, R[i+1] = R[i] * E1(P[i]) / E2(P[i])
 // N = size of the polynomials in P
 // Polynomials in P must have the same basis, same layout
-func BuildGrandProduct(P map[string]PolynomialRefactor, E1, E2 sym.Expr, N int) (PolynomialRefactor, error) {
+func BuildGrandProduct(P map[string]Polynomial, E1, E2 sym.Expr, N int) (Polynomial, error) {
 
 	Q0, err := EvalPointWise(P, E1, N)
 	if err != nil {
-		return PolynomialRefactor{}, fmt.Errorf("failed to evaluate numerator expression: %w", err)
+		return Polynomial{}, fmt.Errorf("failed to evaluate numerator expression: %w", err)
 	}
 
 	Q1, err := EvalPointWise(P, E2, N)
 	if err != nil {
-		return PolynomialRefactor{}, fmt.Errorf("failed to evaluate denominator expression: %w", err)
+		return Polynomial{}, fmt.Errorf("failed to evaluate denominator expression: %w", err)
 	}
 
 	// Div is not allowed in the AST (TODO should I allow it?)
 	ratio, err := DivPointWise(Q0, Q1, N)
 	if err != nil {
-		return PolynomialRefactor{}, fmt.Errorf("failed to compute pointwise ratio: %w", err)
+		return Polynomial{}, fmt.Errorf("failed to compute pointwise ratio: %w", err)
 	}
 
 	return accumulateProducts(ratio, N)
@@ -178,7 +178,7 @@ func BuildGrandProduct(P map[string]PolynomialRefactor, E1, E2 sym.Expr, N int) 
 // (as returned by ComputeQuotient, evaluated on {FrMultiplicativeGen * ω^j}) to
 // standard Lagrange Normal form (evaluated on {ω^j}).
 // The conversion is in-place.
-func CosetLagrangeToLagrangeNormal(p PolynomialRefactor) {
+func CosetLagrangeToLagrangeNormal(p Polynomial) {
 	N := uint64(len(p))
 	d := fft.NewDomain(N)
 

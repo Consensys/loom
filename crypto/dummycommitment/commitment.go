@@ -22,12 +22,12 @@ type OpeningProof struct {
 }
 
 // Commit commits to a polynomial (first evaluation as dummy hash)
-func Commit(p univariate.PolynomialRefactor) (Digest, error) {
+func Commit(p univariate.Polynomial) (Digest, error) {
 	return Digest{p[0]}, nil
 }
 
 // Open evaluates the polynomial (in Lagrange Normal basis) at the given point.
-func Open(p univariate.PolynomialRefactor, point koalabear.Element) (OpeningProof, error) {
+func Open(p univariate.Polynomial, point koalabear.Element) (OpeningProof, error) {
 	if len(p) == 1 {
 		return OpeningProof{ClaimedValue: p[0]}, nil
 	}
