@@ -27,11 +27,11 @@ func ComputeMultiplicity(trace trace.Trace, proof *Proof, E []sym.Expr, GP []str
 	if err != nil {
 		return err
 	}
-	M, err := univariate.BuildMultiplicityPolynomial(&S, &T)
+	M, err := univariate.BuildMultiplicityPolynomial(S, T)
 	if err != nil {
 		return err
 	}
-	err = RegisterColumn(trace, GP[0], &M)
+	err = RegisterColumn(trace, GP[0], M)
 	if err != nil {
 		return err
 	}

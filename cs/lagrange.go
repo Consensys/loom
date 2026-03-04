@@ -18,9 +18,9 @@ const Lagrange = "LAGRANGE"
 
 // ComputableColumn special column that can be encoded with a formula F	, like Lagrange column.
 type ComputableColumn struct {
-	id  string                                    // ID of the computable column
-	F   func(koalabear.Element) koalabear.Element // function F encoding the column (e.g. ω^i/N (z^N-1)/(1-ω^i) for Lagrange_i_N)
-	Gen func() univariate.Polynomial              // generate the column -> it is the evaluation of F on the domain of size N
+	id  string                                             // ID of the computable column
+	F   func(koalabear.Element) koalabear.Element         // function F encoding the column (e.g. ω^i/N (z^N-1)/(1-ω^i) for Lagrange_i_N)
+	Gen func() univariate.PolynomialRefactor              // generate the column -> it is the evaluation of F on the domain of size N
 }
 
 // GetLagrangeID ensures the lagrange name is the same accross protocols
@@ -74,11 +74,10 @@ func NewLagrangeColumn(id string) (ComputableColumn, error) {
 		num.Mul(&num, &denom) // ω^i/N · (z^N - 1) / (z - ω^i)
 		return num
 	}
-	res.Gen = func() univariate.Polynomial {
+	res.Gen = func() univariate.PolynomialRefactor {
 		col := make([]koalabear.Element, N)
 		col[i].SetOne()
-		P, _ := univariate.NewPolynomial(col, univariate.WithBasis(univariate.Lagrange))
-		return P
+		return col
 	}
 
 	return res, nil

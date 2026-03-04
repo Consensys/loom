@@ -1,9 +1,9 @@
 package dummycommitment
 
 import (
+	"github.com/consensys/giop/pas/univariate"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
-	"github.com/consensys/giop/pas/univariate"
 )
 
 // dummycommitment should wrap an existing commitment
@@ -21,28 +21,35 @@ type OpeningProof struct {
 	ClaimedValue koalabear.Element
 }
 
-// Commit commits to a polynomial
-func Commit(p *univariate.Polynomial) (Digest, error) {
-	p.IsCommitted = true
-	return Digest{p.EP.Coefficients[0]}, nil
+// Commit commits to a polynomial (first evaluation as dummy hash)
+func Commit(p univariate.PolynomialRefactor) (Digest, error) {
+	return Digest{p[0]}, nil
 }
 
-// Open computes an opening proof of polynomial p at given point.
-// fft.Domain Cardinality must be larger than p.Degree()
-func Open(p univariate.Polynomial, point koalabear.Element) (OpeningProof, error) {
-
-	// Convert to Canonical basis if needed so Evaluate can use Horner's method
-	if !p.IsConstant() && p.EP.Basis != univariate.Canonical {
-		d := fft.NewDomain(uint64(len(p.EP.Coefficients)))
-		if err := p.ToBasis(d, univariate.Canonical); err != nil {
-			return OpeningProof{}, err
-		}
+// Open evaluates the polynomial (in Lagrange Normal basis) at the given point.
+func Open(p univariate.PolynomialRefactor, point koalabear.Element) (OpeningProof, error) {
+	if len(p) == 1 {
+		return OpeningProof{ClaimedValue: p[0]}, nil
 	}
 
-	y, err := p.Evaluate(point)
-	if err != nil {
-		return OpeningProof{}, err
+	// Copy to avoid mutating the trace
+	coeffs := make([]koalabear.Element, len(p))
+	copy(coeffs, p)
+
+	// Lagrange Normal → Canonical BitReversed via IFFT(DIF)
+	d := fft.NewDomain(uint64(len(coeffs)))
+	d.FFTInverse(coeffs, fft.DIF)
+
+	// BitReversed → Normal canonical
+	fft.BitReverse(coeffs)
+
+	// Horner evaluation: c_0 + c_1*x + c_2*x^2 + ...
+	y := coeffs[len(coeffs)-1]
+	for i := len(coeffs) - 2; i >= 0; i-- {
+		y.Mul(&y, &point)
+		y.Add(&y, &coeffs[i])
 	}
+
 	return OpeningProof{ClaimedValue: y}, nil
 }
 

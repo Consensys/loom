@@ -14,7 +14,7 @@ func GetShiftSuffix(i int) string {
 }
 
 // RegisterColumn registers P, whose id is ID, in T. Returns an error if the trace already exists
-func RegisterColumn(T trace.Trace, ID string, P *univariate.Polynomial) error {
+func RegisterColumn(T trace.Trace, ID string, P univariate.PolynomialRefactor) error {
 	if _, ok := T[ID]; ok {
 		return fmt.Errorf("column %s already registered in the trace", ID)
 	}

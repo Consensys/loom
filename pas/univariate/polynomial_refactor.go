@@ -1,0 +1,205 @@
+// /!\ In this package, every inputs polynomials must be in lagrange basis (the inputs come from columns of a trace).
+
+package univariate
+
+import (
+	"fmt"
+
+	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/gnark-crypto/field/koalabear/fft"
+)
+
+// Polynomial is a wrapper around EPolynomial that includes additional metadata such as shift.
+type PolynomialRefactor = []koalabear.Element
+
+// EvalPointWise eval point wise E on Pi, by picking the coefficient direclty (no conversion, no copies).
+// internal function only.
+// N is the size of the polynomials in Pi, assumed to have all the same size, except the constant (size 1)
+// nbCommittedColumns is the number of variables in E
+func EvalPointWise(Pi map[string]PolynomialRefactor, E sym.Expr, N int) ([]koalabear.Element, error) {
+	leaves := sym.RemoveDuplicates(E.Leaves(sym.NewConfig()))
+	for _, name := range leaves {
+		if _, ok := Pi[name]; !ok {
+			return nil, fmt.Errorf("polynomial %s not found in Pi", name)
+		}
+	}
+	resultCoeffs := make([]koalabear.Element, N)
+	vals := make(map[string]koalabear.Element, len(leaves))
+	for i := 0; i < N; i++ {
+		for _, name := range leaves {
+			if len(Pi[name]) == 1 {
+				vals[name] = Pi[name][0]
+			} else {
+				vals[name] = Pi[name][i]
+			}
+		}
+		resultCoeffs[i] = E.Evaluate(vals)
+	}
+	return resultCoeffs, nil
+}
+
+// DivPointWise computes the resulting polynomial from dividing pointwise.
+// N = size of polynomials. All polynomials must be of the same size, same basis, same layout
+func DivPointWise(P1, P2 PolynomialRefactor, N int) (PolynomialRefactor, error) {
+
+	// Build result polynomial pointwise: R[i] = P_1[i] / P_2[i]
+	res := make([]koalabear.Element, N)
+	for i := 0; i < N; i++ {
+		if P2[i].IsZero() {
+			return PolynomialRefactor{}, fmt.Errorf("division by zero at index %d", i)
+		}
+		res[i].Div(&P1[i], &P2[i])
+	}
+	return res, nil
+}
+
+// BuildMultiplicityPolynomial returns P such that:
+// P[i] is the number of times T[i] appears in S.
+// S, T are assumed to be in Lagrange basis
+// S and T must be of the same size
+func BuildMultiplicityPolynomial(S, T PolynomialRefactor) (PolynomialRefactor, error) {
+
+	if len(S) != len(T) {
+		return PolynomialRefactor{}, fmt.Errorf("S and T don't have equal size: len(S)%d, len(T)=%d", len(S), len(T))
+	}
+
+	n := len(S)
+	res := make(PolynomialRefactor, n)
+
+	one := koalabear.One()
+
+	// we can probably do better :/
+	for i := 0; i < n; i++ {
+		ct := T[i]
+		for j := 0; j < n; j++ {
+			cd := S[j]
+			if cd.Equal(&ct) {
+				res[i].Add(&res[i], &one)
+			}
+		}
+	}
+
+	return res, nil
+
+}
+
+// InvertPointWiseInPlace inverts in place P
+func InvertPointWiseInPlace(P PolynomialRefactor) {
+	for i := 0; i < len(P); i++ {
+		P[i].Inverse(&P[i])
+	}
+}
+
+// accumulateSums returns R such that R[0] = P[0], R[i] = R[i-1] + P[i]
+// N = size of P
+func accumulateSums(P PolynomialRefactor, N int) (PolynomialRefactor, error) {
+
+	// build the result R in lagrange basis of size targetSize such that:
+	// R[0] = P[0], R[i] = R[i-1] + P[i] for i>0
+	result := make(PolynomialRefactor, N)
+	c := P[0]
+	result[0].Set(&c)
+	for i := 1; i < N; i++ {
+		c = P[i]
+		result[i].Add(&result[i-1], &c)
+	}
+
+	return result, nil
+}
+
+// BuildGrandSum returns R such that
+// R[i] = \Sigma_{j<=i}M[j]/E[j]
+// The notation E[i] means the i-th entry of E evaluated on P (same for M).
+func BuildGrandSum(P map[string]PolynomialRefactor, E, M sym.Expr, N int) (PolynomialRefactor, error) {
+
+	// D stores the denominators 1/E(P)
+	D, err := EvalPointWise(P, E, N)
+	if err != nil {
+		return PolynomialRefactor{}, err
+	}
+	InvertPointWiseInPlace(D)
+
+	// multiply by M(P) to get M(P)/E(P)
+	Mp, err := EvalPointWise(P, M, N)
+	if err != nil {
+		return PolynomialRefactor{}, err
+	}
+	for i := 0; i < N; i++ {
+		di := D[i]
+		mi := Mp[i]
+		D[i].Mul(&di, &mi)
+	}
+
+	return accumulateSums(D, N)
+}
+
+// accumulateProducts returns R such that R[i+1] = R[i]*P[i], R[0]=1
+// N = size of P
+func accumulateProducts(P PolynomialRefactor, N int) (PolynomialRefactor, error) {
+
+	// build the result R in lagrange basis of size targetSize such that:
+	// R[0] = 1
+	// R[i] = R[i-1]*P[i-1] for i > 0
+	result := make([]koalabear.Element, N)
+	result[0].SetOne()
+	for i := 1; i < N; i++ {
+		pi := P[i-1]
+		result[i].Mul(&result[i-1], &pi)
+	}
+	return result, nil
+}
+
+// BuildGrandProduct returns R such that R[0]=1, R[i+1] = R[i] * E1(P[i]) / E2(P[i])
+// N = size of the polynomials in P
+// Polynomials in P must have the same basis, same layout
+func BuildGrandProduct(P map[string]PolynomialRefactor, E1, E2 sym.Expr, N int) (PolynomialRefactor, error) {
+
+	Q0, err := EvalPointWise(P, E1, N)
+	if err != nil {
+		return PolynomialRefactor{}, fmt.Errorf("failed to evaluate numerator expression: %w", err)
+	}
+
+	Q1, err := EvalPointWise(P, E2, N)
+	if err != nil {
+		return PolynomialRefactor{}, fmt.Errorf("failed to evaluate denominator expression: %w", err)
+	}
+
+	// Div is not allowed in the AST (TODO should I allow it?)
+	ratio, err := DivPointWise(Q0, Q1, N)
+	if err != nil {
+		return PolynomialRefactor{}, fmt.Errorf("failed to compute pointwise ratio: %w", err)
+	}
+
+	return accumulateProducts(ratio, N)
+}
+
+// CosetLagrangeToLagrangeNormal converts a polynomial from coset-Lagrange Normal form
+// (as returned by ComputeQuotient, evaluated on {FrMultiplicativeGen * ω^j}) to
+// standard Lagrange Normal form (evaluated on {ω^j}).
+// The conversion is in-place.
+func CosetLagrangeToLagrangeNormal(p PolynomialRefactor) {
+	N := uint64(len(p))
+	d := fft.NewDomain(N)
+
+	// Step 1: coset-Lagrange Normal → BitReversed IFFT (= c_k * FrGen^k, BitReversed)
+	d.FFTInverse(p, fft.DIF)
+
+	// Step 2: BitReverse → Normal order (= c_k * FrGen^k)
+	fft.BitReverse(p)
+
+	// Step 3: divide by FrGen^k to get canonical coefficients c_k
+	invFrGen := d.FrMultiplicativeGen
+	invFrGen.Inverse(&invFrGen)
+	acc := koalabear.One()
+	for k := range p {
+		p[k].Mul(&p[k], &acc)
+		acc.Mul(&acc, &invFrGen)
+	}
+
+	// Step 4: canonical Normal → Lagrange BitReversed
+	d.FFT(p, fft.DIF)
+
+	// Step 5: BitReverse → Lagrange Normal
+	fft.BitReverse(p)
+}

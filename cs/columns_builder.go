@@ -25,11 +25,10 @@ func ComputeLagrangeColumn(trace trace.Trace, _ *Proof, _ []sym.Expr, output []s
 	if err != nil {
 		return err
 	}
-	col := cc.Gen()
 	if _, ok := trace[output[0]]; ok {
 		return nil
 	}
-	trace[id] = &col
+	trace[id] = cc.Gen()
 	return nil
 }
 
@@ -51,7 +50,7 @@ func ComputeColumn(trace trace.Trace, proof *Proof, E []sym.Expr, output []strin
 		return err
 	}
 	// record the result polynomial
-	err = RegisterColumn(trace, output[0], &sum)
+	err = RegisterColumn(trace, output[0], sum)
 
 	return err
 }

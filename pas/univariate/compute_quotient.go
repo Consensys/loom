@@ -12,33 +12,17 @@ import (
 
 // ComputeQuotient computes E(PI)/X^N-1
 // /!\ all polynomials must be in normal layout, lagrange basis
-func ComputeQuotient(Pi map[string]*Polynomial, vanishingRelation dag.DAG, N int, opts ...BuilderOption) (Polynomial, error) {
-
-	err := ensurePolynomialsAreInLagrange(Pi)
-	if err != nil {
-		return Polynomial{}, err
-	}
-	err = ensurePolynomialsAreInNormalLayout(Pi)
-	if err != nil {
-		return Polynomial{}, err
-	}
-
-	config := NewBuilderConfig()
-	for _, opt := range opts {
-		if err := opt(&config); err != nil {
-			return Polynomial{}, fmt.Errorf("invalid option: %w", err)
-		}
-	}
+func ComputeQuotient(Pi map[string]PolynomialRefactor, vanishingRelation dag.DAG, N int) (PolynomialRefactor, error) {
 
 	// Degree of E(Pi) is at most E.Degree() * sizePi
 	eDeg := vanishingRelation.Degree()
 	if eDeg <= 0 {
-		return Polynomial{}, fmt.Errorf("expression degree must be at least 1, got %d", eDeg)
+		return PolynomialRefactor{}, fmt.Errorf("expression degree must be at least 1, got %d", eDeg)
 	}
 	N = nextPowerOfTwo(N)
 	bigSize := nextPowerOfTwo(eDeg * N)
 	if bigSize%N != 0 {
-		return Polynomial{}, fmt.Errorf("big domain size %d is not divisible by vanishing domain size %d", bigSize, N)
+		return PolynomialRefactor{}, fmt.Errorf("big domain size %d is not divisible by vanishing domain size %d", bigSize, N)
 	}
 
 	// we do the evaluation manually (don't use EvalPointWise)
@@ -51,8 +35,8 @@ func ComputeQuotient(Pi map[string]*Polynomial, vanishingRelation dag.DAG, N int
 	PiCopies := make(map[string][]koalabear.Element, len(leaves))
 	for _, name := range leaves {
 		v := Pi[name]
-		coeffs := make([]koalabear.Element, len(v.EP.Coefficients)) // len = N except for constant polynomials
-		copy(coeffs, v.EP.Coefficients)
+		coeffs := make([]koalabear.Element, len(v)) // len = N except for constant polynomials
+		copy(coeffs, v)
 		PiCopies[name] = coeffs
 	}
 
@@ -152,23 +136,5 @@ func ComputeQuotient(Pi map[string]*Polynomial, vanishingRelation dag.DAG, N int
 		numerator[i].Div(&numerator[i], &xnMinusOne[i%rho])
 	}
 
-	// Build quotient in LagrangeShifted basis, Normal layout
-	result := &EPolynomial{
-		Coefficients: numerator,
-		Basis:        LagrangeShifted,
-		Layout:       Normal,
-		Degree:       bigSize - 1,
-	}
-
-	if config.OutputBasis != LagrangeShifted {
-		if err := result.ToBasis(bigDomain, config.OutputBasis); err != nil {
-			return Polynomial{}, fmt.Errorf("failed to convert quotient to %v: %w", config.OutputBasis, err)
-		}
-	}
-	result.ToLayout(config.OutputLayout)
-
-	var R Polynomial
-	R.EP = result
-	return R, nil
-
+	return numerator, nil
 }

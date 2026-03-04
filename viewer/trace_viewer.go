@@ -35,8 +35,14 @@ func WriteTraceToCSV(filename string, trace trace.Trace, N int) error {
 		row := make([]string, len(keys))
 
 		for j, k := range keys {
-			c := trace[k].GetCoefficient(i)
-			row[j] = c.String()
+			poly := trace[k]
+			var c string
+			if len(poly) == 1 {
+				c = poly[0].String()
+			} else if i < len(poly) {
+				c = poly[i].String()
+			}
+			row[j] = c
 		}
 
 		if err := writer.Write(row); err != nil {

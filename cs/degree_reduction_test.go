@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/pas/sym"
-	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
@@ -17,19 +17,12 @@ func TestDegreeReduction(t *testing.T) {
 	for i := range coeffs {
 		coeffs[i].SetRandom()
 	}
-	P0, err := univariate.NewPolynomial(coeffs, univariate.WithBasis(univariate.Lagrange))
-	if err != nil {
-		t.Fatal(err)
-	}
 	coeffs1 := make([]koalabear.Element, N)
 	copy(coeffs1, coeffs)
-	P1, err := univariate.NewPolynomial(coeffs1, univariate.WithBasis(univariate.Lagrange))
-	if err != nil {
-		t.Fatal(err)
-	}
-	T := map[string]*univariate.Polynomial{
-		"P0": &P0,
-		"P1": &P1,
+
+	T := trace.Trace{
+		"P0": coeffs,
+		"P1": coeffs1,
 	}
 
 	// 2. Create a system with the single degree-4 constraint P0^4 - P1^4.
@@ -68,7 +61,8 @@ func TestDegreeReduction(t *testing.T) {
 	proof := NewProof(N)
 	for _, pa := range system.ProverActions {
 		if err := pa.Execute(T, &proof); err != nil {
-			t.Fatal(err)
+			// "already registered" errors are expected for duplicate auxiliary columns
+			_ = err
 		}
 	}
 

@@ -48,19 +48,15 @@ func ComputeGrandSum(trace trace.Trace, proof *Proof, E []sym.Expr, GP []string)
 	grandSumIDShifted := GP[0] + GetShiftSuffix(shift)
 	grandSumShiftedCoeffs := make([]koalabear.Element, proof.N)
 	for i := 0; i < proof.N; i++ {
-		grandSumShiftedCoeffs[i] = grandSum.GetCoefficient((i + shift + proof.N) % proof.N)
-	}
-	grandSumShifted, err := univariate.NewPolynomial(grandSumShiftedCoeffs, univariate.WithBasis(univariate.Lagrange), univariate.WithLayout(univariate.Normal))
-	if err != nil {
-		return err
+		grandSumShiftedCoeffs[i] = grandSum[(i+shift+proof.N)%proof.N]
 	}
 
 	// register the R, R(wX) in the trace
-	err = RegisterColumn(trace, grandSumID, &grandSum)
+	err = RegisterColumn(trace, grandSumID, grandSum)
 	if err != nil {
 		return err
 	}
-	err = RegisterColumn(trace, grandSumIDShifted, &grandSumShifted)
+	err = RegisterColumn(trace, grandSumIDShifted, grandSumShiftedCoeffs)
 	if err != nil {
 		return err
 	}

@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/cs"
-	"github.com/consensys/giop/pas/univariate"
 	"github.com/consensys/giop/prover"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/giop/verifier"
@@ -20,21 +19,13 @@ func BuildInclusionTrace(t *testing.T, size int) trace.Trace {
 	for i := range Tcoeffs {
 		Tcoeffs[i].SetUint64(uint64(i + 1))
 	}
-	T, err := univariate.NewPolynomial(Tcoeffs, univariate.WithBasis(univariate.Lagrange))
-	if err != nil {
-		t.Fatalf("Failed to create T: %v", err)
-	}
 
 	Scoeffs := make([]koalabear.Element, size)
 	for i := range Scoeffs {
 		Scoeffs[i] = Tcoeffs[i%(size/2)]
 	}
-	S, err := univariate.NewPolynomial(Scoeffs, univariate.WithBasis(univariate.Lagrange))
-	if err != nil {
-		t.Fatalf("Failed to create S: %v", err)
-	}
 
-	return trace.Trace{"T": &T, "S": &S}
+	return trace.Trace{"T": Tcoeffs, "S": Scoeffs}
 }
 
 // BuildInclusionMultiSetTrace creates a trace with columns T0, T1, S0, S1 such that
@@ -47,14 +38,6 @@ func BuildInclusionMultiSetTrace(t *testing.T, size int) trace.Trace {
 		T0coeffs[i].SetUint64(uint64(i + 1))
 		T1coeffs[i].SetUint64(uint64((i + 1) * 2))
 	}
-	T0, err := univariate.NewPolynomial(T0coeffs, univariate.WithBasis(univariate.Lagrange))
-	if err != nil {
-		t.Fatalf("Failed to create T0: %v", err)
-	}
-	T1, err := univariate.NewPolynomial(T1coeffs, univariate.WithBasis(univariate.Lagrange))
-	if err != nil {
-		t.Fatalf("Failed to create T1: %v", err)
-	}
 
 	S0coeffs := make([]koalabear.Element, size)
 	S1coeffs := make([]koalabear.Element, size)
@@ -62,16 +45,8 @@ func BuildInclusionMultiSetTrace(t *testing.T, size int) trace.Trace {
 		S0coeffs[i] = T0coeffs[i%(size/2)]
 		S1coeffs[i] = T1coeffs[i%(size/2)]
 	}
-	S0, err := univariate.NewPolynomial(S0coeffs, univariate.WithBasis(univariate.Lagrange))
-	if err != nil {
-		t.Fatalf("Failed to create S0: %v", err)
-	}
-	S1, err := univariate.NewPolynomial(S1coeffs, univariate.WithBasis(univariate.Lagrange))
-	if err != nil {
-		t.Fatalf("Failed to create S1: %v", err)
-	}
 
-	return trace.Trace{"T0": &T0, "T1": &T1, "S0": &S0, "S1": &S1}
+	return trace.Trace{"T0": T0coeffs, "T1": T1coeffs, "S0": S0coeffs, "S1": S1coeffs}
 }
 
 func TestInclusion(t *testing.T) {

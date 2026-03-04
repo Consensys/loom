@@ -37,19 +37,19 @@ func TestGrandProductConstraint(t *testing.T) {
 	// R[0] must equal 1
 	var one koalabear.Element
 	one.SetOne()
-	R0 := trace["R"].GetCoefficient(0)
+	R0 := trace["R"][0]
 	if !R0.Equal(&one) {
 		t.Fatalf("R[0] should be 1, got %s", R0.String())
 	}
 
 	// verify recurrence R[i+1] = R[i] * (P0[i]-gamma) / (P1[i]-gamma) at every row
 	for i := 0; i < size; i++ {
-		Ri := trace["R"].GetCoefficient(i)
-		Ri1 := trace["R"].GetCoefficient((i + 1) % size)
+		Ri := trace["R"][i]
+		Ri1 := trace["R"][(i+1)%size]
 		Ri1Expected := new(koalabear.Element).Set(&Ri)
-		c := trace["P0"].GetCoefficient(i)
+		c := trace["P0"][i]
 		num := new(koalabear.Element).Sub(&c, &gamma)
-		c = trace["P1"].GetCoefficient(i)
+		c = trace["P1"][i]
 		den := new(koalabear.Element).Sub(&c, &gamma)
 		Ri1Expected.Mul(Ri1Expected, num)
 		Ri1Expected.Div(Ri1Expected, den)

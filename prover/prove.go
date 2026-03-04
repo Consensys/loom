@@ -29,7 +29,7 @@ func NewRuntime(cciop cs.CompiledIOP, trace trace.Trace) Runtime {
 	}
 }
 
-// Kahn’s style scheduler for Functions (with parallel schedule)
+// Kahn's style scheduler for Functions (with parallel schedule)
 func (runtime Runtime) Solve(knownColumns map[string]bool, proof *cs.Proof, nbWorker int) error {
 
 	funcs := runtime.CompiledIOP.ProverActions
@@ -181,7 +181,7 @@ func (runtime Runtime) DeriveFinalFoldingChallenge(proof *cs.Proof) error {
 		if !ok {
 			return fmt.Errorf("challenge %s not found in the trace", id)
 		}
-		cVal := c.EP.Coefficients[0]
+		cVal := c[0]
 		err := fs.Bind(constants.FINAL_FOLDING_CHALLENGE, cVal.Marshal())
 		if err != nil {
 			return err
@@ -197,17 +197,7 @@ func (runtime Runtime) DeriveFinalFoldingChallenge(proof *cs.Proof) error {
 	c.SetBytes(bc)
 
 	// 6. add the challenge as a constant column, since it might appear in other constraints
-	challengeColumn, err := univariate.NewConstantPolynomial(c)
-	if err != nil {
-		return err
-	}
-
-	err = cs.RegisterColumn(runtime.Trace, constants.FINAL_FOLDING_CHALLENGE, &challengeColumn)
-	if err != nil {
-		return err
-	}
-
-	return err
+	return cs.RegisterColumn(runtime.Trace, constants.FINAL_FOLDING_CHALLENGE, []koalabear.Element{c})
 }
 
 // ComputeQuotient computes H:=runtime.CompiledIOP.Constraint(runtime.Trace)/X^N-1 and commit to it, and
@@ -220,14 +210,17 @@ func (runtime Runtime) ComputeQuotient(proof *cs.Proof) error {
 		return fmt.Errorf("ComputeQuotient: %w", err)
 	}
 
-	digest, err := dummycommitment.Commit(&H)
+	// Convert from coset-Lagrange to standard Lagrange so Open can evaluate it correctly
+	univariate.CosetLagrangeToLagrangeNormal(H)
+
+	digest, err := dummycommitment.Commit(H)
 	if err != nil {
 		return err
 	}
 	proof.OpeningProofs[constants.FINAL_QUOTIENT] = dummycommitment.PackedProof{Digest: digest}
 
 	// Store H in the trace so OpenCommitments can evaluate it at zeta later
-	runtime.Trace[constants.FINAL_QUOTIENT] = &H
+	runtime.Trace[constants.FINAL_QUOTIENT] = H
 
 	return nil
 }
@@ -261,11 +254,7 @@ func (runtime Runtime) DeriveOpeningChallenge(proof *cs.Proof) (koalabear.Elemen
 	zeta.SetBytes(bzeta)
 
 	// register zeta in the trace
-	zetaColumn, err := univariate.NewConstantPolynomial(zeta)
-	if err != nil {
-		return koalabear.Element{}, err
-	}
-	err = cs.RegisterColumn(runtime.Trace, constants.FINAL_EVALUATION_POINT, &zetaColumn)
+	err = cs.RegisterColumn(runtime.Trace, constants.FINAL_EVALUATION_POINT, []koalabear.Element{zeta})
 	if err != nil {
 		return koalabear.Element{}, err
 	}
@@ -281,7 +270,7 @@ func (runtime Runtime) OpenCommitments(proof *cs.Proof, zeta koalabear.Element) 
 		if !ok {
 			return fmt.Errorf("column %s not found in the trace", k)
 		}
-		com.OpeningProof, err = dummycommitment.Open(*poly, zeta)
+		com.OpeningProof, err = dummycommitment.Open(poly, zeta)
 		if err != nil {
 			return err
 		}

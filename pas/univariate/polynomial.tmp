@@ -20,9 +20,6 @@ type Polynomial struct {
 
 	// Shift the polynomial is interpreted as P(w^shift X) where P is described by the coefficients of EP
 	Shift int
-
-	// IsCommitted flag telling if the polynomial has been committed
-	IsCommitted bool
 }
 
 // Config holds configuration options for EvalPointWise and ComputeQuotient
@@ -204,14 +201,12 @@ func Copy(dst, src *Polynomial) {
 	}
 	CopyE(dst.EP, src.EP)
 	dst.Shift = src.Shift
-	dst.IsCommitted = src.IsCommitted
 }
 
 // ShallowCopy creates a shallow copy of src Polynomial to dst Polynomial, where dst shares the same underlying EPolynomial as src, but has its own shift value.
 func ShallowCopy(dst, src *Polynomial) {
 	dst.EP = src.EP // points to the same EPolynomial
 	dst.Shift = src.Shift
-	dst.IsCommitted = src.IsCommitted
 }
 
 // SetShift sets the shift value for the polynomial, which determines how the coefficients are accessed when the polynomial is in Lagrange or Lagrange shifted basis. The shift is applied as a circular shift on the coefficients when accessed through GetCoefficient.

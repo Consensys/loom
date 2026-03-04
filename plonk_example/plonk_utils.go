@@ -33,45 +33,38 @@ const (
 	ID_ID3 string = "ID3"
 )
 
-// gnarkCryptoPolyToUnivariatePoly convesions *iop.Polynomial -> univariate.Polynomial
-func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial) (*univariate.Polynomial, error) {
-
+// gnarkCryptoPolyToUnivariatePoly converts *iop.Polynomial to univariate.PolynomialRefactor
+// (i.e., []koalabear.Element in Lagrange Normal form).
+func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial) (univariate.PolynomialRefactor, error) {
 	c := p.Coefficients()
+	coeffs := make([]koalabear.Element, len(c))
+	copy(coeffs, c)
 
-	var basis univariate.Basis
-	if p.Basis == iop.Canonical {
-		basis = univariate.Canonical
-	} else if p.Basis == iop.Lagrange {
-		basis = univariate.Lagrange
-	} else {
-		basis = univariate.LagrangeShifted
+	n := uint64(len(coeffs))
+	d := fft.NewDomain(n)
+
+	switch p.Basis {
+	case iop.Lagrange:
+		if p.Layout == iop.BitReverse {
+			fft.BitReverse(coeffs)
+		}
+		// Lagrange Normal: already in the desired form
+	case iop.Canonical:
+		if p.Layout == iop.BitReverse {
+			fft.BitReverse(coeffs) // canonical BitReversed → canonical Normal
+		}
+		d.FFT(coeffs, fft.DIF)  // canonical Normal → Lagrange BitReversed
+		fft.BitReverse(coeffs)  // → Lagrange Normal
+	case iop.LagrangeCoset:
+		if p.Layout == iop.BitReverse {
+			fft.BitReverse(coeffs)
+		}
+		univariate.CosetLagrangeToLagrangeNormal(coeffs)
+	default:
+		return nil, fmt.Errorf("unsupported polynomial basis")
 	}
 
-	var layout univariate.Layout
-	if p.Layout == iop.Regular {
-		layout = univariate.Normal
-	} else {
-		layout = univariate.BitReversed
-	}
-
-	res, err := univariate.NewPolynomial(
-		c,
-		univariate.WithBasis(basis),
-		univariate.WithLayout(layout),
-	)
-	if err != nil {
-		return &res, iop.ErrInconsistentFormat
-	}
-
-	// For Lagrange/LagrangeShifted polynomials, NewPolynomial's degree computation
-	// (which strips trailing zeros) is wrong: each of the n evaluation points is a
-	// real data point, not a zero high-degree coefficient. The polynomial degree is
-	// always n-1 regardless of which evaluations happen to be zero.
-	if basis == univariate.Lagrange || basis == univariate.LagrangeShifted {
-		res.EP.Degree = len(res.EP.Coefficients) - 1
-	}
-
-	return &res, nil
+	return coeffs, nil
 }
 
 // BuildTrace from a plonk trace ([ql, qr, qm, qo, qk, l, r, o], permutation), returns
@@ -84,10 +77,10 @@ func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial) (*univariate.Polynomial,
 // holds on those rows.
 func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1CSSolution, nbPublicInputs int) (trace.Trace, error) {
 
-	// ql, qr, qm, qo, qk, id1, id2, id3, s1, s2, s3, l, r, o = 14 columns (z and zs are created in a separate system)
 	nbColumns := 16
 	T := make(trace.Trace, nbColumns)
 	var err error
+
 	T[ID_Ql], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Ql)
 	if err != nil {
 		return T, err
@@ -108,7 +101,6 @@ func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1C
 	if err != nil {
 		return T, err
 	}
-
 	T[ID_S1], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S1)
 	if err != nil {
 		return T, err
@@ -122,41 +114,29 @@ func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1C
 		return T, err
 	}
 
-	// Each polynomial must be declared with its own variable so that &poly gives a
-	// distinct address for each entry. Reusing a single variable p and storing &p
-	// multiple times would make all map entries alias the same memory location.
-	lPoly, err := univariate.NewPolynomial([]koalabear.Element(plonkSolution.L), univariate.WithBasis(univariate.Lagrange))
-	if err != nil {
-		return T, err
-	}
-	// lPoly.EP.Degree = len(lPoly.EP.Coefficients) - 1
-	T[ID_L] = &lPoly
+	// Solution columns: L, R, O are already in Lagrange Normal form
+	lCoeffs := make([]koalabear.Element, len(plonkSolution.L))
+	copy(lCoeffs, plonkSolution.L)
+	T[ID_L] = lCoeffs
 
-	// Complete Qk for the public-input placeholder rows. Both Qk and L are in
-	// Lagrange basis, Normal layout, so Coefficients[i] is the i-th row value.
+	// Complete Qk for the public-input placeholder rows.
 	for i := 0; i < nbPublicInputs; i++ {
-		T[ID_Qk].EP.Coefficients[i] = T[ID_L].EP.Coefficients[i]
+		T[ID_Qk][i] = T[ID_L][i]
 	}
 
-	rPoly, err := univariate.NewPolynomial([]koalabear.Element(plonkSolution.R), univariate.WithBasis(univariate.Lagrange))
-	if err != nil {
-		return T, err
-	}
-	// rPoly.EP.Degree = len(rPoly.EP.Coefficients) - 1
-	T[ID_R] = &rPoly
+	rCoeffs := make([]koalabear.Element, len(plonkSolution.R))
+	copy(rCoeffs, plonkSolution.R)
+	T[ID_R] = rCoeffs
 
-	oPoly, err := univariate.NewPolynomial([]koalabear.Element(plonkSolution.O), univariate.WithBasis(univariate.Lagrange))
-	if err != nil {
-		return T, err
-	}
-	// oPoly.EP.Degree = len(oPoly.EP.Coefficients) - 1
-	T[ID_O] = &oPoly
+	oCoeffs := make([]koalabear.Element, len(plonkSolution.O))
+	copy(oCoeffs, plonkSolution.O)
+	T[ID_O] = oCoeffs
 
 	n := len(plonkTrace.Ql.Coefficients())
 	domain := fft.NewDomain(uint64(n))
 
+	// Build identity permutation columns ID1, ID2, ID3
 	res := make([]koalabear.Element, 3*domain.Cardinality)
-
 	res[0].SetOne()
 	res[domain.Cardinality].Set(&domain.FrMultiplicativeGen)
 	res[2*domain.Cardinality].Square(&domain.FrMultiplicativeGen)
@@ -167,29 +147,19 @@ func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1C
 		res[2*domain.Cardinality+i].Mul(&res[2*domain.Cardinality+i-1], &domain.Generator)
 	}
 
-	id1Poly, err := univariate.NewPolynomial([]koalabear.Element(res[:domain.Cardinality]), univariate.WithBasis(univariate.Lagrange))
-	if err != nil {
-		return T, err
-	}
-	id1Poly.EP.Degree = len(id1Poly.EP.Coefficients) - 1
-	T[ID_ID1] = &id1Poly
+	id1 := make([]koalabear.Element, domain.Cardinality)
+	copy(id1, res[:domain.Cardinality])
+	T[ID_ID1] = id1
 
-	id2Poly, err := univariate.NewPolynomial([]koalabear.Element(res[domain.Cardinality:2*domain.Cardinality]), univariate.WithBasis(univariate.Lagrange))
-	if err != nil {
-		return T, err
-	}
-	id2Poly.EP.Degree = len(id2Poly.EP.Coefficients) - 1
-	T[ID_ID2] = &id2Poly
+	id2 := make([]koalabear.Element, domain.Cardinality)
+	copy(id2, res[domain.Cardinality:2*domain.Cardinality])
+	T[ID_ID2] = id2
 
-	id3Poly, err := univariate.NewPolynomial([]koalabear.Element(res[2*domain.Cardinality:]), univariate.WithBasis(univariate.Lagrange))
-	if err != nil {
-		return T, err
-	}
-	id3Poly.EP.Degree = len(id3Poly.EP.Coefficients) - 1
-	T[ID_ID3] = &id3Poly
+	id3 := make([]koalabear.Element, domain.Cardinality)
+	copy(id3, res[2*domain.Cardinality:])
+	T[ID_ID3] = id3
 
 	return T, nil
-
 }
 
 // plonk circuit
@@ -234,14 +204,10 @@ func GetPlonkTrace() (trace.Trace, int, error) {
 	spr, ok := ccs.(*gnark_cs.SparseR1CS)
 	if !ok {
 		return nil, 0, fmt.Errorf("cannot cast ccs to *gnark_cs.SparseR1CS")
-
 	}
 
 	nbPublic := ccs.GetNbPublicVariables()
 	nbConstraints := ccs.GetNbConstraints()
-	// Domain size must accommodate both public-input placeholder rows and actual
-	// constraint rows, matching gnark's evaluateLROSmallDomain which uses
-	// NextPowerOfTwo(nbConstraints + len(cs.Public)).
 	size := univariate.NextPowerOfTwo(nbConstraints + nbPublic)
 	d := fft.NewDomain(uint64(size))
 
@@ -262,5 +228,4 @@ func GetPlonkTrace() (trace.Trace, int, error) {
 	}
 
 	return T, size, nil
-
 }

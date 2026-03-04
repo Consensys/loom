@@ -6,7 +6,6 @@ import (
 
 	"github.com/consensys/giop/crypto/dummycommitment"
 	"github.com/consensys/giop/pas/sym"
-	"github.com/consensys/giop/pas/univariate"
 	"github.com/consensys/giop/trace"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -95,7 +94,7 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, E []sym.Expr, GP []string
 		if !ok {
 			return fmt.Errorf("challenge %s not found in the trace", id)
 		}
-		cVal := c.EP.Coefficients[0]
+		cVal := c[0]
 		err = fs.Bind(challengeName, cVal.Marshal())
 		if err != nil {
 			return err
@@ -111,10 +110,6 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, E []sym.Expr, GP []string
 	c.SetBytes(bc)
 
 	// 6. add the challenge as a constant column, since it might appear in other constraints
-	challengeColumn, err := univariate.NewConstantPolynomial(c)
-	if err != nil {
-		return err
-	}
-	return RegisterColumn(trace, challengeName, &challengeColumn)
+	return RegisterColumn(trace, challengeName, []koalabear.Element{c})
 
 }

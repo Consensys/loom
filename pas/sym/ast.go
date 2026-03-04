@@ -13,10 +13,18 @@ const NegInf = math.MinInt
 type Config struct {
 	WoCommittedColumns  bool
 	WoComputableColumns bool
+	WoShiftedColumns    bool
 	WoChallenges        bool
 }
 
 type Option func(*Config)
+
+// Leaves() doesnt return the CommittedColumns
+func WithoutShiftedColumns() Option {
+	return func(c *Config) {
+		c.WoShiftedColumns = true
+	}
+}
 
 // Leaves() doesnt return the CommittedColumns
 func WithoutCommittedColumns() Option {
@@ -60,7 +68,6 @@ func NewConfig(opts ...Option) Config {
 
 type Expr interface {
 	Degree() int
-	NumCommittedColumns() int
 	String() string
 	Add(Expr) Expr
 	Sub(Expr) Expr
@@ -82,6 +89,37 @@ type Expr interface {
 	Evaluate(vals map[string]koalabear.Element) koalabear.Element
 }
 
+type ShiftedColumn struct {
+	Name  string
+	Shift int
+}
+
+func (s *ShiftedColumn) Degree() int     { return 1 }
+func (s *ShiftedColumn) String() string  { return fmt.Sprintf("%s(w^%d)", s.Name, s.Shift) }
+func (s *ShiftedColumn) Add(e Expr) Expr { return &Add{s, e} }
+func (s *ShiftedColumn) Sub(e Expr) Expr { return &Sub{s, e} }
+func (s *ShiftedColumn) Mul(e Expr) Expr { return &Mul{s, e} }
+func (s *ShiftedColumn) Pow(n uint32) Expr {
+	if n > 2 {
+		return squareAndMultiply(s, n)
+	}
+	return &Pow{s, n}
+}
+func (s *ShiftedColumn) ReplaceLeafByExpression(leaf string, e Expr) Expr {
+	if s.String() == leaf {
+		return e
+	}
+	return s
+}
+func (s *ShiftedColumn) Prune(deg int) Expr { return pruneSearch(s, deg) }
+func (s *ShiftedColumn) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
+	v, ok := vals[s.String()]
+	if !ok {
+		panic("Evaluate: missing value for CommittedColumn " + s.String())
+	}
+	return v
+}
+
 // ComputableColumn leaf used to store columns which are not committed to, because they can be recomputed by the verifier
 // because their values can be retrieved with a formula, for instance Lagrange columns. Its degree is one.
 type ComputableColumn struct {
@@ -94,16 +132,6 @@ func NewComputableColumn(name string) *ComputableColumn {
 
 func (v *ComputableColumn) Degree() int    { return 1 }
 func (v *ComputableColumn) String() string { return v.Name }
-
-func (v *ComputableColumn) NumCommittedColumns() int {
-	vars := make(map[string]bool)
-	v.collectCommittedColumns(vars)
-	return len(vars)
-}
-
-func (v *ComputableColumn) collectCommittedColumns(vars map[string]bool) {
-	vars[v.Name] = true
-}
 
 func (v *ComputableColumn) Add(e Expr) Expr { return &Add{v, e} }
 func (v *ComputableColumn) Sub(e Expr) Expr { return &Sub{v, e} }
@@ -138,18 +166,6 @@ func NewChallenge(name string) *Challenge {
 func (v Challenge) Degree() int    { return 0 } // Challenge acts as a constant
 func (v Challenge) String() string { return v.Name }
 
-func (v Challenge) NumCommittedColumns() int {
-	// A single variable contributes 1 to the count
-	// The actual index assignment happens during Convert()
-	vars := make(map[string]bool)
-	v.collectCommittedColumns(vars)
-	return len(vars)
-}
-
-func (v Challenge) collectCommittedColumns(vars map[string]bool) {
-	vars[v.Name] = true
-}
-
 type CommittedColumn struct {
 	Name string
 }
@@ -160,18 +176,6 @@ func NewCommittedColumn(name string) *CommittedColumn {
 
 func (c CommittedColumn) Degree() int    { return 1 }
 func (c CommittedColumn) String() string { return c.Name }
-
-func (c CommittedColumn) NumCommittedColumns() int {
-	// A single variable contributes 1 to the count
-	// The actual index assignment happens during Convert()
-	vars := make(map[string]bool)
-	c.collectCommittedColumns(vars)
-	return len(vars)
-}
-
-func (c CommittedColumn) collectCommittedColumns(vars map[string]bool) {
-	vars[c.Name] = true
-}
 
 type Const struct {
 	Value koalabear.Element
@@ -190,14 +194,6 @@ func (c Const) Degree() int {
 
 func (c Const) String() string { return c.Value.String() }
 
-func (c Const) NumCommittedColumns() int {
-	return 0 // Constants don't use any variables
-}
-
-func (c Const) collectCommittedColumns(vars map[string]bool) {
-	// Constants don't contribute any variables
-}
-
 type Add struct {
 	Left, Right Expr
 }
@@ -210,21 +206,6 @@ func (a Add) Degree() int {
 
 func (a Add) String() string {
 	return "(" + a.Left.String() + " + " + a.Right.String() + ")"
-}
-
-func (a Add) NumCommittedColumns() int {
-	vars := make(map[string]bool)
-	a.collectCommittedColumns(vars)
-	return len(vars)
-}
-
-func (a Add) collectCommittedColumns(vars map[string]bool) {
-	if collector, ok := a.Left.(interface{ collectCommittedColumns(map[string]bool) }); ok {
-		collector.collectCommittedColumns(vars)
-	}
-	if collector, ok := a.Right.(interface{ collectCommittedColumns(map[string]bool) }); ok {
-		collector.collectCommittedColumns(vars)
-	}
 }
 
 type Sub struct {
@@ -241,21 +222,6 @@ func (s Sub) String() string {
 	return "(" + s.Left.String() + " - " + s.Right.String() + ")"
 }
 
-func (s Sub) NumCommittedColumns() int {
-	vars := make(map[string]bool)
-	s.collectCommittedColumns(vars)
-	return len(vars)
-}
-
-func (s Sub) collectCommittedColumns(vars map[string]bool) {
-	if collector, ok := s.Left.(interface{ collectCommittedColumns(map[string]bool) }); ok {
-		collector.collectCommittedColumns(vars)
-	}
-	if collector, ok := s.Right.(interface{ collectCommittedColumns(map[string]bool) }); ok {
-		collector.collectCommittedColumns(vars)
-	}
-}
-
 type Mul struct {
 	Left, Right Expr
 }
@@ -270,21 +236,6 @@ func (m Mul) String() string {
 	return "(" + m.Left.String() + " * " + m.Right.String() + ")"
 }
 
-func (m Mul) NumCommittedColumns() int {
-	vars := make(map[string]bool)
-	m.collectCommittedColumns(vars)
-	return len(vars)
-}
-
-func (m Mul) collectCommittedColumns(vars map[string]bool) {
-	if collector, ok := m.Left.(interface{ collectCommittedColumns(map[string]bool) }); ok {
-		collector.collectCommittedColumns(vars)
-	}
-	if collector, ok := m.Right.(interface{ collectCommittedColumns(map[string]bool) }); ok {
-		collector.collectCommittedColumns(vars)
-	}
-}
-
 type Pow struct {
 	Base Expr
 	Exp  uint32
@@ -296,18 +247,6 @@ func (p Pow) Degree() int {
 
 func (p Pow) String() string {
 	return "(" + p.Base.String() + " ^ " + fmt.Sprintf("%d", p.Exp) + ")"
-}
-
-func (p Pow) NumCommittedColumns() int {
-	vars := make(map[string]bool)
-	p.collectCommittedColumns(vars)
-	return len(vars)
-}
-
-func (p Pow) collectCommittedColumns(vars map[string]bool) {
-	if collector, ok := p.Base.(interface{ collectCommittedColumns(map[string]bool) }); ok {
-		collector.collectCommittedColumns(vars)
-	}
 }
 
 func (v *CommittedColumn) Add(e Expr) Expr { return &Add{v, e} }
@@ -418,7 +357,7 @@ func isPrunable(e Expr) bool {
 // Returns nil if no such sub-expression is found.
 func pruneSearch(expr Expr, deg int) Expr {
 	switch e := expr.(type) {
-	case *CommittedColumn, *Const, *ComputableColumn:
+	case *CommittedColumn, *Const, *ComputableColumn, *ShiftedColumn:
 		return nil
 	case *Add:
 		if isPrunable(e.Left) && e.Left.Degree() <= deg {
@@ -488,6 +427,13 @@ func (v *CommittedColumn) Leaves(config Config) []string {
 		return []string{}
 	} else {
 		return []string{v.Name}
+	}
+}
+func (v *ShiftedColumn) Leaves(config Config) []string {
+	if config.WoShiftedColumns {
+		return []string{}
+	} else {
+		return []string{v.String()}
 	}
 }
 func (v *ComputableColumn) Leaves(config Config) []string {
@@ -572,6 +518,8 @@ func (p *Pow) ReplaceLeafByExpression(leaf string, e Expr) Expr {
 // ================================================
 func Clone(e Expr) Expr {
 	switch v := e.(type) {
+	case *ShiftedColumn:
+		return &ShiftedColumn{Name: v.Name}
 	case *CommittedColumn:
 		return &CommittedColumn{Name: v.Name}
 	case *Const:
