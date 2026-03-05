@@ -58,7 +58,7 @@ func TestPermutation(t *testing.T) {
 	trace := cs.BuildPermutationCircuit(t, size)
 	system := cs.NewSystem(size)
 
-	EqualityUpToPermutationIOP(&system, []string{"P0"}, []string{"P1"}, "GrandProduct", "gamma")
+	EqualityUpToPermutationIOP(&system, []string{"P0"}, []string{"P1"})
 
 	cciop := cs.Compile(&system)
 
@@ -126,7 +126,7 @@ func TestPermutationMultiSet(t *testing.T) {
 	trace := cs.BuildPermutationMultiSet(t, size)
 	system := cs.NewSystem(size)
 
-	err := MultiSetEqualityUpToPermutationIOP(&system, [][]string{{"P0", "P1"}}, [][]string{{"Q0", "Q1"}}, "GrandProduct", "alpha", "gamma")
+	err := MultiSetEqualityUpToPermutationIOP(&system, [][]string{{"P0", "P1"}}, [][]string{{"Q0", "Q1"}})
 	if err != nil {
 		t.Fatal(err)
 	}

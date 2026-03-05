@@ -7,32 +7,82 @@ import (
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/prover"
 	"github.com/consensys/giop/std"
+	"github.com/consensys/giop/trace"
 	"github.com/consensys/giop/verifier"
+	"github.com/consensys/giop/viewer"
 )
+
+func getKnownColumns(n int) map[string]bool {
+
+	knowncolumns := make(map[string]bool)
+	for i := 0; i < n; i++ {
+		knowncolumns[ithInstance(ID_L, i)] = true
+		knowncolumns[ithInstance(ID_R, i)] = true
+		knowncolumns[ithInstance(ID_O, i)] = true
+		knowncolumns[ithInstance(ID_Ql, i)] = true
+		knowncolumns[ithInstance(ID_Qr, i)] = true
+		knowncolumns[ithInstance(ID_Qm, i)] = true
+		knowncolumns[ithInstance(ID_Qo, i)] = true
+		knowncolumns[ithInstance(ID_Qk, i)] = true
+		knowncolumns[ithInstance(ID_ID1, i)] = true
+		knowncolumns[ithInstance(ID_ID2, i)] = true
+		knowncolumns[ithInstance(ID_ID3, i)] = true
+		knowncolumns[ithInstance(ID_S1, i)] = true
+		knowncolumns[ithInstance(ID_S2, i)] = true
+		knowncolumns[ithInstance(ID_S3, i)] = true
+	}
+	return knowncolumns
+}
+
+func getIthPlonkRelation(n int) cs.Constraint {
+
+	C := sym.NewCommittedColumn(ithInstance(ID_Ql, n)).Mul(sym.NewCommittedColumn(ithInstance(ID_L, n))).
+		Add(sym.NewCommittedColumn(ithInstance(ID_Qr, n)).Mul(sym.NewCommittedColumn(ithInstance(ID_R, n)))).
+		Add(sym.NewCommittedColumn(ithInstance(ID_Qm, n)).Mul(sym.NewCommittedColumn(ithInstance(ID_L, n))).Mul(sym.NewCommittedColumn(ithInstance(ID_R, n)))).
+		Add(sym.NewCommittedColumn(ithInstance(ID_Qo, n)).Mul(sym.NewCommittedColumn(ithInstance(ID_O, n)))).
+		Add(sym.NewCommittedColumn(ithInstance(ID_Qk, n)))
+
+	return C
+}
+
+func getIthMultiSets(n int) (multiSetIds1 [][]string, multiSetIds2 [][]string) {
+	multiSetIds1 = [][]string{
+		[]string{ithInstance(ID_L, n), ithInstance(ID_ID1, n)},
+		[]string{ithInstance(ID_R, n), ithInstance(ID_ID2, n)},
+		[]string{ithInstance(ID_O, n), ithInstance(ID_ID3, n)},
+	}
+
+	multiSetIds2 = [][]string{
+		[]string{ithInstance(ID_L, n), ithInstance(ID_S1, n)},
+		[]string{ithInstance(ID_R, n), ithInstance(ID_S2, n)},
+		[]string{ithInstance(ID_O, n), ithInstance(ID_S3, n)},
+	}
+	return
+}
+
+func mergeTrace(t1, t2 trace.Trace) trace.Trace {
+	res := make(trace.Trace, len(t1)+len(t2))
+	for k, v := range t1 {
+		res[k] = v
+	}
+	for k, v := range t2 {
+		res[k] = v
+	}
+	return res
+}
 
 func TestPlonk(t *testing.T) {
 
 	// This would be the result of a tracer in a real life example (here we use gnark as a tracer)
-	trace, N, err := GetPlonkTrace()
+	trace1, N, err := GetIthPlonkTrace(0)
 	if err != nil {
 		t.Fatal(nil)
 	}
-
-	knowncolumns := make(map[string]bool)
-	knowncolumns[ID_L] = true
-	knowncolumns[ID_R] = true
-	knowncolumns[ID_O] = true
-	knowncolumns[ID_Ql] = true
-	knowncolumns[ID_Qr] = true
-	knowncolumns[ID_Qm] = true
-	knowncolumns[ID_Qo] = true
-	knowncolumns[ID_Qk] = true
-	knowncolumns[ID_ID1] = true
-	knowncolumns[ID_ID2] = true
-	knowncolumns[ID_ID3] = true
-	knowncolumns[ID_S1] = true
-	knowncolumns[ID_S2] = true
-	knowncolumns[ID_S3] = true
+	trace2, N, err := GetIthPlonkTrace(1)
+	if err != nil {
+		t.Fatal(nil)
+	}
+	trace := mergeTrace(trace1, trace2)
 
 	system := cs.NewSystem(N)
 
@@ -40,29 +90,23 @@ func TestPlonk(t *testing.T) {
 	// QL*L + QR*R + QM*L*R + QO*O + QK = 0
 	// ( (L, ID1), (R, ID2), (O, ID3)) and ( (L, S1), (R, S2), (O, S3)) must be equal as multisets
 
-	C := sym.NewCommittedColumn(ID_Ql).Mul(sym.NewCommittedColumn(ID_L)).
-		Add(sym.NewCommittedColumn(ID_Qr).Mul(sym.NewCommittedColumn(ID_R))).
-		Add(sym.NewCommittedColumn(ID_Qm).Mul(sym.NewCommittedColumn(ID_L)).Mul(sym.NewCommittedColumn(ID_R))).
-		Add(sym.NewCommittedColumn(ID_Qo).Mul(sym.NewCommittedColumn(ID_O))).
-		Add(sym.NewCommittedColumn(ID_Qk))
-
-	system.RegisterConstraint(C)
-
-	multiSetIds1 := [][]string{
-		[]string{ID_L, ID_ID1},
-		[]string{ID_R, ID_ID2},
-		[]string{ID_O, ID_ID3},
+	{
+		C := getIthPlonkRelation(0)
+		system.RegisterConstraint(C)
+		multiSetIds1, multiSetIds2 := getIthMultiSets(0)
+		err = std.MultiSetEqualityUpToPermutationIOP(&system, multiSetIds1, multiSetIds2)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
-
-	multiSetIds2 := [][]string{
-		[]string{ID_L, ID_S1},
-		[]string{ID_R, ID_S2},
-		[]string{ID_O, ID_S3},
-	}
-
-	err = std.MultiSetEqualityUpToPermutationIOP(&system, multiSetIds1, multiSetIds2, "PlonkGrandProduct", "beta", "gamma")
-	if err != nil {
-		t.Fatal(err)
+	{
+		C := getIthPlonkRelation(1)
+		system.RegisterConstraint(C)
+		multiSetIds1, multiSetIds2 := getIthMultiSets(1)
+		err = std.MultiSetEqualityUpToPermutationIOP(&system, multiSetIds1, multiSetIds2)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	cciop := cs.Compile(&system)
@@ -71,6 +115,7 @@ func TestPlonk(t *testing.T) {
 	proof := cs.NewProof(N)
 
 	// Step 1: Solve — compute all intermediate columns (beta, gamma, Z, Z_shifted, LAGRANGE_0)
+	knowncolumns := getKnownColumns(2)
 	err = proverRunTime.Solve(knowncolumns, &proof, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -99,6 +144,8 @@ func TestPlonk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	viewer.WriteProofRoundsDagToHTML(proof.Rounds, "dag.html")
 
 	verifierRunTime := verifier.NewRunTime(cciop)
 	err = verifierRunTime.Verify(&proof, 1)

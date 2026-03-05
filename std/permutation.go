@@ -1,6 +1,8 @@
 package std
 
 import (
+	"fmt"
+
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -33,7 +35,12 @@ import (
 //	|   C1: ∏_j(Q_j-γ)·Z_shifted - ∏_j(P_j-γ)·Z = 0 mod X^N-1                   |
 //	|   C2: (Z-1)·L_0 = 0  (enforces Z[0]=1)                                      |
 //	|-------------------------------–-----------------------------------------------|
-func EqualityUpToPermutationIOP(system *cs.System, ID1, ID2 []string, IDGrandProduct string, gamma string) {
+func EqualityUpToPermutationIOP(system *cs.System, ID1, ID2 []string) error {
+
+	gamma, err := RandomString(5)
+	if err != nil {
+		return err
+	}
 
 	// 1. sample gamma: register the prover action ComputeChallenge
 	E1 := make([]sym.Expr, len(ID1))
@@ -56,11 +63,17 @@ func EqualityUpToPermutationIOP(system *cs.System, ID1, ID2 []string, IDGrandPro
 		E2MinusGamma = E2MinusGamma.Mul(E2[i].Sub(sym.NewChallenge(gamma)))
 	}
 
-	equalityUpToPermutationIOP(system, E1MinusGamma, E2MinusGamma, IDGrandProduct)
+	return equalityUpToPermutationIOP(system, E1MinusGamma, E2MinusGamma)
 
 }
 
-func equalityUpToPermutationIOP(system *cs.System, E1, E2 sym.Expr, IDGrandProduct string) {
+func equalityUpToPermutationIOP(system *cs.System, E1, E2 sym.Expr) error {
+
+	_IDGrandProduct, err := RandomString(5)
+	if err != nil {
+		return err
+	}
+	IDGrandProduct := fmt.Sprintf("GP_%s", _IDGrandProduct)
 
 	// 0. rgister the grand product constraint
 	cs.EnforceGrandProductConstraint(system, E1, E2, IDGrandProduct, system.N)
@@ -71,6 +84,7 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 sym.Expr, IDGrandProdu
 	// 2. register the local constraint: GrandProduct[0] = 1
 	cs.EnforceLocalConstraintAndRegisterLagrangeColumn(system, sym.NewCommittedColumn(IDGrandProduct), sym.NewConst(koalabear.One()), 0)
 
+	return nil
 }
 
 // MultiSetEqualityUpToPermutation proves that the multiset of tuples { (ID1[i][0][j], ID1[i][1][j], ..) }
@@ -112,7 +126,18 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 sym.Expr, IDGrandProdu
 //	|   C1: ∏_s(F2_s-γ)·Z_shifted - ∏_s(F1_s-γ)·Z = 0 mod X^N-1                 |
 //	|   C2: (Z-1)·L_0 = 0  (enforces Z[0]=1)                                      |
 //	|-------------------------------–-----------------------------------------------|
-func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string, IDGrandProduct string, alpha, gamma string) error {
+//
+// func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string, IDGrandProduct string, alpha, gamma string) error {
+func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string) error {
+
+	alpha, err := RandomString(5)
+	if err != nil {
+		return err
+	}
+	gamma, err := RandomString(5)
+	if err != nil {
+		return err
+	}
 
 	// 1. sample alpha: register the prover action ComputeChallenge, depending on all ids in ID1, ID2
 	var deps []sym.Expr
@@ -159,7 +184,7 @@ func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string, 
 	}
 
 	// 5. register the grand production constraint and grandproduct prover action + Lagrange constraint
-	equalityUpToPermutationIOP(system, F1MinusGamma, F2MinusGamma, IDGrandProduct)
+	equalityUpToPermutationIOP(system, F1MinusGamma, F2MinusGamma)
 
 	return nil
 }

@@ -232,11 +232,18 @@ func (runtime Runtime) DeriveOpeningChallenge(proof *cs.Proof) (koalabear.Elemen
 	var round cs.Round
 	round.ChallengeName = constants.FINAL_EVALUATION_POINT
 	round.DependenciesCommittedColumns = []string{constants.FINAL_QUOTIENT}
+	round.DependenciesChallenges = []string{constants.FINAL_FOLDING_CHALLENGE}
 	proof.Rounds = append(proof.Rounds, round)
 
-	// derive the challenge, depending on proof.OpeningProofs[constants.FINAL_QUOTIENT].Digest
+	// derive the challenge, depending on :
+	// * proof.OpeningProofs[constants.FINAL_QUOTIENT].Digest
+	// * constants.FINAL_FOLDING_CHALLENGE
+	// it guarantess that FINAL_FOLDING_CHALLENGE is the last derived challenge, and depends on everything that happens
+	// before, since constants.FINAL_FOLDING_CHALLENGE depends on everything that happens before computing the quotient.
 	fs := fiatshamir.NewTranscript(sha256.New())
 	fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
+
+	// bind the quotient
 	if _, ok := proof.OpeningProofs[constants.FINAL_QUOTIENT]; !ok {
 		return koalabear.Element{}, fmt.Errorf("%s not found in the list of digests", constants.FINAL_QUOTIENT)
 	}
@@ -246,6 +253,18 @@ func (runtime Runtime) DeriveOpeningChallenge(proof *cs.Proof) (koalabear.Elemen
 		return koalabear.Element{}, err
 	}
 
+	// bind the folding challenge
+	c, ok := runtime.Trace[constants.FINAL_FOLDING_CHALLENGE]
+	if !ok {
+		return koalabear.Element{}, fmt.Errorf("challenge %s not found in the trace", constants.FINAL_FOLDING_CHALLENGE)
+	}
+	cVal := c[0]
+	err = fs.Bind(constants.FINAL_EVALUATION_POINT, cVal.Marshal())
+	if err != nil {
+		return koalabear.Element{}, err
+	}
+
+	// compute the challegne
 	bzeta, err := fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
 	if err != nil {
 		return koalabear.Element{}, err

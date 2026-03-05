@@ -19,7 +19,6 @@ import (
 // Runtime stores the variables to plug in the final relation to check.
 type Runtime struct {
 	Vars              map[string]koalabear.Element // values keyed by leaf name
-	Zeta              koalabear.Element            // final opening point
 	VanishingRelation dag.DAG
 }
 
@@ -69,23 +68,6 @@ func (runtime *Runtime) DeriveChallenge(proof *cs.Proof, i int) error {
 	c.SetBytes(bc)
 	runtime.Vars[proof.Rounds[i].ChallengeName] = c
 
-	return nil
-}
-
-// ComputeOpeningPoint compute the opening, depending on H, the quotient
-func (runtime *Runtime) ComputeOpeningPoint(proof *cs.Proof) error {
-	fs := fiatshamir.NewTranscript(sha256.New())
-	fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
-	com, ok := proof.OpeningProofs[constants.FINAL_QUOTIENT]
-	if !ok {
-		return fmt.Errorf("%s not found in the list of commitments", constants.FINAL_QUOTIENT)
-	}
-	fs.Bind(constants.FINAL_EVALUATION_POINT, com.Digest.Marshal())
-	bzeta, err := fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
-	if err != nil {
-		return err
-	}
-	runtime.Zeta.SetBytes(bzeta)
 	return nil
 }
 
@@ -182,7 +164,7 @@ func (runtime *Runtime) EvaluateComputableColumns() error {
 		if err != nil {
 			return err
 		}
-		runtime.Vars[l] = cc.F(runtime.Zeta)
+		runtime.Vars[l] = cc.F(runtime.Vars[constants.FINAL_EVALUATION_POINT])
 	}
 
 	return nil
@@ -208,7 +190,7 @@ func (runtime *Runtime) FillClaimedValues(proof *cs.Proof) error {
 // CheckRelation checks the final relation: proof.VanishingRelation(zeta)=H(zeta)(zeta^N-1)
 func (runtime *Runtime) CheckRelation(proof *cs.Proof) error {
 
-	zeta := runtime.Zeta
+	zeta := runtime.Vars[constants.FINAL_EVALUATION_POINT]
 
 	comh, ok := proof.OpeningProofs[constants.FINAL_QUOTIENT]
 	if !ok {
@@ -232,7 +214,7 @@ func (runtime *Runtime) CheckRelation(proof *cs.Proof) error {
 
 func (runtime *Runtime) VerifyOpeningProofs(proof *cs.Proof) error {
 	for _, op := range proof.OpeningProofs {
-		err := dummycommitment.Verify(op.Digest, op.OpeningProof, runtime.Zeta)
+		err := dummycommitment.Verify(op.Digest, op.OpeningProof, runtime.Vars[constants.FINAL_EVALUATION_POINT])
 		if err != nil {
 			return err
 		}
@@ -243,11 +225,6 @@ func (runtime *Runtime) VerifyOpeningProofs(proof *cs.Proof) error {
 func (runtime *Runtime) Verify(proof *cs.Proof, nbWorkers int) error {
 
 	err := runtime.ComputeChallenges(proof, nbWorkers)
-	if err != nil {
-		return err
-	}
-
-	err = runtime.ComputeOpeningPoint(proof)
 	if err != nil {
 		return err
 	}

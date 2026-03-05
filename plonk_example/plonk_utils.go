@@ -3,6 +3,8 @@ package plonk_example
 import (
 	"fmt"
 
+	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/gnark-crypto/field/koalabear/iop"
@@ -10,8 +12,6 @@ import (
 	gnark_cs "github.com/consensys/gnark/constraint/koalabear"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/scs"
-	"github.com/consensys/giop/pas/univariate"
-	"github.com/consensys/giop/trace"
 )
 
 const (
@@ -33,6 +33,10 @@ const (
 	ID_ID3 string = "ID3"
 )
 
+func ithInstance(id string, num int) string {
+	return fmt.Sprintf("%s_#%d", id, num)
+}
+
 // gnarkCryptoPolyToUnivariatePoly converts *iop.Polynomial to univariate.Polynomial
 // (i.e., []koalabear.Element in Lagrange Normal form).
 func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial) (univariate.Polynomial, error) {
@@ -53,8 +57,8 @@ func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial) (univariate.Polynomial, 
 		if p.Layout == iop.BitReverse {
 			fft.BitReverse(coeffs) // canonical BitReversed → canonical Normal
 		}
-		d.FFT(coeffs, fft.DIF)  // canonical Normal → Lagrange BitReversed
-		fft.BitReverse(coeffs)  // → Lagrange Normal
+		d.FFT(coeffs, fft.DIF) // canonical Normal → Lagrange BitReversed
+		fft.BitReverse(coeffs) // → Lagrange Normal
 	case iop.LagrangeCoset:
 		if p.Layout == iop.BitReverse {
 			fft.BitReverse(coeffs)
@@ -75,41 +79,41 @@ func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial) (univariate.Polynomial, 
 // where Ql[i]=-1), with the explicit note "to be completed by the prover". The prover
 // must set Qk[i]=L[i] so that the vanishing relation Ql[i]*L[i]+Qk[i] = -L[i]+L[i] = 0
 // holds on those rows.
-func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1CSSolution, nbPublicInputs int) (trace.Trace, error) {
+func BuildIthTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1CSSolution, nbPublicInputs int, n int) (trace.Trace, error) {
 
 	nbColumns := 16
 	T := make(trace.Trace, nbColumns)
 	var err error
 
-	T[ID_Ql], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Ql)
+	T[ithInstance(ID_Ql, n)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Ql)
 	if err != nil {
 		return T, err
 	}
-	T[ID_Qr], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qr)
+	T[ithInstance(ID_Qr, n)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qr)
 	if err != nil {
 		return T, err
 	}
-	T[ID_Qm], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qm)
+	T[ithInstance(ID_Qm, n)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qm)
 	if err != nil {
 		return T, err
 	}
-	T[ID_Qo], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qo)
+	T[ithInstance(ID_Qo, n)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qo)
 	if err != nil {
 		return T, err
 	}
-	T[ID_Qk], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qk)
+	T[ithInstance(ID_Qk, n)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qk)
 	if err != nil {
 		return T, err
 	}
-	T[ID_S1], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S1)
+	T[ithInstance(ID_S1, n)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S1)
 	if err != nil {
 		return T, err
 	}
-	T[ID_S2], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S2)
+	T[ithInstance(ID_S2, n)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S2)
 	if err != nil {
 		return T, err
 	}
-	T[ID_S3], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S3)
+	T[ithInstance(ID_S3, n)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S3)
 	if err != nil {
 		return T, err
 	}
@@ -117,23 +121,23 @@ func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1C
 	// Solution columns: L, R, O are already in Lagrange Normal form
 	lCoeffs := make([]koalabear.Element, len(plonkSolution.L))
 	copy(lCoeffs, plonkSolution.L)
-	T[ID_L] = lCoeffs
+	T[ithInstance(ID_L, n)] = lCoeffs
 
 	// Complete Qk for the public-input placeholder rows.
 	for i := 0; i < nbPublicInputs; i++ {
-		T[ID_Qk][i] = T[ID_L][i]
+		T[ithInstance(ID_Qk, n)][i] = T[ithInstance(ID_L, n)][i]
 	}
 
 	rCoeffs := make([]koalabear.Element, len(plonkSolution.R))
 	copy(rCoeffs, plonkSolution.R)
-	T[ID_R] = rCoeffs
+	T[ithInstance(ID_R, n)] = rCoeffs
 
 	oCoeffs := make([]koalabear.Element, len(plonkSolution.O))
 	copy(oCoeffs, plonkSolution.O)
-	T[ID_O] = oCoeffs
+	T[ithInstance(ID_O, n)] = oCoeffs
 
-	n := len(plonkTrace.Ql.Coefficients())
-	domain := fft.NewDomain(uint64(n))
+	size := len(plonkTrace.Ql.Coefficients())
+	domain := fft.NewDomain(uint64(size))
 
 	// Build identity permutation columns ID1, ID2, ID3
 	res := make([]koalabear.Element, 3*domain.Cardinality)
@@ -149,15 +153,15 @@ func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1C
 
 	id1 := make([]koalabear.Element, domain.Cardinality)
 	copy(id1, res[:domain.Cardinality])
-	T[ID_ID1] = id1
+	T[ithInstance(ID_ID1, n)] = id1
 
 	id2 := make([]koalabear.Element, domain.Cardinality)
 	copy(id2, res[domain.Cardinality:2*domain.Cardinality])
-	T[ID_ID2] = id2
+	T[ithInstance(ID_ID2, n)] = id2
 
 	id3 := make([]koalabear.Element, domain.Cardinality)
 	copy(id3, res[2*domain.Cardinality:])
-	T[ID_ID3] = id3
+	T[ithInstance(ID_ID3, n)] = id3
 
 	return T, nil
 }
@@ -182,7 +186,7 @@ func (c *Circuit) Define(api frontend.API) error {
 	return nil
 }
 
-func GetPlonkTrace() (trace.Trace, int, error) {
+func GetIthPlonkTrace(n int) (trace.Trace, int, error) {
 
 	assignment := Circuit{
 		A: 3,
@@ -222,7 +226,7 @@ func GetPlonkTrace() (trace.Trace, int, error) {
 		return nil, size, fmt.Errorf("cannot cast isolution to *gnark_cs.SparseR1CSSolution")
 	}
 
-	T, err := BuildTrace(publicTrace, solution, nbPublic)
+	T, err := BuildIthTrace(publicTrace, solution, nbPublic, n)
 	if err != nil {
 		return nil, size, err
 	}

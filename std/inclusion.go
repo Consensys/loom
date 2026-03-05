@@ -1,6 +1,8 @@
 package std
 
 import (
+	"fmt"
+
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -42,17 +44,37 @@ import (
 //	|   C4: L_0·(GrandSumS·(S−γ) − 1) = 0  (GrandSumS[0] = 1/(S[0]−γ))          |
 //	|   C5: L_{N−1}·(GrandSumS − GrandSumT) = 0  (total sums equal)               |
 //	|-------------------------------–-----------------------------------------------|
-func InclusionCheckIOP(system *cs.System, S, T string, M, grandSumS, grandSumT string, gamma string) {
+func InclusionCheckIOP(system *cs.System, S, T string) error {
 
 	// 1. create the multiplicity polynomial
 	Texpr := sym.NewCommittedColumn(T)
 	Sexpr := sym.NewCommittedColumn(S)
 
-	inclusionCheckIOP(system, Sexpr, Texpr, M, grandSumS, grandSumT, gamma)
+	return inclusionCheckIOP(system, Sexpr, Texpr)
 
 }
 
-func inclusionCheckIOP(system *cs.System, S, T sym.Expr, M, grandSumS, grandSumT string, gamma string) {
+func inclusionCheckIOP(system *cs.System, S, T sym.Expr) error {
+
+	_M, err := RandomString(5)
+	if err != nil {
+		return err
+	}
+	M := fmt.Sprintf("Mult_%s", _M)
+	_grandSumS, err := RandomString(5)
+	if err != nil {
+		return err
+	}
+	grandSumS := fmt.Sprintf("GSum_S_%s", _grandSumS)
+	_grandSumT, err := RandomString(5)
+	if err != nil {
+		return err
+	}
+	grandSumT := fmt.Sprintf("GSum_T_%s", _grandSumT)
+	gamma, err := RandomString(5)
+	if err != nil {
+		return err
+	}
 
 	// 1. create the multiplicity polynomial
 	Mexpr := sym.NewCommittedColumn(M)
@@ -79,6 +101,7 @@ func inclusionCheckIOP(system *cs.System, S, T sym.Expr, M, grandSumS, grandSumT
 	grandSumTExpr := sym.NewCommittedColumn(grandSumT)
 	cs.EnforceLocalConstraintAndRegisterLagrangeColumn(system, grandSumSExpr, grandSumTExpr, system.N-1)
 
+	return nil
 }
 
 // InclusionCheckMultiSetIOP proves that every row-tuple (S[0][i], …, S[k−1][i])
@@ -131,7 +154,12 @@ func inclusionCheckIOP(system *cs.System, S, T sym.Expr, M, grandSumS, grandSumT
 //	|   C4: L_0·(GrandSumS·(S_fold−γ) − 1) = 0                                     |
 //	|   C5: L_{N−1}·(GrandSumS − GrandSumT) = 0  (total sums equal)                |
 //	|----------------------------------–---------------------------------------------|
-func InclusionCheckMultiSetIOP(system *cs.System, S, T []string, M, grandSumS, grandSumT string, gamma string, folding string) {
+func InclusionCheckMultiSetIOP(system *cs.System, S, T []string) error {
+
+	folding, err := RandomString(5)
+	if err != nil {
+		return err
+	}
 
 	// 1. sample a challenge for folding
 	foldingDeps := make([]sym.Expr, len(S)+len(T))
@@ -157,6 +185,6 @@ func InclusionCheckMultiSetIOP(system *cs.System, S, T []string, M, grandSumS, g
 	TFolded := cs.Fold(TExpr, gammaExpr)
 
 	// 3. calls the InclusionCheckIOP on the folded S and T
-	inclusionCheckIOP(system, SFolded, TFolded, M, grandSumS, grandSumT, gamma)
+	return inclusionCheckIOP(system, SFolded, TFolded)
 
 }

@@ -56,7 +56,7 @@ func TestInclusion(t *testing.T) {
 	trace := BuildInclusionTrace(t, size)
 	system := cs.NewSystem(size)
 
-	InclusionCheckIOP(&system, "S", "T", "M", "GrandSumS", "GrandSumT", "gamma")
+	InclusionCheckIOP(&system, "S", "T")
 
 	cciop := cs.Compile(&system)
 
@@ -122,10 +122,9 @@ func TestInclusionMultiSet(t *testing.T) {
 	tr := BuildInclusionMultiSetTrace(t, size)
 	system := cs.NewSystem(size)
 
-	InclusionCheckMultiSetIOP(&system, []string{"S0", "S1"}, []string{"T0", "T1"}, "M", "GrandSumS", "GrandSumT", "gamma", "folding")
+	InclusionCheckMultiSetIOP(&system, []string{"S0", "S1"}, []string{"T0", "T1"})
 
 	cciop := cs.Compile(&system)
-	viewer.WriteProverActionsDagToHTML(cciop, "inclusion_dag.html")
 
 	proverRunTime := prover.NewRuntime(cciop, tr)
 
@@ -166,6 +165,8 @@ func TestInclusionMultiSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	viewer.WriteProofRoundsDagToHTML(proof.Rounds, "rounds.html")
 
 	// 5. Build verifier runtime and derive challenges
 	verifierRunTime := verifier.NewRunTime(cciop)

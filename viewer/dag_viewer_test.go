@@ -16,7 +16,6 @@ func TestWriteProverActionsDagToHTML(t *testing.T) {
 		&system,
 		[][]string{{"P0", "P1"}},
 		[][]string{{"Q0", "Q1"}},
-		"GrandProduct", "alpha", "gamma",
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +39,7 @@ func TestWriteProofRoundsDagToHTML_Permutation(t *testing.T) {
 	size := 16
 	trace := cs.BuildPermutationCircuit(t, size)
 	system := cs.NewSystem(size)
-	std.EqualityUpToPermutationIOP(&system, []string{"P0"}, []string{"P1"}, "GrandProduct", "gamma")
+	std.EqualityUpToPermutationIOP(&system, []string{"P0"}, []string{"P1"})
 
 	cciop := cs.Compile(&system)
 	rt := prover.NewRuntime(cciop, trace)
@@ -71,7 +70,6 @@ func TestWriteProofRoundsDagToHTML_MultiSet(t *testing.T) {
 		&system,
 		[][]string{{"P0", "P1"}},
 		[][]string{{"Q0", "Q1"}},
-		"GrandProduct", "alpha", "gamma",
 	); err != nil {
 		t.Fatal(err)
 	}
