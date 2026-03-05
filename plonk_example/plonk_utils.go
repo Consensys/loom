@@ -34,7 +34,7 @@ const (
 )
 
 func ithInstance(id string, num int) string {
-	return fmt.Sprintf("%s_#%d", id, num)
+	return fmt.Sprintf("%d-%s", num, id)
 }
 
 // gnarkCryptoPolyToUnivariatePoly converts *iop.Polynomial to univariate.Polynomial

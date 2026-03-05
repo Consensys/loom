@@ -39,13 +39,3 @@ func (system *System) RegisterConstraints(C []Constraint) {
 func (system *System) RegisterithLagrangeColumn(i int) {
 	system.RegisterProverAction(nil, []string{GetLagrangeID(i, system.N)}, ComputeLagrangeColumn)
 }
-
-// RegisterProverAction adds a prover action to the underlying System
-func (system *System) RegisterProverAction(inputs []sym.Expr, outputs []string, exec Action) {
-	pa := ProverAction{
-		Inputs:  inputs,
-		Outputs: outputs,
-		Exec:    exec,
-	}
-	system.ProverActions = append(system.ProverActions, pa)
-}
