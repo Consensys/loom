@@ -3,6 +3,7 @@ package cs
 import (
 	"fmt"
 
+	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/pas/univariate"
 	"github.com/consensys/giop/trace"
@@ -17,8 +18,8 @@ func EnforceGrandSumConstraint(system *System, M, E sym.Expr, grandSum string, N
 	// 1. (1-Lagrange_0) * ( (IDGrandSum - IDGrandSum(w^1 X))*E - M)=0
 	lagrange := sym.NewComputableColumn(GetLagrangeID(0, N))
 	p1 := sym.NewConst(koalabear.One()).Sub(lagrange)
-	grandSumShifted := grandSum + GetShiftSuffix(-1)
-	diffGrandSum := sym.NewCommittedColumn(grandSum).Sub(sym.NewCommittedColumn(grandSumShifted))
+	grandSumShifted := constants.GetShiftedName(grandSum, -1)
+	diffGrandSum := sym.NewCommittedColumn(grandSum).Sub(sym.NewShiftedColumn(grandSumShifted))
 	p2 := diffGrandSum.Mul(E).Sub(M)
 	system.RegisterConstraint(p1.Mul(p2))
 
@@ -38,25 +39,15 @@ func ComputeGrandSum(trace trace.Trace, proof *Proof, E []sym.Expr, GP []string)
 		return fmt.Errorf("len(GP)=%d, expected 1", len(GP))
 	}
 
-	// build the polynomials R, R(wX)
+	// build the polynomials R
 	grandSum, err := univariate.BuildGrandSum(trace, E[1], E[0], proof.N)
 	if err != nil {
 		return err
 	}
 	grandSumID := GP[0]
-	shift := -1
-	grandSumIDShifted := GP[0] + GetShiftSuffix(shift)
-	grandSumShiftedCoeffs := make([]koalabear.Element, proof.N)
-	for i := 0; i < proof.N; i++ {
-		grandSumShiftedCoeffs[i] = grandSum[(i+shift+proof.N)%proof.N]
-	}
 
-	// register the R, R(wX) in the trace
+	// register the R in the trace
 	err = RegisterColumn(trace, grandSumID, grandSum)
-	if err != nil {
-		return err
-	}
-	err = RegisterColumn(trace, grandSumIDShifted, grandSumShiftedCoeffs)
 	if err != nil {
 		return err
 	}

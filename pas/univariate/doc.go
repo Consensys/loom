@@ -1,5 +1,4 @@
-// package univariate = layer 0, just raw operations on polynomials
-// package system = layer 1, we use layer 0 in the context of building a system, so we deal with constraints as well
-// package protocol = layer 2, we use layer 1, in the context of the protocol, that is we manage prover<->verifier interaction
+// the polynomials are implicilty assumed to be in Lagrange basis, normal layout.
+// It is only during the quotient computation
 
 package univariate

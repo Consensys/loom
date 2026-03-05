@@ -18,6 +18,7 @@ func (d *Digest) Marshal() []byte {
 }
 
 type OpeningProof struct {
+	Shift        int
 	ClaimedValue koalabear.Element
 }
 
@@ -60,12 +61,5 @@ func Verify(commitment Digest, proof OpeningProof, point koalabear.Element) erro
 
 type PackedProof struct {
 	Digest       Digest
-	OpeningProof OpeningProof
-}
-
-func PackProof(d Digest, proof OpeningProof) PackedProof {
-	return PackedProof{
-		Digest:       d,
-		OpeningProof: proof,
-	}
+	OpeningProof []OpeningProof
 }

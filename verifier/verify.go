@@ -156,7 +156,7 @@ func (runtime *Runtime) ComputeChallenges(proof *cs.Proof, nbWorkers int) error 
 // EvaluateComputableColumns evaluates the computable columns at zeta and stores the results in runtime.Vars.
 func (runtime *Runtime) EvaluateComputableColumns() error {
 
-	ccLeaves := runtime.VanishingRelation.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutCommittedColumns()))
+	ccLeaves := runtime.VanishingRelation.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutCommittedColumns(), sym.WithoutShiftedColumns()))
 	ccLeaves = sym.RemoveDuplicates(ccLeaves)
 
 	for _, l := range ccLeaves {
@@ -173,15 +173,16 @@ func (runtime *Runtime) EvaluateComputableColumns() error {
 // FillClaimedValues fill runtime.Vars with the claimed values from the prover
 func (runtime *Runtime) FillClaimedValues(proof *cs.Proof) error {
 
-	ccLeaves := runtime.VanishingRelation.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutComputableColumns()))
-	ccLeaves = sym.RemoveDuplicates(ccLeaves)
+	for k, proof := range proof.OpeningProofs {
 
-	for _, l := range ccLeaves {
-		com, ok := proof.OpeningProofs[l]
-		if !ok {
-			return fmt.Errorf("Opening proof for column %s not found in proof", l)
+		for _, op := range proof.OpeningProof {
+			if op.Shift == 0 {
+				runtime.Vars[k] = op.ClaimedValue
+			} else {
+				name := constants.GetShiftedName(k, op.Shift)
+				runtime.Vars[name] = op.ClaimedValue
+			}
 		}
-		runtime.Vars[l] = com.OpeningProof.ClaimedValue
 	}
 
 	return nil
@@ -196,7 +197,7 @@ func (runtime *Runtime) CheckRelation(proof *cs.Proof) error {
 	if !ok {
 		return fmt.Errorf("%s does not appear in teh list of commitments", constants.FINAL_QUOTIENT)
 	}
-	hzeta := comh.OpeningProof.ClaimedValue
+	hzeta := comh.OpeningProof[0].ClaimedValue
 
 	var zetaNMinusOne koalabear.Element
 	one := koalabear.One()
@@ -213,10 +214,35 @@ func (runtime *Runtime) CheckRelation(proof *cs.Proof) error {
 }
 
 func (runtime *Runtime) VerifyOpeningProofs(proof *cs.Proof) error {
-	for _, op := range proof.OpeningProofs {
-		err := dummycommitment.Verify(op.Digest, op.OpeningProof, runtime.Vars[constants.FINAL_EVALUATION_POINT])
-		if err != nil {
-			return err
+
+	w, err := koalabear.Generator(uint64(proof.N))
+	if err != nil {
+		return err
+	}
+
+	for _, openingProof := range proof.OpeningProofs {
+
+		for _, op := range openingProof.OpeningProof { // one opening proof per shifted opening
+			shift := op.Shift
+			if shift == 0 {
+				err := dummycommitment.Verify(openingProof.Digest, op, runtime.Vars[constants.FINAL_EVALUATION_POINT])
+				if err != nil {
+					return err
+				}
+			} else {
+				zetaShifted := w
+				if shift < 0 {
+					zetaShifted.Inverse(&w)
+					shift = -shift
+				}
+				zetaShifted.Exp(zetaShifted, big.NewInt(int64(shift)))
+				z := runtime.Vars[constants.FINAL_EVALUATION_POINT]
+				zetaShifted.Mul(&zetaShifted, &z) // w^iζ
+				err := dummycommitment.Verify(openingProof.Digest, op, zetaShifted)
+				if err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil

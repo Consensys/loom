@@ -3,18 +3,17 @@ package cs
 import (
 	"fmt"
 
+	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/pas/univariate"
 	"github.com/consensys/giop/trace"
-	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
 // EnforceGrandProductConstraint IDGrandProductShifted*E2-IDGrandProduct*E1=0
 func EnforceGrandProductConstraint(system *System, E1, E2 sym.Expr, IDGrandProduct string, N int) {
 
 	// build the symbolic expression of the constraint
-	IDGrandProductShifted := IDGrandProduct + GetShiftSuffix(1)
-	A := sym.NewCommittedColumn(IDGrandProductShifted).Mul(E2)
+	A := sym.NewShiftedColumn(constants.GetShiftedName(IDGrandProduct, 1)).Mul(E2)
 	B := sym.NewCommittedColumn(IDGrandProduct).Mul(E1)
 	GPConstraint := A.Sub(B)
 	system.RegisterConstraint(GPConstraint)
@@ -35,21 +34,21 @@ func ComputeGrandProduct(trace trace.Trace, proof *Proof, E []sym.Expr, GP []str
 		return err
 	}
 	RID := GP[0]
-	RsID := GP[0] + GetShiftSuffix(1)
-	RSCoeffs := make([]koalabear.Element, proof.N)
-	for i := 0; i < proof.N; i++ {
-		RSCoeffs[i] = R[(i+1)%proof.N]
-	}
+	// RsID := constants.GetShiftedName(GP[0], 1)
+	// RSCoeffs := make([]koalabear.Element, proof.N)
+	// for i := 0; i < proof.N; i++ {
+	// 	RSCoeffs[i] = R[(i+1)%proof.N]
+	// }
 
 	// register the R, R(wX) in the trace
 	err = RegisterColumn(trace, RID, R)
 	if err != nil {
 		return err
 	}
-	err = RegisterColumn(trace, RsID, RSCoeffs)
-	if err != nil {
-		return err
-	}
+	// err = RegisterColumn(trace, RsID, RSCoeffs)
+	// if err != nil {
+	// 	return err
+	// }
 
 	return nil
 }

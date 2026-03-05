@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/pas/dag"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -26,22 +27,43 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 	}
 
 	// we do the evaluation manually (don't use EvalPointWise)
-	leaves := vanishingRelation.Leaves(sym.Config{})
+	// Separate regular leaves from shifted leaves
+	leavesNormal := sym.RemoveDuplicates(vanishingRelation.Leaves(sym.NewConfig(sym.WithoutShiftedColumns())))
+	leavesShifted := sym.RemoveDuplicates(vanishingRelation.Leaves(sym.NewConfig(sym.OnlyShiftedColumns...)))
 
 	numerator := make([]koalabear.Element, bigSize)
 
-	// copy only the polynomials referenced by E.
-	// Pi may contain more entries than E.Leaves() (e.g. when the full trace is passed in).
-	PiCopies := make(map[string][]koalabear.Element, len(leaves))
-	for _, name := range leaves {
+	// Copy regular (non-shifted) polynomials. Also ensure base columns of shifted leaves are present.
+	PiCopies := make(map[string][]koalabear.Element, len(leavesNormal))
+	for _, name := range leavesNormal {
 		v := Pi[name]
 		coeffs := make([]koalabear.Element, len(v)) // len = N except for constant polynomials
 		copy(coeffs, v)
 		PiCopies[name] = coeffs
 	}
 
+	// Parse shifted leaves and ensure their base columns are in PiCopies
+	type shiftInfo struct {
+		baseName string
+		shift    int
+	}
+	shiftedInfo := make(map[string]shiftInfo, len(leavesShifted))
+	for _, name := range leavesShifted {
+		baseName, shift, err := constants.SplitShiftedName(name)
+		if err != nil {
+			return Polynomial{}, fmt.Errorf("ComputeQuotient: %w", err)
+		}
+		shiftedInfo[name] = shiftInfo{baseName, shift}
+		if _, ok := PiCopies[baseName]; !ok {
+			v := Pi[baseName]
+			coeffs := make([]koalabear.Element, len(v))
+			copy(coeffs, v)
+			PiCopies[baseName] = coeffs
+		}
+	}
+
 	// variables assignment
-	vals := make(map[string]koalabear.Element, len(leaves))
+	vals := make(map[string]koalabear.Element, len(leavesNormal)+len(leavesShifted))
 
 	// create domains
 	bigDomain := fft.NewDomain(uint64(bigSize))
@@ -101,6 +123,15 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 				}
 				vals[name] = pCopy[j]
 			}
+			// shifted leaves: on the current coset, R(wX) at index j equals R at index (j+shift)%N
+			for shiftedName, info := range shiftedInfo {
+				pCopy := PiCopies[info.baseName]
+				if len(pCopy) == 1 {
+					vals[shiftedName] = pCopy[0]
+				} else {
+					vals[shiftedName] = pCopy[((j+info.shift)%N+N)%N]
+				}
+			}
 			numerator[rho*j+i] = vanishingRelation.Eval(vals)
 		}
 
@@ -137,4 +168,34 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 	}
 
 	return numerator, nil
+}
+
+// CosetLagrangeToLagrangeNormal converts a polynomial from coset-Lagrange Normal form
+// (as returned by ComputeQuotient, evaluated on {FrMultiplicativeGen * ω^j}) to
+// standard Lagrange Normal form (evaluated on {ω^j}).
+// The conversion is in-place.
+func CosetLagrangeToLagrangeNormal(p Polynomial) {
+	N := uint64(len(p))
+	d := fft.NewDomain(N)
+
+	// Step 1: coset-Lagrange Normal → BitReversed IFFT (= c_k * FrGen^k, BitReversed)
+	d.FFTInverse(p, fft.DIF)
+
+	// Step 2: BitReverse → Normal order (= c_k * FrGen^k)
+	fft.BitReverse(p)
+
+	// Step 3: divide by FrGen^k to get canonical coefficients c_k
+	invFrGen := d.FrMultiplicativeGen
+	invFrGen.Inverse(&invFrGen)
+	acc := koalabear.One()
+	for k := range p {
+		p[k].Mul(&p[k], &acc)
+		acc.Mul(&acc, &invFrGen)
+	}
+
+	// Step 4: canonical Normal → Lagrange BitReversed
+	d.FFT(p, fft.DIF)
+
+	// Step 5: BitReverse → Lagrange Normal
+	fft.BitReverse(p)
 }

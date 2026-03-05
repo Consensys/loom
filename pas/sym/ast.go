@@ -55,6 +55,10 @@ func NewConfig(opts ...Option) Config {
 	return res
 }
 
+var OnlyChallenges = []Option{WithoutComputableColumns(), WithoutCommittedColumns(), WithoutShiftedColumns()}
+var OnlyCommittedColumns = []Option{WithoutComputableColumns(), WithoutChallenges(), WithoutShiftedColumns()}
+var OnlyShiftedColumns = []Option{WithoutComputableColumns(), WithoutChallenges(), WithoutCommittedColumns()}
+
 // The type of the leaves:
 // * Var
 // * ComputableColumn
@@ -90,12 +94,14 @@ type Expr interface {
 }
 
 type ShiftedColumn struct {
-	Name  string
-	Shift int
+	Name string
 }
 
+func NewShiftedColumn(name string) *ShiftedColumn {
+	return &ShiftedColumn{Name: name}
+}
 func (s *ShiftedColumn) Degree() int     { return 1 }
-func (s *ShiftedColumn) String() string  { return fmt.Sprintf("%s(w^%d)", s.Name, s.Shift) }
+func (s *ShiftedColumn) String() string  { return s.Name }
 func (s *ShiftedColumn) Add(e Expr) Expr { return &Add{s, e} }
 func (s *ShiftedColumn) Sub(e Expr) Expr { return &Sub{s, e} }
 func (s *ShiftedColumn) Mul(e Expr) Expr { return &Mul{s, e} }

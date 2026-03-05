@@ -3,6 +3,7 @@ package prover
 import (
 	"crypto/sha256"
 	"fmt"
+	"math/big"
 	"sync"
 	"sync/atomic"
 
@@ -142,7 +143,7 @@ func (runtime Runtime) DeriveFinalFoldingChallenge(proof *cs.Proof) error {
 	// 1. create the dependencies of the folding challenge to all the polynomials not committed
 	var round cs.Round
 	round.ChallengeName = constants.FINAL_FOLDING_CHALLENGE
-	leaves := runtime.CompiledIOP.VanishingRelation.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutComputableColumns()))
+	leaves := runtime.CompiledIOP.VanishingRelation.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutComputableColumns(), sym.WithoutShiftedColumns()))
 	round.DependenciesCommittedColumns = make([]string, 0, len(leaves))
 	for _, l := range leaves {
 		if _, ok := proof.OpeningProofs[l]; !ok { // <- the column whose ID is l is not committed, we add it to bindings
@@ -281,19 +282,77 @@ func (runtime Runtime) DeriveOpeningChallenge(proof *cs.Proof) (koalabear.Elemen
 	return zeta, nil
 }
 
-// OpenCommitments open all columns at zeta
 func (runtime Runtime) OpenCommitments(proof *cs.Proof, zeta koalabear.Element) error {
+
+	err := runtime.OpenNonShiftedCommitments(proof, zeta)
+	if err != nil {
+		return err
+	}
+
+	return runtime.OpenShiftedCommitments(proof, zeta)
+}
+
+// OpenCommitments open all columns at zeta
+func (runtime Runtime) OpenNonShiftedCommitments(proof *cs.Proof, zeta koalabear.Element) error {
 	var err error
 	for k, com := range proof.OpeningProofs {
 		poly, ok := runtime.Trace[k]
 		if !ok {
 			return fmt.Errorf("column %s not found in the trace", k)
 		}
-		com.OpeningProof, err = dummycommitment.Open(poly, zeta)
+		com.OpeningProof = make([]dummycommitment.OpeningProof, 1)
+		com.OpeningProof[0], err = dummycommitment.Open(poly, zeta)
 		if err != nil {
 			return err
 		}
 		proof.OpeningProofs[k] = com
+	}
+
+	return nil
+}
+
+// OpenCommitments open all columns at zeta
+func (runtime Runtime) OpenShiftedCommitments(proof *cs.Proof, zeta koalabear.Element) error {
+
+	// query the leaves corresponding to ShiftedColumns
+	leavesShifted := runtime.CompiledIOP.VanishingRelation.Leaves(
+		sym.NewConfig(sym.WithoutChallenges(), sym.WithoutComputableColumns(), sym.WithoutCommittedColumns()))
+	leavesShifted = sym.RemoveDuplicates(leavesShifted)
+
+	// open the ShiftedColumns
+	w, err := koalabear.Generator(uint64(proof.N))
+	if err != nil {
+		return err
+	}
+	for _, l := range leavesShifted {
+		name, shift, err := constants.SplitShiftedName(l)
+		if err != nil {
+			return err
+		}
+		poly, ok := runtime.Trace[name]
+		if !ok {
+			return fmt.Errorf("column %s (shifted opening) not found in the trace", name)
+		}
+		com, ok := proof.OpeningProofs[name]
+		if !ok {
+			return fmt.Errorf("OpeningProofs %s (base of shifted opening) not found in the proof", name)
+		}
+		var zetaShifted koalabear.Element
+		zetaShifted.Set(&w)
+		absShift := shift
+		if absShift < 0 {
+			zetaShifted.Inverse(&zetaShifted)
+			absShift = -absShift
+		}
+		zetaShifted.Exp(zetaShifted, big.NewInt(int64(absShift)))
+		zetaShifted.Mul(&zeta, &zetaShifted) // w^shift·ζ
+		openingProof, err := dummycommitment.Open(poly, zetaShifted)
+		if err != nil {
+			return err
+		}
+		openingProof.Shift = shift // preserve original signed shift
+		com.OpeningProof = append(com.OpeningProof, openingProof)
+		proof.OpeningProofs[name] = com
 	}
 
 	return nil

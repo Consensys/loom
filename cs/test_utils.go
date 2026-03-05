@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/pas/dag"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/pas/univariate"
@@ -113,22 +114,22 @@ func BruteForceChecker(T trace.Trace, constraints []Constraint, N int) error {
 
 	for _, C := range constraints {
 
-		leaves := sym.RemoveDuplicates(C.Leaves(sym.NewConfig()))
+		leaves := sym.RemoveDuplicates(C.Leaves(sym.NewConfig(sym.WithoutShiftedColumns())))
 
-		// validate all leaves are present before touching any row
+		// validate all live columns are present before touching any row
 		for _, l := range leaves {
 			if _, ok := T[l]; !ok {
 				return fmt.Errorf("%s not found in the trace", l)
 			}
 		}
 
-		vals := make(map[string]koalabear.Element, len(leaves))
-		for i := 0; i < N; i++ {
-			for _, l := range leaves {
-				vals[l] = getVal(T, l, i)
-			}
-			if z := C.Evaluate(vals); !z.IsZero() {
-				return fmt.Errorf("%s should vanish on the trace, but failed at row %d\n", C.String(), i)
+		vals, err := univariate.EvalPointWise(T, C, N)
+		if err != nil {
+			return err
+		}
+		for i, v := range vals {
+			if !v.IsZero() {
+				return fmt.Errorf("relation not zero at row %d", i)
 			}
 		}
 
@@ -186,10 +187,12 @@ func QuotientChecker(T trace.Trace, constraints []Constraint, N int) error {
 		lagrangeToCanonical(hCoeffs)
 		hz := evalCanonical(hCoeffs, z)
 
-		// For each leaf, evaluate the trace polynomial at z
-		leaves := sym.RemoveDuplicates(C.Leaves(sym.NewConfig()))
-		vals := make(map[string]koalabear.Element, len(leaves))
-		for _, l := range leaves {
+		// For each leaf, evaluate the trace polynomial at z (or w^shift*z for shifted columns)
+		leavesNormal := sym.RemoveDuplicates(C.Leaves(sym.NewConfig(sym.WithoutShiftedColumns())))
+		leavesShifted := sym.RemoveDuplicates(C.Leaves(sym.NewConfig(
+			sym.WithoutChallenges(), sym.WithoutCommittedColumns(), sym.WithoutComputableColumns())))
+		vals := make(map[string]koalabear.Element, len(leavesNormal)+len(leavesShifted))
+		for _, l := range leavesNormal {
 			poly := T[l]
 			if len(poly) == 1 {
 				vals[l] = poly[0]
@@ -199,6 +202,34 @@ func QuotientChecker(T trace.Trace, constraints []Constraint, N int) error {
 			copy(pCopy, poly)
 			lagrangeToCanonical(pCopy)
 			vals[l] = evalCanonical(pCopy, z)
+		}
+		w, err := koalabear.Generator(uint64(N))
+		if err != nil {
+			return err
+		}
+		for _, l := range leavesShifted {
+			baseName, shift, err := constants.SplitShiftedName(l)
+			if err != nil {
+				return err
+			}
+			poly := T[baseName]
+			if len(poly) == 1 {
+				vals[l] = poly[0]
+				continue
+			}
+			pCopy := make([]koalabear.Element, len(poly))
+			copy(pCopy, poly)
+			lagrangeToCanonical(pCopy)
+			var wShift koalabear.Element
+			wShift.Set(&w)
+			absShift := shift
+			if absShift < 0 {
+				wShift.Inverse(&wShift)
+				absShift = -absShift
+			}
+			wShift.Exp(wShift, big.NewInt(int64(absShift)))
+			wShift.Mul(&wShift, &z)
+			vals[l] = evalCanonical(pCopy, wShift)
 		}
 
 		// Evaluate C at the column evaluations: cz = C(traces(z))

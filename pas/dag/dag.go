@@ -74,6 +74,9 @@ func (b *dagBuilder) intern(key string, make func() *DAGNode) *DAGNode {
 
 func (b *dagBuilder) build(e sym.Expr) *DAGNode {
 	switch v := e.(type) {
+	case *sym.ShiftedColumn:
+		key := dagKey("shifted", v.Name)
+		return b.intern(key, func() *DAGNode { return &DAGNode{Kind: KindLeaf, Leaf: e} })
 	case *sym.CommittedColumn:
 		key := dagKey("col", v.Name)
 		return b.intern(key, func() *DAGNode { return &DAGNode{Kind: KindLeaf, Leaf: e} })

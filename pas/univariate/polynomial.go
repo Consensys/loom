@@ -5,35 +5,61 @@ package univariate
 import (
 	"fmt"
 
+	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 )
 
 // Polynomial is a wrapper around EPolynomial that includes additional metadata such as shift.
 type Polynomial = []koalabear.Element
+
+// fillVars fills x with the i-th row of the trace
+func fillVars(Pi map[string]Polynomial, vals map[string]koalabear.Element, i int, N int, leaves, leavesShifted []string) error {
+
+	for _, name := range leaves {
+		if len(Pi[name]) == 1 { // in case of a challenge, the column is of size 1
+			vals[name] = Pi[name][0]
+		} else {
+			vals[name] = Pi[name][i]
+		}
+	}
+
+	for _, name := range leavesShifted {
+		baseName, shift, err := constants.SplitShiftedName(name)
+		if err != nil {
+			return err
+		}
+		vals[name] = Pi[baseName][(i+int(shift)+N)%N]
+	}
+
+	return nil
+}
 
 // EvalPointWise eval point wise E on Pi, by picking the coefficient direclty (no conversion, no copies).
 // internal function only.
 // N is the size of the polynomials in Pi, assumed to have all the same size, except the constant (size 1)
 // nbCommittedColumns is the number of variables in E
 func EvalPointWise(Pi map[string]Polynomial, E sym.Expr, N int) ([]koalabear.Element, error) {
-	leaves := sym.RemoveDuplicates(E.Leaves(sym.NewConfig()))
+	leaves := sym.RemoveDuplicates(E.Leaves(sym.NewConfig(sym.WithoutShiftedColumns())))
 	for _, name := range leaves {
 		if _, ok := Pi[name]; !ok {
 			return nil, fmt.Errorf("polynomial %s not found in Pi", name)
 		}
 	}
+	leavesShifted := sym.RemoveDuplicates(E.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutCommittedColumns(), sym.WithoutComputableColumns())))
+	for _, name := range leavesShifted {
+		baseName, _, err := constants.SplitShiftedName(name)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := Pi[baseName]; !ok {
+			return nil, fmt.Errorf("polynomial %s not found in Pi", baseName)
+		}
+	}
 	resultCoeffs := make([]koalabear.Element, N)
 	vals := make(map[string]koalabear.Element, len(leaves))
 	for i := 0; i < N; i++ {
-		for _, name := range leaves {
-			if len(Pi[name]) == 1 {
-				vals[name] = Pi[name][0]
-			} else {
-				vals[name] = Pi[name][i]
-			}
-		}
+		fillVars(Pi, vals, i, N, leaves, leavesShifted)
 		resultCoeffs[i] = E.Evaluate(vals)
 	}
 	return resultCoeffs, nil
@@ -172,34 +198,4 @@ func BuildGrandProduct(P map[string]Polynomial, E1, E2 sym.Expr, N int) (Polynom
 	}
 
 	return accumulateProducts(ratio, N)
-}
-
-// CosetLagrangeToLagrangeNormal converts a polynomial from coset-Lagrange Normal form
-// (as returned by ComputeQuotient, evaluated on {FrMultiplicativeGen * ω^j}) to
-// standard Lagrange Normal form (evaluated on {ω^j}).
-// The conversion is in-place.
-func CosetLagrangeToLagrangeNormal(p Polynomial) {
-	N := uint64(len(p))
-	d := fft.NewDomain(N)
-
-	// Step 1: coset-Lagrange Normal → BitReversed IFFT (= c_k * FrGen^k, BitReversed)
-	d.FFTInverse(p, fft.DIF)
-
-	// Step 2: BitReverse → Normal order (= c_k * FrGen^k)
-	fft.BitReverse(p)
-
-	// Step 3: divide by FrGen^k to get canonical coefficients c_k
-	invFrGen := d.FrMultiplicativeGen
-	invFrGen.Inverse(&invFrGen)
-	acc := koalabear.One()
-	for k := range p {
-		p[k].Mul(&p[k], &acc)
-		acc.Mul(&acc, &invFrGen)
-	}
-
-	// Step 4: canonical Normal → Lagrange BitReversed
-	d.FFT(p, fft.DIF)
-
-	// Step 5: BitReverse → Lagrange Normal
-	fft.BitReverse(p)
 }

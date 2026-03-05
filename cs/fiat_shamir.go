@@ -65,8 +65,8 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, E []sym.Expr, GP []string
 	// 1. the challenge dependencies are CommittedColumns AND challenges, otherwise
 	// the prover<->verifier interactionit is oblivious of the FS order and gives security gaps. We don't take
 	// the Computationable columns, because they are recomputed by the verifier.
-	dependenciesCommittedColumns := GetColumnsId(E, sym.WithoutChallenges(), sym.WithoutComputableColumns())
-	dependenciesChallenges := GetColumnsId(E, sym.WithoutCommittedColumns(), sym.WithoutComputableColumns())
+	dependenciesCommittedColumns := GetColumnsId(E, sym.OnlyCommittedColumns...)
+	dependenciesChallenges := GetColumnsId(E, sym.OnlyChallenges...)
 
 	// 2. find on which commitments depend round.DependenciesChallenges, and remove them from round.DependenciesCommittedColumns
 	// if they appear in it -> round.DependenciesChallenges already accout for them.
