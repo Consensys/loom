@@ -22,6 +22,10 @@ type Round struct {
 }
 
 type Proof struct {
+	// maps whose keys k are challenges, and values the committed columns on which k depends
+	// It allows the prune the dependency graph of challenge creation.
+	cacheChallengeDependencies map[string][]string
+
 	OpeningProofs map[string]dummycommitment.PackedProof
 
 	// The final constraint. The verifier checks a relation of the form C(P1, P2.. ) = Quotient * (X^n-1)
@@ -41,8 +45,9 @@ type Proof struct {
 
 func NewProof(N int) Proof {
 	return Proof{
-		OpeningProofs: make(map[string]dummycommitment.PackedProof),
-		Rounds:        make([]Round, 0),
-		N:             N,
+		OpeningProofs:              make(map[string]dummycommitment.PackedProof),
+		Rounds:                     make([]Round, 0),
+		cacheChallengeDependencies: make(map[string][]string),
+		N:                          N,
 	}
 }

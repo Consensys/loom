@@ -35,6 +35,24 @@ func GetChallengesID(E []sym.Expr) []string {
 	return ids
 }
 
+// returns l1 \ l2
+func removeFromList(l1, l2 []string) []string {
+	res := make([]string, 0, len(l1))
+	for i := 0; i < len(l1); i++ {
+		isInL2 := false
+		for j := 0; j < len(l2); j++ {
+			if l1[i] == l2[j] {
+				isInL2 = true
+				break
+			}
+		}
+		if !isInL2 {
+			res = append(res, l1[i])
+		}
+	}
+	return res
+}
+
 // ComputeChallenge type of ProverAction creates a challenge named GP[0] which is derived via FS
 // from the commitments of all the leaves appearing in E.
 func ComputeChallenge(trace trace.Trace, proof *Proof, E []sym.Expr, GP []string) error {
@@ -44,16 +62,39 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, E []sym.Expr, GP []string
 	}
 	challengeName := GP[0]
 
-	// 1. record the round: the challenge dependencies are CommittedColumns AND challenges, otherwise
-	// the prover<->verifier interactionit is oblivious of the FS order and gives security gaps, but we ditch
-	// the Computationable columns.
-	var round Round
-	round.ChallengeName = challengeName
-	round.DependenciesCommittedColumns = GetColumnsId(E, sym.WithoutChallenges(), sym.WithoutComputableColumns())
-	round.DependenciesChallenges = GetColumnsId(E, sym.WithoutCommittedColumns(), sym.WithoutComputableColumns())
+	// 1. the challenge dependencies are CommittedColumns AND challenges, otherwise
+	// the prover<->verifier interactionit is oblivious of the FS order and gives security gaps. We don't take
+	// the Computationable columns, because they are recomputed by the verifier.
+	dependenciesCommittedColumns := GetColumnsId(E, sym.WithoutChallenges(), sym.WithoutComputableColumns())
+	dependenciesChallenges := GetColumnsId(E, sym.WithoutCommittedColumns(), sym.WithoutComputableColumns())
+
+	// 2. find on which commitments depend round.DependenciesChallenges, and remove them from round.DependenciesCommittedColumns
+	// if they appear in it -> round.DependenciesChallenges already accout for them.
+	deps := make([]string, 0, len(dependenciesChallenges))
+	for _, c := range dependenciesChallenges {
+		if _, ok := proof.cacheChallengeDependencies[c]; !ok {
+			return fmt.Errorf("challenge %s not recorded in cacheChallengeDependencies", c)
+		}
+		cacheDeps := proof.cacheChallengeDependencies[c]
+		deps = append(deps, cacheDeps...)
+	}
+	dependenciesCommittedColumns = removeFromList(dependenciesCommittedColumns, deps)
+
+	// 3. record the round
+	round := Round{
+		ChallengeName:                challengeName,
+		DependenciesCommittedColumns: dependenciesCommittedColumns,
+		DependenciesChallenges:       dependenciesChallenges,
+	}
 	proof.Rounds = append(proof.Rounds, round)
 
-	// 2. Commit to all the polynomials whose name matches leaves. Record the commitments in the proof, and update FS along the way
+	// 4. add the current challenge to the cacheChallengeDependencies map
+	if _, ok := proof.cacheChallengeDependencies[challengeName]; ok {
+		return fmt.Errorf("challenge %s is already recorded", challengeName)
+	}
+	proof.cacheChallengeDependencies[challengeName] = round.DependenciesCommittedColumns
+
+	// 5. Commit to all the polynomials whose name matches leaves. Record the commitments in the proof, and update FS along the way
 	fs := fiatshamir.NewTranscript(sha256.New())
 	err := fs.NewChallenge(challengeName)
 	if err != nil {
@@ -88,7 +129,7 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, E []sym.Expr, GP []string
 		proof.OpeningProofs[id] = dummycommitment.PackedProof{Digest: com}
 	}
 
-	// 3. Bind the challenge to the other challenges it depends on
+	// 6. Bind the challenge to the other challenges it depends on
 	for _, id := range round.DependenciesChallenges {
 		c, ok := trace[id]
 		if !ok {
@@ -101,7 +142,7 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, E []sym.Expr, GP []string
 		}
 	}
 
-	// 5. Derive the challenge
+	// 7. Derive the challenge
 	bc, err := fs.ComputeChallenge(challengeName)
 	if err != nil {
 		return err
@@ -109,7 +150,7 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, E []sym.Expr, GP []string
 	var c koalabear.Element
 	c.SetBytes(bc)
 
-	// 6. add the challenge as a constant column, since it might appear in other constraints
+	// 8. add the challenge as a constant column, since it might appear in other constraints
 	return RegisterColumn(trace, challengeName, []koalabear.Element{c})
 
 }

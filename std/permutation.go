@@ -37,11 +37,6 @@ import (
 //	|-------------------------------–-----------------------------------------------|
 func EqualityUpToPermutationIOP(system *cs.System, ID1, ID2 []string) error {
 
-	gamma, err := RandomString(5)
-	if err != nil {
-		return err
-	}
-
 	// 1. sample gamma: register the prover action ComputeChallenge
 	E1 := make([]sym.Expr, len(ID1))
 	for i := 0; i < len(ID1); i++ {
@@ -51,9 +46,26 @@ func EqualityUpToPermutationIOP(system *cs.System, ID1, ID2 []string) error {
 	for i := 0; i < len(ID2); i++ {
 		E2[i] = sym.NewCommittedColumn(ID2[i])
 	}
+
+	return equalityUpToPermutationIOP(system, E1, E2)
+
+}
+
+func equalityUpToPermutationIOP(system *cs.System, E1, E2 []sym.Expr) error {
+
+	_IDGrandProduct, err := RandomString(5)
+	if err != nil {
+		return err
+	}
+	IDGrandProduct := fmt.Sprintf("GP_%s", _IDGrandProduct)
+	gamma, err := RandomString(5)
+	if err != nil {
+		return err
+	}
+
 	system.RegisterProverAction(append(E1, E2...), []string{gamma}, cs.ComputeChallenge)
 
-	// 2. register the symbolic constraint \Pi_i (Id1[i]-\gamma), \Pi_i (Id2[i]-\gamma) in the system
+	// 1. sample gamma
 	E1MinusGamma := E1[0].Sub(sym.NewChallenge(gamma))
 	for i := 1; i < len(E1); i++ {
 		E1MinusGamma = E1MinusGamma.Mul(E1[i].Sub(sym.NewChallenge(gamma)))
@@ -63,25 +75,13 @@ func EqualityUpToPermutationIOP(system *cs.System, ID1, ID2 []string) error {
 		E2MinusGamma = E2MinusGamma.Mul(E2[i].Sub(sym.NewChallenge(gamma)))
 	}
 
-	return equalityUpToPermutationIOP(system, E1MinusGamma, E2MinusGamma)
+	// 2. register the grand product constraint
+	cs.EnforceGrandProductConstraint(system, E1MinusGamma, E2MinusGamma, IDGrandProduct, system.N)
 
-}
+	// 3. register the prover action for creating the grand product and grand product shifted
+	system.RegisterProverAction([]sym.Expr{E1MinusGamma, E2MinusGamma}, []string{IDGrandProduct}, cs.ComputeGrandProduct)
 
-func equalityUpToPermutationIOP(system *cs.System, E1, E2 sym.Expr) error {
-
-	_IDGrandProduct, err := RandomString(5)
-	if err != nil {
-		return err
-	}
-	IDGrandProduct := fmt.Sprintf("GP_%s", _IDGrandProduct)
-
-	// 0. rgister the grand product constraint
-	cs.EnforceGrandProductConstraint(system, E1, E2, IDGrandProduct, system.N)
-
-	// 1. register the prover action for creating the grand product and grand product shifted
-	system.RegisterProverAction([]sym.Expr{E1, E2}, []string{IDGrandProduct}, cs.ComputeGrandProduct)
-
-	// 2. register the local constraint: GrandProduct[0] = 1
+	// 4. register the local constraint: GrandProduct[0] = 1
 	cs.EnforceLocalConstraintAndRegisterLagrangeColumn(system, sym.NewCommittedColumn(IDGrandProduct), sym.NewConst(koalabear.One()), 0)
 
 	return nil
@@ -134,10 +134,6 @@ func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string) 
 	if err != nil {
 		return err
 	}
-	gamma, err := RandomString(5)
-	if err != nil {
-		return err
-	}
 
 	// 1. sample alpha: register the prover action ComputeChallenge, depending on all ids in ID1, ID2
 	var deps []sym.Expr
@@ -170,21 +166,8 @@ func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string) 
 		F2[i] = cs.Fold(E2[i], alphaExpr)
 	}
 
-	// 3. sample gamma: register the prover action ComputeChallenge, depending on alpha
-	system.RegisterProverAction([]sym.Expr{alphaExpr}, []string{gamma}, cs.ComputeChallenge)
-
-	// 4. build the relations \Pi_i (F1[i]-\gamma), \Pi_i (F2[i]-\gamma)
-	F1MinusGamma := F1[0].Sub(sym.NewChallenge(gamma))
-	for i := 1; i < len(F1); i++ {
-		F1MinusGamma = F1MinusGamma.Mul(F1[i].Sub(sym.NewChallenge(gamma)))
-	}
-	F2MinusGamma := F2[0].Sub(sym.NewChallenge(gamma))
-	for i := 1; i < len(F2); i++ {
-		F2MinusGamma = F2MinusGamma.Mul(F2[i].Sub(sym.NewChallenge(gamma)))
-	}
-
-	// 5. register the grand production constraint and grandproduct prover action + Lagrange constraint
-	equalityUpToPermutationIOP(system, F1MinusGamma, F2MinusGamma)
+	// 3. equalityUpToPermutationIOP
+	equalityUpToPermutationIOP(system, F1, F2)
 
 	return nil
 }
