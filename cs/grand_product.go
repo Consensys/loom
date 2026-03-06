@@ -34,21 +34,12 @@ func ComputeGrandProduct(trace trace.Trace, proof *Proof, E []sym.Expr, GP []str
 		return err
 	}
 	RID := GP[0]
-	// RsID := constants.GetShiftedName(GP[0], 1)
-	// RSCoeffs := make([]koalabear.Element, proof.N)
-	// for i := 0; i < proof.N; i++ {
-	// 	RSCoeffs[i] = R[(i+1)%proof.N]
-	// }
 
 	// register the R, R(wX) in the trace
 	err = RegisterColumn(trace, RID, R)
 	if err != nil {
 		return err
 	}
-	// err = RegisterColumn(trace, RsID, RSCoeffs)
-	// if err != nil {
-	// 	return err
-	// }
 
 	return nil
 }

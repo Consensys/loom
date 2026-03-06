@@ -43,17 +43,11 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 	}
 
 	// Parse shifted leaves and ensure their base columns are in PiCopies
-	type shiftInfo struct {
-		baseName string
-		shift    int
-	}
-	shiftedInfo := make(map[string]shiftInfo, len(leavesShifted))
 	for _, name := range leavesShifted {
-		baseName, shift, err := constants.SplitShiftedName(name)
+		baseName, _, err := constants.SplitShiftedName(name)
 		if err != nil {
 			return Polynomial{}, fmt.Errorf("ComputeQuotient: %w", err)
 		}
-		shiftedInfo[name] = shiftInfo{baseName, shift}
 		if _, ok := PiCopies[baseName]; !ok {
 			v := Pi[baseName]
 			coeffs := make([]koalabear.Element, len(v))
@@ -62,8 +56,63 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 		}
 	}
 
-	// variables assignment
-	vals := make(map[string]koalabear.Element, len(leavesNormal)+len(leavesShifted))
+	// Build varInfos from DAG.VarIndex: maps variable index → poly slice + shift.
+	// This replaces the vals map and shiftedInfo map in the hot inner loop.
+	type varInfo struct {
+		poly       []koalabear.Element
+		shift      int
+		skipUpdate bool // true for constants and size-1 (challenge) polynomials
+	}
+	varInfos := make([]varInfo, len(vanishingRelation.VarIndex))
+	vars := make([]koalabear.Element, len(vanishingRelation.VarIndex))
+	emptyVals := map[string]koalabear.Element{}
+	for _, n := range vanishingRelation.Nodes {
+		if n.Kind != dag.KindLeaf {
+			continue
+		}
+		idx := n.VarIdx
+		name := n.Leaf.String()
+
+		// Try as regular column in PiCopies
+		if poly, ok := PiCopies[name]; ok {
+			if len(poly) == 1 {
+				vars[idx] = poly[0]
+				varInfos[idx].skipUpdate = true
+			} else {
+				varInfos[idx] = varInfo{poly: poly}
+			}
+			continue
+		}
+
+		// Try as shifted column (name = "baseName_shift_N")
+		if baseName, shift, err := constants.SplitShiftedName(name); err == nil {
+			if poly, ok := PiCopies[baseName]; ok {
+				if len(poly) == 1 {
+					vars[idx] = poly[0]
+					varInfos[idx].skipUpdate = true
+				} else {
+					varInfos[idx] = varInfo{poly: poly, shift: shift}
+				}
+				continue
+			}
+		}
+
+		// Const leaf: not in PiCopies, evaluate once
+		vars[idx] = n.Leaf.Evaluate(emptyVals)
+		varInfos[idx].skipUpdate = true
+	}
+
+	// piNonConst: unique non-constant poly slices, used for FFT loops.
+	// Built from PiCopies (one entry per base column, no duplicates).
+	piNonConst := make([][]koalabear.Element, 0, len(PiCopies))
+	for _, poly := range PiCopies {
+		if len(poly) > 1 {
+			piNonConst = append(piNonConst, poly)
+		}
+	}
+
+	// eval cache (reused across all inner-loop iterations)
+	evalCache := make([]koalabear.Element, len(vanishingRelation.Nodes))
 
 	// create domains
 	bigDomain := fft.NewDomain(uint64(bigSize))
@@ -89,15 +138,10 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 
 	// at this stage, all polynomials in PiCopies are in Lagrange form. We write them in canonical basis, shifted by twiddles[i][0]
 	// to prepare the FFT on the cosets (twiddles[i][0] is <bigDomain.FrMultiplicativeGen^i>), used to avoid the zeroes on X^N-1).
-	for _, pCopy := range PiCopies {
-
-		if len(pCopy) == 1 { // /!\ polynomials coming from challenges are constants -> the size of coeff is 1 in that case
-			continue
-		}
-
+	for _, pCopy := range piNonConst {
 		// shift coset manually
-		smallDomain.FFTInverse(pCopy, fft.DIF)             // PiCopies[j] bit reversed, canonical
-		scaleByTwiddles(pCopy, twiddleFrMultiplicativeGen) // PiCopies[j] are scaled by <bigDomain.FrMultiplicativeGen^i> to avoid zeroes of X^N-1
+		smallDomain.FFTInverse(pCopy, fft.DIF)             // pCopy: bit reversed, canonical
+		scaleByTwiddles(pCopy, twiddleFrMultiplicativeGen) // pCopy: scaled by <bigDomain.FrMultiplicativeGen^i> to avoid zeroes of X^N-1
 	}
 
 	// at this stage, all the polynomials c[i] in c are in canonical, bit reverse, scaled by <bigDomain.FrMultiplicativeGen^i>
@@ -105,44 +149,31 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 
 		// evaluate the polys shifted by <bigDomain.FrMultiplicativeGen> on  <bigDomain.Generator^i> -> the result is the polys
 		// evaluated on the coset bigDomain.FrMultiplicativeGen*<bigDomain.Generator^i>
-		for _, pCopy := range PiCopies {
-			if len(pCopy) == 1 { // /!\ polynomials coming from challenges are constants -> the size of coeff is 1 in that case
-				continue
-			}
-			// shift coset manually
-			smallDomain.FFT(pCopy, fft.DIT) // PiCopies[j] bit reversed, canonical
+		for _, pCopy := range piNonConst {
+			smallDomain.FFT(pCopy, fft.DIT) // pCopy: evaluated on coset i
 		}
 
 		// at this stage, the polys are evaluated on bigDomain.FrMultiplicativeGen*<bigDomain.Generator^i>. We can compute the rho-ith
 		// component of the numerator
 		for j := 0; j < N; j++ {
-			for name, pCopy := range PiCopies { // assign variables
-				if len(pCopy) == 1 { // /!\ polynomials coming from challenges are constants -> the size of coeff is 1 in that case
-					vals[name] = pCopy[0]
+			// Fill vars using pre-built varInfos (no map ops: pure slice reads/writes)
+			for k, vi := range varInfos {
+				if vi.skipUpdate {
 					continue
 				}
-				vals[name] = pCopy[j]
-			}
-			// shifted leaves: on the current coset, R(wX) at index j equals R at index (j+shift)%N
-			for shiftedName, info := range shiftedInfo {
-				pCopy := PiCopies[info.baseName]
-				if len(pCopy) == 1 {
-					vals[shiftedName] = pCopy[0]
+				if vi.shift == 0 {
+					vars[k] = vi.poly[j]
 				} else {
-					vals[shiftedName] = pCopy[((j+info.shift)%N+N)%N]
+					vars[k] = vi.poly[((j+vi.shift)%N+N)%N]
 				}
 			}
-			numerator[rho*j+i] = vanishingRelation.Eval(vals)
+			numerator[rho*j+i] = vanishingRelation.EvalWithCacheVars(vars, evalCache)
 		}
 
-		// FFTInv on PiCopies -> the PiCopies become in canonical, the k-th coeffs are shifted by bigDomain.FrMultiplicativeGen^k*<bigDomain.Generator^ik>
-		for _, pCopy := range PiCopies {
-			if len(pCopy) == 1 { // /!\ polynomials coming from challenges are constants -> the size of coeff is 1 in that case
-				continue
-			}
-			// shift coset manually
-			smallDomain.FFTInverse(pCopy, fft.DIF)            // PiCopies[j] bit reversed, canonical
-			scaleByTwiddles(pCopy, twiddleGeneratorBigDomain) // the k-th coeffs are now shifted by bigDomain.FrMultiplicativeGen^k*<bigDomain.Generator^(i+1)k>
+		// FFTInv on piNonConst -> polys become canonical again, k-th coeff shifted by bigDomain.FrMultiplicativeGen^k*<bigDomain.Generator^ik>
+		for _, pCopy := range piNonConst {
+			smallDomain.FFTInverse(pCopy, fft.DIF)            // pCopy: bit reversed, canonical
+			scaleByTwiddles(pCopy, twiddleGeneratorBigDomain) // k-th coeff now shifted by bigDomain.FrMultiplicativeGen^k*<bigDomain.Generator^(i+1)k>
 		}
 	}
 

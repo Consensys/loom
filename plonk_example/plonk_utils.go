@@ -79,41 +79,41 @@ func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial) (univariate.Polynomial, 
 // where Ql[i]=-1), with the explicit note "to be completed by the prover". The prover
 // must set Qk[i]=L[i] so that the vanishing relation Ql[i]*L[i]+Qk[i] = -L[i]+L[i] = 0
 // holds on those rows.
-func BuildIthTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1CSSolution, nbPublicInputs int, n int) (trace.Trace, error) {
+func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1CSSolution, nbPublicInputs int) (trace.Trace, error) {
 
 	nbColumns := 16
 	T := make(trace.Trace, nbColumns)
 	var err error
 
-	T[ithInstance(ID_Ql, n)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Ql)
+	T[ID_Ql], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Ql)
 	if err != nil {
 		return T, err
 	}
-	T[ithInstance(ID_Qr, n)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qr)
+	T[ID_Qr], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qr)
 	if err != nil {
 		return T, err
 	}
-	T[ithInstance(ID_Qm, n)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qm)
+	T[ID_Qm], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qm)
 	if err != nil {
 		return T, err
 	}
-	T[ithInstance(ID_Qo, n)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qo)
+	T[ID_Qo], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qo)
 	if err != nil {
 		return T, err
 	}
-	T[ithInstance(ID_Qk, n)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qk)
+	T[ID_Qk], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qk)
 	if err != nil {
 		return T, err
 	}
-	T[ithInstance(ID_S1, n)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S1)
+	T[ID_S1], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S1)
 	if err != nil {
 		return T, err
 	}
-	T[ithInstance(ID_S2, n)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S2)
+	T[ID_S2], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S2)
 	if err != nil {
 		return T, err
 	}
-	T[ithInstance(ID_S3, n)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S3)
+	T[ID_S3], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S3)
 	if err != nil {
 		return T, err
 	}
@@ -121,20 +121,20 @@ func BuildIthTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.Sparse
 	// Solution columns: L, R, O are already in Lagrange Normal form
 	lCoeffs := make([]koalabear.Element, len(plonkSolution.L))
 	copy(lCoeffs, plonkSolution.L)
-	T[ithInstance(ID_L, n)] = lCoeffs
+	T[ID_L] = lCoeffs
 
 	// Complete Qk for the public-input placeholder rows.
 	for i := 0; i < nbPublicInputs; i++ {
-		T[ithInstance(ID_Qk, n)][i] = T[ithInstance(ID_L, n)][i]
+		T[ID_Qk][i] = T[ID_L][i]
 	}
 
 	rCoeffs := make([]koalabear.Element, len(plonkSolution.R))
 	copy(rCoeffs, plonkSolution.R)
-	T[ithInstance(ID_R, n)] = rCoeffs
+	T[ID_R] = rCoeffs
 
 	oCoeffs := make([]koalabear.Element, len(plonkSolution.O))
 	copy(oCoeffs, plonkSolution.O)
-	T[ithInstance(ID_O, n)] = oCoeffs
+	T[ID_O] = oCoeffs
 
 	size := len(plonkTrace.Ql.Coefficients())
 	domain := fft.NewDomain(uint64(size))
@@ -153,15 +153,15 @@ func BuildIthTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.Sparse
 
 	id1 := make([]koalabear.Element, domain.Cardinality)
 	copy(id1, res[:domain.Cardinality])
-	T[ithInstance(ID_ID1, n)] = id1
+	T[ID_ID1] = id1
 
 	id2 := make([]koalabear.Element, domain.Cardinality)
 	copy(id2, res[domain.Cardinality:2*domain.Cardinality])
-	T[ithInstance(ID_ID2, n)] = id2
+	T[ID_ID2] = id2
 
 	id3 := make([]koalabear.Element, domain.Cardinality)
 	copy(id3, res[2*domain.Cardinality:])
-	T[ithInstance(ID_ID3, n)] = id3
+	T[ID_ID3] = id3
 
 	return T, nil
 }
@@ -186,7 +186,33 @@ func (c *Circuit) Define(api frontend.API) error {
 	return nil
 }
 
-func GetIthPlonkTrace(n int) (trace.Trace, int, error) {
+func GetPublicPart(t trace.Trace) trace.Trace {
+	res := make(trace.Trace, len(t)-3)
+	res[ID_Z] = t[ID_Z]
+	res[ID_ZS] = t[ID_ZS]
+	res[ID_Ql] = t[ID_Ql]
+	res[ID_Qr] = t[ID_Qr]
+	res[ID_Qm] = t[ID_Qm]
+	res[ID_Qo] = t[ID_Qo]
+	res[ID_Qk] = t[ID_Qk]
+	res[ID_S1] = t[ID_S1]
+	res[ID_S2] = t[ID_S2]
+	res[ID_S3] = t[ID_S3]
+	res[ID_ID1] = t[ID_ID1]
+	res[ID_ID2] = t[ID_ID2]
+	res[ID_ID3] = t[ID_ID3]
+	return res
+}
+
+func GetPrivatePartCopy(t trace.Trace, i int) trace.Trace {
+	res := make(trace.Trace, len(t)-3)
+	res[ithInstance(ID_L, i)] = t[ID_L]
+	res[ithInstance(ID_R, i)] = t[ID_R]
+	res[ithInstance(ID_O, i)] = t[ID_O]
+	return res
+}
+
+func GetPlonkTrace() (trace.Trace, int, error) {
 
 	assignment := Circuit{
 		A: 3,
@@ -226,7 +252,7 @@ func GetIthPlonkTrace(n int) (trace.Trace, int, error) {
 		return nil, size, fmt.Errorf("cannot cast isolution to *gnark_cs.SparseR1CSSolution")
 	}
 
-	T, err := BuildIthTrace(publicTrace, solution, nbPublic, n)
+	T, err := BuildTrace(publicTrace, solution, nbPublic)
 	if err != nil {
 		return nil, size, err
 	}

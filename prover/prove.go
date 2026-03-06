@@ -51,6 +51,7 @@ func (runtime Runtime) Solve(knownColumns map[string]bool, proof *cs.Proof, nbWo
 	}
 
 	readyQueue := make(chan int, n)
+	// var mu sync.Mutex
 	var wg sync.WaitGroup
 
 	// Count how many functions executed

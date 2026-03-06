@@ -269,6 +269,99 @@ func TestDAGDegree(t *testing.T) {
 	}
 }
 
+// TestDAGFactorize verifies that Factorize correctly applies
+// add(mul(x,y),mul(x,z)) → mul(x,add(y,z)) and preserves evaluation results.
+func TestDAGFactorize(t *testing.T) {
+	x := sym.NewCommittedColumn("x")
+	y := sym.NewCommittedColumn("y")
+	z := sym.NewCommittedColumn("z")
+	w := sym.NewCommittedColumn("w")
+	vals := u64Vals("x", uint64(2), "y", uint64(3), "z", uint64(5), "w", uint64(7))
+
+	cases := []struct {
+		name        string
+		expr        sym.Expr
+		wantMulSave int // expected reduction in Mul field operations at eval time
+	}{
+		{
+			// x*y + x*z  →  x*(y+z): Mul(x,y)+Mul(x,z)=4 muls → Mul(x,Add(y,z))=2 muls
+			name:        "binary",
+			expr:        x.Mul(y).Add(x.Mul(z)),
+			wantMulSave: 2,
+		},
+		{
+			// x*y + x*z + x*w  →  x*(y+z+w): 6 muls → 2 muls
+			name:        "three_terms",
+			expr:        x.Mul(y).Add(x.Mul(z)).Add(x.Mul(w)),
+			wantMulSave: 4,
+		},
+		{
+			// x*y + x*z + w  →  x*(y+z) + w: 4 muls → 2 muls
+			name:        "partial",
+			expr:        x.Mul(y).Add(x.Mul(z)).Add(w),
+			wantMulSave: 2,
+		},
+		{
+			// x*y + z*w: no common factor, no savings
+			name:        "no_common_factor",
+			expr:        x.Mul(y).Add(z.Mul(w)),
+			wantMulSave: 0,
+		},
+		{
+			// x*y*z + x*y*w  →  x*(y*(z+w)): saves 2 multiplications
+			name:        "multi_factor_mul",
+			expr:        x.Mul(y).Mul(z).Add(x.Mul(y).Mul(w)),
+			wantMulSave: 2,
+		},
+	}
+
+	// countMuls counts field Mul operations performed when evaluating the DAG.
+	countMuls := func(d *DAG) int {
+		n := 0
+		for _, node := range d.Nodes {
+			if node.Kind == KindMul {
+				n += len(node.Children) // n-ary Mul does len(Children) multiplications
+			}
+		}
+		return n
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := ExprToDAG(tc.expr).Flatten().Factorize()
+
+			// Correctness: evaluation must match the original expression.
+			want := tc.expr.Evaluate(vals)
+			got := d.Eval(vals)
+			if !got.Equal(&want) {
+				t.Errorf("eval mismatch: got %s, want %s\nDAG:\n%s", got.String(), want.String(), d.String())
+			}
+
+			// EvalWithCacheVars must also produce the correct result.
+			vars := make([]koalabear.Element, len(d.VarIndex))
+			for name, idx := range d.VarIndex {
+				if v, ok := vals[name]; ok {
+					vars[idx] = v
+				}
+			}
+			cache := make([]koalabear.Element, len(d.Nodes))
+			gotVars := d.EvalWithCacheVars(vars, cache)
+			if !gotVars.Equal(&want) {
+				t.Errorf("EvalWithCacheVars mismatch: got %s, want %s", gotVars.String(), want.String())
+			}
+
+			// Mul savings: factorize reduces field multiplications, not node count.
+			unfactored := ExprToDAG(tc.expr).Flatten()
+			mulsBefore := countMuls(unfactored)
+			mulsAfter := countMuls(d)
+			if mulsBefore-mulsAfter != tc.wantMulSave {
+				t.Errorf("Mul savings: got %d (before=%d after=%d), want %d\nFactorized DAG:\n%s",
+					mulsBefore-mulsAfter, mulsBefore, mulsAfter, tc.wantMulSave, d.String())
+			}
+		})
+	}
+}
+
 // TestDAGEvalComplex uses a rich expression with shared sub-expressions, all
 // operator kinds, and both DAG and flattened-DAG evaluation.
 //

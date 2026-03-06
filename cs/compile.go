@@ -8,9 +8,10 @@ import (
 
 // Fold returns Σ_i αⁱE[i]
 func Fold(E []sym.Expr, alpha sym.Expr) sym.Expr {
-	res := E[0]
-	for i := 1; i < len(E); i++ {
-		res = res.Add(E[i].Mul(alpha.Pow(uint32(i))))
+	res := E[len(E)-1]
+	for i := len(E) - 2; i >= 0; i-- {
+		res = res.Mul(alpha).Add(E[i])
+		// res = res.Add(E[i].Mul(alpha.Pow(uint32(i))))
 	}
 	return res
 }
@@ -52,6 +53,7 @@ func Compile(system *System, opts ...Option) CompiledIOP {
 	// 1. symoblically fold all the constraints using the folding challenge. The actual challenge is derived in prover/.
 	C := Fold(system.Constraints, sym.NewChallenge(constants.FINAL_FOLDING_CHALLENGE))
 	CDag := dag.ExprToDAG(C)
+	CDag = CDag.Flatten()
 	return CompiledIOP{
 		ProverActions:     system.ProverActions,
 		VanishingRelation: *CDag,

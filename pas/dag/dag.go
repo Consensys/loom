@@ -2,6 +2,7 @@ package dag
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/consensys/giop/pas/sym"
@@ -31,6 +32,8 @@ type DAGNode struct {
 	Leaf     sym.Expr   // non-nil iff Kind == KindLeaf; holds the original leaf
 	Children []*DAGNode // len 2 for Add/Sub/Mul; len 1 for Pow; len 0 for Leaf
 	Exp      uint32     // exponent, only meaningful when Kind == KindPow
+	Index    int        // position in DAG.Nodes; used by EvalWithCache / EvalWithCacheVars
+	VarIdx   int        // for KindLeaf: index into vars slice for EvalWithCacheVars
 
 	key string // canonical key used for deduplication (unexported)
 }
@@ -39,22 +42,36 @@ type DAGNode struct {
 // structurally identical (including commutativity for Add and Mul) share a
 // single *DAGNode.
 type DAG struct {
-	Root  *DAGNode
-	Nodes []*DAGNode // every unique node, in topological order (children before parents)
+	Root     *DAGNode
+	Nodes    []*DAGNode     // every unique node, in topological order (children before parents)
+	VarIndex map[string]int // leaf name → index in vars slice for EvalWithCacheVars
 }
 
 // ExprToDAG converts an Expr tree into a DAG by merging identical
 // sub-expressions into shared nodes. Commutativity is respected: (a+b) and
 // (b+a) produce the same node, as do (a*b) and (b*a). Sub is not commutative.
 func ExprToDAG(e sym.Expr) *DAG {
-	b := &dagBuilder{cache: make(map[string]*DAGNode)}
+	b := &dagBuilder{
+		cache:    make(map[string]*DAGNode),
+		varIndex: make(map[string]int),
+	}
 	root := b.build(e)
-	return &DAG{Root: root, Nodes: b.ordered}
+	return &DAG{Root: root, Nodes: b.ordered, VarIndex: b.varIndex}
 }
 
 type dagBuilder struct {
-	cache   map[string]*DAGNode
-	ordered []*DAGNode
+	cache    map[string]*DAGNode
+	ordered  []*DAGNode
+	varIndex map[string]int
+}
+
+func (b *dagBuilder) assignVarIdx(name string) int {
+	if idx, ok := b.varIndex[name]; ok {
+		return idx
+	}
+	idx := len(b.varIndex)
+	b.varIndex[name] = idx
+	return idx
 }
 
 // intern returns the cached node for key, or creates it via make(), records
@@ -67,6 +84,7 @@ func (b *dagBuilder) intern(key string, make func() *DAGNode) *DAGNode {
 	}
 	n := make()
 	n.key = key
+	n.Index = len(b.ordered)
 	b.cache[key] = n
 	b.ordered = append(b.ordered, n)
 	return n
@@ -76,22 +94,32 @@ func (b *dagBuilder) build(e sym.Expr) *DAGNode {
 	switch v := e.(type) {
 	case *sym.ShiftedColumn:
 		key := dagKey("shifted", v.Name)
-		return b.intern(key, func() *DAGNode { return &DAGNode{Kind: KindLeaf, Leaf: e} })
+		return b.intern(key, func() *DAGNode {
+			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.Name)}
+		})
 	case *sym.CommittedColumn:
 		key := dagKey("col", v.Name)
-		return b.intern(key, func() *DAGNode { return &DAGNode{Kind: KindLeaf, Leaf: e} })
+		return b.intern(key, func() *DAGNode {
+			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.Name)}
+		})
 
 	case *sym.Challenge:
 		key := dagKey("chal", v.Name)
-		return b.intern(key, func() *DAGNode { return &DAGNode{Kind: KindLeaf, Leaf: e} })
+		return b.intern(key, func() *DAGNode {
+			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.Name)}
+		})
 
 	case *sym.ComputableColumn:
 		key := dagKey("comp", v.Name)
-		return b.intern(key, func() *DAGNode { return &DAGNode{Kind: KindLeaf, Leaf: e} })
+		return b.intern(key, func() *DAGNode {
+			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.Name)}
+		})
 
 	case *sym.Const:
 		key := dagKey("const", v.Value.String())
-		return b.intern(key, func() *DAGNode { return &DAGNode{Kind: KindLeaf, Leaf: e} })
+		return b.intern(key, func() *DAGNode {
+			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.Value.String())}
+		})
 
 	case *sym.Add:
 		left, right := b.build(v.Left), b.build(v.Right)
@@ -177,7 +205,213 @@ func (d *DAG) Flatten() *DAG {
 	}
 	postOrder(root)
 
-	return &DAG{Root: root, Nodes: ordered}
+	// Reassign Index for every node in the new ordering.
+	// Non-leaf nodes are newly allocated (safe to mutate). Leaf nodes are
+	// shared with the original DAG, but Flatten is typically called once and
+	// the original DAG is discarded, so mutation is acceptable.
+	for i, n := range ordered {
+		n.Index = i
+	}
+
+	return &DAG{Root: root, Nodes: ordered, VarIndex: d.VarIndex}
+}
+
+// Factorize applies the distributive law
+//
+//	add(mul(x,y), mul(x,z)) → mul(x, add(y,z))
+//
+// to every Add node, bottom-up, until no further reductions are possible
+// within a single pass. Best called on a Flatten()ed DAG. Returns a new DAG
+// that shares leaf nodes with the receiver.
+//
+// The rule is applied greedily: at each Add node the factor that appears in
+// the largest number of Mul children is extracted first, then the rule is
+// re-applied to the residual terms. Only factors that are nodes with a
+// non-empty key (i.e. nodes from the original ExprToDAG construction) are
+// considered, so newly-created intermediate nodes are never spuriously
+// identified as a common factor.
+func (d *DAG) Factorize() *DAG {
+	// Process nodes bottom-up (d.Nodes is in topological order: children
+	// before parents), mapping each original node to its rewritten form.
+	rewritten := make(map[*DAGNode]*DAGNode, len(d.Nodes))
+	for _, n := range d.Nodes {
+		rewritten[n] = factorizeRewrite(n, rewritten)
+	}
+
+	root := rewritten[d.Root]
+
+	// Rebuild topological order for the new DAG via post-order DFS.
+	seen := make(map[*DAGNode]bool, len(d.Nodes))
+	ordered := make([]*DAGNode, 0, len(d.Nodes))
+	var postOrder func(*DAGNode)
+	postOrder = func(n *DAGNode) {
+		if seen[n] {
+			return
+		}
+		seen[n] = true
+		for _, c := range n.Children {
+			postOrder(c)
+		}
+		ordered = append(ordered, n)
+	}
+	postOrder(root)
+
+	for i, n := range ordered {
+		n.Index = i
+	}
+
+	return &DAG{Root: root, Nodes: ordered, VarIndex: d.VarIndex}
+}
+
+// factorizeRewrite rewrites n after all its children have already been
+// rewritten (bottom-up order). For Add nodes it calls factorizeAddChildren
+// to apply the distributive law; other node kinds just thread through
+// rewritten children unchanged.
+func factorizeRewrite(n *DAGNode, rewritten map[*DAGNode]*DAGNode) *DAGNode {
+	switch n.Kind {
+	case KindLeaf:
+		return n // leaves are shared unchanged
+
+	case KindAdd:
+		children := make([]*DAGNode, len(n.Children))
+		for i, c := range n.Children {
+			children[i] = rewritten[c]
+		}
+		return factorizeAddChildren(children)
+
+	case KindMul:
+		changed := false
+		children := make([]*DAGNode, len(n.Children))
+		for i, c := range n.Children {
+			children[i] = rewritten[c]
+			if children[i] != c {
+				changed = true
+			}
+		}
+		if !changed {
+			return n // unchanged: preserve key for factor lookup
+		}
+		return &DAGNode{Kind: KindMul, Children: children} // key intentionally empty
+
+	case KindSub:
+		l, r := rewritten[n.Children[0]], rewritten[n.Children[1]]
+		if l == n.Children[0] && r == n.Children[1] {
+			return n
+		}
+		return &DAGNode{Kind: KindSub, Children: []*DAGNode{l, r}}
+
+	case KindPow:
+		base := rewritten[n.Children[0]]
+		if base == n.Children[0] {
+			return n
+		}
+		return &DAGNode{Kind: KindPow, Children: []*DAGNode{base}, Exp: n.Exp}
+	}
+	panic(fmt.Sprintf("Factorize: unknown NodeKind %d", n.Kind))
+}
+
+// factorizeAddChildren applies the distributive law to the children of an Add
+// node and returns a (possibly factored) replacement node. It recurses until
+// no further reductions are possible at this level.
+//
+// Only KindMul children participate in factorization. Non-Mul children (leaves,
+// Pow, Sub) are carried through unchanged, which avoids the need to introduce
+// a Const(1) node for the case where a term reduces to the identity.
+//
+// Factor candidates are restricted to nodes whose key is non-empty: this
+// ensures that only nodes from the original DAG construction are used as
+// factors, preventing newly-created intermediate nodes from being spuriously
+// matched.
+func factorizeAddChildren(children []*DAGNode) *DAGNode {
+	// Count how many KindMul children contain each factor (by key).
+	factorCount := make(map[string]int)
+	factorByKey := make(map[string]*DAGNode)
+	for _, c := range children {
+		if c.Kind != KindMul {
+			continue
+		}
+		seen := make(map[string]bool)
+		for _, f := range c.Children {
+			if f.key == "" {
+				continue // skip keyless intermediate nodes
+			}
+			if !seen[f.key] {
+				seen[f.key] = true
+				factorCount[f.key]++
+				factorByKey[f.key] = f
+			}
+		}
+	}
+
+	// Pick the factor with the highest count (≥ 2 to be worth extracting).
+	bestKey, bestCount := "", 1
+	for k, cnt := range factorCount {
+		if cnt > bestCount {
+			bestCount, bestKey = cnt, k
+		}
+	}
+	if bestKey == "" {
+		return &DAGNode{Kind: KindAdd, Children: children}
+	}
+
+	factor := factorByKey[bestKey]
+
+	// Partition children: Mul children that contain the factor go into
+	// withFactor (with the factor removed); all others go into withoutFactor.
+	var withFactor, withoutFactor []*DAGNode
+	for _, c := range children {
+		if c.Kind == KindMul {
+			// Find the first occurrence of the factor in this Mul's children.
+			idx := -1
+			for i, f := range c.Children {
+				if f.key == bestKey {
+					idx = i
+					break
+				}
+			}
+			if idx >= 0 {
+				// Rebuild Mul without this one occurrence of the factor.
+				rem := make([]*DAGNode, 0, len(c.Children)-1)
+				rem = append(rem, c.Children[:idx]...)
+				rem = append(rem, c.Children[idx+1:]...)
+				switch len(rem) {
+				case 0:
+					// Mul had exactly one child = the factor itself.
+					// Avoid creating a Const(1); treat as non-participating.
+					withoutFactor = append(withoutFactor, c)
+				case 1:
+					withFactor = append(withFactor, rem[0])
+				default:
+					withFactor = append(withFactor, &DAGNode{Kind: KindMul, Children: rem})
+				}
+				continue
+			}
+		}
+		withoutFactor = append(withoutFactor, c)
+	}
+
+	// Build mul(factor, add(withFactor...)), recursing into the inner Add to
+	// factor out any additional common factors among withFactor terms.
+	var inner *DAGNode
+	switch len(withFactor) {
+	case 0:
+		// Nothing was factored (all candidates hit the len=0 edge case).
+		return &DAGNode{Kind: KindAdd, Children: children}
+	case 1:
+		inner = withFactor[0]
+	default:
+		inner = factorizeAddChildren(withFactor) // recurse: more factors possible
+	}
+	factored := &DAGNode{Kind: KindMul, Children: []*DAGNode{factor, inner}}
+
+	if len(withoutFactor) == 0 {
+		return factored
+	}
+
+	// Combine the factored group with the remaining children and recurse to
+	// extract any further common factors among the residual terms.
+	residual := append(withoutFactor, factored)
+	return factorizeAddChildren(residual)
 }
 
 // flattenNode returns the flattened version of n, looking up already-flattened
@@ -393,6 +627,118 @@ func evalDAGNode(n *DAGNode, cache map[*DAGNode]koalabear.Element, vals map[stri
 	panic(fmt.Sprintf("Eval: unknown NodeKind %d", n.Kind))
 }
 
+// EvalWithCacheVars evaluates the DAG using pre-filled vars and cache slices,
+// avoiding all map operations. vars must be indexed by DAGNode.VarIdx (leaf
+// variables must be set by the caller before each call). cache must have
+// length >= len(d.Nodes). Both slices can be reused across repeated calls.
+// Only works on DAGs produced by ExprToDAG (not Flatten).
+func (d *DAG) EvalWithCacheVars(vars []koalabear.Element, cache []koalabear.Element) koalabear.Element {
+	for _, n := range d.Nodes {
+		cache[n.Index] = evalDAGNodeSliceVars(n, cache, vars)
+	}
+	return cache[d.Root.Index]
+}
+
+func evalDAGNodeSliceVars(n *DAGNode, cache []koalabear.Element, vars []koalabear.Element) koalabear.Element {
+	switch n.Kind {
+	case KindLeaf:
+		return vars[n.VarIdx]
+
+	case KindAdd:
+		var acc koalabear.Element
+		for _, child := range n.Children {
+			v := cache[child.Index]
+			acc.Add(&acc, &v)
+		}
+		return acc
+
+	case KindSub:
+		l, r := cache[n.Children[0].Index], cache[n.Children[1].Index]
+		var res koalabear.Element
+		res.Sub(&l, &r)
+		return res
+
+	case KindMul:
+		var acc koalabear.Element
+		acc.SetOne()
+		for _, child := range n.Children {
+			v := cache[child.Index]
+			acc.Mul(&acc, &v)
+		}
+		return acc
+
+	case KindPow:
+		base := cache[n.Children[0].Index]
+		var res koalabear.Element
+		res.SetOne()
+		exp := n.Exp
+		for exp > 0 {
+			if exp&1 == 1 {
+				res.Mul(&res, &base)
+			}
+			base.Mul(&base, &base)
+			exp >>= 1
+		}
+		return res
+	}
+	panic(fmt.Sprintf("EvalWithCacheVars: unknown NodeKind %d", n.Kind))
+}
+
+// EvalWithCache evaluates the DAG using the caller-supplied cache slice instead
+// of allocating a new map on each call. cache must have length >= len(d.Nodes).
+// Reuse the same slice across repeated calls to avoid allocation overhead.
+func (d *DAG) EvalWithCache(vals map[string]koalabear.Element, cache []koalabear.Element) koalabear.Element {
+	for _, n := range d.Nodes {
+		cache[n.Index] = evalDAGNodeSlice(n, cache, vals)
+	}
+	return cache[d.Root.Index]
+}
+
+func evalDAGNodeSlice(n *DAGNode, cache []koalabear.Element, vals map[string]koalabear.Element) koalabear.Element {
+	switch n.Kind {
+	case KindLeaf:
+		return n.Leaf.Evaluate(vals)
+
+	case KindAdd:
+		var acc koalabear.Element
+		for _, child := range n.Children {
+			v := cache[child.Index]
+			acc.Add(&acc, &v)
+		}
+		return acc
+
+	case KindSub:
+		l, r := cache[n.Children[0].Index], cache[n.Children[1].Index]
+		var res koalabear.Element
+		res.Sub(&l, &r)
+		return res
+
+	case KindMul:
+		var acc koalabear.Element
+		acc.SetOne()
+		for _, child := range n.Children {
+			v := cache[child.Index]
+			acc.Mul(&acc, &v)
+		}
+		return acc
+
+	case KindPow:
+		base := cache[n.Children[0].Index]
+		var res koalabear.Element
+		res.SetOne()
+		exp := n.Exp
+		for exp > 0 {
+			if exp&1 == 1 {
+				res.Mul(&res, &base)
+			}
+			base.Mul(&base, &base)
+			exp >>= 1
+		}
+		return res
+	}
+	panic(fmt.Sprintf("EvalWithCache: unknown NodeKind %d", n.Kind))
+}
+
 // Leaves returns the String() representation of every unique leaf in the DAG
 // that is not excluded by config. The filtering rules are identical to those
 // of Expr.Leaves: WithoutCommittedColumns, WithoutChallenges, and
@@ -461,7 +807,9 @@ func dagNodeDegree(n *DAGNode, degrees map[*DAGNode]int) int {
 func dagKey(parts ...string) string {
 	var b strings.Builder
 	for _, p := range parts {
-		fmt.Fprintf(&b, "%q", p)
+		b.WriteString(strconv.Itoa(len(p)))
+		b.WriteByte(':')
+		b.WriteString(p)
 	}
 	return b.String()
 }
