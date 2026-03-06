@@ -69,6 +69,11 @@ func EvalPointWise(Pi map[string]Polynomial, E sym.Expr, N int) ([]koalabear.Ele
 // N = size of polynomials. All polynomials must be of the same size, same basis, same layout
 func DivPointWise(P1, P2 Polynomial, N int) (Polynomial, error) {
 
+	for i := 0; i < len(P2); i++ {
+		if P2[i].IsZero() {
+			return Polynomial{}, fmt.Errorf("division by zero")
+		}
+	}
 	res := koalabear.BatchInvert(P2)
 
 	// Build result polynomial pointwise: R[i] = P_1[i] / P_2[i]
