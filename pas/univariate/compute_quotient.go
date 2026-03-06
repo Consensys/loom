@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/pas/dag"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -26,90 +25,59 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 		return Polynomial{}, fmt.Errorf("big domain size %d is not divisible by vanishing domain size %d", bigSize, N)
 	}
 
-	// we do the evaluation manually (don't use EvalPointWise)
-	// Separate regular leaves from shifted leaves
-	leavesNormal := sym.RemoveDuplicates(vanishingRelation.Leaves(sym.NewConfig(sym.WithoutShiftedColumns())))
-	leavesShifted := sym.RemoveDuplicates(vanishingRelation.Leaves(sym.NewConfig(sym.OnlyShiftedColumns...)))
-
-	numerator := make([]koalabear.Element, bigSize)
-
-	// Copy regular (non-shifted) polynomials. Also ensure base columns of shifted leaves are present.
-	PiCopies := make(map[string][]koalabear.Element, len(leavesNormal))
-	for _, name := range leavesNormal {
-		v := Pi[name]
-		coeffs := make([]koalabear.Element, len(v)) // len = N except for constant polynomials
-		copy(coeffs, v)
-		PiCopies[name] = coeffs
+	// Collect unique non-Const leaves, set Leaf.Idx, and pair each with its
+	// base polynomial copy. A ShiftedColumn and its base CommittedColumn share
+	// the same backing slice (baseCopies keyed by l.Name); only one copy and
+	// one FFT pass is needed per base column.
+	type leafSlot struct {
+		leaf *sym.Leaf
+		poly []koalabear.Element
 	}
-
-	// Parse shifted leaves and ensure their base columns are in PiCopies
-	for _, name := range leavesShifted {
-		baseName, _, err := constants.SplitShiftedName(name)
-		if err != nil {
-			return Polynomial{}, fmt.Errorf("ComputeQuotient: %w", err)
-		}
-		if _, ok := PiCopies[baseName]; !ok {
-			v := Pi[baseName]
-			coeffs := make([]koalabear.Element, len(v))
-			copy(coeffs, v)
-			PiCopies[baseName] = coeffs
-		}
-	}
-
-	// Build varInfos from DAG.VarIndex: maps variable index → poly slice + shift.
-	// This replaces the vals map and shiftedInfo map in the hot inner loop.
-	type varInfo struct {
-		poly       []koalabear.Element
-		shift      int
-		skipUpdate bool // true for constants and size-1 (challenge) polynomials
-	}
-	varInfos := make([]varInfo, len(vanishingRelation.VarIndex))
-	vars := make([]koalabear.Element, len(vanishingRelation.VarIndex))
-	emptyVals := map[string]koalabear.Element{}
+	type varKey struct{ name string; shift int }
+	varToIdx := make(map[varKey]int)
+	baseCopies := make(map[string][]koalabear.Element)
+	var slots []leafSlot
 	for _, n := range vanishingRelation.Nodes {
 		if n.Kind != dag.KindLeaf {
 			continue
 		}
-		idx := n.VarIdx
-		name := n.Leaf.String()
-
-		// Try as regular column in PiCopies
-		if poly, ok := PiCopies[name]; ok {
-			if len(poly) == 1 {
-				vars[idx] = poly[0]
-				varInfos[idx].skipUpdate = true
-			} else {
-				varInfos[idx] = varInfo{poly: poly}
-			}
+		l := n.Leaf.(*sym.Leaf)
+		if l.Type == sym.Const {
+			continue // EvaluateWithIdx returns l.Value directly; no slot needed
+		}
+		key := varKey{l.Name, l.Shift}
+		if idx, ok := varToIdx[key]; ok {
+			l.Idx = idx
 			continue
 		}
-
-		// Try as shifted column (name = "baseName_shift_N")
-		if baseName, shift, err := constants.SplitShiftedName(name); err == nil {
-			if poly, ok := PiCopies[baseName]; ok {
-				if len(poly) == 1 {
-					vars[idx] = poly[0]
-					varInfos[idx].skipUpdate = true
-				} else {
-					varInfos[idx] = varInfo{poly: poly, shift: shift}
-				}
-				continue
-			}
+		l.Idx = len(slots)
+		varToIdx[key] = l.Idx
+		if _, ok := baseCopies[l.Name]; !ok {
+			v := Pi[l.Name]
+			coeffs := make([]koalabear.Element, len(v))
+			copy(coeffs, v)
+			baseCopies[l.Name] = coeffs
 		}
-
-		// Const leaf: not in PiCopies, evaluate once
-		vars[idx] = n.Leaf.Evaluate(emptyVals)
-		varInfos[idx].skipUpdate = true
+		slots = append(slots, leafSlot{leaf: l, poly: baseCopies[l.Name]})
 	}
 
-	// piNonConst: unique non-constant poly slices, used for FFT loops.
-	// Built from PiCopies (one entry per base column, no duplicates).
-	piNonConst := make([][]koalabear.Element, 0, len(PiCopies))
-	for _, poly := range PiCopies {
+	// piNonConst: unique non-constant polynomial slices for FFT (one per base column).
+	piNonConst := make([][]koalabear.Element, 0, len(baseCopies))
+	for _, poly := range baseCopies {
 		if len(poly) > 1 {
 			piNonConst = append(piNonConst, poly)
 		}
 	}
+
+	// Pre-fill vals for size-1 polynomials (challenges); they never change across rows.
+	vals := make([]koalabear.Element, len(slots))
+	for _, s := range slots {
+		if len(s.poly) == 1 {
+			vals[s.leaf.Idx] = s.poly[0]
+		}
+	}
+
+	numerator := make([]koalabear.Element, bigSize)
 
 	// eval cache (reused across all inner-loop iterations)
 	evalCache := make([]koalabear.Element, len(vanishingRelation.Nodes))
@@ -156,18 +124,17 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 		// at this stage, the polys are evaluated on bigDomain.FrMultiplicativeGen*<bigDomain.Generator^i>. We can compute the rho-ith
 		// component of the numerator
 		for j := 0; j < N; j++ {
-			// Fill vars using pre-built varInfos (no map ops: pure slice reads/writes)
-			for k, vi := range varInfos {
-				if vi.skipUpdate {
-					continue
+			for _, s := range slots {
+				if len(s.poly) == 1 {
+					continue // challenge: already set
 				}
-				if vi.shift == 0 {
-					vars[k] = vi.poly[j]
+				if s.leaf.Type == sym.ShiftedColumn {
+					vals[s.leaf.Idx] = s.poly[((j+s.leaf.Shift)%N+N)%N]
 				} else {
-					vars[k] = vi.poly[((j+vi.shift)%N+N)%N]
+					vals[s.leaf.Idx] = s.poly[j]
 				}
 			}
-			numerator[rho*j+i] = vanishingRelation.EvalWithCacheVars(vars, evalCache)
+			numerator[rho*j+i] = vanishingRelation.EvalWithIdx(vals, evalCache)
 		}
 
 		// FFTInv on piNonConst -> polys become canonical again, k-th coeff shifted by bigDomain.FrMultiplicativeGen^k*<bigDomain.Generator^ik>

@@ -92,33 +92,23 @@ func (b *dagBuilder) intern(key string, make func() *DAGNode) *DAGNode {
 
 func (b *dagBuilder) build(e sym.Expr) *DAGNode {
 	switch v := e.(type) {
-	case *sym.ShiftedColumn:
-		key := dagKey("shifted", v.Name)
+	case *sym.Leaf:
+		var prefix string
+		switch v.Type {
+		case sym.ShiftedColumn:
+			prefix = "shifted"
+		case sym.CommittedColumn:
+			prefix = "col"
+		case sym.Challenge:
+			prefix = "chal"
+		case sym.ComputableColumn:
+			prefix = "comp"
+		case sym.Const:
+			prefix = "const"
+		}
+		key := dagKey(prefix, v.String())
 		return b.intern(key, func() *DAGNode {
-			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.Name)}
-		})
-	case *sym.CommittedColumn:
-		key := dagKey("col", v.Name)
-		return b.intern(key, func() *DAGNode {
-			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.Name)}
-		})
-
-	case *sym.Challenge:
-		key := dagKey("chal", v.Name)
-		return b.intern(key, func() *DAGNode {
-			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.Name)}
-		})
-
-	case *sym.ComputableColumn:
-		key := dagKey("comp", v.Name)
-		return b.intern(key, func() *DAGNode {
-			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.Name)}
-		})
-
-	case *sym.Const:
-		key := dagKey("const", v.Value.String())
-		return b.intern(key, func() *DAGNode {
-			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.Value.String())}
+			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.String())}
 		})
 
 	case *sym.Add:
@@ -509,14 +499,17 @@ func dagRefCount(root *DAGNode) map[*DAGNode]int {
 func dagNodeLabel(n *DAGNode) string {
 	switch n.Kind {
 	case KindLeaf:
-		switch v := n.Leaf.(type) {
-		case *sym.CommittedColumn:
+		v := n.Leaf.(*sym.Leaf)
+		switch v.Type {
+		case sym.CommittedColumn:
 			return "col:" + v.Name
-		case *sym.Challenge:
+		case sym.ShiftedColumn:
+			return "shifted:" + v.String()
+		case sym.Challenge:
 			return "chal:" + v.Name
-		case *sym.ComputableColumn:
+		case sym.ComputableColumn:
 			return "comp:" + v.Name
-		case *sym.Const:
+		case sym.Const:
 			return "const:" + v.Value.String()
 		}
 		return n.Leaf.String()
@@ -682,6 +675,61 @@ func evalDAGNodeSliceVars(n *DAGNode, cache []koalabear.Element, vars []koalabea
 		return res
 	}
 	panic(fmt.Sprintf("EvalWithCacheVars: unknown NodeKind %d", n.Kind))
+}
+
+// EvalWithIdx evaluates the DAG using vals indexed by Leaf.Idx (set externally
+// on each *sym.Leaf node). Const leaves return their value directly without
+// reading vals. cache must have length >= len(d.Nodes).
+func (d *DAG) EvalWithIdx(vals []koalabear.Element, cache []koalabear.Element) koalabear.Element {
+	for _, n := range d.Nodes {
+		cache[n.Index] = evalDAGNodeSliceIdx(n, cache, vals)
+	}
+	return cache[d.Root.Index]
+}
+
+func evalDAGNodeSliceIdx(n *DAGNode, cache []koalabear.Element, vals []koalabear.Element) koalabear.Element {
+	switch n.Kind {
+	case KindLeaf:
+		return n.Leaf.(*sym.Leaf).EvaluateWithIdx(vals)
+
+	case KindAdd:
+		var acc koalabear.Element
+		for _, child := range n.Children {
+			v := cache[child.Index]
+			acc.Add(&acc, &v)
+		}
+		return acc
+
+	case KindSub:
+		l, r := cache[n.Children[0].Index], cache[n.Children[1].Index]
+		var res koalabear.Element
+		res.Sub(&l, &r)
+		return res
+
+	case KindMul:
+		var acc koalabear.Element
+		acc.SetOne()
+		for _, child := range n.Children {
+			v := cache[child.Index]
+			acc.Mul(&acc, &v)
+		}
+		return acc
+
+	case KindPow:
+		base := cache[n.Children[0].Index]
+		var res koalabear.Element
+		res.SetOne()
+		exp := n.Exp
+		for exp > 0 {
+			if exp&1 == 1 {
+				res.Mul(&res, &base)
+			}
+			base.Mul(&base, &base)
+			exp >>= 1
+		}
+		return res
+	}
+	panic(fmt.Sprintf("EvalWithIdx: unknown NodeKind %d", n.Kind))
 }
 
 // EvalWithCache evaluates the DAG using the caller-supplied cache slice instead

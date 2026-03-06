@@ -9,6 +9,24 @@ import (
 
 const NegInf = math.MinInt
 
+type LeafType int
+
+const (
+	CommittedColumn LeafType = iota
+	ShiftedColumn
+	ComputableColumn
+	Challenge
+	Const
+)
+
+type Leaf struct {
+	Type  LeafType
+	Idx   int // used for EvalPointWise, as a lookup to avoid maps
+	Shift int
+	Name  string
+	Value koalabear.Element // only set for Const type
+}
+
 // Config useful for querying the leaves
 type Config struct {
 	WoCommittedColumns  bool
@@ -19,7 +37,7 @@ type Config struct {
 
 type Option func(*Config)
 
-// Leaves() doesnt return the CommittedColumns
+// Leaves() doesnt return the ShiftedColumns
 func WithoutShiftedColumns() Option {
 	return func(c *Config) {
 		c.WoShiftedColumns = true
@@ -59,16 +77,12 @@ var OnlyChallenges = []Option{WithoutComputableColumns(), WithoutCommittedColumn
 var OnlyCommittedColumns = []Option{WithoutComputableColumns(), WithoutChallenges(), WithoutShiftedColumns()}
 var OnlyShiftedColumns = []Option{WithoutComputableColumns(), WithoutChallenges(), WithoutCommittedColumns()}
 
-// The type of the leaves:
-// * Var
-// * ComputableColumn
-// * Challenge
-// is used at the protocol/ level, because those types encode the status of a column -> is it a column that needs to be committed ?
-// Should we use this column for Fiat Shamir ? Is it a Challenge sent by the verifier (so not a column we need to commit)?
-// All this info is stored directly in the AST describing the constraint.
-//
-// It is not used as the system/ level, because at this level there is no verifier-prover interaction. We just have a trace,
-// and mathematical formulas encoding the constraints that the trace must fulfil.
+// The LeafType encodes the status of a column at the protocol level:
+//   - CommittedColumn: the prover commits to this column
+//   - ComputableColumn: recomputable by the verifier (e.g. Lagrange basis columns)
+//   - Challenge: a Fiat-Shamir challenge (degree 0)
+//   - ShiftedColumn: a column evaluated at a shifted point P(ω^shift·X)
+//   - Const: a constant field element (degree 0)
 
 type Expr interface {
 	Degree() int
@@ -80,6 +94,9 @@ type Expr interface {
 
 	Leaves(config Config) []string
 
+	// LeavesFull returns every non-Const Leaf in the expression tree.
+	LeavesFull(config Config) []*Leaf
+
 	// ReplaceLeafByExpression finds all occurence of leaf in the tree and replace it with e
 	ReplaceLeafByExpression(leaf string, e Expr) Expr
 
@@ -88,117 +105,130 @@ type Expr interface {
 	// Return E.
 	Prune(deg int) Expr
 
+	// EvaluateWEvaluateWithIdx substitues each leaf idx with vals[idx] and returns the result.
+	// Panics if idx out of bound
+	EvaluateWithIdx(vals []koalabear.Element) koalabear.Element
+
 	// Evaluate substitutes each leaf name with the corresponding field element
 	// from vals and returns the result. Panics if a required name is absent.
+	// This function exists for testing purpose, in the protocols in std/ for instance
+	// we use EvaluateWithIdx (through EvalPointWise).
 	Evaluate(vals map[string]koalabear.Element) koalabear.Element
 }
 
-type ShiftedColumn struct {
-	Name string
+func NewCommittedColumn(name string) *Leaf {
+	return &Leaf{Type: CommittedColumn, Name: name}
 }
 
-func NewShiftedColumn(name string) *ShiftedColumn {
-	return &ShiftedColumn{Name: name}
+func NewShiftedColumn(name string, shift int) *Leaf {
+	return &Leaf{Type: ShiftedColumn, Shift: shift, Name: name}
 }
-func (s *ShiftedColumn) Degree() int     { return 1 }
-func (s *ShiftedColumn) String() string  { return s.Name }
-func (s *ShiftedColumn) Add(e Expr) Expr { return &Add{s, e} }
-func (s *ShiftedColumn) Sub(e Expr) Expr { return &Sub{s, e} }
-func (s *ShiftedColumn) Mul(e Expr) Expr { return &Mul{s, e} }
-func (s *ShiftedColumn) Pow(n uint32) Expr {
-	if n > 2 {
-		return squareAndMultiply(s, n)
+
+func NewComputableColumn(name string) *Leaf {
+	return &Leaf{Type: ComputableColumn, Name: name}
+}
+
+func NewChallenge(name string) *Leaf {
+	return &Leaf{Type: Challenge, Name: name}
+}
+
+func NewConst(value koalabear.Element) *Leaf {
+	return &Leaf{Type: Const, Value: value}
+}
+
+func (l *Leaf) String() string {
+	switch l.Type {
+	case ShiftedColumn:
+		return fmt.Sprintf("%s_shift_%d", l.Name, l.Shift)
+	case Const:
+		return l.Value.String()
+	default:
+		return l.Name
 	}
-	return &Pow{s, n}
 }
-func (s *ShiftedColumn) ReplaceLeafByExpression(leaf string, e Expr) Expr {
-	if s.String() == leaf {
+
+func (l *Leaf) Degree() int {
+	switch l.Type {
+	case Const:
+		if l.Value.IsZero() {
+			return NegInf
+		}
+		return 0
+	case Challenge:
+		return 0
+	default: // CommittedColumn, ShiftedColumn, ComputableColumn
+		return 1
+	}
+}
+
+func (l *Leaf) Add(e Expr) Expr { return &Add{l, e} }
+func (l *Leaf) Sub(e Expr) Expr { return &Sub{l, e} }
+func (l *Leaf) Mul(e Expr) Expr { return &Mul{l, e} }
+func (l *Leaf) Pow(n uint32) Expr {
+	if n > 2 {
+		return squareAndMultiply(l, n)
+	}
+	return &Pow{l, n}
+}
+
+func (l *Leaf) Leaves(config Config) []string {
+	switch l.Type {
+	case CommittedColumn:
+		if config.WoCommittedColumns {
+			return []string{}
+		}
+		return []string{l.Name}
+	case ShiftedColumn:
+		if config.WoShiftedColumns {
+			return []string{}
+		}
+		return []string{l.String()}
+	case ComputableColumn:
+		if config.WoComputableColumns {
+			return []string{}
+		}
+		return []string{l.Name}
+	case Challenge:
+		if config.WoChallenges {
+			return []string{}
+		}
+		return []string{l.Name}
+	case Const:
+		return []string{}
+	}
+	return []string{}
+}
+
+func (l *Leaf) ReplaceLeafByExpression(leaf string, e Expr) Expr {
+	if l.Type == Const {
+		return l
+	}
+	if l.String() == leaf {
 		return e
 	}
-	return s
+	return l
 }
-func (s *ShiftedColumn) Prune(deg int) Expr { return pruneSearch(s, deg) }
-func (s *ShiftedColumn) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
-	v, ok := vals[s.String()]
+
+func (l *Leaf) Prune(deg int) Expr { return pruneSearch(l, deg) }
+
+func (l *Leaf) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
+	if l.Type == Const {
+		return l.Value
+	}
+	key := l.String()
+	v, ok := vals[key]
 	if !ok {
-		panic("Evaluate: missing value for CommittedColumn " + s.String())
+		panic("Evaluate: missing value for " + key)
 	}
 	return v
 }
 
-// ComputableColumn leaf used to store columns which are not committed to, because they can be recomputed by the verifier
-// because their values can be retrieved with a formula, for instance Lagrange columns. Its degree is one.
-type ComputableColumn struct {
-	Name string
-}
-
-func NewComputableColumn(name string) *ComputableColumn {
-	return &ComputableColumn{Name: name}
-}
-
-func (v *ComputableColumn) Degree() int    { return 1 }
-func (v *ComputableColumn) String() string { return v.Name }
-
-func (v *ComputableColumn) Add(e Expr) Expr { return &Add{v, e} }
-func (v *ComputableColumn) Sub(e Expr) Expr { return &Sub{v, e} }
-func (v *ComputableColumn) Mul(e Expr) Expr { return &Mul{v, e} }
-func (v *ComputableColumn) Pow(n uint32) Expr {
-	if n > 2 {
-		return squareAndMultiply(v, n)
+func (l *Leaf) EvaluateWithIdx(vals []koalabear.Element) koalabear.Element {
+	if l.Type == Const {
+		return l.Value
 	}
-	return &Pow{v, n}
+	return vals[l.Idx]
 }
-
-func (v *ComputableColumn) ReplaceLeafByExpression(leaf string, e Expr) Expr {
-	if v.Name == leaf {
-		return e
-	}
-	return v
-}
-
-func (v *ComputableColumn) Prune(deg int) Expr { return pruneSearch(v, deg) }
-
-// Leaf storing a challenge
-type Challenge struct {
-	Name string
-}
-
-// Acts as a constant, but with an identifier, so it can be plugged in an expression. Its degree is zero. It is used to stored the
-// challenges in an algebraic expression
-func NewChallenge(name string) *Challenge {
-	return &Challenge{Name: name}
-}
-
-func (v Challenge) Degree() int    { return 0 } // Challenge acts as a constant
-func (v Challenge) String() string { return v.Name }
-
-type CommittedColumn struct {
-	Name string
-}
-
-func NewCommittedColumn(name string) *CommittedColumn {
-	return &CommittedColumn{Name: name}
-}
-
-func (c CommittedColumn) Degree() int    { return 1 }
-func (c CommittedColumn) String() string { return c.Name }
-
-type Const struct {
-	Value koalabear.Element
-}
-
-func NewConst(value koalabear.Element) *Const {
-	return &Const{Value: value}
-}
-
-func (c Const) Degree() int {
-	if c.Value.IsZero() {
-		return math.MinInt // negative infinity
-	}
-	return 0
-}
-
-func (c Const) String() string { return c.Value.String() }
 
 type Add struct {
 	Left, Right Expr
@@ -253,36 +283,6 @@ func (p Pow) Degree() int {
 
 func (p Pow) String() string {
 	return "(" + p.Base.String() + " ^ " + fmt.Sprintf("%d", p.Exp) + ")"
-}
-
-func (v *CommittedColumn) Add(e Expr) Expr { return &Add{v, e} }
-func (v *CommittedColumn) Sub(e Expr) Expr { return &Sub{v, e} }
-func (v *CommittedColumn) Mul(e Expr) Expr { return &Mul{v, e} }
-func (v *CommittedColumn) Pow(n uint32) Expr {
-	if n > 2 {
-		return squareAndMultiply(v, n)
-	}
-	return &Pow{v, n}
-}
-
-func (c *Challenge) Add(e Expr) Expr { return &Add{c, e} }
-func (c *Challenge) Sub(e Expr) Expr { return &Sub{c, e} }
-func (c *Challenge) Mul(e Expr) Expr { return &Mul{c, e} }
-func (c *Challenge) Pow(n uint32) Expr {
-	if n > 2 {
-		return squareAndMultiply(c, n)
-	}
-	return &Pow{c, n}
-}
-
-func (c *Const) Add(e Expr) Expr { return &Add{c, e} }
-func (c *Const) Sub(e Expr) Expr { return &Sub{c, e} }
-func (c *Const) Mul(e Expr) Expr { return &Mul{c, e} }
-func (c *Const) Pow(n uint32) Expr {
-	if n > 2 {
-		return squareAndMultiply(c, n)
-	}
-	return &Pow{c, n}
 }
 
 func (a *Add) Add(e Expr) Expr { return &Add{a, e} }
@@ -347,11 +347,11 @@ func Prod(exprs ...Expr) Expr {
 	return result
 }
 
-// isPrunable returns true if e is a composite sub-expression (not a bare leaf or Const)
+// isPrunable returns true if e is a composite sub-expression (not a bare leaf)
 // that is eligible to be extracted into a new intermediate polynomial.
 func isPrunable(e Expr) bool {
 	switch e.(type) {
-	case *CommittedColumn, *Const, *Challenge, *ComputableColumn:
+	case *Leaf:
 		return false
 	}
 	return true
@@ -359,11 +359,11 @@ func isPrunable(e Expr) bool {
 
 // pruneSearch recurses through expr looking for a composite child node E with degree <= deg.
 // When found, E is replaced in-place with NewCommittedColumn(E.String()) and E is returned.
-// Var and Const children are skipped (they are already leaves; replacing them is a no-op).
+// Leaf children are skipped (they are already leaves; replacing them is a no-op).
 // Returns nil if no such sub-expression is found.
 func pruneSearch(expr Expr, deg int) Expr {
 	switch e := expr.(type) {
-	case *CommittedColumn, *Const, *ComputableColumn, *ShiftedColumn:
+	case *Leaf:
 		return nil
 	case *Add:
 		if isPrunable(e.Left) && e.Left.Degree() <= deg {
@@ -421,35 +421,6 @@ func pruneSearch(expr Expr, deg int) Expr {
 	return nil
 }
 
-func (c *Challenge) Leaves(config Config) []string {
-	if config.WoChallenges {
-		return []string{}
-	} else {
-		return []string{c.Name}
-	}
-}
-func (v *CommittedColumn) Leaves(config Config) []string {
-	if config.WoCommittedColumns {
-		return []string{}
-	} else {
-		return []string{v.Name}
-	}
-}
-func (v *ShiftedColumn) Leaves(config Config) []string {
-	if config.WoShiftedColumns {
-		return []string{}
-	} else {
-		return []string{v.String()}
-	}
-}
-func (v *ComputableColumn) Leaves(config Config) []string {
-	if config.WoComputableColumns {
-		return []string{}
-	} else {
-		return []string{v.Name}
-	}
-}
-func (c *Const) Leaves(config Config) []string { return []string{} }
 func (a *Add) Leaves(config Config) []string {
 	return append(a.Left.Leaves(config), a.Right.Leaves(config)...)
 }
@@ -461,29 +432,45 @@ func (m *Mul) Leaves(config Config) []string {
 }
 func (p *Pow) Leaves(config Config) []string { return p.Base.Leaves(config) }
 
-func (c *Challenge) Prune(deg int) Expr       { return pruneSearch(c, deg) }
-func (v *CommittedColumn) Prune(deg int) Expr { return pruneSearch(v, deg) }
-func (c *Const) Prune(deg int) Expr           { return pruneSearch(c, deg) }
-func (a *Add) Prune(deg int) Expr             { return pruneSearch(a, deg) }
-func (s *Sub) Prune(deg int) Expr             { return pruneSearch(s, deg) }
-func (m *Mul) Prune(deg int) Expr             { return pruneSearch(m, deg) }
-func (p *Pow) Prune(deg int) Expr             { return pruneSearch(p, deg) }
+func (l *Leaf) LeavesFull(config Config) []*Leaf {
+	switch l.Type {
+	case CommittedColumn:
+		if config.WoCommittedColumns {
+			return nil
+		}
+	case ShiftedColumn:
+		if config.WoShiftedColumns {
+			return nil
+		}
+	case ComputableColumn:
+		if config.WoComputableColumns {
+			return nil
+		}
+	case Challenge:
+		if config.WoChallenges {
+			return nil
+		}
+	case Const:
+		return nil
+	}
+	return []*Leaf{l}
+}
+func (a *Add) LeavesFull(config Config) []*Leaf {
+	return append(a.Left.LeavesFull(config), a.Right.LeavesFull(config)...)
+}
+func (s *Sub) LeavesFull(config Config) []*Leaf {
+	return append(s.Left.LeavesFull(config), s.Right.LeavesFull(config)...)
+}
+func (m *Mul) LeavesFull(config Config) []*Leaf {
+	return append(m.Left.LeavesFull(config), m.Right.LeavesFull(config)...)
+}
+func (p *Pow) LeavesFull(config Config) []*Leaf { return p.Base.LeavesFull(config) }
 
-func (c *Challenge) ReplaceLeafByExpression(leaf string, e Expr) Expr {
-	if c.Name == leaf {
-		return e
-	} else {
-		return c
-	}
-}
-func (v *CommittedColumn) ReplaceLeafByExpression(leaf string, e Expr) Expr {
-	if v.Name == leaf {
-		return e
-	} else {
-		return v
-	}
-}
-func (c *Const) ReplaceLeafByExpression(leaf string, e Expr) Expr { return c }
+func (a *Add) Prune(deg int) Expr { return pruneSearch(a, deg) }
+func (s *Sub) Prune(deg int) Expr { return pruneSearch(s, deg) }
+func (m *Mul) Prune(deg int) Expr { return pruneSearch(m, deg) }
+func (p *Pow) Prune(deg int) Expr { return pruneSearch(p, deg) }
+
 func (a *Add) ReplaceLeafByExpression(leaf string, e Expr) Expr {
 	return &Add{a.Left.ReplaceLeafByExpression(leaf, e), a.Right.ReplaceLeafByExpression(leaf, e)}
 }
@@ -495,112 +482,6 @@ func (m *Mul) ReplaceLeafByExpression(leaf string, e Expr) Expr {
 }
 func (p *Pow) ReplaceLeafByExpression(leaf string, e Expr) Expr {
 	return &Pow{p.Base.ReplaceLeafByExpression(leaf, e), p.Exp}
-}
-
-// Clone returns a deep copy of the expression tree with no shared nodes.
-//
-// fix from an error originally found in TestPrune. Without Clone some nodes share the same objects,
-// resulting in a DAG and not a tree
-//
-// ================ claude log ================
-// Root cause: squareAndMultiply built a DAG instead of a tree. The line
-//   result = &Mul{result, result} made both Left and Right of the new Mul
-//   point to the same object. For (x0+x1)^8:
-// M3.Left === M3.Right === M2
-//   M2.Left === M2.Right === M1   ← shared!
-//   M1.Left === M1.Right === Add{x0,x1}
-
-//   When Prune(2) found M1 (degree 2) inside M2.Left and replaced it in-place
-//    with a Var, it also silently modified M2.Right (same pointer). So degree
-//    dropped from 8 → 6 instead of 8 → 7.
-
-// Fix: Added a Clone(Expr) Expr deep-copy function and changed
-// squareAndMultiply to clone the right child on every square step (result =
-//
-//	&Mul{result, Clone(result)}) and clone base on every multiply step. This
-//	ensures every node in the tree is a distinct object, so in-place
-//
-// mutations like Prune only affect the intended subtree
-// ================================================
-func Clone(e Expr) Expr {
-	switch v := e.(type) {
-	case *ShiftedColumn:
-		return &ShiftedColumn{Name: v.Name}
-	case *CommittedColumn:
-		return &CommittedColumn{Name: v.Name}
-	case *Const:
-		c := *v
-		return &c
-	case *Challenge:
-		return &Challenge{Name: v.Name}
-	case *ComputableColumn:
-		return &ComputableColumn{Name: v.Name}
-	case *Add:
-		return &Add{Left: Clone(v.Left), Right: Clone(v.Right)}
-	case *Sub:
-		return &Sub{Left: Clone(v.Left), Right: Clone(v.Right)}
-	case *Mul:
-		return &Mul{Left: Clone(v.Left), Right: Clone(v.Right)}
-	case *Pow:
-		return &Pow{Base: Clone(v.Base), Exp: v.Exp}
-	}
-	panic("Clone: unknown Expr type")
-}
-
-// squareAndMultiply builds an Expr tree for base^exp using binary exponentiation.
-// exp must be >= 3.
-// Each node in the tree is a distinct object (no shared pointers) so that
-// in-place transformations such as Prune work correctly on the tree.
-func squareAndMultiply(base Expr, exp uint32) Expr {
-	// Collect the bits of exp from LSB to MSB, then reverse to get MSB-first.
-	var binaryBits []bool
-	for n := exp; n > 0; n >>= 1 {
-		binaryBits = append(binaryBits, n&1 == 1)
-	}
-	for i, j := 0, len(binaryBits)-1; i < j; i, j = i+1, j-1 {
-		binaryBits[i], binaryBits[j] = binaryBits[j], binaryBits[i]
-	}
-
-	// The MSB is always 1; start with result = base and process the remaining bits.
-	// Clone the right child on every squaring step so that Left and Right are always
-	// distinct objects — otherwise Prune (which rewrites nodes in-place) would
-	// simultaneously modify both sides of a Mul when it modifies a shared subtree.
-	result := base
-	for i := 1; i < len(binaryBits); i++ {
-		result = &Mul{result, Clone(result)} // square
-		if binaryBits[i] {
-			result = &Mul{result, Clone(base)} // multiply
-		}
-	}
-	return result
-}
-
-func (c *CommittedColumn) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
-	v, ok := vals[c.Name]
-	if !ok {
-		panic("Evaluate: missing value for CommittedColumn " + c.Name)
-	}
-	return v
-}
-
-func (c *Challenge) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
-	v, ok := vals[c.Name]
-	if !ok {
-		panic("Evaluate: missing value for Challenge " + c.Name)
-	}
-	return v
-}
-
-func (c *ComputableColumn) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
-	v, ok := vals[c.Name]
-	if !ok {
-		panic("Evaluate: missing value for ComputableColumn " + c.Name)
-	}
-	return v
-}
-
-func (c *Const) Evaluate(_ map[string]koalabear.Element) koalabear.Element {
-	return c.Value
 }
 
 func (a *Add) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
@@ -641,15 +522,96 @@ func (p *Pow) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
 	return res
 }
 
-// RemoveDuplicates removes duplicates in input
-func RemoveDuplicates(input []string) []string {
-	seen := make(map[string]bool)
-	result := []string{}
+func (a *Add) EvaluateWithIdx(vals []koalabear.Element) koalabear.Element {
+	l := a.Left.EvaluateWithIdx(vals)
+	r := a.Right.EvaluateWithIdx(vals)
+	l.Add(&l, &r)
+	return l
+}
 
-	for _, value := range input {
-		if !seen[value] {
-			seen[value] = true
-			result = append(result, value)
+func (s *Sub) EvaluateWithIdx(vals []koalabear.Element) koalabear.Element {
+	l := s.Left.EvaluateWithIdx(vals)
+	r := s.Right.EvaluateWithIdx(vals)
+	l.Sub(&l, &r)
+	return l
+}
+
+func (m *Mul) EvaluateWithIdx(vals []koalabear.Element) koalabear.Element {
+	l := m.Left.EvaluateWithIdx(vals)
+	r := m.Right.EvaluateWithIdx(vals)
+	l.Mul(&l, &r)
+	return l
+}
+
+func (p *Pow) EvaluateWithIdx(vals []koalabear.Element) koalabear.Element {
+	base := p.Base.EvaluateWithIdx(vals)
+	var res koalabear.Element
+	res.SetOne()
+	exp := p.Exp
+	for exp > 0 {
+		if exp&1 == 1 {
+			res.Mul(&res, &base)
+		}
+		base.Mul(&base, &base)
+		exp >>= 1
+	}
+	return res
+}
+
+// Clone returns a deep copy of the expression tree with no shared nodes.
+func Clone(e Expr) Expr {
+	switch v := e.(type) {
+	case *Leaf:
+		c := *v
+		return &c
+	case *Add:
+		return &Add{Left: Clone(v.Left), Right: Clone(v.Right)}
+	case *Sub:
+		return &Sub{Left: Clone(v.Left), Right: Clone(v.Right)}
+	case *Mul:
+		return &Mul{Left: Clone(v.Left), Right: Clone(v.Right)}
+	case *Pow:
+		return &Pow{Base: Clone(v.Base), Exp: v.Exp}
+	}
+	panic("Clone: unknown Expr type")
+}
+
+// squareAndMultiply builds an Expr tree for base^exp using binary exponentiation.
+// exp must be >= 3.
+// Each node in the tree is a distinct object (no shared pointers) so that
+// in-place transformations such as Prune work correctly on the tree.
+func squareAndMultiply(base Expr, exp uint32) Expr {
+	// Collect the bits of exp from LSB to MSB, then reverse to get MSB-first.
+	var binaryBits []bool
+	for n := exp; n > 0; n >>= 1 {
+		binaryBits = append(binaryBits, n&1 == 1)
+	}
+	for i, j := 0, len(binaryBits)-1; i < j; i, j = i+1, j-1 {
+		binaryBits[i], binaryBits[j] = binaryBits[j], binaryBits[i]
+	}
+
+	// The MSB is always 1; start with result = base and process the remaining bits.
+	// Clone the right child on every squaring step so that Left and Right are always
+	// distinct objects — otherwise Prune (which rewrites nodes in-place) would
+	// simultaneously modify both sides of a Mul when it modifies a shared subtree.
+	result := base
+	for i := 1; i < len(binaryBits); i++ {
+		result = &Mul{result, Clone(result)} // square
+		if binaryBits[i] {
+			result = &Mul{result, Clone(base)} // multiply
+		}
+	}
+	return result
+}
+
+func RemoveDuplicates[T comparable](s []T) []T {
+	seen := make(map[T]struct{}, len(s))
+	result := make([]T, 0, len(s))
+
+	for _, v := range s {
+		if _, ok := seen[v]; !ok {
+			seen[v] = struct{}{}
+			result = append(result, v)
 		}
 	}
 

@@ -1,10 +1,15 @@
 package std
 
 import (
+	"fmt"
+	"os"
+	"runtime/pprof"
 	"testing"
 
 	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/pas/univariate"
 	"github.com/consensys/giop/prover"
+	"github.com/consensys/giop/trace"
 	"github.com/consensys/giop/verifier"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
@@ -144,4 +149,66 @@ func TestPermutationMultiSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func BenchmarkPermutation(b *testing.B) {
+
+	size := 1 << 10
+	nbPolys := 5
+	p1 := make([]univariate.Polynomial, nbPolys)
+	for i := 0; i < nbPolys; i++ {
+		p1[i] = make(univariate.Polynomial, size)
+		for j := 0; j < size; j++ {
+			p1[i][j].SetRandom()
+		}
+	}
+	p2 := make([]univariate.Polynomial, nbPolys)
+	for i := 0; i < nbPolys; i++ {
+		p2[i] = make(univariate.Polynomial, size)
+		for j := 0; j < size; j++ {
+			p2[i][j].Set(&p1[(i+1)%nbPolys][(j+1)%size])
+		}
+	}
+
+	trace := make(trace.Trace)
+	s1 := make([]string, nbPolys)
+	s2 := make([]string, nbPolys)
+	for i := 0; i < nbPolys; i++ {
+		s1[i] = fmt.Sprintf("P1_%d", i)
+		s2[i] = fmt.Sprintf("P2_%d", i)
+		trace[fmt.Sprintf("P1_%d", i)] = p1[i]
+		trace[fmt.Sprintf("P2_%d", i)] = p2[i]
+	}
+
+	system := cs.NewSystem(size)
+
+	_ = EqualityUpToPermutationIOP(&system, s1, s2)
+
+	knowncolumns := make(map[string]bool)
+	for _, s := range s1 {
+		knowncolumns[s] = true
+	}
+	for _, s := range s2 {
+		knowncolumns[s] = true
+	}
+	cciop := cs.Compile(&system)
+
+	f, _ := os.Create("cpu.prof")
+	pprof.StartCPUProfile(f)
+	b.Run("prover", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+
+			_trace := make(map[string]univariate.Polynomial)
+			for i := 0; i < nbPolys; i++ {
+				_trace[fmt.Sprintf("P1_%d", i)] = trace[fmt.Sprintf("P1_%d", i)]
+				_trace[fmt.Sprintf("P2_%d", i)] = trace[fmt.Sprintf("P2_%d", i)]
+			}
+
+			proverRunTime := prover.NewRuntime(cciop, _trace)
+			proverRunTime.Prove(knowncolumns, 1)
+
+		}
+	})
+	pprof.StopCPUProfile()
+
 }

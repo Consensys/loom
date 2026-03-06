@@ -3,7 +3,6 @@ package cs
 import (
 	"fmt"
 
-	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/pas/univariate"
 	"github.com/consensys/giop/trace"
@@ -13,7 +12,7 @@ import (
 func EnforceGrandProductConstraint(system *System, E1, E2 sym.Expr, IDGrandProduct string, N int) {
 
 	// build the symbolic expression of the constraint
-	A := sym.NewShiftedColumn(constants.GetShiftedName(IDGrandProduct, 1)).Mul(E2)
+	A := sym.NewShiftedColumn(IDGrandProduct, 1).Mul(E2)
 	B := sym.NewCommittedColumn(IDGrandProduct).Mul(E1)
 	GPConstraint := A.Sub(B)
 	system.RegisterConstraint(GPConstraint)
