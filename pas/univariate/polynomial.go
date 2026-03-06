@@ -40,27 +40,46 @@ func fillVars(Pi map[string]Polynomial, vals map[string]koalabear.Element, i int
 // N is the size of the polynomials in Pi, assumed to have all the same size, except the constant (size 1)
 // nbCommittedColumns is the number of variables in E
 func EvalPointWise(Pi map[string]Polynomial, E sym.Expr, N int) ([]koalabear.Element, error) {
-	leaves := sym.RemoveDuplicates(E.Leaves(sym.NewConfig(sym.WithoutShiftedColumns())))
-	for _, name := range leaves {
-		if _, ok := Pi[name]; !ok {
-			return nil, fmt.Errorf("polynomial %s not found in Pi", name)
+
+	// query the leaves (without constants), deduplicate by name, and index them.
+	// Different *Leaf pointers may represent the same column (shifted case)
+	// we assign the same Idx to all of them so EvaluateWithIdx reads from the
+	// correct slot.
+	nameToIdx := make(map[string]int)
+	allLeaves := E.LeavesFull(sym.NewConfig())
+	leaves := make([]*sym.Leaf, 0, len(allLeaves))
+	for _, l := range allLeaves {
+		name := l.String()
+		if idx, ok := nameToIdx[name]; ok {
+			l.Idx = idx
+		} else {
+			l.Idx = len(leaves)
+			nameToIdx[name] = l.Idx
+			leaves = append(leaves, l)
 		}
 	}
-	leavesShifted := sym.RemoveDuplicates(E.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutCommittedColumns(), sym.WithoutComputableColumns())))
-	for _, name := range leavesShifted {
-		baseName, _, err := constants.SplitShiftedName(name)
-		if err != nil {
-			return nil, err
-		}
-		if _, ok := Pi[baseName]; !ok {
-			return nil, fmt.Errorf("polynomial %s not found in Pi", baseName)
-		}
+
+	// fetch the subtrace indexed by l.Idx; for ShiftedColumn, l.Name is the base column.
+	_Pi := make([]Polynomial, len(leaves))
+	for _, l := range leaves {
+		_Pi[l.Idx] = Pi[l.Name]
 	}
+
 	resultCoeffs := make([]koalabear.Element, N)
-	vals := make(map[string]koalabear.Element, len(leaves))
+	vals := make([]koalabear.Element, len(leaves))
 	for i := 0; i < N; i++ {
-		fillVars(Pi, vals, i, N, leaves, leavesShifted)
-		resultCoeffs[i] = E.Evaluate(vals)
+		for _, l := range leaves {
+			if l.Type == sym.Challenge {
+				vals[l.Idx] = _Pi[l.Idx][0]
+				continue
+			}
+			if l.Type == sym.ShiftedColumn {
+				vals[l.Idx] = _Pi[l.Idx][(i+N+l.Shift)%N]
+				continue
+			}
+			vals[l.Idx] = _Pi[l.Idx][i]
+		}
+		resultCoeffs[i] = E.EvaluateWithIdx(vals)
 	}
 	return resultCoeffs, nil
 }

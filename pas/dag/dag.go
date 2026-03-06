@@ -92,33 +92,23 @@ func (b *dagBuilder) intern(key string, make func() *DAGNode) *DAGNode {
 
 func (b *dagBuilder) build(e sym.Expr) *DAGNode {
 	switch v := e.(type) {
-	case *sym.ShiftedColumn:
-		key := dagKey("shifted", v.Name)
+	case *sym.Leaf:
+		var prefix string
+		switch v.Type {
+		case sym.ShiftedColumn:
+			prefix = "shifted"
+		case sym.CommittedColumn:
+			prefix = "col"
+		case sym.Challenge:
+			prefix = "chal"
+		case sym.ComputableColumn:
+			prefix = "comp"
+		case sym.Const:
+			prefix = "const"
+		}
+		key := dagKey(prefix, v.String())
 		return b.intern(key, func() *DAGNode {
-			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.Name)}
-		})
-	case *sym.CommittedColumn:
-		key := dagKey("col", v.Name)
-		return b.intern(key, func() *DAGNode {
-			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.Name)}
-		})
-
-	case *sym.Challenge:
-		key := dagKey("chal", v.Name)
-		return b.intern(key, func() *DAGNode {
-			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.Name)}
-		})
-
-	case *sym.ComputableColumn:
-		key := dagKey("comp", v.Name)
-		return b.intern(key, func() *DAGNode {
-			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.Name)}
-		})
-
-	case *sym.Const:
-		key := dagKey("const", v.Value.String())
-		return b.intern(key, func() *DAGNode {
-			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.Value.String())}
+			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.String())}
 		})
 
 	case *sym.Add:
@@ -509,14 +499,17 @@ func dagRefCount(root *DAGNode) map[*DAGNode]int {
 func dagNodeLabel(n *DAGNode) string {
 	switch n.Kind {
 	case KindLeaf:
-		switch v := n.Leaf.(type) {
-		case *sym.CommittedColumn:
+		v := n.Leaf.(*sym.Leaf)
+		switch v.Type {
+		case sym.CommittedColumn:
 			return "col:" + v.Name
-		case *sym.Challenge:
+		case sym.ShiftedColumn:
+			return "shifted:" + v.String()
+		case sym.Challenge:
 			return "chal:" + v.Name
-		case *sym.ComputableColumn:
+		case sym.ComputableColumn:
 			return "comp:" + v.Name
-		case *sym.Const:
+		case sym.Const:
 			return "const:" + v.Value.String()
 		}
 		return n.Leaf.String()

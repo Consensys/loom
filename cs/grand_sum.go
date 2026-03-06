@@ -3,7 +3,6 @@ package cs
 import (
 	"fmt"
 
-	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/pas/univariate"
 	"github.com/consensys/giop/trace"
@@ -18,8 +17,7 @@ func EnforceGrandSumConstraint(system *System, M, E sym.Expr, grandSum string, N
 	// 1. (1-Lagrange_0) * ( (IDGrandSum - IDGrandSum(w^1 X))*E - M)=0
 	lagrange := sym.NewComputableColumn(GetLagrangeID(0, N))
 	p1 := sym.NewConst(koalabear.One()).Sub(lagrange)
-	grandSumShifted := constants.GetShiftedName(grandSum, -1)
-	diffGrandSum := sym.NewCommittedColumn(grandSum).Sub(sym.NewShiftedColumn(grandSumShifted))
+	diffGrandSum := sym.NewCommittedColumn(grandSum).Sub(sym.NewShiftedColumn(grandSum, -1))
 	p2 := diffGrandSum.Mul(E).Sub(M)
 	system.RegisterConstraint(p1.Mul(p2))
 
