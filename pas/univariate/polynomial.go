@@ -5,7 +5,6 @@ package univariate
 import (
 	"fmt"
 
-	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
@@ -13,48 +12,29 @@ import (
 // Polynomial is a wrapper around EPolynomial that includes additional metadata such as shift.
 type Polynomial = []koalabear.Element
 
-// fillVars fills x with the i-th row of the trace
-func fillVars(Pi map[string]Polynomial, vals map[string]koalabear.Element, i int, N int, leaves, leavesShifted []string) error {
-
-	for _, name := range leaves {
-		if len(Pi[name]) == 1 { // in case of a challenge, the column is of size 1
-			vals[name] = Pi[name][0]
-		} else {
-			vals[name] = Pi[name][i]
-		}
-	}
-
-	for _, name := range leavesShifted {
-		baseName, shift, err := constants.SplitShiftedName(name)
-		if err != nil {
-			return err
-		}
-		vals[name] = Pi[baseName][(i+int(shift)+N)%N]
-	}
-
-	return nil
-}
-
 // EvalPointWise eval point wise E on Pi, by picking the coefficient direclty (no conversion, no copies).
 // internal function only.
 // N is the size of the polynomials in Pi, assumed to have all the same size, except the constant (size 1)
 // nbCommittedColumns is the number of variables in E
 func EvalPointWise(Pi map[string]Polynomial, E sym.Expr, N int) ([]koalabear.Element, error) {
 
-	// query the leaves (without constants), deduplicate by name, and index them.
-	// Different *Leaf pointers may represent the same column (shifted case)
-	// we assign the same Idx to all of them so EvaluateWithIdx reads from the
-	// correct slot.
-	nameToIdx := make(map[string]int)
+	// query the leaves (without constants), deduplicate by (Name, Shift), and index them.
+	// CommittedColumn "col" and ShiftedColumn "col" shift=1 are distinct variables and
+	// need different Idx values; both share the same base polynomial (keyed by l.Name).
+	type varKey struct {
+		name  string
+		shift int
+	}
+	varToIdx := make(map[varKey]int)
 	allLeaves := E.LeavesFull(sym.NewConfig())
 	leaves := make([]*sym.Leaf, 0, len(allLeaves))
 	for _, l := range allLeaves {
-		name := l.String()
-		if idx, ok := nameToIdx[name]; ok {
+		key := varKey{l.Name, l.Shift}
+		if idx, ok := varToIdx[key]; ok {
 			l.Idx = idx
 		} else {
 			l.Idx = len(leaves)
-			nameToIdx[name] = l.Idx
+			varToIdx[key] = l.Idx
 			leaves = append(leaves, l)
 		}
 	}
@@ -69,7 +49,7 @@ func EvalPointWise(Pi map[string]Polynomial, E sym.Expr, N int) ([]koalabear.Ele
 	vals := make([]koalabear.Element, len(leaves))
 	for i := 0; i < N; i++ {
 		for _, l := range leaves {
-			if l.Type == sym.Challenge {
+			if len(_Pi[l.Idx]) == 1 {
 				vals[l.Idx] = _Pi[l.Idx][0]
 				continue
 			}

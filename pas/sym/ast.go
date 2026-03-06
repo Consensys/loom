@@ -111,6 +111,8 @@ type Expr interface {
 
 	// Evaluate substitutes each leaf name with the corresponding field element
 	// from vals and returns the result. Panics if a required name is absent.
+	// This function exists for testing purpose, in the protocols in std/ for instance
+	// we use EvaluateWithIdx (through EvalPointWise).
 	Evaluate(vals map[string]koalabear.Element) koalabear.Element
 }
 

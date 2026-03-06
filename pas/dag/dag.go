@@ -677,6 +677,61 @@ func evalDAGNodeSliceVars(n *DAGNode, cache []koalabear.Element, vars []koalabea
 	panic(fmt.Sprintf("EvalWithCacheVars: unknown NodeKind %d", n.Kind))
 }
 
+// EvalWithIdx evaluates the DAG using vals indexed by Leaf.Idx (set externally
+// on each *sym.Leaf node). Const leaves return their value directly without
+// reading vals. cache must have length >= len(d.Nodes).
+func (d *DAG) EvalWithIdx(vals []koalabear.Element, cache []koalabear.Element) koalabear.Element {
+	for _, n := range d.Nodes {
+		cache[n.Index] = evalDAGNodeSliceIdx(n, cache, vals)
+	}
+	return cache[d.Root.Index]
+}
+
+func evalDAGNodeSliceIdx(n *DAGNode, cache []koalabear.Element, vals []koalabear.Element) koalabear.Element {
+	switch n.Kind {
+	case KindLeaf:
+		return n.Leaf.(*sym.Leaf).EvaluateWithIdx(vals)
+
+	case KindAdd:
+		var acc koalabear.Element
+		for _, child := range n.Children {
+			v := cache[child.Index]
+			acc.Add(&acc, &v)
+		}
+		return acc
+
+	case KindSub:
+		l, r := cache[n.Children[0].Index], cache[n.Children[1].Index]
+		var res koalabear.Element
+		res.Sub(&l, &r)
+		return res
+
+	case KindMul:
+		var acc koalabear.Element
+		acc.SetOne()
+		for _, child := range n.Children {
+			v := cache[child.Index]
+			acc.Mul(&acc, &v)
+		}
+		return acc
+
+	case KindPow:
+		base := cache[n.Children[0].Index]
+		var res koalabear.Element
+		res.SetOne()
+		exp := n.Exp
+		for exp > 0 {
+			if exp&1 == 1 {
+				res.Mul(&res, &base)
+			}
+			base.Mul(&base, &base)
+			exp >>= 1
+		}
+		return res
+	}
+	panic(fmt.Sprintf("EvalWithIdx: unknown NodeKind %d", n.Kind))
+}
+
 // EvalWithCache evaluates the DAG using the caller-supplied cache slice instead
 // of allocating a new map on each call. cache must have length >= len(d.Nodes).
 // Reuse the same slice across repeated calls to avoid allocation overhead.
