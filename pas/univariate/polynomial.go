@@ -13,15 +13,27 @@ import (
 // Polynomial is a wrapper around EPolynomial that includes additional metadata such as shift.
 type Polynomial = []koalabear.Element
 
-// EvalPointWise eval point wise E on Pi, by picking the coefficient direclty (no conversion, no copies).
-// internal function only.
-// N is the size of the polynomials in Pi, assumed to have all the same size, except the constant (size 1)
-// nbCommittedColumns is the number of variables in E
-func EvalPointWise(Pi map[string]Polynomial, E sym.Expr, N int, mu *sync.Mutex) ([]koalabear.Element, error) {
+// evalBufPool pools []koalabear.Element slices used as temporary buffers inside
+// BuildGrandProduct and BuildGrandSum. koalabear.Element contains no pointers,
+// so pooled slices do not prevent GC of other objects.
+var evalBufPool sync.Pool
 
-	// query the leaves (without constants), deduplicate by (Name, Shift), and index them.
-	// CommittedColumn "col" and ShiftedColumn "col" shift=1 are distinct variables and
-	// need different Idx values; both share the same base polynomial (keyed by l.Name).
+func getBuf(n int) []koalabear.Element {
+	if v := evalBufPool.Get(); v != nil {
+		if b := v.([]koalabear.Element); cap(b) >= n {
+			return b[:n]
+		}
+	}
+	return make([]koalabear.Element, n)
+}
+
+func putBuf(b []koalabear.Element) {
+	evalBufPool.Put(b[:cap(b)])
+}
+
+// evalPointWiseInto is the core implementation: it evaluates E point-wise over
+// Pi and writes the N results into dst (which must have length N).
+func evalPointWiseInto(Pi map[string]Polynomial, E sym.Expr, N int, mu *sync.Mutex, dst []koalabear.Element) error {
 	type varKey struct {
 		name  string
 		shift int
@@ -40,7 +52,6 @@ func EvalPointWise(Pi map[string]Polynomial, E sym.Expr, N int, mu *sync.Mutex) 
 		}
 	}
 
-	// fetch the subtrace indexed by l.Idx; for ShiftedColumn, l.Name is the base column (/!\ concurrent map access)
 	if mu != nil {
 		mu.Lock()
 	}
@@ -52,7 +63,6 @@ func EvalPointWise(Pi map[string]Polynomial, E sym.Expr, N int, mu *sync.Mutex) 
 		mu.Unlock()
 	}
 
-	resultCoeffs := make([]koalabear.Element, N)
 	vals := make([]koalabear.Element, len(leaves))
 	for i := 0; i < N; i++ {
 		for _, l := range leaves {
@@ -66,9 +76,17 @@ func EvalPointWise(Pi map[string]Polynomial, E sym.Expr, N int, mu *sync.Mutex) 
 			}
 			vals[l.Idx] = _Pi[l.Idx][i]
 		}
-		resultCoeffs[i] = E.EvaluateWithIdx(vals)
+		dst[i] = E.EvaluateWithIdx(vals)
 	}
-	return resultCoeffs, nil
+	return nil
+}
+
+// EvalPointWise evaluates E point-wise over Pi and returns the N results as a
+// freshly allocated slice. N is the size of the polynomials in Pi (all must
+// have the same size, except constants which have size 1).
+func EvalPointWise(Pi map[string]Polynomial, E sym.Expr, N int, mu *sync.Mutex) ([]koalabear.Element, error) {
+	dst := make([]koalabear.Element, N)
+	return dst, evalPointWiseInto(Pi, E, N, mu, dst)
 }
 
 // DivPointWise computes the resulting polynomial from dividing pointwise.
@@ -89,32 +107,41 @@ func DivPointWise(P1, P2 Polynomial, N int) (Polynomial, error) {
 	return res, nil
 }
 
-// BuildMultiplicityPolynomial returns P such that:
-// P[i] is the number of times T[i] appears in S.
-// S, T are assumed to be in Lagrange basis
-// S and T must be of the same size
-func BuildMultiplicityPolynomial(S, T Polynomial) (Polynomial, error) {
-
-	if len(S) != len(T) {
-		return Polynomial{}, fmt.Errorf("S and T don't have equal size: len(S)%d, len(T)=%d", len(S), len(T))
-	}
-
-	n := len(S)
-	res := make(Polynomial, n)
-
-	one := koalabear.One()
-
-	// we can probably do better :/
-	for i := 0; i < n; i++ {
-		ct := T[i]
-		for j := 0; j < n; j++ {
-			cd := S[j]
-			if cd.Equal(&ct) {
+func countMultiplicity(S, T Polynomial, N int) Polynomial {
+	res := make(Polynomial, N)
+	var one koalabear.Element
+	one.SetOne()
+	for i := 0; i < N; i++ {
+		for j := 0; j < N; j++ {
+			if T[i].Equal(&S[j]) {
 				res[i].Add(&res[i], &one)
 			}
 		}
 	}
+	return res
+}
 
+// BuildMultiplicityPolynomial returns P such that:
+// P[i] is the number of times T[i] appears in S.
+// S, T are assumed to be in Lagrange basis
+// S and T must be of the same size
+func BuildMultiplicityPolynomial(Pi map[string]Polynomial, S, T sym.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
+
+	// evaluate S and T on P
+	_S := getBuf(N)
+	_T := getBuf(N)
+	if err := evalPointWiseInto(Pi, S, N, mu, _S); err != nil {
+		putBuf(_S)
+		return Polynomial{}, err
+	}
+	if err := evalPointWiseInto(Pi, T, N, mu, _T); err != nil {
+		putBuf(_S)
+		return Polynomial{}, err
+	}
+
+	res := countMultiplicity(_S, _T, N)
+	putBuf(_S)
+	putBuf(_T)
 	return res, nil
 
 }
@@ -148,16 +175,19 @@ func accumulateSums(P Polynomial, N int) (Polynomial, error) {
 // The notation E[i] means the i-th entry of E evaluated on P (same for M).
 func BuildGrandSum(P map[string]Polynomial, E, M sym.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
 
-	// D stores the denominators 1/E(P)
-	D, err := EvalPointWise(P, E, N, mu)
-	if err != nil {
+	// D stores the denominators 1/E(P); pooled because it is only needed until accumulateSums copies it.
+	D := getBuf(N)
+	if err := evalPointWiseInto(P, E, N, mu, D); err != nil {
+		putBuf(D)
 		return Polynomial{}, err
 	}
 	InvertPointWiseInPlace(D)
 
-	// multiply by M(P) to get M(P)/E(P)
-	Mp, err := EvalPointWise(P, M, N, mu)
-	if err != nil {
+	// Mp is pooled: it is multiplied into D and then discarded.
+	Mp := getBuf(N)
+	if err := evalPointWiseInto(P, M, N, mu, Mp); err != nil {
+		putBuf(D)
+		putBuf(Mp)
 		return Polynomial{}, err
 	}
 	for i := 0; i < N; i++ {
@@ -165,8 +195,11 @@ func BuildGrandSum(P map[string]Polynomial, E, M sym.Expr, N int, mu *sync.Mutex
 		mi := Mp[i]
 		D[i].Mul(&di, &mi)
 	}
+	putBuf(Mp)
 
-	return accumulateSums(D, N)
+	result, err := accumulateSums(D, N)
+	putBuf(D)
+	return result, err
 }
 
 // accumulateProducts returns R such that R[i+1] = R[i]*P[i], R[0]=1
@@ -190,18 +223,23 @@ func accumulateProducts(P Polynomial, N int) (Polynomial, error) {
 // Polynomials in P must have the same basis, same layout
 func BuildGrandProduct(P map[string]Polynomial, E1, E2 sym.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
 
-	Q0, err := EvalPointWise(P, E1, N, mu)
-	if err != nil {
+	// Q0 and Q1 are intermediate buffers: pooled because they are fully consumed by DivPointWise.
+	Q0 := getBuf(N)
+	if err := evalPointWiseInto(P, E1, N, mu, Q0); err != nil {
+		putBuf(Q0)
 		return Polynomial{}, fmt.Errorf("failed to evaluate numerator expression: %w", err)
 	}
 
-	Q1, err := EvalPointWise(P, E2, N, mu)
-	if err != nil {
+	Q1 := getBuf(N)
+	if err := evalPointWiseInto(P, E2, N, mu, Q1); err != nil {
+		putBuf(Q0)
+		putBuf(Q1)
 		return Polynomial{}, fmt.Errorf("failed to evaluate denominator expression: %w", err)
 	}
 
-	// Div is not allowed in the AST (TODO should I allow it?)
 	ratio, err := DivPointWise(Q0, Q1, N)
+	putBuf(Q0)
+	putBuf(Q1)
 	if err != nil {
 		return Polynomial{}, fmt.Errorf("failed to compute pointwise ratio: %w", err)
 	}

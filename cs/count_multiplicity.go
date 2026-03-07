@@ -20,15 +20,9 @@ func ComputeMultiplicity(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sy
 	if len(GP) != 1 {
 		return fmt.Errorf("len(GP)=%d, expected 1", len(GP))
 	}
-	S, err := univariate.EvalPointWise(trace, E[0], proof.N, mu)
-	if err != nil {
-		return err
-	}
-	T, err := univariate.EvalPointWise(trace, E[1], proof.N, mu)
-	if err != nil {
-		return err
-	}
-	M, err := univariate.BuildMultiplicityPolynomial(S, T)
+	S := E[0]
+	T := E[1]
+	M, err := univariate.BuildMultiplicityPolynomial(trace, S, T, proof.N, mu)
 	if err != nil {
 		return err
 	}
