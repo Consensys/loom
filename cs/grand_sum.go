@@ -2,6 +2,7 @@ package cs
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/pas/univariate"
@@ -28,7 +29,7 @@ func EnforceGrandSumConstraint(system *System, M, E sym.Expr, grandSum string, N
 
 // ComputeGrandSum builds the "grand sum" polynomial between E0:=E[0] and E1:=E[1], that
 // is a polnyomial GS such that GS[i]=Σ_{j⩽i}E0[j]/E1[j]
-func ComputeGrandSum(trace trace.Trace, proof *Proof, E []sym.Expr, GP []string) error {
+func ComputeGrandSum(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sym.Expr, GP []string) error {
 
 	if len(E) != 2 {
 		return fmt.Errorf("len(E)=%d, expected 2", len(E))
@@ -38,14 +39,14 @@ func ComputeGrandSum(trace trace.Trace, proof *Proof, E []sym.Expr, GP []string)
 	}
 
 	// build the polynomials R
-	grandSum, err := univariate.BuildGrandSum(trace, E[1], E[0], proof.N)
+	grandSum, err := univariate.BuildGrandSum(trace, E[1], E[0], proof.N, mu)
 	if err != nil {
 		return err
 	}
 	grandSumID := GP[0]
 
 	// register the R in the trace
-	err = RegisterColumn(trace, grandSumID, grandSum)
+	err = RegisterColumn(trace, grandSumID, grandSum, mu)
 	if err != nil {
 		return err
 	}

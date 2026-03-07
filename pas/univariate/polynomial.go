@@ -4,6 +4,7 @@ package univariate
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -16,7 +17,7 @@ type Polynomial = []koalabear.Element
 // internal function only.
 // N is the size of the polynomials in Pi, assumed to have all the same size, except the constant (size 1)
 // nbCommittedColumns is the number of variables in E
-func EvalPointWise(Pi map[string]Polynomial, E sym.Expr, N int) ([]koalabear.Element, error) {
+func EvalPointWise(Pi map[string]Polynomial, E sym.Expr, N int, mu *sync.Mutex) ([]koalabear.Element, error) {
 
 	// query the leaves (without constants), deduplicate by (Name, Shift), and index them.
 	// CommittedColumn "col" and ShiftedColumn "col" shift=1 are distinct variables and
@@ -39,10 +40,16 @@ func EvalPointWise(Pi map[string]Polynomial, E sym.Expr, N int) ([]koalabear.Ele
 		}
 	}
 
-	// fetch the subtrace indexed by l.Idx; for ShiftedColumn, l.Name is the base column.
+	// fetch the subtrace indexed by l.Idx; for ShiftedColumn, l.Name is the base column (/!\ concurrent map access)
+	if mu != nil {
+		mu.Lock()
+	}
 	_Pi := make([]Polynomial, len(leaves))
 	for _, l := range leaves {
 		_Pi[l.Idx] = Pi[l.Name]
+	}
+	if mu != nil {
+		mu.Unlock()
 	}
 
 	resultCoeffs := make([]koalabear.Element, N)
@@ -139,17 +146,17 @@ func accumulateSums(P Polynomial, N int) (Polynomial, error) {
 // BuildGrandSum returns R such that
 // R[i] = \Sigma_{j<=i}M[j]/E[j]
 // The notation E[i] means the i-th entry of E evaluated on P (same for M).
-func BuildGrandSum(P map[string]Polynomial, E, M sym.Expr, N int) (Polynomial, error) {
+func BuildGrandSum(P map[string]Polynomial, E, M sym.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
 
 	// D stores the denominators 1/E(P)
-	D, err := EvalPointWise(P, E, N)
+	D, err := EvalPointWise(P, E, N, mu)
 	if err != nil {
 		return Polynomial{}, err
 	}
 	InvertPointWiseInPlace(D)
 
 	// multiply by M(P) to get M(P)/E(P)
-	Mp, err := EvalPointWise(P, M, N)
+	Mp, err := EvalPointWise(P, M, N, mu)
 	if err != nil {
 		return Polynomial{}, err
 	}
@@ -181,14 +188,14 @@ func accumulateProducts(P Polynomial, N int) (Polynomial, error) {
 // BuildGrandProduct returns R such that R[0]=1, R[i+1] = R[i] * E1(P[i]) / E2(P[i])
 // N = size of the polynomials in P
 // Polynomials in P must have the same basis, same layout
-func BuildGrandProduct(P map[string]Polynomial, E1, E2 sym.Expr, N int) (Polynomial, error) {
+func BuildGrandProduct(P map[string]Polynomial, E1, E2 sym.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
 
-	Q0, err := EvalPointWise(P, E1, N)
+	Q0, err := EvalPointWise(P, E1, N, mu)
 	if err != nil {
 		return Polynomial{}, fmt.Errorf("failed to evaluate numerator expression: %w", err)
 	}
 
-	Q1, err := EvalPointWise(P, E2, N)
+	Q1, err := EvalPointWise(P, E2, N, mu)
 	if err != nil {
 		return Polynomial{}, fmt.Errorf("failed to evaluate denominator expression: %w", err)
 	}

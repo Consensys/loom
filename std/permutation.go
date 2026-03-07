@@ -3,6 +3,7 @@ package std
 import (
 	"fmt"
 
+	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -53,12 +54,12 @@ func EqualityUpToPermutationIOP(system *cs.System, ID1, ID2 []string) error {
 
 func equalityUpToPermutationIOP(system *cs.System, E1, E2 []sym.Expr) error {
 
-	_IDGrandProduct, err := RandomString(5)
+	_IDGrandProduct, err := RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
 	IDGrandProduct := fmt.Sprintf("GP_%s", _IDGrandProduct)
-	gamma, err := RandomString(5)
+	gamma, err := RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
@@ -130,7 +131,7 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 []sym.Expr) error {
 // func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string, IDGrandProduct string, alpha, gamma string) error {
 func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string) error {
 
-	alpha, err := RandomString(5)
+	alpha, err := RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}

@@ -12,6 +12,7 @@ const FINAL_EVALUATION_POINT = "github.com/consensys/giop@zeta"
 const FINAL_FOLDING_CHALLENGE = "github.com/consensys/giop@alpha"
 const SUFFIX_SHIFT_SPLIT = "_"
 const SUFFIX_SHIFT = "shift"
+const SIZE_RANDOM_STRING = 10 // size of the names randomly created for the intermediate columns issued with prover actions
 
 func GetShiftedName(name string, shift int) string {
 	return fmt.Sprintf("%s_%s_%d", name, SUFFIX_SHIFT, shift)

@@ -2,6 +2,7 @@ package cs
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/consensys/giop/pas/sym"
@@ -59,8 +60,9 @@ func TestDegreeReduction(t *testing.T) {
 	//    reduceDegree emits duplicate prover actions. The second execution returns
 	//    "already registered"; skip it silently since the column is already correct.
 	proof := NewProof(N)
+	var mu sync.Mutex
 	for _, pa := range system.ProverActions {
-		if err := pa.Execute(T, &proof); err != nil {
+		if err := pa.Execute(T, &proof, &mu); err != nil {
 			// "already registered" errors are expected for duplicate auxiliary columns
 			_ = err
 		}

@@ -75,7 +75,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := sym.NewCommittedColumn("x0").Pow(2).Add(sym.NewCommittedColumn("x1"))
 		Pi := map[string]Polynomial{"x0": coeffs0, "x1": coeffs1}
 
-		R, err := EvalPointWise(Pi, C, size)
+		R, err := EvalPointWise(Pi, C, size, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -98,7 +98,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := sym.NewCommittedColumn("x0").Sub(sym.NewCommittedColumn("x1"))
 		Pi := map[string]Polynomial{"x0": P0, "x1": P1}
 
-		R, err := EvalPointWise(Pi, C, size)
+		R, err := EvalPointWise(Pi, C, size, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -118,7 +118,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := sym.NewCommittedColumn("x0").Mul(sym.NewCommittedColumn("x1"))
 		Pi := map[string]Polynomial{"x0": P0, "x1": P1}
 
-		R, err := EvalPointWise(Pi, C, size)
+		R, err := EvalPointWise(Pi, C, size, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -142,7 +142,7 @@ func TestEvalPointWise(t *testing.T) {
 			Sub(sym.NewCommittedColumn("x3"))
 		Pi := map[string]Polynomial{"x0": P0, "x1": P1, "x2": P2, "x3": P3}
 
-		R, err := EvalPointWise(Pi, C, size)
+		R, err := EvalPointWise(Pi, C, size, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -163,7 +163,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := sym.NewCommittedColumn("x0").Mul(sym.NewCommittedColumn("x0")).Sub(sym.NewCommittedColumn("x0"))
 		Pi := map[string]Polynomial{"x0": P0}
 
-		R, err := EvalPointWise(Pi, C, size)
+		R, err := EvalPointWise(Pi, C, size, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -185,7 +185,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := sym.NewCommittedColumn("x0").Sub(sym.NewCommittedColumn("x1")).Mul(sym.NewCommittedColumn("x2"))
 		Pi := map[string]Polynomial{"x0": P0, "x1": P1, "x2": P2}
 
-		R, err := EvalPointWise(Pi, C, size)
+		R, err := EvalPointWise(Pi, C, size, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -270,7 +270,7 @@ func TestBuildGrandProduct(t *testing.T) {
 		E0 := sym.NewCommittedColumn("x")
 		E1 := sym.NewCommittedColumn("x")
 
-		R, err := BuildGrandProduct(Pi, E0, E1, size)
+		R, err := BuildGrandProduct(Pi, E0, E1, size, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -296,7 +296,7 @@ func TestBuildGrandProduct(t *testing.T) {
 		E0 := sym.NewCommittedColumn("x")
 		E1 := sym.NewCommittedColumn("one")
 
-		R, err := BuildGrandProduct(Pi, E0, E1, size)
+		R, err := BuildGrandProduct(Pi, E0, E1, size, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -317,7 +317,7 @@ func TestBuildGrandProduct(t *testing.T) {
 		E0 := sym.NewCommittedColumn("x")
 		E1 := sym.NewCommittedColumn("y")
 
-		R, err := BuildGrandProduct(Pi, E0, E1, size)
+		R, err := BuildGrandProduct(Pi, E0, E1, size, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -337,7 +337,7 @@ func TestBuildGrandProduct(t *testing.T) {
 		E0 := sym.NewCommittedColumn("x")
 		E1 := sym.NewCommittedColumn("y")
 
-		R, err := BuildGrandProduct(Pi, E0, E1, size)
+		R, err := BuildGrandProduct(Pi, E0, E1, size, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -366,7 +366,7 @@ func TestBuildGrandProduct(t *testing.T) {
 		E0 := sym.NewCommittedColumn("x")
 		E1 := sym.NewCommittedColumn("y")
 
-		_, err := BuildGrandProduct(Pi, E0, E1, size)
+		_, err := BuildGrandProduct(Pi, E0, E1, size, nil)
 		if err == nil {
 			t.Fatal("expected error for zero denominator, got nil")
 		}
@@ -460,7 +460,7 @@ func TestBuildGrandSum(t *testing.T) {
 		E := sym.NewCommittedColumn("P")
 		M := sym.NewConst(koalabear.One())
 		T := map[string]Polynomial{"P": P}
-		R, err := BuildGrandSum(T, E, M, size)
+		R, err := BuildGrandSum(T, E, M, size, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

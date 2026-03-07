@@ -2,6 +2,7 @@ package cs
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/pas/univariate"
@@ -21,21 +22,21 @@ func EnforceGrandProductConstraint(system *System, E1, E2 sym.Expr, IDGrandProdu
 // ComputeGrandProduct build the "grand product" polynomial between E0:=E[0] and E1:=E[1], that is it creates
 // a polynomial (=column) R such that R[0]=1, R[i+1]=R[i]E0[i]/E1[i], where E0[i] means the i-th entry of E0 evaluated on prot.trace.Trace
 // (same for E1). The relation R(wX)E1-RE0 mut vanish on X^N-1 iff E1[i] and E0[i] are permutated versions of each other
-func ComputeGrandProduct(trace trace.Trace, proof *Proof, E []sym.Expr, GP []string) error {
+func ComputeGrandProduct(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sym.Expr, GP []string) error {
 
 	if len(E) != 2 {
 		return fmt.Errorf("E must have size 2, got %d", len(E))
 	}
 
 	// build the polynomials R, R(wX)
-	R, err := univariate.BuildGrandProduct(trace, E[0], E[1], proof.N)
+	R, err := univariate.BuildGrandProduct(trace, E[0], E[1], proof.N, mu)
 	if err != nil {
 		return err
 	}
 	RID := GP[0]
 
 	// register the R, R(wX) in the trace
-	err = RegisterColumn(trace, RID, R)
+	err = RegisterColumn(trace, RID, R, mu)
 	if err != nil {
 		return err
 	}

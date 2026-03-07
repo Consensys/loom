@@ -3,6 +3,7 @@ package cs
 import (
 	"crypto/sha256"
 	"fmt"
+	"sync"
 
 	"github.com/consensys/giop/crypto/dummycommitment"
 	"github.com/consensys/giop/pas/sym"
@@ -55,94 +56,100 @@ func removeFromList(l1, l2 []string) []string {
 
 // ComputeChallenge type of ProverAction creates a challenge named GP[0] which is derived via FS
 // from the commitments of all the leaves appearing in E.
-func ComputeChallenge(trace trace.Trace, proof *Proof, E []sym.Expr, GP []string) error {
-
+func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sym.Expr, GP []string) error {
 	if len(GP) == 0 {
 		return fmt.Errorf("len(GP)=0, it must contain the name of the challenge")
 	}
 	challengeName := GP[0]
 
-	// 1. the challenge dependencies are CommittedColumns AND challenges, otherwise
-	// the prover<->verifier interactionit is oblivious of the FS order and gives security gaps. We don't take
-	// the Computationable columns, because they are recomputed by the verifier.
-	dependenciesCommittedColumns := GetColumnsId(E, sym.OnlyCommittedColumns...)
-	dependenciesChallenges := GetColumnsId(E, sym.OnlyChallenges...)
+	// Steps 1-6 are protected by mu; use a closure so defer unlocks on all exit paths.
+	fs, err := func() (*fiatshamir.Transcript, error) {
+		mu.Lock()
+		defer mu.Unlock()
 
-	// 2. find on which commitments depend round.DependenciesChallenges, and remove them from round.DependenciesCommittedColumns
-	// if they appear in it -> round.DependenciesChallenges already accout for them.
-	deps := make([]string, 0, len(dependenciesChallenges))
-	for _, c := range dependenciesChallenges {
-		if _, ok := proof.cacheChallengeDependencies[c]; !ok {
-			return fmt.Errorf("challenge %s not recorded in cacheChallengeDependencies", c)
+		// 1. the challenge dependencies are CommittedColumns AND challenges, otherwise
+		// the prover<->verifier interactionit is oblivious of the FS order and gives security gaps. We don't take
+		// the Computationable columns, because they are recomputed by the verifier.
+		dependenciesCommittedColumns := GetColumnsId(E, sym.OnlyCommittedColumns...)
+		dependenciesChallenges := GetColumnsId(E, sym.OnlyChallenges...)
+
+		// 2. find on which commitments depend round.DependenciesChallenges, and remove them from round.DependenciesCommittedColumns
+		// if they appear in it -> round.DependenciesChallenges already accout for them.
+		deps := make([]string, 0, len(dependenciesChallenges))
+		for _, c := range dependenciesChallenges {
+			if _, ok := proof.cacheChallengeDependencies[c]; !ok {
+				return nil, fmt.Errorf("challenge %s not recorded in cacheChallengeDependencies", c)
+			}
+			cacheDeps := proof.cacheChallengeDependencies[c]
+			deps = append(deps, cacheDeps...)
 		}
-		cacheDeps := proof.cacheChallengeDependencies[c]
-		deps = append(deps, cacheDeps...)
-	}
-	dependenciesCommittedColumns = removeFromList(dependenciesCommittedColumns, deps)
+		dependenciesCommittedColumns = removeFromList(dependenciesCommittedColumns, deps)
 
-	// 3. record the round
-	round := Round{
-		ChallengeName:                challengeName,
-		DependenciesCommittedColumns: dependenciesCommittedColumns,
-		DependenciesChallenges:       dependenciesChallenges,
-	}
-	proof.Rounds = append(proof.Rounds, round)
+		// 3. record the round
+		round := Round{
+			ChallengeName:                challengeName,
+			DependenciesCommittedColumns: dependenciesCommittedColumns,
+			DependenciesChallenges:       dependenciesChallenges,
+		}
+		proof.Rounds = append(proof.Rounds, round)
 
-	// 4. add the current challenge to the cacheChallengeDependencies map
-	if _, ok := proof.cacheChallengeDependencies[challengeName]; ok {
-		return fmt.Errorf("challenge %s is already recorded", challengeName)
-	}
-	proof.cacheChallengeDependencies[challengeName] = round.DependenciesCommittedColumns
+		// 4. add the current challenge to the cacheChallengeDependencies map
+		if _, ok := proof.cacheChallengeDependencies[challengeName]; ok {
+			return nil, fmt.Errorf("challenge %s is already recorded", challengeName)
+		}
+		proof.cacheChallengeDependencies[challengeName] = round.DependenciesCommittedColumns
 
-	// 5. Commit to all the polynomials whose name matches leaves. Record the commitments in the proof, and update FS along the way
-	fs := fiatshamir.NewTranscript(sha256.New())
-	err := fs.NewChallenge(challengeName)
+		// 5. Commit to all the polynomials whose name matches leaves. Record the commitments in the proof, and update FS along the way
+		fs := fiatshamir.NewTranscript(sha256.New())
+		if err := fs.NewChallenge(challengeName); err != nil {
+			return nil, err
+		}
+		for _, id := range round.DependenciesCommittedColumns {
+
+			// if the commitment exists, we bind it to challenge
+			_, ok := proof.OpeningProofs[id]
+			if ok {
+				comPacked := proof.OpeningProofs[id]
+				if err := fs.Bind(challengeName, comPacked.Digest.Marshal()); err != nil {
+					return nil, err
+				}
+				continue
+			}
+
+			// if not, we commit, record the commitment, and bind it to challenge
+			poly, ok := trace[id]
+			if !ok {
+				return nil, fmt.Errorf("polynomial %s not found in the trace", id)
+			}
+			com, err := dummycommitment.Commit(poly)
+			if err != nil {
+				return nil, err
+			}
+			if err := fs.Bind(challengeName, com.Marshal()); err != nil {
+				return nil, err
+			}
+			proof.OpeningProofs[id] = dummycommitment.PackedProof{Digest: com}
+		}
+
+		// 6. Bind the challenge to the other challenges it depends on
+		for _, id := range round.DependenciesChallenges {
+			c, ok := trace[id]
+			if !ok {
+				return nil, fmt.Errorf("challenge %s not found in the trace", id)
+			}
+			cVal := c[0]
+			if err := fs.Bind(challengeName, cVal.Marshal()); err != nil {
+				return nil, err
+			}
+		}
+
+		return fs, nil
+	}()
 	if err != nil {
 		return err
 	}
-	for _, id := range round.DependenciesCommittedColumns {
 
-		// if the commitment exists, we bind it to challenge
-		_, ok := proof.OpeningProofs[id]
-		if ok {
-			comPacked := proof.OpeningProofs[id]
-			err = fs.Bind(challengeName, comPacked.Digest.Marshal())
-			if err != nil {
-				return err
-			}
-			continue
-		}
-
-		// if not, we commit, record the commitment, and bind it to challenge
-		poly, ok := trace[id]
-		if !ok {
-			return fmt.Errorf("polynomial %s not found in the trace", id)
-		}
-		com, err := dummycommitment.Commit(poly)
-		if err != nil {
-			return err
-		}
-		err = fs.Bind(challengeName, com.Marshal())
-		if err != nil {
-			return err
-		}
-		proof.OpeningProofs[id] = dummycommitment.PackedProof{Digest: com}
-	}
-
-	// 6. Bind the challenge to the other challenges it depends on
-	for _, id := range round.DependenciesChallenges {
-		c, ok := trace[id]
-		if !ok {
-			return fmt.Errorf("challenge %s not found in the trace", id)
-		}
-		cVal := c[0]
-		err = fs.Bind(challengeName, cVal.Marshal())
-		if err != nil {
-			return err
-		}
-	}
-
-	// 7. Derive the challenge
+	// 7. Derive the challenge (no lock needed: fs is local, no shared state)
 	bc, err := fs.ComputeChallenge(challengeName)
 	if err != nil {
 		return err
@@ -151,6 +158,6 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, E []sym.Expr, GP []string
 	c.SetBytes(bc)
 
 	// 8. add the challenge as a constant column, since it might appear in other constraints
-	return RegisterColumn(trace, challengeName, []koalabear.Element{c})
+	return RegisterColumn(trace, challengeName, []koalabear.Element{c}, mu)
 
 }

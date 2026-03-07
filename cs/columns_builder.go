@@ -2,6 +2,7 @@ package cs
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/pas/univariate"
@@ -19,12 +20,14 @@ func GetComputationableColumn(id string) (ComputableColumn, error) {
 
 // ComputeLagrangeColumn prover action to build a computable column, that is a column encoded by a formula.
 // If it exists, we don't throw an error, as the column might be generated from different IOPs.
-func ComputeLagrangeColumn(trace trace.Trace, _ *Proof, _ []sym.Expr, output []string) error {
+func ComputeLagrangeColumn(trace trace.Trace, _ *Proof, mu *sync.Mutex, _ []sym.Expr, output []string) error {
 	id := output[0]
 	cc, err := GetComputationableColumn(output[0])
 	if err != nil {
 		return err
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if _, ok := trace[output[0]]; ok {
 		return nil
 	}
@@ -37,7 +40,7 @@ func ComputeLagrangeColumn(trace trace.Trace, _ *Proof, _ []sym.Expr, output []s
 // ComputeColumn computes a new polynomial Q (new column in the trace) such that ith that Q =E(IDs)
 // Returns the constraint Q-E(IDs), but does not record it. It is up to the caller to record it in the system.
 // func ComputeColumn(S *System, E sym.Expr, IDresult string) (Constraint, error) {
-func ComputeColumn(trace trace.Trace, proof *Proof, E []sym.Expr, output []string) error {
+func ComputeColumn(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sym.Expr, output []string) error {
 
 	if len(output) == 0 {
 		return fmt.Errorf("output needs to contain at list a name")
@@ -45,12 +48,12 @@ func ComputeColumn(trace trace.Trace, proof *Proof, E []sym.Expr, output []strin
 	if len(E) == 0 {
 		return fmt.Errorf("E needs to contain at list an expression")
 	}
-	sum, err := univariate.EvalPointWise(trace, E[0], proof.N)
+	sum, err := univariate.EvalPointWise(trace, E[0], proof.N, mu)
 	if err != nil {
 		return err
 	}
 	// record the result polynomial
-	err = RegisterColumn(trace, output[0], sum)
+	err = RegisterColumn(trace, output[0], sum, mu)
 
 	return err
 }

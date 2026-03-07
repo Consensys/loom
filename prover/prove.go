@@ -21,6 +21,7 @@ import (
 type Runtime struct {
 	CompiledIOP cs.CompiledIOP
 	Trace       trace.Trace
+	Mu          sync.Mutex
 }
 
 func NewRuntime(cciop cs.CompiledIOP, trace trace.Trace) Runtime {
@@ -31,7 +32,7 @@ func NewRuntime(cciop cs.CompiledIOP, trace trace.Trace) Runtime {
 }
 
 // Kahn's style scheduler for Functions (with parallel schedule)
-func (runtime Runtime) Solve(knownColumns map[string]bool, proof *cs.Proof, nbWorker int) error {
+func (runtime *Runtime) Solve(knownColumns map[string]bool, proof *cs.Proof, nbWorker int) error {
 
 	funcs := runtime.CompiledIOP.ProverActions
 	n := len(funcs)
@@ -60,7 +61,7 @@ func (runtime Runtime) Solve(knownColumns map[string]bool, proof *cs.Proof, nbWo
 	// Worker logic
 	worker := func() {
 		for i := range readyQueue {
-			err := funcs[i].Execute(runtime.Trace, proof)
+			err := funcs[i].Execute(runtime.Trace, proof, &runtime.Mu)
 			if err != nil {
 				panic(err)
 			}
@@ -69,7 +70,9 @@ func (runtime Runtime) Solve(knownColumns map[string]bool, proof *cs.Proof, nbWo
 
 			// Mark outputs known and release consumers
 			for _, out := range funcs[i].Outputs {
+				runtime.Mu.Lock()
 				knownColumns[out] = true
+				runtime.Mu.Unlock()
 
 				for _, j := range consumers[out] {
 					if atomic.AddInt32(&inDegree[j], -1) == 0 {
@@ -83,17 +86,17 @@ func (runtime Runtime) Solve(knownColumns map[string]bool, proof *cs.Proof, nbWo
 		}
 	}
 
-	// Start workers
-	for i := 0; i < nbWorker; i++ {
-		go worker()
-	}
-
-	// Seed initial ready functions
+	// Seed initial ready functions before starting workers to avoid racing on inDegree reads
 	for i := range funcs {
 		if inDegree[i] == 0 {
 			wg.Add(1) // whenever we populate teh chan, we need to add one more task to the wait group
 			readyQueue <- i
 		}
+	}
+
+	// Start workers
+	for i := 0; i < nbWorker; i++ {
+		go worker()
 	}
 
 	// Wait until all scheduled work completes
@@ -134,7 +137,7 @@ func FinalChallenges(rounds []cs.Round) []string {
 
 // Fold all the constraints by sampling a random challenge, derived from the necessary data to ensure that this challenge
 // cannot have been derived derived prior to any of the prover<->interactions and commitments
-func (runtime Runtime) DeriveFinalFoldingChallenge(proof *cs.Proof) error {
+func (runtime *Runtime) DeriveFinalFoldingChallenge(proof *cs.Proof) error {
 
 	// proof.VanishingRelation = runtime.CompiledIOP.VanishingRelation
 
@@ -199,13 +202,13 @@ func (runtime Runtime) DeriveFinalFoldingChallenge(proof *cs.Proof) error {
 	c.SetBytes(bc)
 
 	// 6. add the challenge as a constant column, since it might appear in other constraints
-	return cs.RegisterColumn(runtime.Trace, constants.FINAL_FOLDING_CHALLENGE, []koalabear.Element{c})
+	return cs.RegisterColumn(runtime.Trace, constants.FINAL_FOLDING_CHALLENGE, []koalabear.Element{c}, &runtime.Mu)
 }
 
 // ComputeQuotient computes H:=runtime.CompiledIOP.Constraint(runtime.Trace)/X^N-1 and commit to it, and
 //
 //	and store it in the trace, it is needed to be opened later
-func (runtime Runtime) ComputeQuotient(proof *cs.Proof) error {
+func (runtime *Runtime) ComputeQuotient(proof *cs.Proof) error {
 
 	H, err := univariate.ComputeQuotient(runtime.Trace, runtime.CompiledIOP.VanishingRelation, runtime.CompiledIOP.N)
 	if err != nil {
@@ -228,7 +231,7 @@ func (runtime Runtime) ComputeQuotient(proof *cs.Proof) error {
 }
 
 // DeriveOpeningChallenge register the final round for deriving the opening challenge, and compute it
-func (runtime Runtime) DeriveOpeningChallenge(proof *cs.Proof) (koalabear.Element, error) {
+func (runtime *Runtime) DeriveOpeningChallenge(proof *cs.Proof) (koalabear.Element, error) {
 
 	// register the round in the proof
 	var round cs.Round
@@ -275,7 +278,7 @@ func (runtime Runtime) DeriveOpeningChallenge(proof *cs.Proof) (koalabear.Elemen
 	zeta.SetBytes(bzeta)
 
 	// register zeta in the trace
-	err = cs.RegisterColumn(runtime.Trace, constants.FINAL_EVALUATION_POINT, []koalabear.Element{zeta})
+	err = cs.RegisterColumn(runtime.Trace, constants.FINAL_EVALUATION_POINT, []koalabear.Element{zeta}, &runtime.Mu)
 	if err != nil {
 		return koalabear.Element{}, err
 	}
@@ -283,7 +286,7 @@ func (runtime Runtime) DeriveOpeningChallenge(proof *cs.Proof) (koalabear.Elemen
 	return zeta, nil
 }
 
-func (runtime Runtime) OpenCommitments(proof *cs.Proof, zeta koalabear.Element) error {
+func (runtime *Runtime) OpenCommitments(proof *cs.Proof, zeta koalabear.Element) error {
 
 	err := runtime.OpenNonShiftedCommitments(proof, zeta)
 	if err != nil {
@@ -294,7 +297,7 @@ func (runtime Runtime) OpenCommitments(proof *cs.Proof, zeta koalabear.Element) 
 }
 
 // OpenCommitments open all columns at zeta
-func (runtime Runtime) OpenNonShiftedCommitments(proof *cs.Proof, zeta koalabear.Element) error {
+func (runtime *Runtime) OpenNonShiftedCommitments(proof *cs.Proof, zeta koalabear.Element) error {
 	var err error
 	for k, com := range proof.OpeningProofs {
 		poly, ok := runtime.Trace[k]
@@ -313,7 +316,7 @@ func (runtime Runtime) OpenNonShiftedCommitments(proof *cs.Proof, zeta koalabear
 }
 
 // OpenCommitments open all columns at zeta
-func (runtime Runtime) OpenShiftedCommitments(proof *cs.Proof, zeta koalabear.Element) error {
+func (runtime *Runtime) OpenShiftedCommitments(proof *cs.Proof, zeta koalabear.Element) error {
 
 	// query the leaves corresponding to ShiftedColumns
 	leavesShifted := runtime.CompiledIOP.VanishingRelation.Leaves(
@@ -359,7 +362,7 @@ func (runtime Runtime) OpenShiftedCommitments(proof *cs.Proof, zeta koalabear.El
 	return nil
 }
 
-func (runtime Runtime) Prove(knownColumns map[string]bool, nbWorkers int) (cs.Proof, error) {
+func (runtime *Runtime) Prove(knownColumns map[string]bool, nbWorkers int) (cs.Proof, error) {
 
 	proof := cs.NewProof(runtime.CompiledIOP.N)
 

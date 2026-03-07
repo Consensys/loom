@@ -2,6 +2,7 @@ package cs
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/consensys/giop/pas/univariate"
 	"github.com/consensys/giop/trace"
@@ -14,7 +15,9 @@ func GetShiftSuffix(i int) string {
 }
 
 // RegisterColumn registers P, whose id is ID, in T. Returns an error if the trace already exists
-func RegisterColumn(T trace.Trace, ID string, P univariate.Polynomial) error {
+func RegisterColumn(T trace.Trace, ID string, P univariate.Polynomial, mu *sync.Mutex) error {
+	mu.Lock()
+	defer mu.Unlock()
 	if _, ok := T[ID]; ok {
 		return fmt.Errorf("column %s already registered in the trace", ID)
 	}

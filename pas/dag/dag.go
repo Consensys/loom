@@ -2,12 +2,30 @@ package dag
 
 import (
 	"fmt"
+	"hash/fnv"
 	"strconv"
 	"strings"
 
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
+
+// fnvKey computes an FNV-64a hash of s and returns it as a 16-char hex string.
+// Used to build O(1)-length compound node keys that are content-based (and
+// therefore globally unique across separate ExprToDAG calls) without the O(n²)
+// string-growth that results from naively concatenating children's full keys.
+func fnvKey(s string) string {
+	h := fnv.New64a()
+	h.Write([]byte(s))
+	return strconv.FormatUint(h.Sum64(), 16)
+}
+
+// fnvKeyUint computes an FNV-64a hash of s as uint64 (for ordering).
+func fnvKeyUint(s string) uint64 {
+	h := fnv.New64a()
+	h.Write([]byte(s))
+	return h.Sum64()
+}
 
 // NodeKind identifies the type of an expression DAG node.
 type NodeKind int
@@ -90,62 +108,113 @@ func (b *dagBuilder) intern(key string, make func() *DAGNode) *DAGNode {
 	return n
 }
 
-func (b *dagBuilder) build(e sym.Expr) *DAGNode {
-	switch v := e.(type) {
-	case *sym.Leaf:
-		var prefix string
-		switch v.Type {
-		case sym.ShiftedColumn:
-			prefix = "shifted"
-		case sym.CommittedColumn:
-			prefix = "col"
-		case sym.Challenge:
-			prefix = "chal"
-		case sym.ComputableColumn:
-			prefix = "comp"
-		case sym.Const:
-			prefix = "const"
-		}
-		key := dagKey(prefix, v.String())
-		return b.intern(key, func() *DAGNode {
-			return &DAGNode{Kind: KindLeaf, Leaf: e, VarIdx: b.assignVarIdx(v.String())}
-		})
-
-	case *sym.Add:
-		left, right := b.build(v.Left), b.build(v.Right)
-		if left.key > right.key { // canonical order: (a+b) == (b+a)
-			left, right = right, left
-		}
-		key := dagKey("add", left.key, right.key)
-		return b.intern(key, func() *DAGNode {
-			return &DAGNode{Kind: KindAdd, Children: []*DAGNode{left, right}}
-		})
-
-	case *sym.Sub:
-		left, right := b.build(v.Left), b.build(v.Right)
-		key := dagKey("sub", left.key, right.key) // not commutative
-		return b.intern(key, func() *DAGNode {
-			return &DAGNode{Kind: KindSub, Children: []*DAGNode{left, right}}
-		})
-
-	case *sym.Mul:
-		left, right := b.build(v.Left), b.build(v.Right)
-		if left.key > right.key { // canonical order: (a*b) == (b*a)
-			left, right = right, left
-		}
-		key := dagKey("mul", left.key, right.key)
-		return b.intern(key, func() *DAGNode {
-			return &DAGNode{Kind: KindMul, Children: []*DAGNode{left, right}}
-		})
-
-	case *sym.Pow:
-		base := b.build(v.Base)
-		key := dagKey("pow", base.key, fmt.Sprintf("%d", v.Exp))
-		return b.intern(key, func() *DAGNode {
-			return &DAGNode{Kind: KindPow, Children: []*DAGNode{base}, Exp: v.Exp}
-		})
+func (b *dagBuilder) build(root sym.Expr) *DAGNode {
+	// Iterative post-order traversal to avoid stack overflow on deep expression trees
+	// (e.g. a sum of thousands of constraints folded left-associatively).
+	type frame struct {
+		expr      sym.Expr
+		processed bool // true = children already pushed; time to intern this node
 	}
-	panic(fmt.Sprintf("ExprToDAG: unknown Expr type %T", e))
+
+	result := make(map[sym.Expr]*DAGNode) // expr pointer → built DAGNode
+	stack := make([]frame, 0, 64)
+	stack = append(stack, frame{root, false})
+
+	for len(stack) > 0 {
+		f := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		e := f.expr
+
+		if _, done := result[e]; done {
+			continue // shared subtree already built
+		}
+
+		switch v := e.(type) {
+		case *sym.Leaf:
+			var prefix string
+			switch v.Type {
+			case sym.ShiftedColumn:
+				prefix = "shifted"
+			case sym.CommittedColumn:
+				prefix = "col"
+			case sym.Challenge:
+				prefix = "chal"
+			case sym.ComputableColumn:
+				prefix = "comp"
+			case sym.Const:
+				prefix = "const"
+			}
+			key := dagKey(prefix, v.String())
+			lv := v
+			result[e] = b.intern(key, func() *DAGNode {
+				return &DAGNode{Kind: KindLeaf, Leaf: lv, VarIdx: b.assignVarIdx(lv.String())}
+			})
+
+		case *sym.Add:
+			if !f.processed {
+				stack = append(stack, frame{e, true}, frame{v.Left, false}, frame{v.Right, false})
+			} else {
+				left, right := result[v.Left], result[v.Right]
+				lh, rh := fnvKeyUint(left.key), fnvKeyUint(right.key)
+				if lh > rh { // canonical order by content hash
+					left, right = right, left
+					lh, rh = rh, lh
+				}
+				key := dagKey("add", strconv.FormatUint(lh, 16), strconv.FormatUint(rh, 16))
+				l, r := left, right
+				result[e] = b.intern(key, func() *DAGNode {
+					return &DAGNode{Kind: KindAdd, Children: []*DAGNode{l, r}}
+				})
+			}
+
+		case *sym.Sub:
+			if !f.processed {
+				stack = append(stack, frame{e, true}, frame{v.Left, false}, frame{v.Right, false})
+			} else {
+				left, right := result[v.Left], result[v.Right]
+				key := dagKey("sub", fnvKey(left.key), fnvKey(right.key)) // Sub is not commutative; order is preserved
+				l, r := left, right
+				result[e] = b.intern(key, func() *DAGNode {
+					return &DAGNode{Kind: KindSub, Children: []*DAGNode{l, r}}
+				})
+			}
+
+		case *sym.Mul:
+			if !f.processed {
+				stack = append(stack, frame{e, true}, frame{v.Left, false}, frame{v.Right, false})
+			} else {
+				left, right := result[v.Left], result[v.Right]
+				lh, rh := fnvKeyUint(left.key), fnvKeyUint(right.key)
+				if lh > rh { // canonical order by content hash
+					left, right = right, left
+					lh, rh = rh, lh
+				}
+				key := dagKey("mul", strconv.FormatUint(lh, 16), strconv.FormatUint(rh, 16))
+				l, r := left, right
+				result[e] = b.intern(key, func() *DAGNode {
+					return &DAGNode{Kind: KindMul, Children: []*DAGNode{l, r}}
+				})
+			}
+
+		case *sym.Pow:
+			if !f.processed {
+				stack = append(stack, frame{e, true}, frame{v.Base, false})
+			} else {
+				base := result[v.Base]
+				key := dagKey("pow", fnvKey(base.key), strconv.Itoa(int(v.Exp)))
+				bs, exp := base, v.Exp
+				result[e] = b.intern(key, func() *DAGNode {
+					return &DAGNode{Kind: KindPow, Children: []*DAGNode{bs}, Exp: exp}
+				})
+			}
+
+		default:
+			panic(fmt.Sprintf("ExprToDAG: unknown Expr type %T", e))
+		}
+	}
+
+	return result[root]
 }
 
 // Key returns a unique ID characterising the node

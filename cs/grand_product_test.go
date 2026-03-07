@@ -1,6 +1,7 @@
 package cs
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/consensys/giop/pas/sym"
@@ -23,7 +24,8 @@ func TestGrandProductConstraint(t *testing.T) {
 	E1 := sym.NewCommittedColumn("P0").Sub(sym.NewChallenge("gamma"))
 	E2 := sym.NewCommittedColumn("P1").Sub(sym.NewChallenge("gamma"))
 
-	err := ComputeLagrangeColumn(trace, nil, nil, []string{GetLagrangeID(0, size)})
+	var mu sync.Mutex
+	err := ComputeLagrangeColumn(trace, nil, &mu, nil, []string{GetLagrangeID(0, size)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +34,7 @@ func TestGrandProductConstraint(t *testing.T) {
 	system := NewSystem(size)
 	EnforceGrandProductConstraint(&system, E1, E2, "R", size)
 	proof := NewProof(size)
-	ComputeGrandProduct(trace, &proof, []sym.Expr{E1, E2}, []string{"R"})
+	ComputeGrandProduct(trace, &proof, &mu, []sym.Expr{E1, E2}, []string{"R"})
 
 	// R[0] must equal 1
 	var one koalabear.Element

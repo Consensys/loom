@@ -3,6 +3,7 @@ package std
 import (
 	"fmt"
 
+	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -56,22 +57,22 @@ func InclusionCheckIOP(system *cs.System, S, T string) error {
 
 func inclusionCheckIOP(system *cs.System, S, T sym.Expr) error {
 
-	_M, err := RandomString(5)
+	_M, err := RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
 	M := fmt.Sprintf("Mult_%s", _M)
-	_grandSumS, err := RandomString(5)
+	_grandSumS, err := RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
 	grandSumS := fmt.Sprintf("GSum_S_%s", _grandSumS)
-	_grandSumT, err := RandomString(5)
+	_grandSumT, err := RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
 	grandSumT := fmt.Sprintf("GSum_T_%s", _grandSumT)
-	gamma, err := RandomString(5)
+	gamma, err := RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
@@ -156,7 +157,7 @@ func inclusionCheckIOP(system *cs.System, S, T sym.Expr) error {
 //	|----------------------------------–---------------------------------------------|
 func InclusionCheckMultiSetIOP(system *cs.System, S, T []string) error {
 
-	folding, err := RandomString(5)
+	folding, err := RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
