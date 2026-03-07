@@ -13,7 +13,8 @@ func TestGrandSumConstraint(t *testing.T) {
 
 	trace := BuildRandomTrace(t, size)
 	system := NewSystem(size)
-	EnforceGrandSumConstraint(&system, sym.NewCommittedColumn("M"), sym.NewCommittedColumn("E"), "GrandSum", size)
+	constraints := BuildGrandSumConstraints(sym.NewCommittedColumn("M"), sym.NewCommittedColumn("E"), "GrandSum", size)
+	system.RegisterConstraints(constraints)
 	proof := NewProof(size)
 	E := sym.NewCommittedColumn("E")
 	M := sym.NewCommittedColumn("M")

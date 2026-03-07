@@ -106,7 +106,8 @@ func reduceDegree(system *System, targetDegree int) {
 
 			// register the creation of an auxiliary column C := lowDegreeExpr(trace)
 			// The ID of C is lowDegreeExpr.String()
-			EnforceCorrectConstruction(system, lowDegreeExpr, lowDegreeExpr.String())
+			newConstraint := BuildCorrectConstructionConstraint(lowDegreeExpr, lowDegreeExpr.String())
+			system.RegisterConstraint(newConstraint)
 
 			// register the prover action of creating the column C := lowDegreeExpr(trace)
 			system.RegisterProverAction([]sym.Expr{lowDegreeExpr}, []string{lowDegreeExpr.String()}, ComputeColumn)

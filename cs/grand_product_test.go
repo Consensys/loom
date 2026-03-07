@@ -32,7 +32,8 @@ func TestGrandProductConstraint(t *testing.T) {
 
 	// add the constraint that the grand product is computed correctly to the system
 	system := NewSystem(size)
-	EnforceGrandProductConstraint(&system, E1, E2, "R", size)
+	GPConstraint := BuildGrandProductConstraint(E1, E2, "R", size)
+	system.RegisterConstraint(GPConstraint)
 	proof := NewProof(size)
 	ComputeGrandProduct(trace, &proof, &mu, []sym.Expr{E1, E2}, []string{"R"})
 

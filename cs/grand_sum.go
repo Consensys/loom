@@ -10,21 +10,24 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
-// EnforceGrandProductConstraint :
+// BuildGrandSumConstraints :
 // 1. (1-Lagrange_0) * ( (IDGrandSum - IDGrandSum(w^1 X))*E - M)=0 -> ensures that IDGrandSum[i] = IDGrandSum[i-1]+M[i]/E[i]
 // 2. Lagrange_0*( IDGrandSum*E-M)=0 -> ensures IDGrandSum[0] = M[0]/E[0]
-func EnforceGrandSumConstraint(system *System, M, E sym.Expr, grandSum string, N int) {
+func BuildGrandSumConstraints(M, E sym.Expr, grandSum string, N int) []Constraint {
 
 	// 1. (1-Lagrange_0) * ( (IDGrandSum - IDGrandSum(w^1 X))*E - M)=0
 	lagrange := sym.NewComputableColumn(GetLagrangeID(0, N))
 	p1 := sym.NewConst(koalabear.One()).Sub(lagrange)
 	diffGrandSum := sym.NewCommittedColumn(grandSum).Sub(sym.NewShiftedColumn(grandSum, -1))
 	p2 := diffGrandSum.Mul(E).Sub(M)
-	system.RegisterConstraint(p1.Mul(p2))
+	recurrenceRelation := p1.Mul(p2)
 
 	// 2. Lagrange_0*( IDGrandSum*E-M)=0
 	grandSumTimesE := sym.NewCommittedColumn(grandSum).Mul(E)
-	EnforceLocalConstraintAndRegisterLagrangeColumn(system, grandSumTimesE, M, 0)
+	localConstraint := BuildLocalConstraint(grandSumTimesE, M, 0, N)
+
+	return []Constraint{recurrenceRelation, localConstraint}
+	// EnforceLocalConstraintAndRegisterLagrangeColumn(system, grandSumTimesE, M, 0)
 }
 
 // ComputeGrandSum builds the "grand sum" polynomial between E0:=E[0] and E1:=E[1], that

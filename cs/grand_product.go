@@ -9,14 +9,14 @@ import (
 	"github.com/consensys/giop/trace"
 )
 
-// EnforceGrandProductConstraint IDGrandProductShifted*E2-IDGrandProduct*E1=0
-func EnforceGrandProductConstraint(system *System, E1, E2 sym.Expr, IDGrandProduct string, N int) {
+// BuildGrandProductConstraint IDGrandProductShifted*E2-IDGrandProduct*E1=0
+func BuildGrandProductConstraint(E1, E2 sym.Expr, IDGrandProduct string, N int) Constraint {
 
 	// build the symbolic expression of the constraint
 	A := sym.NewShiftedColumn(IDGrandProduct, 1).Mul(E2)
 	B := sym.NewCommittedColumn(IDGrandProduct).Mul(E1)
 	GPConstraint := A.Sub(B)
-	system.RegisterConstraint(GPConstraint)
+	return GPConstraint
 }
 
 // ComputeGrandProduct build the "grand product" polynomial between E0:=E[0] and E1:=E[1], that is it creates

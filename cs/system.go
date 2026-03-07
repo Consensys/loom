@@ -23,6 +23,16 @@ func NewSystem(N int) System {
 	}
 }
 
+// RegisterProverAction adds a prover action to the underlying System
+func (system *System) RegisterProverAction(inputs []sym.Expr, outputs []string, exec Action) {
+	pa := ProverAction{
+		Inputs:  inputs,
+		Outputs: outputs,
+		Exec:    exec,
+	}
+	system.ProverActions = append(system.ProverActions, pa)
+}
+
 // Constraints list of constraints, that the Columns in a trace must fulfil. The constraints
 // are algebraic expression, which evaluted on columns of a trace.Trace of size N mut vanish on X^N-1.
 type Constraints = []Constraint

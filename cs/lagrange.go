@@ -3,9 +3,11 @@ package cs
 import (
 	"fmt"
 	"math/big"
+	"sync"
 
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
@@ -18,8 +20,8 @@ const Lagrange = "LAGRANGE"
 
 // ComputableColumn special column that can be encoded with a formula F	, like Lagrange column.
 type ComputableColumn struct {
-	id  string                                             // ID of the computable column
-	F   func(koalabear.Element) koalabear.Element         // function F encoding the column (e.g. ω^i/N (z^N-1)/(1-ω^i) for Lagrange_i_N)
+	id  string                                    // ID of the computable column
+	F   func(koalabear.Element) koalabear.Element // function F encoding the column (e.g. ω^i/N (z^N-1)/(1-ω^i) for Lagrange_i_N)
 	Gen func() univariate.Polynomial              // generate the column -> it is the evaluation of F on the domain of size N
 }
 
@@ -83,16 +85,27 @@ func NewLagrangeColumn(id string) (ComputableColumn, error) {
 	return res, nil
 }
 
-// EnforceLocalConstraint registers the constraint lagrange_i * (E - M)
-// which ensures that E[i] = M[i]
-// Syntactic sugar merging the EnforceLocalConstraint and the prover action of registering the lagrange column
-func EnforceLocalConstraintAndRegisterLagrangeColumn(system *System, E, M sym.Expr, i int) {
+// ComputeLagrangeColumn prover action to build a computable column, that is a column encoded by a formula.
+// If it exists, we don't throw an error, as the column might be generated from different IOPs.
+func ComputeLagrangeColumn(trace trace.Trace, _ *Proof, mu *sync.Mutex, _ []sym.Expr, output []string) error {
+	id := output[0]
+	cc, err := GetComputationableColumn(output[0])
+	if err != nil {
+		return err
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if _, ok := trace[output[0]]; ok {
+		return nil
+	}
+	trace[id] = cc.Gen()
+	return nil
+}
 
-	// 1. register the symbolic constraint in the system
-	lagrangeID := GetLagrangeID(i, system.N)
-	GPIsOneAtFirstEntry := sym.NewComputableColumn(lagrangeID).Mul(E.Sub(M)) // Lagrange_i * (E - M)
-	system.RegisterConstraint(GPIsOneAtFirstEntry)
-
-	// 2. register the prover action: creation of the column i-th-Lagrange
-	system.RegisterithLagrangeColumn(i) // <- syntactic sugar to add a prover action for creating the i-th lagrange column
+// BuildLocalConstraint builds the constraints Lagrange_i(E-M) whose vanishing at X^n-1
+// is equivalent to E[i]=M[i]
+func BuildLocalConstraint(E, M sym.Expr, i int, N int) Constraint {
+	lagrangeID := GetLagrangeID(i, N)
+	localConstraint := sym.NewComputableColumn(lagrangeID).Mul(E.Sub(M))
+	return localConstraint
 }

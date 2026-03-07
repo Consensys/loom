@@ -22,13 +22,3 @@ func (proverAction ProverAction) Execute(trace trace.Trace, proof *Proof, mu *sy
 
 // List of functions needed for solving all the columns in FinalVanishingRelation
 type ProverActions = []ProverAction
-
-// RegisterProverAction adds a prover action to the underlying System
-func (system *System) RegisterProverAction(inputs []sym.Expr, outputs []string, exec Action) {
-	pa := ProverAction{
-		Inputs:  inputs,
-		Outputs: outputs,
-		Exec:    exec,
-	}
-	system.ProverActions = append(system.ProverActions, pa)
-}

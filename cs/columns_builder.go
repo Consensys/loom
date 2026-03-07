@@ -18,23 +18,6 @@ func GetComputationableColumn(id string) (ComputableColumn, error) {
 	return NewLagrangeColumn(id)
 }
 
-// ComputeLagrangeColumn prover action to build a computable column, that is a column encoded by a formula.
-// If it exists, we don't throw an error, as the column might be generated from different IOPs.
-func ComputeLagrangeColumn(trace trace.Trace, _ *Proof, mu *sync.Mutex, _ []sym.Expr, output []string) error {
-	id := output[0]
-	cc, err := GetComputationableColumn(output[0])
-	if err != nil {
-		return err
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if _, ok := trace[output[0]]; ok {
-		return nil
-	}
-	trace[id] = cc.Gen()
-	return nil
-}
-
 // ComputeColumn simplest prover action: build a new column whose name is output[0] and whose computation
 // requires executing E on trace
 // ComputeColumn computes a new polynomial Q (new column in the trace) such that ith that Q =E(IDs)
@@ -58,10 +41,10 @@ func ComputeColumn(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sym.Expr
 	return err
 }
 
-// EnforceCorrectConstruction adds a constraint idRes - E=0, to ensure that IdRes is correcly
+// BuildCorrectConstructionConstraint adds a constraint idRes - E=0, to ensure that IdRes is correcly
 // constructed with E
-func EnforceCorrectConstruction(system *System, E sym.Expr, IdRes string) {
+func BuildCorrectConstructionConstraint(E sym.Expr, IdRes string) Constraint {
 	res := sym.NewCommittedColumn(IdRes)
 	E = E.Sub(res)
-	system.RegisterConstraint(E)
+	return E
 }

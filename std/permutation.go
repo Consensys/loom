@@ -77,13 +77,18 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 []sym.Expr) error {
 	}
 
 	// 2. register the grand product constraint
-	cs.EnforceGrandProductConstraint(system, E1MinusGamma, E2MinusGamma, IDGrandProduct, system.N)
+	gpConstraint := cs.BuildGrandProductConstraint(E1MinusGamma, E2MinusGamma, IDGrandProduct, system.N)
+	system.RegisterConstraint(gpConstraint)
 
 	// 3. register the prover action for creating the grand product and grand product shifted
 	system.RegisterProverAction([]sym.Expr{E1MinusGamma, E2MinusGamma}, []string{IDGrandProduct}, cs.ComputeGrandProduct)
 
 	// 4. register the local constraint: GrandProduct[0] = 1
-	cs.EnforceLocalConstraintAndRegisterLagrangeColumn(system, sym.NewCommittedColumn(IDGrandProduct), sym.NewConst(koalabear.One()), 0)
+	boundaryConstraint := cs.BuildLocalConstraint(sym.NewCommittedColumn(IDGrandProduct), sym.NewConst(koalabear.One()), 0, system.N)
+	system.RegisterConstraint(boundaryConstraint)
+
+	// 5. register the creation of the lagrange column
+	system.RegisterithLagrangeColumn(0)
 
 	return nil
 }
