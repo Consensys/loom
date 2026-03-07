@@ -47,11 +47,13 @@ const (
 // so that the node is unique regardless of operand order in the source tree.
 type DAGNode struct {
 	Kind     NodeKind
-	Leaf     sym.Expr   // non-nil iff Kind == KindLeaf; holds the original leaf
+	Leaf     *sym.Leaf  // non-nil iff Kind == KindLeaf; stored as concrete type to avoid interface dispatch in hot eval path
 	Children []*DAGNode // len 2 for Add/Sub/Mul; len 1 for Pow; len 0 for Leaf
 	Exp      uint32     // exponent, only meaningful when Kind == KindPow
 	Index    int        // position in DAG.Nodes; used by EvalWithCache / EvalWithCacheVars
 	VarIdx   int        // for KindLeaf: index into vars slice for EvalWithCacheVars
+	IsConst  bool       // true iff Kind == KindLeaf and the leaf is a Const
+	ConstVal koalabear.Element // valid iff IsConst; avoids the l.Type==Const branch in the hot eval path
 
 	key string // canonical key used for deduplication (unexported)
 }
@@ -148,7 +150,12 @@ func (b *dagBuilder) build(root sym.Expr) *DAGNode {
 			key := dagKey(prefix, v.String())
 			lv := v
 			result[e] = b.intern(key, func() *DAGNode {
-				return &DAGNode{Kind: KindLeaf, Leaf: lv, VarIdx: b.assignVarIdx(lv.String())}
+				n := &DAGNode{Kind: KindLeaf, Leaf: lv, VarIdx: b.assignVarIdx(lv.String())}
+				if lv.Type == sym.Const {
+					n.IsConst = true
+					n.ConstVal = lv.Value
+				}
+				return n
 			})
 
 		case *sym.Add:
@@ -568,18 +575,17 @@ func dagRefCount(root *DAGNode) map[*DAGNode]int {
 func dagNodeLabel(n *DAGNode) string {
 	switch n.Kind {
 	case KindLeaf:
-		v := n.Leaf.(*sym.Leaf)
-		switch v.Type {
+		switch n.Leaf.Type {
 		case sym.CommittedColumn:
-			return "col:" + v.Name
+			return "col:" + n.Leaf.Name
 		case sym.ShiftedColumn:
-			return "shifted:" + v.String()
+			return "shifted:" + n.Leaf.String()
 		case sym.Challenge:
-			return "chal:" + v.Name
+			return "chal:" + n.Leaf.Name
 		case sym.ComputableColumn:
-			return "comp:" + v.Name
+			return "comp:" + n.Leaf.Name
 		case sym.Const:
-			return "const:" + v.Value.String()
+			return "const:" + n.Leaf.Value.String()
 		}
 		return n.Leaf.String()
 	case KindAdd:
@@ -759,7 +765,10 @@ func (d *DAG) EvalWithIdx(vals []koalabear.Element, cache []koalabear.Element) k
 func evalDAGNodeSliceIdx(n *DAGNode, cache []koalabear.Element, vals []koalabear.Element) koalabear.Element {
 	switch n.Kind {
 	case KindLeaf:
-		return n.Leaf.(*sym.Leaf).EvaluateWithIdx(vals)
+		if n.IsConst {
+			return n.ConstVal
+		}
+		return vals[n.Leaf.Idx]
 
 	case KindAdd:
 		var acc koalabear.Element

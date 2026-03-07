@@ -41,7 +41,7 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 		if n.Kind != dag.KindLeaf {
 			continue
 		}
-		l := n.Leaf.(*sym.Leaf)
+		l := n.Leaf
 		if l.Type == sym.Const {
 			continue // EvaluateWithIdx returns l.Value directly; no slot needed
 		}
@@ -69,11 +69,27 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 		}
 	}
 
-	// Pre-fill vals for size-1 polynomials (challenges); they never change across rows.
+	// Pre-classify slots once so the inner j-loop is branch-free.
+	// Const slots (len==1, i.e. challenges) are pre-filled into vals and excluded from both lists.
+	type shiftedSlot struct {
+		idx   int
+		poly  []koalabear.Element
+		shift int
+	}
+	type normalSlot struct {
+		idx  int
+		poly []koalabear.Element
+	}
+	var normalSlots []normalSlot
+	var shiftedSlots []shiftedSlot
 	vals := make([]koalabear.Element, len(slots))
 	for _, s := range slots {
 		if len(s.poly) == 1 {
-			vals[s.leaf.Idx] = s.poly[0]
+			vals[s.leaf.Idx] = s.poly[0] // challenge: constant, pre-filled once
+		} else if s.leaf.Type == sym.ShiftedColumn {
+			shiftedSlots = append(shiftedSlots, shiftedSlot{s.leaf.Idx, s.poly, s.leaf.Shift})
+		} else {
+			normalSlots = append(normalSlots, normalSlot{s.leaf.Idx, s.poly})
 		}
 	}
 
@@ -124,15 +140,11 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 		// at this stage, the polys are evaluated on bigDomain.FrMultiplicativeGen*<bigDomain.Generator^i>. We can compute the rho-ith
 		// component of the numerator
 		for j := 0; j < N; j++ {
-			for _, s := range slots {
-				if len(s.poly) == 1 {
-					continue // challenge: already set
-				}
-				if s.leaf.Type == sym.ShiftedColumn {
-					vals[s.leaf.Idx] = s.poly[((j+s.leaf.Shift)%N+N)%N]
-				} else {
-					vals[s.leaf.Idx] = s.poly[j]
-				}
+			for _, s := range normalSlots {
+				vals[s.idx] = s.poly[j]
+			}
+			for _, s := range shiftedSlots {
+				vals[s.idx] = s.poly[((j+s.shift)%N+N)%N]
 			}
 			numerator[rho*j+i] = vanishingRelation.EvalWithIdx(vals, evalCache)
 		}
