@@ -1,13 +1,10 @@
-package cs
+package proveractions
 
 import (
 	"fmt"
 	"math/big"
-	"sync"
 
-	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/pas/univariate"
-	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
@@ -83,29 +80,4 @@ func NewLagrangeColumn(id string) (ComputableColumn, error) {
 	}
 
 	return res, nil
-}
-
-// ComputeLagrangeColumn prover action to build a computable column, that is a column encoded by a formula.
-// If it exists, we don't throw an error, as the column might be generated from different IOPs.
-func ComputeLagrangeColumn(trace trace.Trace, _ *Proof, mu *sync.Mutex, _ []sym.Expr, output []string) error {
-	id := output[0]
-	cc, err := GetComputationableColumn(output[0])
-	if err != nil {
-		return err
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if _, ok := trace[output[0]]; ok {
-		return nil
-	}
-	trace[id] = cc.Gen()
-	return nil
-}
-
-// BuildLocalConstraint builds the constraints Lagrange_i(E-M) whose vanishing at X^n-1
-// is equivalent to E[i]=M[i]
-func BuildLocalConstraint(E, M sym.Expr, i int, N int) Constraint {
-	lagrangeID := GetLagrangeID(i, N)
-	localConstraint := sym.NewComputableColumn(lagrangeID).Mul(E.Sub(M))
-	return localConstraint
 }

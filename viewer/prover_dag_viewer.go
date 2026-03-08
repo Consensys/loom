@@ -9,10 +9,11 @@ import (
 	"text/template"
 
 	"github.com/consensys/giop/cs"
+	proveractions "github.com/consensys/giop/prover_actions"
 )
 
 // actionLabel returns a short display label for a ProverAction from its output column names.
-func actionLabel(pa cs.ProverAction) string {
+func actionLabel(pa proveractions.ProverAction) string {
 	if len(pa.Outputs) == 0 {
 		return "action"
 	}
@@ -60,7 +61,7 @@ func WriteProverActionsDagToHTML(cciop cs.CompiledIOP, filename string) error {
 		labelOf[id] = actionLabel(pa)
 
 		// edges from input columns → this action
-		for _, col := range cs.GetColumnsId(pa.Inputs) {
+		for _, col := range proveractions.GetColumnsId(pa.Inputs) {
 			if _, seen := kindOf[col]; !seen {
 				if producedBy[col] {
 					kindOf[col] = "computed"
@@ -93,7 +94,7 @@ func WriteProverActionsDagToHTML(cciop cs.CompiledIOP, filename string) error {
 	for i, pa := range actions {
 		id := aID(i)
 		layer := 1
-		for _, col := range cs.GetColumnsId(pa.Inputs) {
+		for _, col := range proveractions.GetColumnsId(pa.Inputs) {
 			if l := layerOf[col] + 1; l > layer {
 				layer = l
 			}

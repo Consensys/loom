@@ -1,4 +1,4 @@
-package cs
+package proveractions
 
 import (
 	"crypto/sha256"

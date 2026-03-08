@@ -2,6 +2,7 @@ package cs
 
 import (
 	"github.com/consensys/giop/pas/sym"
+	proveractions "github.com/consensys/giop/prover_actions"
 )
 
 type Constraint = sym.Expr
@@ -10,7 +11,7 @@ type Constraint = sym.Expr
 // different constraints (for instance a solver might tell how to compute a grand product column, grand sum column, etc).
 type System struct {
 	Constraints   Constraints
-	ProverActions ProverActions
+	ProverActions []proveractions.ProverAction
 	N             int
 }
 
@@ -18,14 +19,14 @@ type System struct {
 func NewSystem(N int) System {
 	return System{
 		Constraints:   make(Constraints, 0),
-		ProverActions: make(ProverActions, 0),
+		ProverActions: make(proveractions.ProverActions, 0),
 		N:             N,
 	}
 }
 
 // RegisterProverAction adds a prover action to the underlying System
-func (system *System) RegisterProverAction(inputs []sym.Expr, outputs []string, exec Action) {
-	pa := ProverAction{
+func (system *System) RegisterProverAction(inputs []sym.Expr, outputs []string, exec proveractions.Action) {
+	pa := proveractions.ProverAction{
 		Inputs:  inputs,
 		Outputs: outputs,
 		Exec:    exec,
@@ -47,5 +48,5 @@ func (system *System) RegisterConstraints(C []Constraint) {
 
 // RegisterithLagrangeColumn syntactic sugar to add a prover action for creating the i-th lagrange column
 func (system *System) RegisterithLagrangeColumn(i int) {
-	system.RegisterProverAction(nil, []string{GetLagrangeID(i, system.N)}, ComputeLagrangeColumn)
+	system.RegisterProverAction(nil, []string{proveractions.GetLagrangeID(i, system.N)}, proveractions.ComputeLagrangeColumn)
 }

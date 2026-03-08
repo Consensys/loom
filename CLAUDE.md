@@ -33,10 +33,12 @@ go vet ./...
 | Package | Role |
 |---|---|
 | `pas/sym/` | Symbolic AST for multivariate polynomial expressions |
-| `pas/univariate/` | Univariate polynomial arithmetic, FFT, basis conversion |
-| `trace/` | `Trace = map[string]*univariate.Polynomial` |
-| `cs/` | Constraint system: types, Fiat-Shamir, grand product, Lagrange |
-| `std/` | Standard IOP gadgets (permutation, multiset equality) |
+| `pas/dag/` | DAG representation of `sym.Expr` with shared sub-expression nodes |
+| `pas/univariate/` | Univariate polynomial arithmetic, FFT, pointwise evaluation |
+| `trace/` | `Trace = map[string]univariate.Polynomial` |
+| `prover_actions.go/` | `ProverAction`, `Proof`, `Round`, and all built-in action functions |
+| `cs/` | Constraint system: types, constraint builders, compilation |
+| `std/` | Standard IOP gadgets (permutation, inclusion, multiset equality) |
 | `prover/` | Prover pipeline: solve → fold → quotient → open |
 | `verifier/` | Verifier pipeline: replay FS → check algebraic relation |
 | `crypto/dummycommitment/` | Toy commitment (digest = first coefficient) |
@@ -45,46 +47,54 @@ go vet ./...
 
 ### `pas/sym` — symbolic expressions
 
-`Expr` is an AST interface supporting `Add/Sub/Mul/Pow`. Three leaf types encode column status:
+`Expr` is an AST interface supporting `Add/Sub/Mul/Pow`. Leaf types:
 - `CommittedColumn` — a trace column the prover commits to
-- `Challenge` — a Fiat-Shamir challenge (degree 0, treated as a constant during evaluation)
-- `ComputableColumn` — recomputable by the verifier (e.g., Lagrange basis columns)
+- `Challenge` — a Fiat-Shamir challenge (treated as a constant during evaluation)
+- `ComputableColumn` — recomputable by the verifier (e.g. Lagrange columns)
+- `ShiftedColumn` — a committed column evaluated at `ω^shift · X`
 
-`Leaves(config)` traverses the AST and returns column IDs, filtered by `WithoutCommittedColumns()` / `WithoutChallenges()` / `WithoutComputableColumns()`.
+`Leaves(config)` filters by `WithoutCommittedColumns()` / `WithoutChallenges()` / `WithoutComputableColumns()` / `WithoutShiftedColumns()`. Shorthand filter slices: `sym.OnlyCommittedColumns`, `sym.OnlyChallenges`.
 
-`Convert(expr, varindex, nvars)` → dense multivariate `Polynomial`; `ToHorner(p)` → efficient `*Horner` for evaluation via `h.Eval([]Element)`.
+`NewShiftedColumn(id, shift)` creates `P(ω^shift · X)`.
+
+### `pas/dag` — expression DAG
+
+`DAG` is the shared-subexpression form of an `Expr`. Structurally identical sub-trees (including commutativity for Add/Mul) share a single `*DAGNode`.
+
+- `ExprToDAG(e sym.Expr) *DAG` — converts a tree to a DAG
+- `dag.Flatten()` — returns a flattened/optimised DAG
+- `dag.Eval(vars map[string]koalabear.Element)` — evaluates the DAG at scalar assignments
+- `dag.Leaves(config)` — enumerates leaf names (same options as `sym.Leaves`)
+
+`VanishingRelation` in `CompiledIOP` and `verifier.Runtime` is a `dag.DAG`, not a `sym.Expr`.
 
 ### `pas/univariate` — univariate polynomials
 
-`Polynomial` wraps `*EPolynomial` (coefficients + basis + layout + degree) with an integer `Shift` for `P(ω^shift · X)`.
+`Polynomial = []koalabear.Element`. All polynomials are in **Lagrange Normal** form (evaluation at `ω^0, ω^1, …`). No basis/layout metadata.
 
-Three bases: `Canonical`, `Lagrange`, `LagrangeShifted`. Two layouts: `Normal`, `BitReversed`.
+- `len(p) == 1` signals a constant polynomial.
+- `ComputeQuotient` returns **coset-Lagrange** form — call `CosetLagrangeToLagrangeNormal(H)` before storing in the trace or committing.
+- `dummycommitment.Open` does IFFT + BitReverse + Horner to evaluate a Lagrange Normal polynomial.
 
-Critical operations:
-- `GetCoefficient(i)` — works in Lagrange/LagrangeShifted and for constant polynomials; **panics** in Canonical (non-constant)
-- `Evaluate(x)` — Horner evaluation; **requires Canonical basis**
-- `ToBasis(domain, targetBasis)` — in-place basis conversion via FFT
-- `EvalPointWise(trace, E, N)` — computes `E(trace)` row-by-row in Lagrange basis
-- `ComputeQuotient(trace, E, N)` — computes `E(trace) / (X^N - 1)`; returns **LagrangeShifted** by default — call `ToBasis(domain, Canonical)` before `Evaluate`
-- `BuildGrandProduct(trace, E1, E2, N)` — constructs `R` with `R[0]=1, R[i+1]=R[i]·E1[i]/E2[i]`
+Key functions in `iop_utils.go`:
+- `BuildPointwiseEvaluation(trace, E, N, mu)` — computes `E(trace)` row-by-row
+- `BuildGrandProduct(trace, E1, E2, N, mu)` — `R[0]=1, R[i+1]=R[i]·E1[i]/E2[i]`
+- `BuildGrandSum(trace, E, M, N, mu)` — `R[i] = Σ_{j≤i} M[j]/E[j]`
+- `BuildMultiplicityPolynomial(trace, S, T, N, mu)` — `M[i] = #{j | S[j]=T[i]}`
+- `BuildFilteredAccPolynomial(trace, E, F, alpha, N, mu)` — accumulator filtered by binary column `F`
 
-### `cs` — constraint system
+### `prover_actions.go/` — prover actions and proof types
 
-**Core types** (`cs.go`, `compile.go`):
+**Note**: the package is in a directory named `prover_actions.go` (with `.go` suffix) and imported as `proveractions "github.com/consensys/giop/prover_actions.go"`.
+
+**Core types**:
 ```go
-type Trace = map[string]*univariate.Polynomial  // trace/trace.go
-type Constraint = sym.Expr
+type Action = func(trace.Trace, *Proof, *sync.Mutex, []sym.Expr, []string) error
 
 type ProverAction struct {
-    Inputs  []sym.Expr  // symbolic inputs; leaves give the required column IDs
-    Outputs []string    // column IDs produced
-    Exec    Action      // func(Trace, *Proof, []sym.Expr, []string) error
-}
-
-type System struct {
-    Constraints   []Constraint
-    ProverActions []ProverAction
-    N             int
+    Inputs  []sym.Expr
+    Outputs []string
+    Exec    Action
 }
 
 type Round struct {
@@ -94,72 +104,110 @@ type Round struct {
 }
 
 type Proof struct {
-    OpeningProofs     map[string]dummycommitment.PackedProof
-    VanishingRelation Constraint
-    Rounds            []Round
-    N                 int
+    OpeningProofs map[string]dummycommitment.PackedProof
+    Rounds        []Round
+    N             int
+    // unexported: cacheChallengeDependencies map[string][]string
+}
+```
+
+**Built-in action functions** (pass directly as `ProverAction.Exec`):
+- `ComputeChallenge` — commits to columns in `E`, derives FS challenge, appends a `Round` to `proof.Rounds`, stores the challenge as a constant column in the trace
+- `ComputeGrandProduct` — builds grand product column `R` from `E[0]/E[1]`
+- `ComputeGrandSum` — builds grand sum column from `E[0]/E[1]`
+- `ComputeColumn` — evaluates `E[0]` pointwise, stores result
+- `ComputeMultiplicity` — computes multiplicity of `E[0]` in `E[1]`
+- `ComputeLagrangeColumn` — generates the i-th Lagrange column (idempotent if already present)
+
+**Utilities**:
+- `GetColumnsId(E, opts...)` — extracts leaf column IDs from `[]sym.Expr`
+- `GetLagrangeID(i, N)` — canonical ID `LAGRANGE_i_N` for the i-th Lagrange column
+- `GetComputationableColumn(id)` — returns a `ComputableColumn` with `.F` (evaluator at a point) and `.Gen()` (generates the full column)
+- `RegisterColumn(trace, id, poly, mu)` — thread-safe column registration; errors if already present
+
+### `cs` — constraint system
+
+**Core types** (`system.go`, `compile.go`):
+```go
+type Constraint = sym.Expr
+
+type System struct {
+    Constraints   []Constraint
+    ProverActions []proveractions.ProverAction
+    N             int
 }
 
 type CompiledIOP struct {
-    ProverActions     []ProverAction
-    VanishingRelation Constraint  // Fold(system.Constraints, alpha)
+    ProverActions     []proveractions.ProverAction
+    VanishingRelation dag.DAG   // Fold(system.Constraints, alpha) as a DAG
     N                 int
 }
 ```
 
-`cs.Compile(&system)` folds all constraints symbolically with `constants.FINAL_FOLDING_CHALLENGE` (the actual challenge value is derived at prove-time).
+`cs.Compile(&system, opts...)` folds all constraints with `constants.FINAL_FOLDING_CHALLENGE`, converts to a `dag.DAG`, and flattens it. Option: `WithTargetDegree(d)` triggers degree reduction before folding.
 
-**Key functions** in `cs/`:
-- `SendMeAChallenge(trace, proof, E, outputs)` — commits to columns in `E`, derives FS challenge, appends a `Round` to `proof.Rounds`, stores challenge as constant column in trace
-- `GrandProduct(trace, proof, E, outputs)` — builds grand product column `R` and shifted version `R(w^1X)`, registers both in trace
-- `GetColumnsId(E, opts...)` — extracts leaf column IDs from `[]sym.Expr`, with optional filtering
-- `GetLagrangeID(i, N)` — canonical ID for the i-th Lagrange basis column
+**Constraint builders** (`common_constraints.go`):
+- `BuildGrandProductConstraint(E1, E2, IDGrandProduct, N)` — `R(ωX)·E2 - R·E1 = 0`
+- `BuildGrandSumConstraints(M, E, grandSum, N)` — two constraints encoding the recurrence relation
+- `BuildLocalConstraint(E, M, i, N)` — `L_i·(E - M) = 0`
+- `BuildCorrectConstructionConstraint(E, IdRes)` — `IdRes - E = 0`
 
-**Constants** (`constants/const.go`): `FINAL_FOLDING_CHALLENGE`, `FINAL_EVALUATION_POINT`, `FINAL_QUOTIENT` — prefixed with `github.com/consensys/giop@` to avoid namespace collisions.
+**System methods**:
+- `system.RegisterProverAction(inputs, outputs, exec)`
+- `system.RegisterConstraint(C)` / `system.RegisterConstraints([]C)`
+- `system.RegisterithLagrangeColumn(i)` — registers the Lagrange column prover action
+
+**Constants** (`constants/const.go`): `FINAL_FOLDING_CHALLENGE`, `FINAL_EVALUATION_POINT`, `FINAL_QUOTIENT` — prefixed with `github.com/consensys/giop@`. Also `GetShiftedName(id, shift)` / `SplitShiftedName(id)` for shifted column naming.
 
 ### `std` — standard gadgets
 
-- `EqualityUpToPermutationIOP(system, ID1, ID2, IDGrandProduct, gamma)` — proves `{ID1[i]}` = `{ID2[i]}` as multisets via a grand product argument
-- `MultiSetEqualityUpToPermutationIOP(system, ID1, ID2, IDGrandProduct, alpha, gamma)` — same for tuples; uses `alpha` to compress tuples into scalars first, then `gamma` for the grand product
-- `LocalConstraint(system, ID, i, value)` — constrains `Trace[ID][i] == value` using the Lagrange basis column `L_i`
+- `EqualityUpToPermutationIOP(system, ID1, ID2 []string)` — proves `{ID1[i]}` = `{ID2[i]}` as multisets; gamma and grand product ID are generated internally
+- `MultiSetEqualityUpToPermutationIOP(system, ID1, ID2 [][]string)` — same for tuples; alpha and gamma generated internally
+- `InclusionCheckIOP(system, S, T string)` — proves every value in `S` appears in `T` (lookup argument using grand sums + multiplicity)
+- `InclusionCheckMultiSetIOP(system, S, T []string)` — same for row-tuples; folds with a FS challenge before scalar inclusion check
+
+All gadgets allocate fresh random IDs for intermediate columns/challenges via `RandomString`.
 
 ### Prover pipeline (`prover/prove.go`)
 
 `Runtime.Prove(knownColumns, nbWorkers)` runs:
-1. **`Solve`** — Kahn's scheduler executes `ProverActions` in topological order; `knownColumns` seeds the initial ready set
-2. **`DeriveFinalFoldingChallenge`** — commits all not-yet-committed trace columns, binds them to FS, derives `alpha`, registers it in trace and proof
-3. **`ComputeQuotient`** — computes `H = VanishingRelation(trace) / (X^N - 1)`, commits to `H`, stores in trace
-4. **`DeriveOpeningChallenge`** — derives `zeta` from commitment to `H`, registers in trace
-5. **`OpenCommitments`** — evaluates all entries in `proof.OpeningProofs` at `zeta`
+1. **`Solve`** — Kahn's scheduler executes `ProverActions` in topological order (parallel with `nbWorkers` goroutines); `knownColumns` seeds the initial ready set
+2. **`DeriveFinalFoldingChallenge`** — commits all not-yet-committed trace columns, binds them and all final challenges to FS, derives `alpha`, registers in trace and proof
+3. **`ComputeQuotient`** — computes `H = VanishingRelation(trace) / (X^N - 1)`, calls `CosetLagrangeToLagrangeNormal(H)`, commits to `H`
+4. **`DeriveOpeningChallenge`** — derives `zeta` from quotient commitment + folding challenge, registers in trace; returns `zeta`
+5. **`OpenCommitments`** — `OpenNonShiftedCommitments` (all at `zeta`) + `OpenShiftedCommitments` (at `ω^shift · zeta` for each shifted leaf)
 
 ### Verifier pipeline (`verifier/verify.go`)
 
-`NewRunTime(cciop)` builds a `Runtime` with `Varindex` populated from `cciop.VanishingRelation.Leaves()`.
+`NewRunTime(cciop)` builds a `Runtime` with `VanishingRelation` = `cciop.VanishingRelation`.
 
-`Runtime.Verify(&proof)` runs:
-1. **`ComputeChallenges`** — Kahn's scheduler replays FS rounds to re-derive all challenges into `runtime.Vars`
-2. **`ComputeOpeningPoint`** — re-derives `zeta` from commitment to quotient
-3. **`EvaluateComputableColumns`** — evaluates Lagrange-type columns at `zeta`
-4. **`FillClaimedValues`** — copies prover-claimed opening values into `runtime.Vars`
-5. **`CheckRelation`** — verifies `VanishingRelation(openings) = H(zeta) · (zeta^N - 1)` using `sym.ToHorner` + `Eval`
-6. **`VerifyOpeningProofs`** — calls `dummycommitment.Verify` for each opening (currently a no-op)
+`Runtime.Verify(&proof, nbWorkers)` runs:
+1. **`ComputeChallenges`** — Kahn's scheduler replays FS rounds into `runtime.Vars`
+2. **`EvaluateComputableColumns`** — evaluates Lagrange columns at `zeta` via `ComputableColumn.F`
+3. **`FillClaimedValues`** — copies prover-claimed opening values into `runtime.Vars` (non-shifted and shifted)
+4. **`CheckRelation`** — verifies `VanishingRelation.Eval(vars) = H(zeta) · (zeta^N - 1)`
+5. **`VerifyOpeningProofs`** — calls `dummycommitment.Verify` for each opening
 
 ### `viewer` — HTML visualisers
 
-- `WriteProofRoundsDagToHTML(rounds []cs.Round, filename)` — DAG of verifier FS rounds: committed-column leaf nodes → challenge nodes
-- `WriteProverActionsDagToHTML(cciop cs.CompiledIOP, filename)` — bipartite DAG: known columns → action nodes → computed columns
-- `WriteTraceToCSV(filename, trace, N)` — dumps all trace columns as CSV
+- `WriteProofRoundsDagToHTML(rounds []proveractions.Round, filename)`
+- `WriteProverActionsDagToHTML(cciop cs.CompiledIOP, filename)`
+- `WriteTraceToCSV(filename, trace, N)`
 
 ## Key gotchas
 
-**Polynomial basis discipline**: `Evaluate(x)` requires `Canonical` basis. `GetCoefficient(i)` requires `Lagrange`/`LagrangeShifted` or a constant polynomial. `dummycommitment.Open` converts to Canonical automatically. `ComputeQuotient` returns `LagrangeShifted` — call `ToBasis(domain, Canonical)` before evaluating at a point.
+**Polynomial representation**: `Polynomial = []koalabear.Element`, always in Lagrange Normal form. `len(p) == 1` means constant. `ComputeQuotient` is the only function that returns coset-Lagrange — always call `CosetLagrangeToLagrangeNormal` on its result.
 
-**`squareAndMultiply` builds trees, not DAGs**: `Expr.Pow(n)` uses binary exponentiation with `Clone` on every step to ensure no shared nodes. Shared nodes break `Prune` (which rewrites in-place).
+**`prover_actions.go/` package name**: the directory is literally named `prover_actions.go`; import with the alias `proveractions "github.com/consensys/giop/prover_actions.go"`.
 
-**Fiat-Shamir transcript**: challenges must be derived in the exact order they were registered. A failed `SendMeAChallenge` mid-loop leaves the transcript in a broken state.
+**Action mutex**: `Action` signature includes `*sync.Mutex`. Actions that write to the trace must use `RegisterColumn` (which locks internally). Actions that read from the trace or the proof must lock manually.
 
-**`ProverActions` are in topological order**: `Solve` relies on this. The Kahn scheduler merely parallelises execution; the ordering must be correct at registration time.
+**Shifted columns**: use `sym.NewShiftedColumn(id, shift)` for `P(ω^shift · X)`. Shifted openings are handled by `OpenShiftedCommitments` / `VerifyOpeningProofs`. Filter with `sym.WithoutShiftedColumns()` or `sym.WithoutCommittedColumns()` as needed.
 
-**Lagrange column IDs**: `GetLagrangeID(i, N)` generates a canonical ID. The same Lagrange column registered from different gadgets is idempotent (`AddComputableColumn` is a no-op if the column already exists).
+**Fiat-Shamir transcript**: challenges must be derived in the exact order they were registered. `ComputeChallenge` uses `cacheChallengeDependencies` to avoid double-counting committed columns that are already covered by a prior challenge.
 
-**`VarIndex` scope**: `verifier.Runtime.Varindex` is built from `cciop.VanishingRelation.Leaves()`. `FINAL_EVALUATION_POINT` (zeta) is stored in `runtime.Zeta` and is NOT in `Varindex`.
+**`ProverActions` registration order matters**: `Solve` is a Kahn scheduler — it only parallelises actions whose dependencies are satisfied. The ordering must reflect the data-flow DAG at registration time.
+
+**`VanishingRelation` is a `dag.DAG`**: not a `sym.Expr`. Use `.Eval(vars)` for evaluation and `.Leaves(config)` for leaf enumeration.
+
+**Lagrange column IDs**: `GetLagrangeID(i, N)` → `LAGRANGE_i_N`. `ComputeLagrangeColumn` is idempotent: if the column is already in the trace it returns `nil` without error.

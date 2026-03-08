@@ -4,6 +4,7 @@ import (
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/pas/dag"
 	"github.com/consensys/giop/pas/sym"
+	proveractions "github.com/consensys/giop/prover_actions"
 )
 
 // Fold returns Σ_i αⁱE[i]
@@ -19,7 +20,7 @@ func Fold(E []sym.Expr, alpha sym.Expr) sym.Expr {
 // CompiledIOP DAG containing all tha proverActions, and the final constraint that must vanish
 // on X^N-1
 type CompiledIOP struct {
-	ProverActions     []ProverAction
+	ProverActions     []proveractions.ProverAction
 	VanishingRelation dag.DAG
 	N                 int
 }

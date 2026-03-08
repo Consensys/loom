@@ -6,6 +6,7 @@ import (
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/pas/sym"
+	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
@@ -79,33 +80,33 @@ func inclusionCheckIOP(system *cs.System, S, T sym.Expr) error {
 
 	// 1. create the multiplicity polynomial
 	Mexpr := sym.NewCommittedColumn(M)
-	system.RegisterProverAction([]sym.Expr{S, T}, []string{M}, cs.ComputeMultiplicity)
+	system.RegisterProverAction([]sym.Expr{S, T}, []string{M}, proveractions.ComputeMultiplicity)
 
 	// 2. sample a challenge gamma, depending on M, S, and T
 	gammaDeps := []sym.Expr{S, T, Mexpr}
-	system.RegisterProverAction(gammaDeps, []string{gamma}, cs.ComputeChallenge)
+	system.RegisterProverAction(gammaDeps, []string{gamma}, proveractions.ComputeChallenge)
 
-	// 4. compute the grand sums grandSum1:=Σ_i M[i]/(T[i]-γ), grandSum2:=Σ_i 1/(S[i]-γ)
+	// 3. compute the grand sums grandSum1:=Σ_i M[i]/(T[i]-γ), grandSum2:=Σ_i 1/(S[i]-γ)
 	oneExpr := sym.NewConst(koalabear.One())
 	SminusGamma := S.Sub(sym.NewChallenge(gamma))
-	system.RegisterProverAction([]sym.Expr{oneExpr, SminusGamma}, []string{grandSumS}, cs.ComputeGrandSum)
+	system.RegisterProverAction([]sym.Expr{oneExpr, SminusGamma}, []string{grandSumS}, proveractions.ComputeGrandSum)
 
 	TminusGamma := T.Sub(sym.NewChallenge(gamma))
-	system.RegisterProverAction([]sym.Expr{Mexpr, TminusGamma}, []string{grandSumT}, cs.ComputeGrandSum)
+	system.RegisterProverAction([]sym.Expr{Mexpr, TminusGamma}, []string{grandSumT}, proveractions.ComputeGrandSum)
 
-	// 5. register the constraints ensuring the grand sums are correctly constructed
+	// 4. register the constraints ensuring the grand sums are correctly constructed
 	grandSumConstraintsT := cs.BuildGrandSumConstraints(Mexpr, TminusGamma, grandSumT, system.N)
 	grandSumConstraintsS := cs.BuildGrandSumConstraints(oneExpr, SminusGamma, grandSumS, system.N)
 	system.RegisterConstraints(grandSumConstraintsT)
 	system.RegisterConstraints(grandSumConstraintsS)
 
-	// 6. ensure that grandSumT[N-1] = grandSumS[N-1]
+	// 5. ensure that grandSumT[N-1] = grandSumS[N-1]
 	grandSumSExpr := sym.NewCommittedColumn(grandSumS)
 	grandSumTExpr := sym.NewCommittedColumn(grandSumT)
 	boundaryEquality := cs.BuildLocalConstraint(grandSumSExpr, grandSumTExpr, system.N-1, system.N)
 	system.RegisterConstraint(boundaryEquality)
 
-	// 7. register the creation of the 2 lagrange columns 0 and N-1
+	// 6. register the creation of the 2 lagrange columns 0 and N-1
 	system.RegisterithLagrangeColumn(0)
 	system.RegisterithLagrangeColumn(system.N - 1)
 
@@ -177,7 +178,7 @@ func InclusionCheckMultiSetIOP(system *cs.System, S, T []string) error {
 	for i := 0; i < len(T); i++ {
 		foldingDeps[i+len(S)] = sym.NewCommittedColumn(T[i])
 	}
-	system.RegisterProverAction(foldingDeps, []string{folding}, cs.ComputeChallenge)
+	system.RegisterProverAction(foldingDeps, []string{folding}, proveractions.ComputeChallenge)
 
 	// 2. fold S and T
 	gammaExpr := sym.NewChallenge(folding)

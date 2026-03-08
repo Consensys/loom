@@ -6,7 +6,7 @@ import (
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/pas/sym"
-	"github.com/consensys/gnark-crypto/field/koalabear"
+	proveractions "github.com/consensys/giop/prover_actions"
 )
 
 // EqualityUpToPermutation proves that the multiset { ID1[j][i] } equals { ID2[j][i] }, up to permutation.
@@ -64,7 +64,7 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 []sym.Expr) error {
 		return err
 	}
 
-	system.RegisterProverAction(append(E1, E2...), []string{gamma}, cs.ComputeChallenge)
+	system.RegisterProverAction(append(E1, E2...), []string{gamma}, proveractions.ComputeChallenge)
 
 	// 1. sample gamma
 	E1MinusGamma := E1[0].Sub(sym.NewChallenge(gamma))
@@ -76,18 +76,14 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 []sym.Expr) error {
 		E2MinusGamma = E2MinusGamma.Mul(E2[i].Sub(sym.NewChallenge(gamma)))
 	}
 
-	// 2. register the grand product constraint
+	// 2. register the grand product constraint (including the boundary constraint)
 	gpConstraint := cs.BuildGrandProductConstraint(E1MinusGamma, E2MinusGamma, IDGrandProduct, system.N)
-	system.RegisterConstraint(gpConstraint)
+	system.RegisterConstraints(gpConstraint)
 
 	// 3. register the prover action for creating the grand product and grand product shifted
-	system.RegisterProverAction([]sym.Expr{E1MinusGamma, E2MinusGamma}, []string{IDGrandProduct}, cs.ComputeGrandProduct)
+	system.RegisterProverAction([]sym.Expr{E1MinusGamma, E2MinusGamma}, []string{IDGrandProduct}, proveractions.ComputeGrandProduct)
 
-	// 4. register the local constraint: GrandProduct[0] = 1
-	boundaryConstraint := cs.BuildLocalConstraint(sym.NewCommittedColumn(IDGrandProduct), sym.NewConst(koalabear.One()), 0, system.N)
-	system.RegisterConstraint(boundaryConstraint)
-
-	// 5. register the creation of the lagrange column
+	// 4. register the creation of the lagrange column
 	system.RegisterithLagrangeColumn(0)
 
 	return nil
@@ -159,7 +155,7 @@ func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string) 
 		}
 		deps = append(deps, E2[i]...)
 	}
-	system.RegisterProverAction(deps, []string{alpha}, cs.ComputeChallenge)
+	system.RegisterProverAction(deps, []string{alpha}, proveractions.ComputeChallenge)
 
 	// 2. fold ID1[i], ID2[i] for all i with alpha
 	alphaExpr := sym.NewChallenge(alpha)

@@ -9,6 +9,7 @@ import (
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/pas/univariate"
 	"github.com/consensys/giop/prover"
+	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/giop/verifier"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -29,7 +30,7 @@ func TestPermutation(t *testing.T) {
 
 	// begin proving
 	knowncolumns := map[string]bool{"P0": true, "P1": true}
-	proof := cs.NewProof(system.N)
+	proof := proveractions.NewProof(system.N)
 
 	// 1. Solve + sanity checks
 	err := proverRunTime.Solve(knowncolumns, &proof, 1)
@@ -99,7 +100,7 @@ func TestPermutationMultiSet(t *testing.T) {
 
 	proverRunTime := prover.NewRuntime(cciop, trace)
 
-	proof := cs.NewProof(system.N)
+	proof := proveractions.NewProof(system.N)
 
 	// 1. Solve + sanity checks
 	err = proverRunTime.Solve(knowncolumns, &proof, 1)

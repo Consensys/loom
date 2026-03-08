@@ -519,6 +519,47 @@ func verifyQuotientIdentity(t *testing.T, Pi map[string]Polynomial, E sym.Expr, 
 	}
 }
 
+func TestBuildFilteredAccPolynomial(t *testing.T) {
+
+	t.Run("AllOnesFilter_LastEntryIsHornerEval", func(t *testing.T) {
+		// When F = [1, 1, ..., 1], the recurrence simplifies to
+		//   R[0]   = E[0]
+		//   R[i]   = alpha * R[i-1] + E[i]
+		// so R[N-1] = E[0]*alpha^{N-1} + E[1]*alpha^{N-2} + ... + E[N-1],
+		// i.e. the evaluation of E interpreted as a canonical polynomial
+		// (E[0] = leading coefficient) at alpha.
+		N := 8
+		E := makeLagrangePoly(3, 7, 2, 11, 5, 9, 1, 4)
+		F := makeLagrangePoly(1, 1, 1, 1, 1, 1, 1, 1)
+		var alphaVal koalabear.Element
+		alphaVal.SetUint64(5)
+
+		Pi := map[string]Polynomial{
+			"e":     E,
+			"f":     F,
+			"alpha": {alphaVal},
+		}
+		Eexpr := sym.NewCommittedColumn("e")
+		Fexpr := sym.NewCommittedColumn("f")
+
+		R, err := BuildFilteredAccPolynomial(Pi, Eexpr, Fexpr, sym.NewChallenge("alpha"), N, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Compute expected = E[0]*alpha^{N-1} + ... + E[N-1] via forward Horner.
+		expected := E[0]
+		for i := 1; i < N; i++ {
+			expected.Mul(&expected, &alphaVal)
+			expected.Add(&expected, &E[i])
+		}
+
+		if !R[N-1].Equal(&expected) {
+			t.Errorf("R[N-1] = %s, want %s", R[N-1].String(), expected.String())
+		}
+	})
+}
+
 func TestComputeQuotient(t *testing.T) {
 
 	t.Run("TrivialZero", func(t *testing.T) {

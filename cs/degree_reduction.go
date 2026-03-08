@@ -3,45 +3,8 @@ package cs
 import (
 	"github.com/consensys/giop/pas/dag"
 	"github.com/consensys/giop/pas/sym"
+	proveractions "github.com/consensys/giop/prover_actions"
 )
-
-// func reduceDegree(system *System, targetDegree int) error {
-
-// var config system.Config
-// for _, opt := range opts {
-// 	err := opt(&config)
-// 	if err != nil {
-// 		return err
-// 	}
-// }
-
-// // fold the constraints
-// Cprime, err := system.Flatten(&prot.S, C, targetDegree)
-// if err != nil {
-// 	return err
-// }
-
-// // IDs to commit
-// IDtoCommit := sym.RemoveDuplicates(C.CommittedColumns())
-// if _, err := prot.SendMeAChallenge(IDtoCommit, alpha); err != nil {
-// 	return err
-// }
-
-// // create a constraint C := \Sum_i challenge.Nameⁱ * Ci
-// CprimeFolded := Cprime[0]
-// for i := 1; i < len(Cprime); i++ {
-// 	CprimeFolded = CprimeFolded.Add(Cprime[i].Mul(sym.NewChallenge(alpha).Pow(uint32(i))))
-// }
-
-// // record the constraint
-// if config.CacheMe {
-// 	prot.S.CachedConstraints = append(prot.S.CachedConstraints, CprimeFolded)
-// } else {
-// 	prot.S.Constraints = append(prot.S.Constraints, CprimeFolded)
-// }
-
-// 	return nil
-// }
 
 // reduceDegree Computes a set of constraints equivalent to constraint, but of dergee <= targetDegree.
 // The auxiliary constraints are folded into a single polynomial identity with a Fiat-Shamir challenge α.
@@ -81,7 +44,7 @@ import (
 //	|-------------------------------–-----------------------------------------------|
 func reduceDegree(system *System, targetDegree int) {
 
-	// seenExpr records already seen folded expressions (the AST doesn't common substrings). The key is a unique ID
+	// seenExpr records already seen folded expressions (the AST doesn't account for common substrings). The key is a unique ID
 	// characterising a sym.Expr, derived from building its corresponding DAG. The value is the name of the reduced expression.
 	// ex: for computing P0^4 and targetDegree=2, we compute P0' = P0^2 only once, and then compute P0 = P0'^2
 	seenExpr := make(map[string]string)
@@ -110,7 +73,7 @@ func reduceDegree(system *System, targetDegree int) {
 			system.RegisterConstraint(newConstraint)
 
 			// register the prover action of creating the column C := lowDegreeExpr(trace)
-			system.RegisterProverAction([]sym.Expr{lowDegreeExpr}, []string{lowDegreeExpr.String()}, ComputeColumn)
+			system.RegisterProverAction([]sym.Expr{lowDegreeExpr}, []string{lowDegreeExpr.String()}, proveractions.ComputeColumn)
 
 			// register the lowDegreeExpr
 			seenExpr[daglowDegreeExpr.Root.Key()] = lowDegreeExpr.String()

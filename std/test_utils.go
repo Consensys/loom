@@ -7,6 +7,7 @@ import (
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/prover"
+	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/giop/verifier"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
@@ -22,7 +23,7 @@ func sanityCheck(proverRunTime *prover.Runtime, constraints []cs.Constraint, N i
 	}
 }
 
-func CheckFiatShamir(proverRunTime *prover.Runtime, verifierRunTime *verifier.Runtime, proof *cs.Proof, zeta koalabear.Element, t *testing.T) {
+func CheckFiatShamir(proverRunTime *prover.Runtime, verifierRunTime *verifier.Runtime, proof *proveractions.Proof, zeta koalabear.Element, t *testing.T) {
 
 	proverChallenges := proverRunTime.CompiledIOP.VanishingRelation.Leaves(
 		sym.NewConfig(sym.WithoutCommittedColumns(),

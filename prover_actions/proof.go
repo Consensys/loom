@@ -1,4 +1,4 @@
-package cs
+package proveractions
 
 import (
 	"github.com/consensys/giop/crypto/dummycommitment"

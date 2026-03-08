@@ -103,8 +103,10 @@ func BuildGrandProduct(P map[string]Polynomial, E1, E2 sym.Expr, N int, mu *sync
 // BuildFilteredAccPolynomial builds a polynomial R such that:
 // * R[0] = F[0]*E[0]
 // *  R[i] = F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1] for i>0
-// F is a binary column (contains only 0 and 1s), it acts as a filter. alpha is a challenge in the trace.
-// R represents the evaluation of E filtered by F, with coeff ordering on par with the filter.
+// F is a an expression whose evaluation is a binary column (contains only 0 and 1s), it acts as a filter.
+// It is up to the caller to ensure that F evaluations contain only 0 and 1.
+// alpha is a challenge in the trace. R represents the evaluation of E filtered by F, with coeff ordering
+// on par with the filter.
 //
 // example:
 // E = [1, 7, 9, 10, 6, 12]
@@ -113,32 +115,48 @@ func BuildGrandProduct(P map[string]Polynomial, E1, E2 sym.Expr, N int, mu *sync
 // R is built such R[N-1] is the evaluation of E_F at alpha, when we discard the non selected elements in E_F.
 // After discarding non selected elmts in E_F we get [7, 6, 12], so R[N-1]=7α²+6α+12. This is what the formula
 //
-//	R[i] = F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1] encodes.
-func BuildFilteredAccPolynomial(P map[string]Polynomial, E sym.Expr, F, alpha string, N int, mu *sync.Mutex) (Polynomial, error) {
+//	R[i] = F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1]
+//
+// encodes.
+func BuildFilteredAccPolynomial(P map[string]Polynomial, E, F, alpha sym.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
 
-	Q0 := getBuf(N)
-	if err := evalPointWiseInto(P, E, N, mu, Q0); err != nil {
-		putBuf(Q0)
+	_E := getBuf(N)
+	_F := getBuf(N)
+	if err := evalPointWiseInto(P, E, N, mu, _E); err != nil {
+		putBuf(_E)
+		putBuf(_F)
+		return Polynomial{}, err
+	}
+	if err := evalPointWiseInto(P, F, N, mu, _F); err != nil {
+		putBuf(_E)
+		putBuf(_F)
 		return Polynomial{}, err
 	}
 	res := make(Polynomial, N)
-	_F := P[F]
-	_alpha := P[alpha]
+	if _, ok := alpha.(*sym.Leaf); !ok {
+		return Polynomial{}, fmt.Errorf("alpha must be a leaf")
+	}
+	alphaExpr := alpha.(*sym.Leaf)
+	if alphaExpr.Type != sym.Challenge {
+		return Polynomial{}, fmt.Errorf("alpha must be a challenge")
+	}
+	_alpha := P[alpha.String()]
 	a := _alpha[0]
 
 	// R[0] = F[0]*E[0]
-	res[0].Mul(&Q0[0], &_F[0])
+	res[0].Mul(&_E[0], &_F[0])
 
 	// R[i] = F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1]
 	var path1, path2, one koalabear.Element
 	one = koalabear.One()
 	for i := 1; i < N; i++ {
 		path1.Sub(&one, &_F[i]).Mul(&path1, &res[i-1])                   // (1-F[i])R[i-1]
-		path2.Mul(&a, &res[i-1]).Add(&path2, &Q0[i]).Mul(&path2, &_F[i]) // F[i]*(α*R[i-1]+E[i])
+		path2.Mul(&a, &res[i-1]).Add(&path2, &_E[i]).Mul(&path2, &_F[i]) // F[i]*(α*R[i-1]+E[i])
 		res[i].Add(&path1, &path2)
 	}
 
-	putBuf(Q0)
+	putBuf(_E)
+	putBuf(_F)
 
 	return res, nil
 }

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/pas/sym"
+	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
@@ -25,7 +26,7 @@ func TestGrandProductConstraint(t *testing.T) {
 	E2 := sym.NewCommittedColumn("P1").Sub(sym.NewChallenge("gamma"))
 
 	var mu sync.Mutex
-	err := ComputeLagrangeColumn(trace, nil, &mu, nil, []string{GetLagrangeID(0, size)})
+	err := proveractions.ComputeLagrangeColumn(trace, nil, &mu, nil, []string{proveractions.GetLagrangeID(0, size)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,9 +34,9 @@ func TestGrandProductConstraint(t *testing.T) {
 	// add the constraint that the grand product is computed correctly to the system
 	system := NewSystem(size)
 	GPConstraint := BuildGrandProductConstraint(E1, E2, "R", size)
-	system.RegisterConstraint(GPConstraint)
-	proof := NewProof(size)
-	ComputeGrandProduct(trace, &proof, &mu, []sym.Expr{E1, E2}, []string{"R"})
+	system.RegisterConstraints(GPConstraint)
+	proof := proveractions.NewProof(size)
+	proveractions.ComputeGrandProduct(trace, &proof, &mu, []sym.Expr{E1, E2}, []string{"R"})
 
 	// R[0] must equal 1
 	var one koalabear.Element

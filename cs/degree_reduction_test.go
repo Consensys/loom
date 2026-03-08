@@ -1,11 +1,11 @@
 package cs
 
 import (
-	"fmt"
 	"sync"
 	"testing"
 
 	"github.com/consensys/giop/pas/sym"
+	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
@@ -51,15 +51,11 @@ func TestDegreeReduction(t *testing.T) {
 		t.Fatalf("expected auxiliary constraints after reduction, got %d total", len(system.Constraints))
 	}
 
-	for _, c := range system.Constraints {
-		fmt.Println(c.String())
-	}
-
 	// 4. Execute all prover actions to populate T with the auxiliary columns.
 	//    When the same sub-expression (e.g. P0*P0) is extracted twice by Prune,
 	//    reduceDegree emits duplicate prover actions. The second execution returns
 	//    "already registered"; skip it silently since the column is already correct.
-	proof := NewProof(N)
+	proof := proveractions.NewProof(N)
 	var mu sync.Mutex
 	for _, pa := range system.ProverActions {
 		if err := pa.Execute(T, &proof, &mu); err != nil {
