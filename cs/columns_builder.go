@@ -31,7 +31,7 @@ func ComputeColumn(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sym.Expr
 	if len(E) == 0 {
 		return fmt.Errorf("E needs to contain at list an expression")
 	}
-	sum, err := univariate.EvalPointWise(trace, E[0], proof.N, mu)
+	sum, err := univariate.BuildPointwiseEvaluation(trace, E[0], proof.N, mu)
 	if err != nil {
 		return err
 	}

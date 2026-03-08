@@ -75,7 +75,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := sym.NewCommittedColumn("x0").Pow(2).Add(sym.NewCommittedColumn("x1"))
 		Pi := map[string]Polynomial{"x0": coeffs0, "x1": coeffs1}
 
-		R, err := EvalPointWise(Pi, C, size, nil)
+		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -98,7 +98,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := sym.NewCommittedColumn("x0").Sub(sym.NewCommittedColumn("x1"))
 		Pi := map[string]Polynomial{"x0": P0, "x1": P1}
 
-		R, err := EvalPointWise(Pi, C, size, nil)
+		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -118,7 +118,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := sym.NewCommittedColumn("x0").Mul(sym.NewCommittedColumn("x1"))
 		Pi := map[string]Polynomial{"x0": P0, "x1": P1}
 
-		R, err := EvalPointWise(Pi, C, size, nil)
+		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -142,7 +142,7 @@ func TestEvalPointWise(t *testing.T) {
 			Sub(sym.NewCommittedColumn("x3"))
 		Pi := map[string]Polynomial{"x0": P0, "x1": P1, "x2": P2, "x3": P3}
 
-		R, err := EvalPointWise(Pi, C, size, nil)
+		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -163,7 +163,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := sym.NewCommittedColumn("x0").Mul(sym.NewCommittedColumn("x0")).Sub(sym.NewCommittedColumn("x0"))
 		Pi := map[string]Polynomial{"x0": P0}
 
-		R, err := EvalPointWise(Pi, C, size, nil)
+		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -185,7 +185,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := sym.NewCommittedColumn("x0").Sub(sym.NewCommittedColumn("x1")).Mul(sym.NewCommittedColumn("x2"))
 		Pi := map[string]Polynomial{"x0": P0, "x1": P1, "x2": P2}
 
-		R, err := EvalPointWise(Pi, C, size, nil)
+		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -206,7 +206,7 @@ func TestDivPointWise(t *testing.T) {
 		P1 := makeLagrangePoly(2, 4, 6, 8, 10, 12, 14, 16)
 		P2 := makeLagrangePoly(2, 2, 2, 2, 2, 2, 2, 2)
 
-		R, err := DivPointWise(P1, P2, size)
+		R, err := divPointwise(P1, P2, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -223,7 +223,7 @@ func TestDivPointWise(t *testing.T) {
 		P1 := makeLagrangePoly(3, 7, 11, 5, 2, 9, 6, 4)
 		P2 := makeLagrangePoly(1, 1, 1, 1, 1, 1, 1, 1)
 
-		R, err := DivPointWise(P1, P2, size)
+		R, err := divPointwise(P1, P2, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -235,7 +235,7 @@ func TestDivPointWise(t *testing.T) {
 		P1 := makeLagrangePoly(5, 3, 9, 2, 7, 11, 4, 6)
 		P2 := makeLagrangePoly(5, 3, 9, 2, 7, 11, 4, 6)
 
-		R, err := DivPointWise(P1, P2, size)
+		R, err := divPointwise(P1, P2, size)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -254,7 +254,7 @@ func TestDivPointWise(t *testing.T) {
 		P1 := makeLagrangePoly(1, 2, 3, 4, 5, 6, 7, 8)
 		P2 := makeLagrangePoly(1, 0, 1, 1, 1, 1, 1, 1)
 
-		_, err := DivPointWise(P1, P2, size)
+		_, err := divPointwise(P1, P2, size)
 		if err == nil {
 			t.Fatal("expected error for division by zero, got nil")
 		}

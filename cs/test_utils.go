@@ -123,7 +123,7 @@ func BruteForceChecker(T trace.Trace, constraints []Constraint, N int) error {
 			}
 		}
 
-		vals, err := univariate.EvalPointWise(T, C, N, nil)
+		vals, err := univariate.BuildPointwiseEvaluation(T, C, N, nil)
 		if err != nil {
 			return err
 		}

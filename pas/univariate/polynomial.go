@@ -81,17 +81,9 @@ func evalPointWiseInto(Pi map[string]Polynomial, E sym.Expr, N int, mu *sync.Mut
 	return nil
 }
 
-// EvalPointWise evaluates E point-wise over Pi and returns the N results as a
-// freshly allocated slice. N is the size of the polynomials in Pi (all must
-// have the same size, except constants which have size 1).
-func EvalPointWise(Pi map[string]Polynomial, E sym.Expr, N int, mu *sync.Mutex) ([]koalabear.Element, error) {
-	dst := make([]koalabear.Element, N)
-	return dst, evalPointWiseInto(Pi, E, N, mu, dst)
-}
-
-// DivPointWise computes the resulting polynomial from dividing pointwise.
+// divPointwise computes the resulting polynomial from dividing pointwise.
 // N = size of polynomials. All polynomials must be of the same size, same basis, same layout
-func DivPointWise(P1, P2 Polynomial, N int) (Polynomial, error) {
+func divPointwise(P1, P2 Polynomial, N int) (Polynomial, error) {
 
 	for i := 0; i < len(P2); i++ {
 		if P2[i].IsZero() {
@@ -121,33 +113,8 @@ func countMultiplicity(S, T Polynomial, N int) Polynomial {
 	return res
 }
 
-// BuildMultiplicityPolynomial returns P such that:
-// P[i] is the number of times T[i] appears in S.
-// S, T are assumed to be in Lagrange basis
-// S and T must be of the same size
-func BuildMultiplicityPolynomial(Pi map[string]Polynomial, S, T sym.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
-
-	// evaluate S and T on P
-	_S := getBuf(N)
-	_T := getBuf(N)
-	if err := evalPointWiseInto(Pi, S, N, mu, _S); err != nil {
-		putBuf(_S)
-		return Polynomial{}, err
-	}
-	if err := evalPointWiseInto(Pi, T, N, mu, _T); err != nil {
-		putBuf(_S)
-		return Polynomial{}, err
-	}
-
-	res := countMultiplicity(_S, _T, N)
-	putBuf(_S)
-	putBuf(_T)
-	return res, nil
-
-}
-
-// InvertPointWiseInPlace inverts in place P
-func InvertPointWiseInPlace(P Polynomial) {
+// invertPointwiseInPlace inverts in place P
+func invertPointwiseInPlace(P Polynomial) {
 	for i := 0; i < len(P); i++ {
 		P[i].Inverse(&P[i])
 	}
@@ -170,38 +137,6 @@ func accumulateSums(P Polynomial, N int) (Polynomial, error) {
 	return result, nil
 }
 
-// BuildGrandSum returns R such that
-// R[i] = \Sigma_{j<=i}M[j]/E[j]
-// The notation E[i] means the i-th entry of E evaluated on P (same for M).
-func BuildGrandSum(P map[string]Polynomial, E, M sym.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
-
-	// D stores the denominators 1/E(P); pooled because it is only needed until accumulateSums copies it.
-	D := getBuf(N)
-	if err := evalPointWiseInto(P, E, N, mu, D); err != nil {
-		putBuf(D)
-		return Polynomial{}, err
-	}
-	InvertPointWiseInPlace(D)
-
-	// Mp is pooled: it is multiplied into D and then discarded.
-	Mp := getBuf(N)
-	if err := evalPointWiseInto(P, M, N, mu, Mp); err != nil {
-		putBuf(D)
-		putBuf(Mp)
-		return Polynomial{}, err
-	}
-	for i := 0; i < N; i++ {
-		di := D[i]
-		mi := Mp[i]
-		D[i].Mul(&di, &mi)
-	}
-	putBuf(Mp)
-
-	result, err := accumulateSums(D, N)
-	putBuf(D)
-	return result, err
-}
-
 // accumulateProducts returns R such that R[i+1] = R[i]*P[i], R[0]=1
 // N = size of P
 func accumulateProducts(P Polynomial, N int) (Polynomial, error) {
@@ -216,33 +151,4 @@ func accumulateProducts(P Polynomial, N int) (Polynomial, error) {
 		result[i].Mul(&result[i-1], &pi)
 	}
 	return result, nil
-}
-
-// BuildGrandProduct returns R such that R[0]=1, R[i+1] = R[i] * E1(P[i]) / E2(P[i])
-// N = size of the polynomials in P
-// Polynomials in P must have the same basis, same layout
-func BuildGrandProduct(P map[string]Polynomial, E1, E2 sym.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
-
-	// Q0 and Q1 are intermediate buffers: pooled because they are fully consumed by DivPointWise.
-	Q0 := getBuf(N)
-	if err := evalPointWiseInto(P, E1, N, mu, Q0); err != nil {
-		putBuf(Q0)
-		return Polynomial{}, fmt.Errorf("failed to evaluate numerator expression: %w", err)
-	}
-
-	Q1 := getBuf(N)
-	if err := evalPointWiseInto(P, E2, N, mu, Q1); err != nil {
-		putBuf(Q0)
-		putBuf(Q1)
-		return Polynomial{}, fmt.Errorf("failed to evaluate denominator expression: %w", err)
-	}
-
-	ratio, err := DivPointWise(Q0, Q1, N)
-	putBuf(Q0)
-	putBuf(Q1)
-	if err != nil {
-		return Polynomial{}, fmt.Errorf("failed to compute pointwise ratio: %w", err)
-	}
-
-	return accumulateProducts(ratio, N)
 }
