@@ -37,7 +37,7 @@ func GetChallengesID(E []sym.Expr) []string {
 }
 
 // returns l1 \ l2
-func removeFromList(l1, l2 []string) []string {
+func l1MinusL2(l1, l2 []string) []string {
 	res := make([]string, 0, len(l1))
 	for i := 0; i < len(l1); i++ {
 		isInL2 := false
@@ -50,6 +50,27 @@ func removeFromList(l1, l2 []string) []string {
 		if !isInL2 {
 			res = append(res, l1[i])
 		}
+	}
+	return res
+}
+
+// l1DisjointUnionL2 returns l1 U l2 without duplicates
+func l1DisjointUnionL2(l1, l2 []string) []string {
+	seen := make(map[string]struct{})
+	res := make([]string, 0, len(l1)+len(l2))
+	for _, l := range l1 {
+		if _, ok := seen[l]; ok {
+			continue
+		}
+		seen[l] = struct{}{}
+		res = append(res, l)
+	}
+	for _, l := range l2 {
+		if _, ok := seen[l]; ok {
+			continue
+		}
+		seen[l] = struct{}{}
+		res = append(res, l)
 	}
 	return res
 }
@@ -73,7 +94,7 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sym.E
 		dependenciesCommittedColumns := GetColumnsId(E, sym.OnlyCommittedColumns...)
 		dependenciesChallenges := GetColumnsId(E, sym.OnlyChallenges...)
 
-		// 2. find on which commitments depend round.DependenciesChallenges, and remove them from round.DependenciesCommittedColumns
+		// 2. find on which commitments depend dependenciesChallenges, and remove them from dependenciesCommittedColumns
 		// if they appear in it -> round.DependenciesChallenges already accout for them.
 		deps := make([]string, 0, len(dependenciesChallenges))
 		for _, c := range dependenciesChallenges {
@@ -83,7 +104,7 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sym.E
 			cacheDeps := proof.cacheChallengeDependencies[c]
 			deps = append(deps, cacheDeps...)
 		}
-		dependenciesCommittedColumns = removeFromList(dependenciesCommittedColumns, deps)
+		dependenciesCommittedColumns = l1MinusL2(dependenciesCommittedColumns, deps)
 
 		// 3. record the round
 		round := Round{
@@ -97,7 +118,7 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sym.E
 		if _, ok := proof.cacheChallengeDependencies[challengeName]; ok {
 			return nil, fmt.Errorf("challenge %s is already recorded", challengeName)
 		}
-		proof.cacheChallengeDependencies[challengeName] = round.DependenciesCommittedColumns
+		proof.cacheChallengeDependencies[challengeName] = l1DisjointUnionL2(round.DependenciesCommittedColumns, deps)
 
 		// 5. Commit to all the polynomials whose name matches leaves. Record the commitments in the proof, and update FS along the way
 		fs := fiatshamir.NewTranscript(sha256.New())
