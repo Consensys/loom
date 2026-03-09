@@ -165,7 +165,7 @@ func inclusionCheckIOP(system *cs.System, S, T sym.Expr) error {
 //	|----------------------------------–---------------------------------------------|
 func InclusionCheckMultiSetIOP(system *cs.System, S, T []string) error {
 
-	folding, err := RandomString(constants.SIZE_RANDOM_STRING)
+	gamma, err := RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
@@ -178,10 +178,10 @@ func InclusionCheckMultiSetIOP(system *cs.System, S, T []string) error {
 	for i := 0; i < len(T); i++ {
 		foldingDeps[i+len(S)] = sym.NewCommittedColumn(T[i])
 	}
-	system.RegisterProverAction(foldingDeps, []string{folding}, proveractions.ComputeChallenge)
+	system.RegisterProverAction(foldingDeps, []string{gamma}, proveractions.ComputeChallenge)
 
 	// 2. fold S and T
-	gammaExpr := sym.NewChallenge(folding)
+	gammaExpr := sym.NewChallenge(gamma)
 	SExpr := make([]sym.Expr, len(S))
 	TExpr := make([]sym.Expr, len(T))
 	for i := 0; i < len(S); i++ {

@@ -9,8 +9,107 @@ import (
 	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/giop/verifier"
+	"github.com/consensys/giop/viewer"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
+
+func TestEqualityFilteredMultiColumns(t *testing.T) {
+
+	size := 16
+
+	// Same construction as TestEqualityFilteredColumns, but A and B are
+	// duplicated into two-column lists [A, A2] and [B, B2].
+	aVals := make(univariate.Polynomial, size)
+	for i := range aVals {
+		aVals[i].SetRandom()
+	}
+
+	f1Vals := make(univariate.Polynomial, size)
+	f2Vals := make(univariate.Polynomial, size)
+	bVals := make(univariate.Polynomial, size)
+	for i := 0; i < size; i++ {
+		if i%2 == 0 {
+			f1Vals[i].SetOne()
+			bVals[i].SetRandom()
+		} else {
+			f2Vals[i].SetOne()
+			bVals[i].Set(&aVals[i-1])
+		}
+	}
+
+	// Duplicate: A2 = A, B2 = B
+	aVals2 := make(univariate.Polynomial, size)
+	bVals2 := make(univariate.Polynomial, size)
+	copy(aVals2, aVals)
+	copy(bVals2, bVals)
+
+	T := trace.Trace{
+		"A":  aVals,
+		"A2": aVals2,
+		"B":  bVals,
+		"B2": bVals2,
+		"F1": f1Vals,
+		"F2": f2Vals,
+	}
+
+	system := cs.NewSystem(size)
+
+	err := EqualityFilteredMultiColumns(&system, []string{"A", "A2"}, "F1", []string{"B", "B2"}, "F2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cciop := cs.Compile(&system)
+	proverRunTime := prover.NewRuntime(cciop, T)
+	knownColumns := map[string]bool{"A": true, "A2": true, "B": true, "B2": true, "F1": true, "F2": true}
+	proof := proveractions.NewProof(system.N)
+
+	viewer.WriteProverActionsDagToHTML(cciop, "pa_projection_multi.html")
+
+	err = proverRunTime.Solve(knownColumns, &proof, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+
+	err = proverRunTime.DeriveFinalFoldingChallenge(&proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+
+	err = proverRunTime.ComputeQuotient(&proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+
+	var zeta koalabear.Element
+	zeta, err = proverRunTime.DeriveOpeningChallenge(&proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+
+	err = proverRunTime.OpenCommitments(&proof, zeta)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifierRunTime := verifier.NewRunTime(cciop)
+	err = verifierRunTime.ComputeChallenges(&proof, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	CheckFiatShamir(&proverRunTime, &verifierRunTime, &proof, zeta, t)
+
+	viewer.WriteProofRoundsDagToHTML(proof.Rounds, "projection_multi_rounds.html")
+
+	err = verifierRunTime.Verify(&proof, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestEqualityFilteredColumns(t *testing.T) {
 
@@ -65,6 +164,8 @@ func TestEqualityFilteredColumns(t *testing.T) {
 	knownColumns := map[string]bool{"A": true, "B": true, "F1": true, "F2": true}
 	proof := proveractions.NewProof(system.N)
 
+	viewer.WriteProverActionsDagToHTML(cciop, "pa_projection.html")
+
 	// 1. Solve + sanity checks
 	err = proverRunTime.Solve(knownColumns, &proof, 1)
 	if err != nil {
@@ -107,6 +208,8 @@ func TestEqualityFilteredColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	CheckFiatShamir(&proverRunTime, &verifierRunTime, &proof, zeta, t)
+
+	viewer.WriteProofRoundsDagToHTML(proof.Rounds, "projection_rounds.html")
 
 	// 6. Verify
 	err = verifierRunTime.Verify(&proof, 1)

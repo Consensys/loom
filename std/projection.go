@@ -19,6 +19,43 @@ func EqualityFilteredColumns(system *cs.System, A, F1, B, F2 string) error {
 	return equalityFilteredColumns(system, Aexpr, Bexpr, F1, F2)
 }
 
+// EqualityFilteredMultiColumns proves that the rows of A filtered by F1 = the rows
+// of B filtered by F2, where F1 and F2 are binary columns
+func EqualityFilteredMultiColumns(system *cs.System, A []string, F1 string, B []string, F2 string) error {
+
+	gamma, err := RandomString(constants.SIZE_RANDOM_STRING)
+	if err != nil {
+		return err
+	}
+
+	// 1. sample a challenge for folding
+	foldingDeps := make([]sym.Expr, len(A)+len(B))
+	for i := 0; i < len(A); i++ {
+		foldingDeps[i] = sym.NewCommittedColumn(A[i])
+	}
+	for i := 0; i < len(B); i++ {
+		foldingDeps[i+len(A)] = sym.NewCommittedColumn(B[i])
+	}
+	system.RegisterProverAction(foldingDeps, []string{gamma}, proveractions.ComputeChallenge)
+
+	// 2. fold A and B
+	gammaExpr := sym.NewChallenge(gamma)
+	AExpr := make([]sym.Expr, len(A))
+	BExpr := make([]sym.Expr, len(B))
+	for i := 0; i < len(A); i++ {
+		AExpr[i] = sym.NewCommittedColumn(A[i])
+	}
+	for i := 0; i < len(B); i++ {
+		BExpr[i] = sym.NewCommittedColumn(B[i])
+	}
+	AFolded := cs.Fold(AExpr, gammaExpr)
+	BFolded := cs.Fold(BExpr, gammaExpr)
+
+	// 3. call equalityFilteredColumns
+	return equalityFilteredColumns(system, AFolded, BFolded, F1, F2)
+
+}
+
 func equalityFilteredColumns(system *cs.System, A, B sym.Expr, F1, F2 string) error {
 
 	// 1. build filtered acc polynomials for A and B
