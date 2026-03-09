@@ -9,19 +9,84 @@ import (
 	proveractions "github.com/consensys/giop/prover_actions"
 )
 
-// EqualityFilteredColumns proves that A filterd by F1 = B filtered by F2,
-// where F1 and F2 are binary columns
-func EqualityFilteredColumns(system *cs.System, A, F1, B, F2 string) error {
+// EqualityFilteredColumnsIOP proves that the ordered sequence of A-values selected by F1
+// equals the ordered sequence of B-values selected by F2, where F1 and F2 are binary columns.
+// I.e., if the selected indices are i_0 < i_1 < ... < i_{m-1} and j_0 < j_1 < ... < j_{m-1}, then
+// A[i_0] = B[j_0], A[i_1] = B[j_1], ..., A[i_{m-1}] = B[j_{m-1}].
+//
+// It models the following Σ-protocol (N = domain size):
+//
+//	|-------------------------------–-------------------------------------------------|
+//	| [prover]                      |              [verifier]                         |
+//	|-------------------------------–-------------------------------------------------|
+//	| Commit(A, F1, B, F2)  -----→  | [Com(A), Com(F1), Com(B), Com(F2)]             | ROUND 1
+//	|-------------------------------–-------------------------------------------------|
+//	|                               ←-----  Sample random α                          |
+//	|                               |       (α = Fiat-Shamir(Com(A),Com(F1),         |
+//	|                               |                        Com(B),Com(F2)))         | ROUND 2
+//	|-------------------------------–-------------------------------------------------|
+//	| Compute filtered accumulators FA, FB via Horner on the selected entries:       |
+//	|   FA[0]   = F1[0] · A[0]                                                       |
+//	|   FA[i]   = F1[i]·(α·FA[i-1] + A[i]) + (1-F1[i])·FA[i-1]   for i > 0        |
+//	|   (FB defined symmetrically with B, F2)                                        |
+//	|   So FA[N-1] = Σ_{F1[i]=1} A[i] · α^(m-1-rank(i))  (Horner of selected A)    |
+//	| Commit(FA, FB)        -----→  | [Com(FA), Com(FB)]                             | ROUND 3
+//	|-------------------------------–-------------------------------------------------|
+//	|       (done via FoldConstraints + Finalize + Verify)                            |
+//	| Records constraints:                                                            |
+//	|   C1: L_0·(FA - F1·A) = 0                (boundary for FA)                    |
+//	|   C2: (1-L_0)·(FA - F1·(α·FA_prev+A) - (1-F1)·FA_prev) = 0  (recurrence FA) |
+//	|   C3, C4: symmetric constraints for FB                                         |
+//	|   C5: L_{N-1}·(FA - FB) = 0              (final accumulated values match)     |
+//	|-------------------------------–-------------------------------------------------|
+func EqualityFilteredColumnsIOP(system *cs.System, A, F1, B, F2 string) error {
 
 	Aexpr := sym.NewCommittedColumn(A)
 	Bexpr := sym.NewCommittedColumn(B)
 
-	return equalityFilteredColumns(system, Aexpr, Bexpr, F1, F2)
+	return equalityFilteredColumnsIOP(system, Aexpr, Bexpr, F1, F2)
 }
 
-// EqualityFilteredMultiColumns proves that the rows of A filtered by F1 = the rows
-// of B filtered by F2, where F1 and F2 are binary columns
-func EqualityFilteredMultiColumns(system *cs.System, A []string, F1 string, B []string, F2 string) error {
+// EqualityFilteredMultiColumnsIOP proves that the ordered sequence of row-tuples of A selected by F1
+// equals the ordered sequence of row-tuples of B selected by F2, where F1 and F2 are binary columns.
+// I.e., A[0],..,A[k-1] and B[0],..,B[l-1] are column lists, and the tuples
+// (A[0][i],..,A[k-1][i]) for F1[i]=1 must match (B[0][i],..,B[l-1][i]) for F2[i]=1 in order.
+//
+// Row-tuples are first compressed into scalars via γ, then EqualityFilteredColumnsIOP is applied.
+//
+// It models the following Σ-protocol (N = domain size):
+//
+//	|-------------------------------–-------------------------------------------------|
+//	| [prover]                      |              [verifier]                         |
+//	|-------------------------------–-------------------------------------------------|
+//	| Commit(A[0],..,A[k-1],        |                                                 |
+//	|        B[0],..,B[l-1])-----→  | [Com(A[j]), Com(B[j])]  ∀ j                   | ROUND 1
+//	|-------------------------------–-------------------------------------------------|
+//	|                               ←-----  Sample random γ                          |
+//	|                               |       (γ = Fiat-Shamir(Com(A[j]),Com(B[j])))   | ROUND 2
+//	|-------------------------------–-------------------------------------------------|
+//	| Fold each row-tuple into a scalar column:                                       |
+//	|   Ã[i] = Σ_j γ^j · A[j][i]                                                    |
+//	|   B̃[i] = Σ_j γ^j · B[j][i]                                                    |
+//	| (reduces tuple equality to scalar equality)                                     |
+//	|-------------------------------–-------------------------------------------------|
+//	| Commit(F1, F2)        -----→  | [Com(F1), Com(F2)]                             | ROUND 3
+//	|-------------------------------–-------------------------------------------------|
+//	|                               ←-----  Sample random α                          |
+//	|                               |       (α = Fiat-Shamir(...,Com(F1),Com(F2)))   | ROUND 4
+//	|-------------------------------–-------------------------------------------------|
+//	| Compute filtered accumulators FÃ, FB̃ via Horner on the selected entries:       |
+//	|   FÃ[0]   = F1[0] · Ã[0]                                                       |
+//	|   FÃ[i]   = F1[i]·(α·FÃ[i-1] + Ã[i]) + (1-F1[i])·FÃ[i-1]   for i > 0       |
+//	|   (FB̃ defined symmetrically with B̃, F2)                                        |
+//	| Commit(FÃ, FB̃)       -----→  | [Com(FÃ), Com(FB̃)]                             | ROUND 5
+//	|-------------------------------–-------------------------------------------------|
+//	|       (done via FoldConstraints + Finalize + Verify)                            |
+//	| Records constraints:                                                            |
+//	|   C1–C4: recurrence + boundary constraints for FÃ and FB̃                       |
+//	|   C5:    L_{N-1}·(FÃ - FB̃) = 0   (final accumulated values match)             |
+//	|-------------------------------–-------------------------------------------------|
+func EqualityFilteredMultiColumnsIOP(system *cs.System, A []string, F1 string, B []string, F2 string) error {
 
 	gamma, err := RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
@@ -52,11 +117,11 @@ func EqualityFilteredMultiColumns(system *cs.System, A []string, F1 string, B []
 	BFolded := cs.Fold(BExpr, gammaExpr)
 
 	// 3. call equalityFilteredColumns
-	return equalityFilteredColumns(system, AFolded, BFolded, F1, F2)
+	return equalityFilteredColumnsIOP(system, AFolded, BFolded, F1, F2)
 
 }
 
-func equalityFilteredColumns(system *cs.System, A, B sym.Expr, F1, F2 string) error {
+func equalityFilteredColumnsIOP(system *cs.System, A, B sym.Expr, F1, F2 string) error {
 
 	// 1. build filtered acc polynomials for A and B
 	_idAccFA, err := RandomString(constants.SIZE_RANDOM_STRING)

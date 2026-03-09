@@ -54,7 +54,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 
 	system := cs.NewSystem(size)
 
-	err := EqualityFilteredMultiColumns(&system, []string{"A", "A2"}, "F1", []string{"B", "B2"}, "F2")
+	err := EqualityFilteredMultiColumnsIOP(&system, []string{"A", "A2"}, "F1", []string{"B", "B2"}, "F2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestEqualityFilteredColumns(t *testing.T) {
 	system := cs.NewSystem(size)
 
 	// call EqualityFilteredColumns
-	err := EqualityFilteredColumns(&system, "A", "F1", "B", "F2")
+	err := EqualityFilteredColumnsIOP(&system, "A", "F1", "B", "F2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,8 +163,6 @@ func TestEqualityFilteredColumns(t *testing.T) {
 	proverRunTime := prover.NewRuntime(cciop, T)
 	knownColumns := map[string]bool{"A": true, "B": true, "F1": true, "F2": true}
 	proof := proveractions.NewProof(system.N)
-
-	viewer.WriteProverActionsDagToHTML(cciop, "pa_projection.html")
 
 	// 1. Solve + sanity checks
 	err = proverRunTime.Solve(knownColumns, &proof, 1)
@@ -208,8 +206,6 @@ func TestEqualityFilteredColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	CheckFiatShamir(&proverRunTime, &verifierRunTime, &proof, zeta, t)
-
-	viewer.WriteProofRoundsDagToHTML(proof.Rounds, "projection_rounds.html")
 
 	// 6. Verify
 	err = verifierRunTime.Verify(&proof, 1)
