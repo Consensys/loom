@@ -36,7 +36,7 @@ go vet ./...
 | `pas/dag/` | DAG representation of `sym.Expr` with shared sub-expression nodes |
 | `pas/univariate/` | Univariate polynomial arithmetic, FFT, pointwise evaluation |
 | `trace/` | `Trace = map[string]univariate.Polynomial` |
-| `prover_actions.go/` | `ProverAction`, `Proof`, `Round`, and all built-in action functions |
+| `prover_actions/` | `ProverAction`, `Proof`, `Round`, and all built-in action functions |
 | `cs/` | Constraint system: types, constraint builders, compilation |
 | `std/` | Standard IOP gadgets (permutation, inclusion, multiset equality) |
 | `prover/` | Prover pipeline: solve → fold → quotient → open |
@@ -83,9 +83,9 @@ Key functions in `iop_utils.go`:
 - `BuildMultiplicityPolynomial(trace, S, T, N, mu)` — `M[i] = #{j | S[j]=T[i]}`
 - `BuildFilteredAccPolynomial(trace, E, F, alpha, N, mu)` — accumulator filtered by binary column `F`
 
-### `prover_actions.go/` — prover actions and proof types
+### `prover_actions/` — prover actions and proof types
 
-**Note**: the package is in a directory named `prover_actions.go` (with `.go` suffix) and imported as `proveractions "github.com/consensys/giop/prover_actions.go"`.
+**Note**: the package directory is `prover_actions/` and imported as `proveractions "github.com/consensys/giop/prover_actions"`.
 
 **Core types**:
 ```go
@@ -117,6 +117,7 @@ type Proof struct {
 - `ComputeGrandSum` — builds grand sum column from `E[0]/E[1]`
 - `ComputeColumn` — evaluates `E[0]` pointwise, stores result
 - `ComputeMultiplicity` — computes multiplicity of `E[0]` in `E[1]`
+- `ComputeFilteredAccPolynomial` — builds filtered accumulator `R` from `E[0]` (values), `E[1]` (binary filter), `E[2]` (challenge α); `R[N-1]` is the Horner evaluation of selected entries
 - `ComputeLagrangeColumn` — generates the i-th Lagrange column (idempotent if already present)
 
 **Utilities**:
@@ -146,11 +147,14 @@ type CompiledIOP struct {
 
 `cs.Compile(&system, opts...)` folds all constraints with `constants.FINAL_FOLDING_CHALLENGE`, converts to a `dag.DAG`, and flattens it. Option: `WithTargetDegree(d)` triggers degree reduction before folding.
 
+`cs.Fold(E []sym.Expr, alpha sym.Expr)` — returns `Σ_i αⁱ·E[i]` (Horner evaluation); used by gadgets to compress multi-column row-tuples into a single scalar expression before applying a scalar argument.
+
 **Constraint builders** (`common_constraints.go`):
 - `BuildGrandProductConstraint(E1, E2, IDGrandProduct, N)` — `R(ωX)·E2 - R·E1 = 0`
 - `BuildGrandSumConstraints(M, E, grandSum, N)` — two constraints encoding the recurrence relation
 - `BuildLocalConstraint(E, M, i, N)` — `L_i·(E - M) = 0`
 - `BuildCorrectConstructionConstraint(E, IdRes)` — `IdRes - E = 0`
+- `BuildFilteredAccPolynomialConstraint(E, F, alpha, R, N)` — two constraints encoding the filtered accumulator recurrence: `L_0·(R - F·E) = 0` and `(1-L_0)·(R - F·(α·R_prev+E) - (1-F)·R_prev) = 0`
 
 **System methods**:
 - `system.RegisterProverAction(inputs, outputs, exec)`
@@ -165,6 +169,8 @@ type CompiledIOP struct {
 - `MultiSetEqualityUpToPermutationIOP(system, ID1, ID2 [][]string)` — same for tuples; alpha and gamma generated internally
 - `InclusionCheckIOP(system, S, T string)` — proves every value in `S` appears in `T` (lookup argument using grand sums + multiplicity)
 - `InclusionCheckMultiSetIOP(system, S, T []string)` — same for row-tuples; folds with a FS challenge before scalar inclusion check
+- `EqualityFilteredColumnsIOP(system, A, F1, B, F2 string)` — proves the ordered sub-sequence of `A` selected by binary column `F1` equals the ordered sub-sequence of `B` selected by `F2`; uses a filtered accumulator (Horner) + boundary constraint
+- `EqualityFilteredMultiColumnsIOP(system, A []string, F1 string, B []string, F2 string)` — same for row-tuples; row-tuples are first compressed to scalars via a FS challenge γ, then delegates to `EqualityFilteredColumnsIOP`
 
 All gadgets allocate fresh random IDs for intermediate columns/challenges via `RandomString`.
 
@@ -198,7 +204,7 @@ All gadgets allocate fresh random IDs for intermediate columns/challenges via `R
 
 **Polynomial representation**: `Polynomial = []koalabear.Element`, always in Lagrange Normal form. `len(p) == 1` means constant. `ComputeQuotient` is the only function that returns coset-Lagrange — always call `CosetLagrangeToLagrangeNormal` on its result.
 
-**`prover_actions.go/` package name**: the directory is literally named `prover_actions.go`; import with the alias `proveractions "github.com/consensys/giop/prover_actions.go"`.
+**`prover_actions/` package name**: the directory is `prover_actions/`; import with the alias `proveractions "github.com/consensys/giop/prover_actions"`.
 
 **Action mutex**: `Action` signature includes `*sync.Mutex`. Actions that write to the trace must use `RegisterColumn` (which locks internally). Actions that read from the trace or the proof must lock manually.
 
