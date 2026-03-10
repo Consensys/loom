@@ -80,19 +80,19 @@ func inclusionCheckIOP(system *cs.System, S, T sym.Expr) error {
 
 	// 1. create the multiplicity polynomial
 	Mexpr := sym.NewCommittedColumn(M)
-	system.RegisterProverAction([]sym.Expr{S, T}, []string{M}, proveractions.ComputeMultiplicity)
+	system.RegisterProverAction([]sym.Expr{S, T}, []string{M}, proveractions.NewIDCtx(proveractions.MULTIPLICITY))
 
 	// 2. sample a challenge gamma, depending on M, S, and T
 	gammaDeps := []sym.Expr{S, T, Mexpr}
-	system.RegisterProverAction(gammaDeps, []string{gamma}, proveractions.ComputeChallenge)
+	system.RegisterProverAction(gammaDeps, []string{gamma}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 3. compute the grand sums grandSum1:=Σ_i M[i]/(T[i]-γ), grandSum2:=Σ_i 1/(S[i]-γ)
 	oneExpr := sym.NewConst(koalabear.One())
 	SminusGamma := S.Sub(sym.NewChallenge(gamma))
-	system.RegisterProverAction([]sym.Expr{oneExpr, SminusGamma}, []string{grandSumS}, proveractions.ComputeGrandSum)
+	system.RegisterProverAction([]sym.Expr{oneExpr, SminusGamma}, []string{grandSumS}, proveractions.NewIDCtx(proveractions.GRAND_SUM))
 
 	TminusGamma := T.Sub(sym.NewChallenge(gamma))
-	system.RegisterProverAction([]sym.Expr{Mexpr, TminusGamma}, []string{grandSumT}, proveractions.ComputeGrandSum)
+	system.RegisterProverAction([]sym.Expr{Mexpr, TminusGamma}, []string{grandSumT}, proveractions.NewIDCtx(proveractions.GRAND_SUM))
 
 	// 4. register the constraints ensuring the grand sums are correctly constructed
 	grandSumConstraintsT := cs.BuildGrandSumConstraints(Mexpr, TminusGamma, grandSumT, system.N)
@@ -178,7 +178,7 @@ func InclusionCheckMultiSetIOP(system *cs.System, S, T []string) error {
 	for i := 0; i < len(T); i++ {
 		foldingDeps[i+len(S)] = sym.NewCommittedColumn(T[i])
 	}
-	system.RegisterProverAction(foldingDeps, []string{gamma}, proveractions.ComputeChallenge)
+	system.RegisterProverAction(foldingDeps, []string{gamma}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 2. fold S and T
 	gammaExpr := sym.NewChallenge(gamma)

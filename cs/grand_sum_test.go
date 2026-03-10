@@ -20,11 +20,11 @@ func TestGrandSumConstraint(t *testing.T) {
 	E := sym.NewCommittedColumn("E")
 	M := sym.NewCommittedColumn("M")
 	var mu sync.Mutex
-	err := proveractions.ComputeGrandSum(trace, &proof, &mu, []sym.Expr{M, E}, []string{"GrandSum"})
+	err := proveractions.ComputeGrandSum(trace, &proof, &mu, []sym.Expr{M, E}, []string{"GrandSum"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	proveractions.ComputeLagrangeColumn(trace, nil, &mu, nil, []string{proveractions.GetLagrangeID(0, size)})
+	proveractions.ComputeLagrangeColumn(trace, nil, &mu, nil, []string{proveractions.GetLagrangeID(0, size)}, nil)
 
 	err = BruteForceChecker(trace, system.Constraints, system.N)
 	if err != nil {

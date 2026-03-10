@@ -101,7 +101,7 @@ func EqualityFilteredMultiColumnsIOP(system *cs.System, A []string, F1 string, B
 	for i := 0; i < len(B); i++ {
 		foldingDeps[i+len(A)] = sym.NewCommittedColumn(B[i])
 	}
-	system.RegisterProverAction(foldingDeps, []string{gamma}, proveractions.ComputeChallenge)
+	system.RegisterProverAction(foldingDeps, []string{gamma}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 2. fold A and B
 	gammaExpr := sym.NewChallenge(gamma)
@@ -145,13 +145,13 @@ func equalityFilteredColumnsIOP(system *cs.System, A, B sym.Expr, F1, F2 string)
 	F1Expr := sym.NewCommittedColumn(F1)
 	F2Expr := sym.NewCommittedColumn(F2)
 	depsAlpha := []sym.Expr{A, B, F1Expr, F2Expr}
-	system.RegisterProverAction(depsAlpha, []string{_alpha}, proveractions.ComputeChallenge)
+	system.RegisterProverAction(depsAlpha, []string{_alpha}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 3. create the filtered acc polynomials
 	inputsFA := []sym.Expr{A, F1Expr, alpha}
-	system.RegisterProverAction(inputsFA, []string{idAccFA}, proveractions.ComputeFilteredAccPolynomial)
+	system.RegisterProverAction(inputsFA, []string{idAccFA}, proveractions.NewIDCtx(proveractions.FITLERED_ACC_POLY))
 	inputsFB := []sym.Expr{B, F2Expr, alpha}
-	system.RegisterProverAction(inputsFB, []string{idAccFB}, proveractions.ComputeFilteredAccPolynomial)
+	system.RegisterProverAction(inputsFB, []string{idAccFB}, proveractions.NewIDCtx(proveractions.FITLERED_ACC_POLY))
 
 	// 4. register the constraints ensuring that the filtered acc polynomials
 	// FA and FB are correclty constructed

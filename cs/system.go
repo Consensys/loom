@@ -25,11 +25,11 @@ func NewSystem(N int) System {
 }
 
 // RegisterProverAction adds a prover action to the underlying System
-func (system *System) RegisterProverAction(inputs []sym.Expr, outputs []string, exec proveractions.Action) {
+func (system *System) RegisterProverAction(inputs []sym.Expr, outputs []string, ctx proveractions.Ctx) {
 	pa := proveractions.ProverAction{
 		Inputs:  inputs,
 		Outputs: outputs,
-		Exec:    exec,
+		Ctx:     ctx,
 	}
 	system.ProverActions = append(system.ProverActions, pa)
 }
@@ -47,6 +47,7 @@ func (system *System) RegisterConstraints(C []Constraint) {
 }
 
 // RegisterithLagrangeColumn syntactic sugar to add a prover action for creating the i-th lagrange column
+// TODO make a special contex for Lagrange columns
 func (system *System) RegisterithLagrangeColumn(i int) {
-	system.RegisterProverAction(nil, []string{proveractions.GetLagrangeID(i, system.N)}, proveractions.ComputeLagrangeColumn)
+	system.RegisterProverAction(nil, []string{proveractions.GetLagrangeID(i, system.N)}, proveractions.NewIDCtx(proveractions.LAGRANGE))
 }

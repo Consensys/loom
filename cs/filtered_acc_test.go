@@ -50,7 +50,7 @@ func TestComputeFilteredAccPolynomial(t *testing.T) {
 	T["R"] = R
 
 	// Add the L_0 Lagrange column needed for the boundary constraint.
-	err = proveractions.ComputeLagrangeColumn(T, nil, &mu, nil, []string{proveractions.GetLagrangeID(0, N)})
+	err = proveractions.ComputeLagrangeColumn(T, nil, &mu, nil, []string{proveractions.GetLagrangeID(0, N)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

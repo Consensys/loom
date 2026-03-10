@@ -26,7 +26,7 @@ func TestGrandProductConstraint(t *testing.T) {
 	E2 := sym.NewCommittedColumn("P1").Sub(sym.NewChallenge("gamma"))
 
 	var mu sync.Mutex
-	err := proveractions.ComputeLagrangeColumn(trace, nil, &mu, nil, []string{proveractions.GetLagrangeID(0, size)})
+	err := proveractions.ComputeLagrangeColumn(trace, nil, &mu, nil, []string{proveractions.GetLagrangeID(0, size)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestGrandProductConstraint(t *testing.T) {
 	GPConstraint := BuildGrandProductConstraint(E1, E2, "R", size)
 	system.RegisterConstraints(GPConstraint)
 	proof := proveractions.NewProof(size)
-	proveractions.ComputeGrandProduct(trace, &proof, &mu, []sym.Expr{E1, E2}, []string{"R"})
+	proveractions.ComputeGrandProduct(trace, &proof, &mu, []sym.Expr{E1, E2}, []string{"R"}, nil)
 
 	// R[0] must equal 1
 	var one koalabear.Element

@@ -73,7 +73,7 @@ func reduceDegree(system *System, targetDegree int) {
 			system.RegisterConstraint(newConstraint)
 
 			// register the prover action of creating the column C := lowDegreeExpr(trace)
-			system.RegisterProverAction([]sym.Expr{lowDegreeExpr}, []string{lowDegreeExpr.String()}, proveractions.ComputeColumn)
+			system.RegisterProverAction([]sym.Expr{lowDegreeExpr}, []string{lowDegreeExpr.String()}, proveractions.NewIDCtx(proveractions.COMPUTE_COL))
 
 			// register the lowDegreeExpr
 			seenExpr[daglowDegreeExpr.Root.Key()] = lowDegreeExpr.String()

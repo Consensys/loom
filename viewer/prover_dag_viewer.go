@@ -12,8 +12,11 @@ import (
 	proveractions "github.com/consensys/giop/prover_actions"
 )
 
-// actionLabel returns a short display label for a ProverAction from its output column names.
+// actionLabel returns a display label for a ProverAction from its Ctx.String().
 func actionLabel(pa proveractions.ProverAction) string {
+	if pa.Ctx != nil {
+		return pa.Ctx.String()
+	}
 	if len(pa.Outputs) == 0 {
 		return "action"
 	}

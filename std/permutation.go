@@ -64,7 +64,7 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 []sym.Expr) error {
 		return err
 	}
 
-	system.RegisterProverAction(append(E1, E2...), []string{gamma}, proveractions.ComputeChallenge)
+	system.RegisterProverAction(append(E1, E2...), []string{gamma}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 1. sample gamma
 	E1MinusGamma := E1[0].Sub(sym.NewChallenge(gamma))
@@ -81,7 +81,7 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 []sym.Expr) error {
 	system.RegisterConstraints(gpConstraint)
 
 	// 3. register the prover action for creating the grand product and grand product shifted
-	system.RegisterProverAction([]sym.Expr{E1MinusGamma, E2MinusGamma}, []string{IDGrandProduct}, proveractions.ComputeGrandProduct)
+	system.RegisterProverAction([]sym.Expr{E1MinusGamma, E2MinusGamma}, []string{IDGrandProduct}, proveractions.NewIDCtx(proveractions.GRAND_PRODUCT))
 
 	// 4. register the creation of the lagrange column
 	system.RegisterithLagrangeColumn(0)
@@ -155,7 +155,7 @@ func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string) 
 		}
 		deps = append(deps, E2[i]...)
 	}
-	system.RegisterProverAction(deps, []string{alpha}, proveractions.ComputeChallenge)
+	system.RegisterProverAction(deps, []string{alpha}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 2. fold ID1[i], ID2[i] for all i with alpha
 	alphaExpr := sym.NewChallenge(alpha)
