@@ -202,12 +202,18 @@ body{
 #bar h1 span{color:#e3b341}
 #legend{display:flex;gap:16px;align-items:center;font-size:.72rem;color:#8b949e}
 .li{display:flex;align-items:center;gap:6px;white-space:nowrap}
+#resetBtn{
+  margin-left:12px;padding:4px 10px;
+  background:#21262d;border:1px solid #30363d;border-radius:4px;
+  color:#c9d1d9;font-size:.72rem;cursor:pointer;white-space:nowrap}
+#resetBtn:hover{background:#30363d}
 #hint{margin-left:auto;font-size:.68rem;color:#484f58;white-space:nowrap}
 /* ── viewport ── */
 #vp{
   position:fixed;top:46px;left:0;right:0;bottom:0;
   overflow:hidden;cursor:grab}
-#vp:active{cursor:grabbing}
+#vp.panning{cursor:grabbing}
+#vp.node-drag{cursor:move}
 svg{width:100%;height:100%}
 /* ── node styles ── */
 .nk rect{fill:#0d2137;stroke:#388bfd;stroke-width:1.5}   /* known   : blue   */
@@ -264,8 +270,9 @@ svg{width:100%;height:100%}
       </svg>
       output
     </div>
+    <button id="resetBtn" onclick="resetLayout()">&#x21BA; Reset layout</button>
   </div>
-  <div id="hint">scroll to zoom &middot; drag to pan &middot; hover for full ID</div>
+  <div id="hint">scroll to zoom &middot; drag canvas to pan &middot; drag node to move &middot; hover for full ID</div>
 </div>
 
 <div id="vp">
@@ -308,32 +315,65 @@ function nodeClass(kind) {
   if (kind === "computed") return "nv";
   return "na"; // action
 }
-function edgeClass(kind)   { return kind === "to_action" ? "eti" : "efo"; }
-function edgeMarker(kind)  { return kind === "to_action" ? "ai"  : "ao";  }
+function edgeClass(kind)  { return kind === "to_action" ? "eti" : "efo"; }
+function edgeMarker(kind) { return kind === "to_action" ? "ai"  : "ao";  }
 
-// ── draw edges first ──────────────────────────────────────────────────────────
-const g = document.getElementById("g");
-D.edges.forEach(e => {
-  const s = byId[e.from], t = byId[e.to];
-  if (!s || !t) return;
+// ── mutable per-node positions (data-space, centred on node) ─────────────────
+const pos = {};
+D.nodes.forEach(n => { pos[n.id] = { x: n.x, y: n.y }; });
+
+function edgePath(sid, tid) {
+  const s = pos[sid], t = pos[tid];
   const x1 = s.x + NW / 2, y1 = s.y;
   const x2 = t.x - NW / 2, y2 = t.y;
   const mx = (x1 + x2) / 2;
-  const path = document.createElementNS(NS, "path");
-  path.setAttribute("d",
-    "M" + x1 + "," + y1 +
+  return "M" + x1 + "," + y1 +
     " C" + mx + "," + y1 +
     " " + mx + "," + y2 +
-    " " + x2 + "," + y2);
+    " " + x2 + "," + y2;
+}
+
+// ── draw edges first ──────────────────────────────────────────────────────────
+const g = document.getElementById("g");
+const edgeEls = []; // {from, to, el}
+
+D.edges.forEach(e => {
+  if (!byId[e.from] || !byId[e.to]) return;
+  const path = document.createElementNS(NS, "path");
+  path.setAttribute("d", edgePath(e.from, e.to));
   path.setAttribute("class",      edgeClass(e.kind));
   path.setAttribute("marker-end", "url(#" + edgeMarker(e.kind) + ")");
   g.appendChild(path);
+  edgeEls.push({ from: e.from, to: e.to, el: path });
 });
 
+// adjacency map: node id → edges that touch it
+const adjEdges = {};
+D.nodes.forEach(n => { adjEdges[n.id] = []; });
+edgeEls.forEach(e => {
+  adjEdges[e.from].push(e);
+  adjEdges[e.to].push(e);
+});
+
+function redrawEdges(id) {
+  (adjEdges[id] || []).forEach(e => {
+    e.el.setAttribute("d", edgePath(e.from, e.to));
+  });
+}
+
+function placeNode(id) {
+  const p = pos[id];
+  nodeEls[id].setAttribute("transform",
+    "translate(" + (p.x - NW / 2) + "," + (p.y - NH / 2) + ")");
+}
+
 // ── draw nodes ────────────────────────────────────────────────────────────────
+const nodeEls = {};
 const tip = document.getElementById("tip");
+
 D.nodes.forEach(n => {
   const ng = document.createElementNS(NS, "g");
+  nodeEls[n.id] = ng;
   ng.setAttribute("class", nodeClass(n.kind));
   ng.setAttribute("transform",
     "translate(" + (n.x - NW / 2) + "," + (n.y - NH / 2) + ")");
@@ -366,6 +406,16 @@ D.nodes.forEach(n => {
   ng.addEventListener("mousemove", moveTip);
   ng.addEventListener("mouseleave", () => { tip.style.display = "none"; });
 
+  // ── node drag ──
+  ng.addEventListener("mousedown", ev => {
+    ev.stopPropagation(); // prevent canvas pan
+    draggingNode = n.id;
+    // offset in data-space between cursor and node centre
+    nodeDragOx = (ev.clientX - tx) / sc - pos[n.id].x;
+    nodeDragOy = (ev.clientY - ty) / sc - pos[n.id].y;
+    vp.classList.add("node-drag");
+  });
+
   g.appendChild(ng);
 });
 
@@ -374,43 +424,69 @@ function moveTip(ev) {
   tip.style.top  = (ev.clientY -  4) + "px";
 }
 
-// ── auto-fit ──────────────────────────────────────────────────────────────────
+// ── pan/zoom state ────────────────────────────────────────────────────────────
 let tx = 0, ty = 0, sc = 1;
-function apply() {
+function applyTransform() {
   g.setAttribute("transform",
     "translate(" + tx + "," + ty + ") scale(" + sc + ")");
 }
 
-let minX =  Infinity, minY =  Infinity;
-let maxX = -Infinity, maxY = -Infinity;
-D.nodes.forEach(n => {
-  minX = Math.min(minX, n.x - NW / 2);
-  minY = Math.min(minY, n.y - NH / 2);
-  maxX = Math.max(maxX, n.x + NW / 2);
-  maxY = Math.max(maxY, n.y + NH / 2);
-});
-const pad = 40;
-minX -= pad; minY -= pad; maxX += pad; maxY += pad;
 const vp = document.getElementById("vp");
-const cw = vp.clientWidth, ch = vp.clientHeight;
-const fw = maxX - minX, fh = maxY - minY;
-sc = Math.min(cw / fw, ch / fh, 1.5);
-tx = -minX * sc + (cw - fw * sc) / 2;
-ty = -minY * sc + (ch - fh * sc) / 2;
-apply();
 
-// ── pan and zoom ──────────────────────────────────────────────────────────────
-let dragging = false, ox = 0, oy = 0;
+function fitToNodes() {
+  let minX =  Infinity, minY =  Infinity;
+  let maxX = -Infinity, maxY = -Infinity;
+  D.nodes.forEach(n => {
+    const p = pos[n.id];
+    minX = Math.min(minX, p.x - NW / 2);
+    minY = Math.min(minY, p.y - NH / 2);
+    maxX = Math.max(maxX, p.x + NW / 2);
+    maxY = Math.max(maxY, p.y + NH / 2);
+  });
+  const pad = 40;
+  minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+  const cw = vp.clientWidth, ch = vp.clientHeight;
+  const fw = maxX - minX, fh = maxY - minY;
+  sc = Math.min(cw / fw, ch / fh, 1.5);
+  tx = -minX * sc + (cw - fw * sc) / 2;
+  ty = -minY * sc + (ch - fh * sc) / 2;
+  applyTransform();
+}
+
+fitToNodes();
+
+// ── pan interaction ───────────────────────────────────────────────────────────
+let panning = false, panOx = 0, panOy = 0;
+let draggingNode = null, nodeDragOx = 0, nodeDragOy = 0;
+
 vp.addEventListener("mousedown", e => {
-  dragging = true; ox = e.clientX - tx; oy = e.clientY - ty;
+  panning = true;
+  panOx = e.clientX - tx;
+  panOy = e.clientY - ty;
+  vp.classList.add("panning");
 });
-window.addEventListener("mouseup",   () => { dragging = false; });
+
+window.addEventListener("mouseup", () => {
+  panning = false;
+  draggingNode = null;
+  vp.classList.remove("panning", "node-drag");
+});
+
 window.addEventListener("mousemove", e => {
-  if (!dragging) return;
-  tx = e.clientX - ox;
-  ty = e.clientY - oy;
-  apply();
+  if (draggingNode) {
+    const nx = (e.clientX - tx) / sc - nodeDragOx;
+    const ny = (e.clientY - ty) / sc - nodeDragOy;
+    pos[draggingNode].x = nx;
+    pos[draggingNode].y = ny;
+    placeNode(draggingNode);
+    redrawEdges(draggingNode);
+  } else if (panning) {
+    tx = e.clientX - panOx;
+    ty = e.clientY - panOy;
+    applyTransform();
+  }
 });
+
 vp.addEventListener("wheel", e => {
   e.preventDefault();
   const f = e.deltaY < 0 ? 1.12 : 0.89;
@@ -420,8 +496,19 @@ vp.addEventListener("wheel", e => {
   tx = mx - (mx - tx) * f;
   ty = my - (my - ty) * f;
   sc *= f;
-  apply();
+  applyTransform();
 }, { passive: false });
+
+// ── reset layout ──────────────────────────────────────────────────────────────
+function resetLayout() {
+  D.nodes.forEach(n => {
+    pos[n.id].x = n.x;
+    pos[n.id].y = n.y;
+    placeNode(n.id);
+    redrawEdges(n.id);
+  });
+  fitToNodes();
+}
 </script>
 </body>
 </html>`

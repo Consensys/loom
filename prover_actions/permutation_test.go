@@ -45,8 +45,8 @@ func TestPermutationGeneration(t *testing.T) {
 	// the S[i]-th element of (ID_0||ID_1)
 	chunks := []string{"P1", "P2"}
 	idChunks := []string{
-		GetPermutationSupport(0),
-		GetPermutationSupport(1),
+		GetPermutationSupportID(0),
+		GetPermutationSupportID(1),
 	}
 
 	for i := 0; i < 2*N; i++ {

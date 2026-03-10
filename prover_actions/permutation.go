@@ -13,13 +13,17 @@ import (
 // PERMUTATION_SUPPORT prefix for the columns containing the support of a permutation
 const PERMUTATION_SUPPORT = "ID"
 
-func GetPermutationSupport(i int) string {
+func GetPermutationSupportID(i int) string {
 	return fmt.Sprintf("%s_%d", PERMUTATION_SUPPORT, i)
 }
 
 type PermutationContext struct {
 	// S full permutation, i -> S[i]
 	S []int
+}
+
+func NewPermutationContext(S []int) PermutationContext {
+	return PermutationContext{S: S}
 }
 
 func (pc PermutationContext) String() string {
@@ -87,18 +91,20 @@ func ComputePermutationColumns(trace trace.Trace, proof *Proof, mu *sync.Mutex, 
 		return err
 	}
 	for i := 0; i < len(support); i++ {
-		err = RegisterColumn(trace, GetPermutationSupport(i), support[i], mu)
+		err = RegisterColumn(trace, GetPermutationSupportID(i), support[i], mu)
 		if err != nil {
 			return err
 		}
 	}
 
 	// 4. generation of the permutation columns
+	// outputs must contain at least nbChunks names (the permuted column names);
+	// any extra entries are support-column aliases declared to the scheduler and ignored here.
 	permutation := generatePermutation(support, permutationCtx.S)
-	if len(outputs) != nbChunks {
-		return fmt.Errorf("expected %d outputs, got %d\n", nbChunks, len(outputs))
+	if len(outputs) < nbChunks {
+		return fmt.Errorf("expected at least %d outputs, got %d\n", nbChunks, len(outputs))
 	}
-	for i := 0; i < len(outputs); i++ {
+	for i := 0; i < nbChunks; i++ {
 		err = RegisterColumn(trace, outputs[i], permutation[i], mu)
 		if err != nil {
 			return err

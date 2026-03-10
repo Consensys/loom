@@ -132,20 +132,13 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 []sym.Expr) error {
 // func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string, IDGrandProduct string, alpha, gamma string) error {
 func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string) error {
 
-	alpha, err := RandomString(constants.SIZE_RANDOM_STRING)
-	if err != nil {
-		return err
-	}
-
 	// 1. sample alpha: register the prover action ComputeChallenge, depending on all ids in ID1, ID2
-	var deps []sym.Expr
 	E1 := make([][]sym.Expr, len(ID1))
 	for i := 0; i < len(E1); i++ {
 		E1[i] = make([]sym.Expr, len(ID1[i]))
 		for j := 0; j < len(ID1[i]); j++ {
 			E1[i][j] = sym.NewCommittedColumn(ID1[i][j])
 		}
-		deps = append(deps, E1[i]...)
 	}
 	E2 := make([][]sym.Expr, len(ID2))
 	for i := 0; i < len(E2); i++ {
@@ -153,6 +146,44 @@ func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string) 
 		for j := 0; j < len(ID2[i]); j++ {
 			E2[i][j] = sym.NewCommittedColumn(ID2[i][j])
 		}
+	}
+
+	return multiSetEqualityUpToPermutationIOP(system, E1, E2)
+	// alpha, err := RandomString(constants.SIZE_RANDOM_STRING)
+	// if err != nil {
+	// 	return err
+	// }
+	// system.RegisterProverAction(deps, []string{alpha}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
+
+	// // 2. fold ID1[i], ID2[i] for all i with alpha
+	// alphaExpr := sym.NewChallenge(alpha)
+	// F1 := make([]sym.Expr, len(E1))
+	// for i := 0; i < len(E1); i++ {
+	// 	F1[i] = cs.Fold(E1[i], alphaExpr)
+	// }
+	// F2 := make([]sym.Expr, len(E2))
+	// for i := 0; i < len(E2); i++ {
+	// 	F2[i] = cs.Fold(E2[i], alphaExpr)
+	// }
+
+	// // 3. equalityUpToPermutationIOP
+	// equalityUpToPermutationIOP(system, F1, F2)
+
+	// return nil
+}
+
+func multiSetEqualityUpToPermutationIOP(system *cs.System, E1, E2 [][]sym.Expr) error {
+
+	// 1. derive alpha
+	alpha, err := RandomString(constants.SIZE_RANDOM_STRING)
+	if err != nil {
+		return err
+	}
+	var deps []sym.Expr
+	for i := 0; i < len(E1); i++ {
+		deps = append(deps, E1[i]...)
+	}
+	for i := 0; i < len(E1); i++ {
 		deps = append(deps, E2[i]...)
 	}
 	system.RegisterProverAction(deps, []string{alpha}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
@@ -172,4 +203,5 @@ func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string) 
 	equalityUpToPermutationIOP(system, F1, F2)
 
 	return nil
+
 }
