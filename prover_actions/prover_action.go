@@ -20,6 +20,7 @@ const (
 	MULTIPLICITY
 	FITLERED_ACC_POLY
 	FIAT_SHAMIR
+	PERMUTATION_GEN
 )
 
 func init() {
@@ -31,6 +32,7 @@ func init() {
 	PARegister[MULTIPLICITY] = ComputeMultiplicity
 	PARegister[FITLERED_ACC_POLY] = ComputeFilteredAccPolynomial
 	PARegister[FIAT_SHAMIR] = ComputeChallenge
+	PARegister[PERMUTATION_GEN] = ComputePermutationColumns
 }
 
 type Action = func(trace.Trace, *Proof, *sync.Mutex, []sym.Expr, []string, Ctx) error

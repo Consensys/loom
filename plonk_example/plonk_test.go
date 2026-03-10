@@ -9,6 +9,7 @@ import (
 	"github.com/consensys/giop/std"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/giop/verifier"
+	"github.com/consensys/giop/viewer"
 )
 
 func getKnownColumns(n int) map[string]bool {
@@ -133,6 +134,8 @@ func TestPlonk(t *testing.T) {
 	}
 
 	cciop := cs.Compile(&system)
+
+	viewer.WriteProverActionsDagToHTML(cciop, "plonk_dag.html")
 
 	proverRunTime := prover.NewRuntime(cciop, fulltrace)
 	// proof := cs.NewProof(N)

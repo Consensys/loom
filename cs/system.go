@@ -26,6 +26,19 @@ func NewSystem(N int) System {
 
 // RegisterProverAction adds a prover action to the underlying System
 func (system *System) RegisterProverAction(inputs []sym.Expr, outputs []string, ctx proveractions.Ctx) {
+
+	// if it is the creation of a lagrange column, check if we haven't already register the action (for cleaning purpose only,
+	// this step is not necessary)
+	if ctx.GetID() == proveractions.LAGRANGE {
+		for _, pa := range system.ProverActions {
+			if pa.Ctx.GetID() == proveractions.LAGRANGE {
+				if outputs[0] == pa.Outputs[0] {
+					return
+				}
+			}
+		}
+	}
+
 	pa := proveractions.ProverAction{
 		Inputs:  inputs,
 		Outputs: outputs,
