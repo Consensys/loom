@@ -199,6 +199,137 @@ func TestEvalPointWise(t *testing.T) {
 	})
 }
 
+// setupPiSlice assigns Idx values to every leaf in E and returns _Pi []Polynomial,
+// where _Pi[l.Idx] is the polynomial for leaf l drawn from Pi.
+// This mirrors the setup done inside evalPointWiseInto.
+func setupPiSlice(Pi map[string]Polynomial, E sym.Expr) []Polynomial {
+	type varKey struct {
+		name  string
+		shift int
+	}
+	varToIdx := make(map[varKey]int)
+	allLeaves := E.LeavesFull(sym.NewConfig())
+	var unique []*sym.Leaf
+	for _, l := range allLeaves {
+		key := varKey{l.Name, l.Shift}
+		if idx, ok := varToIdx[key]; ok {
+			l.Idx = idx
+		} else {
+			l.Idx = len(unique)
+			varToIdx[key] = l.Idx
+			unique = append(unique, l)
+		}
+	}
+	_Pi := make([]Polynomial, len(unique))
+	for _, l := range unique {
+		_Pi[l.Idx] = Pi[l.Name]
+	}
+	return _Pi
+}
+
+func TestEvaluateOnIthEntry(t *testing.T) {
+
+	t.Run("Regular_x0sq_plus_x1", func(t *testing.T) {
+		// E = x0^2 + x1; verify row-by-row against BuildPointwiseEvaluation
+		size := 8
+		P0 := makeLagrangePoly(1, 2, 3, 4, 5, 6, 7, 8)
+		P1 := makeLagrangePoly(10, 20, 30, 40, 50, 60, 70, 80)
+		Pi := map[string]Polynomial{"x0": P0, "x1": P1}
+		E := sym.NewCommittedColumn("x0").Pow(2).Add(sym.NewCommittedColumn("x1"))
+
+		_Pi := setupPiSlice(Pi, E)
+		R, err := BuildPointwiseEvaluation(Pi, E, size, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < size; i++ {
+			got := E.EvaluateOnIthEntry(_Pi, i)
+			if !got.Equal(&R[i]) {
+				t.Errorf("row %d: got %s, want %s", i, got.String(), R[i].String())
+			}
+		}
+	})
+
+	t.Run("ConstantPolynomial", func(t *testing.T) {
+		// gamma is a constant polynomial (len==1); should always return gamma[0]
+		size := 8
+		P0 := makeLagrangePoly(3, 5, 7, 9, 11, 13, 15, 17)
+		var gVal koalabear.Element
+		gVal.SetUint64(42)
+		Pi := map[string]Polynomial{"x0": P0, "gamma": {gVal}}
+		E := sym.NewCommittedColumn("x0").Sub(sym.NewCommittedColumn("gamma"))
+
+		_Pi := setupPiSlice(Pi, E)
+		R, err := BuildPointwiseEvaluation(Pi, E, size, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < size; i++ {
+			got := E.EvaluateOnIthEntry(_Pi, i)
+			if !got.Equal(&R[i]) {
+				t.Errorf("row %d: got %s, want %s", i, got.String(), R[i].String())
+			}
+		}
+	})
+
+	t.Run("ConstLeaf", func(t *testing.T) {
+		// E = x0 - 3 where 3 is a Const leaf (not in Pi)
+		size := 8
+		var three koalabear.Element
+		three.SetUint64(3)
+		P0 := makeLagrangePoly(4, 5, 6, 7, 8, 9, 10, 11)
+		Pi := map[string]Polynomial{"x0": P0}
+		E := sym.NewCommittedColumn("x0").Sub(sym.NewConst(three))
+
+		_Pi := setupPiSlice(Pi, E)
+		R, err := BuildPointwiseEvaluation(Pi, E, size, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < size; i++ {
+			got := E.EvaluateOnIthEntry(_Pi, i)
+			if !got.Equal(&R[i]) {
+				t.Errorf("row %d: got %s, want %s", i, got.String(), R[i].String())
+			}
+		}
+	})
+
+	t.Run("ShiftedColumn", func(t *testing.T) {
+		// E = x0(shift=1) - x0; should equal P0[(i+1)%N] - P0[i]
+		size := 8
+		P0 := makeLagrangePoly(1, 3, 2, 7, 5, 4, 6, 8)
+		Pi := map[string]Polynomial{"x0": P0}
+		E := sym.NewShiftedColumn("x0", 1).Sub(sym.NewCommittedColumn("x0"))
+
+		_Pi := setupPiSlice(Pi, E)
+		for i := 0; i < size; i++ {
+			got := E.EvaluateOnIthEntry(_Pi, i)
+			var want koalabear.Element
+			want.Sub(&P0[(i+1)%size], &P0[i])
+			if !got.Equal(&want) {
+				t.Errorf("row %d: got %s, want %s", i, got.String(), want.String())
+			}
+		}
+	})
+
+	t.Run("NegativeShift", func(t *testing.T) {
+		// E = x0(shift=-1); should equal P0[(i-1+N)%N]
+		size := 8
+		P0 := makeLagrangePoly(2, 4, 6, 8, 10, 12, 14, 16)
+		Pi := map[string]Polynomial{"x0": P0}
+		E := sym.NewShiftedColumn("x0", -1)
+
+		_Pi := setupPiSlice(Pi, E)
+		for i := 0; i < size; i++ {
+			got := E.EvaluateOnIthEntry(_Pi, i)
+			want := P0[(i-1+size)%size]
+			if !got.Equal(&want) {
+				t.Errorf("row %d: got %s, want %s", i, got.String(), want.String())
+			}
+		}
+	})
+}
+
 func TestDivPointWise(t *testing.T) {
 
 	t.Run("Simple", func(t *testing.T) {

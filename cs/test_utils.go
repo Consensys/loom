@@ -99,15 +99,6 @@ func BuildPermutationMultiSet(t *testing.T, size int) trace.Trace {
 	}
 }
 
-// getVal returns T[l][i] handling constant polynomials (size 1).
-func getVal(T trace.Trace, l string, i int) koalabear.Element {
-	p := T[l]
-	if len(p) == 1 {
-		return p[0]
-	}
-	return p[i]
-}
-
 // BruteForceChecker checks rows by rows a system by evaluating on the domain X^n-1,
 // and checks that it is zero on this domain
 func BruteForceChecker(T trace.Trace, constraints []Constraint, N int) error {

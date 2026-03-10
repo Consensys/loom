@@ -8,6 +8,7 @@ import (
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
+	"github.com/consensys/gnark-crypto/utils"
 )
 
 // ComputeQuotient computes E(PI)/X^N-1
@@ -25,43 +26,34 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 		return Polynomial{}, fmt.Errorf("big domain size %d is not divisible by vanishing domain size %d", bigSize, N)
 	}
 
-	// Collect unique non-Const leaves, set Leaf.Idx, and pair each with its
-	// base polynomial copy. A ShiftedColumn and its base CommittedColumn share
-	// the same backing slice (baseCopies keyed by l.Name); only one copy and
-	// one FFT pass is needed per base column.
-	type leafSlot struct {
-		leaf *sym.Leaf
-		poly []koalabear.Element
-	}
-	type varKey struct{ name string; shift int }
-	varToIdx := make(map[varKey]int)
+	// Assign Leaf.Idx by column name (shifted and non-shifted versions of the same
+	// column share the same index and polynomial; EvalOnIthEntry handles shifts).
+	// Copy each base polynomial once so FFT mutations don't affect the caller's trace.
+	nameToIdx := make(map[string]int)
 	baseCopies := make(map[string][]koalabear.Element)
-	var slots []leafSlot
 	for _, n := range vanishingRelation.Nodes {
-		if n.Kind != dag.KindLeaf {
+		if n.Kind != dag.KindLeaf || n.Leaf.Type == sym.Const {
 			continue
 		}
 		l := n.Leaf
-		if l.Type == sym.Const {
-			continue // EvaluateWithIdx returns l.Value directly; no slot needed
+		if _, ok := nameToIdx[l.Name]; !ok {
+			nameToIdx[l.Name] = len(nameToIdx)
+			src := Pi[l.Name]
+			cp := make([]koalabear.Element, len(src))
+			copy(cp, src)
+			baseCopies[l.Name] = cp
 		}
-		key := varKey{l.Name, l.Shift}
-		if idx, ok := varToIdx[key]; ok {
-			l.Idx = idx
-			continue
-		}
-		l.Idx = len(slots)
-		varToIdx[key] = l.Idx
-		if _, ok := baseCopies[l.Name]; !ok {
-			v := Pi[l.Name]
-			coeffs := make([]koalabear.Element, len(v))
-			copy(coeffs, v)
-			baseCopies[l.Name] = coeffs
-		}
-		slots = append(slots, leafSlot{leaf: l, poly: baseCopies[l.Name]})
+		l.Idx = nameToIdx[l.Name]
 	}
 
-	// piNonConst: unique non-constant polynomial slices for FFT (one per base column).
+	// _Pi[idx] is the (mutable) copy of the polynomial for that leaf name.
+	// The FFT loop mutates these slices in-place; EvalOnIthEntry reads from them.
+	_Pi := make([][]koalabear.Element, len(nameToIdx))
+	for name, idx := range nameToIdx {
+		_Pi[idx] = baseCopies[name]
+	}
+
+	// piNonConst: non-constant polynomial slices that need FFT (one per base column).
 	piNonConst := make([][]koalabear.Element, 0, len(baseCopies))
 	for _, poly := range baseCopies {
 		if len(poly) > 1 {
@@ -69,34 +61,7 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 		}
 	}
 
-	// Pre-classify slots once so the inner j-loop is branch-free.
-	// Const slots (len==1, i.e. challenges) are pre-filled into vals and excluded from both lists.
-	type shiftedSlot struct {
-		idx   int
-		poly  []koalabear.Element
-		shift int
-	}
-	type normalSlot struct {
-		idx  int
-		poly []koalabear.Element
-	}
-	var normalSlots []normalSlot
-	var shiftedSlots []shiftedSlot
-	vals := make([]koalabear.Element, len(slots))
-	for _, s := range slots {
-		if len(s.poly) == 1 {
-			vals[s.leaf.Idx] = s.poly[0] // challenge: constant, pre-filled once
-		} else if s.leaf.Type == sym.ShiftedColumn {
-			shiftedSlots = append(shiftedSlots, shiftedSlot{s.leaf.Idx, s.poly, s.leaf.Shift})
-		} else {
-			normalSlots = append(normalSlots, normalSlot{s.leaf.Idx, s.poly})
-		}
-	}
-
 	numerator := make([]koalabear.Element, bigSize)
-
-	// eval cache (reused across all inner-loop iterations)
-	evalCache := make([]koalabear.Element, len(vanishingRelation.Nodes))
 
 	// create domains
 	bigDomain := fft.NewDomain(uint64(bigSize))
@@ -110,10 +75,10 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 	// i.e. build powers of g then BitReverse with length N.
 	twiddleFrMultiplicativeGen := make([]koalabear.Element, N)
 	fft.BuildExpTable(bigDomain.FrMultiplicativeGen, twiddleFrMultiplicativeGen)
-	fft.BitReverse(twiddleFrMultiplicativeGen)
+	utils.BitReverse(twiddleFrMultiplicativeGen)
 	twiddleGeneratorBigDomain := make([]koalabear.Element, N)
 	fft.BuildExpTable(bigDomain.Generator, twiddleGeneratorBigDomain)
-	fft.BitReverse(twiddleGeneratorBigDomain)
+	utils.BitReverse(twiddleGeneratorBigDomain)
 	scaleByTwiddles := func(a, b []koalabear.Element) {
 		for i := 0; i < N; i++ {
 			a[i].Mul(&a[i], &b[i])
@@ -129,7 +94,7 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 	}
 
 	// at this stage, all the polynomials c[i] in c are in canonical, bit reverse, scaled by <bigDomain.FrMultiplicativeGen^i>
-	for i := 0; i < rho; i++ {
+	for i := range rho {
 
 		// evaluate the polys shifted by <bigDomain.FrMultiplicativeGen> on  <bigDomain.Generator^i> -> the result is the polys
 		// evaluated on the coset bigDomain.FrMultiplicativeGen*<bigDomain.Generator^i>
@@ -140,13 +105,7 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 		// at this stage, the polys are evaluated on bigDomain.FrMultiplicativeGen*<bigDomain.Generator^i>. We can compute the rho-ith
 		// component of the numerator
 		for j := 0; j < N; j++ {
-			for _, s := range normalSlots {
-				vals[s.idx] = s.poly[j]
-			}
-			for _, s := range shiftedSlots {
-				vals[s.idx] = s.poly[((j+s.shift)%N+N)%N]
-			}
-			numerator[rho*j+i] = vanishingRelation.EvalWithIdx(vals, evalCache)
+			numerator[rho*j+i] = vanishingRelation.EvalOnIthEntry(_Pi, j)
 		}
 
 		// FFTInv on piNonConst -> polys become canonical again, k-th coeff shifted by bigDomain.FrMultiplicativeGen^k*<bigDomain.Generator^ik>
@@ -167,13 +126,13 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 	frn.Exp(bigDomain.FrMultiplicativeGen, NBigInt) // FrGen^N
 	gn.Exp(bigDomain.Generator, NBigInt)            // bigDomain.Generator^N, has order rho
 	accgn := koalabear.One()
-	for i := 0; i < rho; i++ {
+	for i := range rho {
 		xnMinusOne[i].Mul(&frn, &accgn).Sub(&xnMinusOne[i], &one) // FrGen^N · gn^i - 1
 		accgn.Mul(&accgn, &gn)
 	}
 
 	// do the division
-	for i := 0; i < bigSize; i++ {
+	for i := range bigSize {
 		numerator[i].Div(&numerator[i], &xnMinusOne[i%rho])
 	}
 
@@ -192,7 +151,7 @@ func CosetLagrangeToLagrangeNormal(p Polynomial) {
 	d.FFTInverse(p, fft.DIF)
 
 	// Step 2: BitReverse → Normal order (= c_k * FrGen^k)
-	fft.BitReverse(p)
+	utils.BitReverse(p)
 
 	// Step 3: divide by FrGen^k to get canonical coefficients c_k
 	invFrGen := d.FrMultiplicativeGen
@@ -207,5 +166,5 @@ func CosetLagrangeToLagrangeNormal(p Polynomial) {
 	d.FFT(p, fft.DIF)
 
 	// Step 5: BitReverse → Lagrange Normal
-	fft.BitReverse(p)
+	utils.BitReverse(p)
 }

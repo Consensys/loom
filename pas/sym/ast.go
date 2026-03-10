@@ -105,9 +105,15 @@ type Expr interface {
 	// Return E.
 	Prune(deg int) Expr
 
-	// EvaluateWEvaluateWithIdx substitues each leaf idx with vals[idx] and returns the result.
-	// Panics if idx out of bound
-	EvaluateWithIdx(vals []koalabear.Element) koalabear.Element
+	// EvaluateOnIthEntry evaluates the expression at row i of the polynomial slice _Pi.
+	// Each leaf's Idx field selects which polynomial in _Pi to read from.
+	// Row selection rules:
+	//   - Const leaf          : returns the constant value (ignores _Pi and i)
+	//   - len(_Pi[l.Idx]) == 1: constant polynomial, always returns _Pi[l.Idx][0]
+	//   - ShiftedColumn leaf  : returns _Pi[l.Idx][(i + N + l.Shift) % N] where N = len(_Pi[l.Idx])
+	//   - all other leaves    : returns _Pi[l.Idx][i]
+	// Leaf Idx values must be set by the caller before invoking this method (e.g. via LeavesFull).
+	EvaluateOnIthEntry(_Pi [][]koalabear.Element, i int) koalabear.Element
 
 	// Evaluate substitutes each leaf name with the corresponding field element
 	// from vals and returns the result. Panics if a required name is absent.
@@ -223,11 +229,19 @@ func (l *Leaf) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
 	return v
 }
 
-func (l *Leaf) EvaluateWithIdx(vals []koalabear.Element) koalabear.Element {
+func (l *Leaf) EvaluateOnIthEntry(_Pi [][]koalabear.Element, i int) koalabear.Element {
 	if l.Type == Const {
 		return l.Value
 	}
-	return vals[l.Idx]
+	p := _Pi[l.Idx]
+	if len(p) == 1 {
+		return p[0]
+	}
+	N := len(p)
+	if l.Type == ShiftedColumn {
+		return p[(i+N+l.Shift)%N]
+	}
+	return p[i]
 }
 
 type Add struct {
@@ -522,29 +536,29 @@ func (p *Pow) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
 	return res
 }
 
-func (a *Add) EvaluateWithIdx(vals []koalabear.Element) koalabear.Element {
-	l := a.Left.EvaluateWithIdx(vals)
-	r := a.Right.EvaluateWithIdx(vals)
+func (a *Add) EvaluateOnIthEntry(_Pi [][]koalabear.Element, i int) koalabear.Element {
+	l := a.Left.EvaluateOnIthEntry(_Pi, i)
+	r := a.Right.EvaluateOnIthEntry(_Pi, i)
 	l.Add(&l, &r)
 	return l
 }
 
-func (s *Sub) EvaluateWithIdx(vals []koalabear.Element) koalabear.Element {
-	l := s.Left.EvaluateWithIdx(vals)
-	r := s.Right.EvaluateWithIdx(vals)
+func (s *Sub) EvaluateOnIthEntry(_Pi [][]koalabear.Element, i int) koalabear.Element {
+	l := s.Left.EvaluateOnIthEntry(_Pi, i)
+	r := s.Right.EvaluateOnIthEntry(_Pi, i)
 	l.Sub(&l, &r)
 	return l
 }
 
-func (m *Mul) EvaluateWithIdx(vals []koalabear.Element) koalabear.Element {
-	l := m.Left.EvaluateWithIdx(vals)
-	r := m.Right.EvaluateWithIdx(vals)
+func (m *Mul) EvaluateOnIthEntry(_Pi [][]koalabear.Element, i int) koalabear.Element {
+	l := m.Left.EvaluateOnIthEntry(_Pi, i)
+	r := m.Right.EvaluateOnIthEntry(_Pi, i)
 	l.Mul(&l, &r)
 	return l
 }
 
-func (p *Pow) EvaluateWithIdx(vals []koalabear.Element) koalabear.Element {
-	base := p.Base.EvaluateWithIdx(vals)
+func (p *Pow) EvaluateOnIthEntry(_Pi [][]koalabear.Element, i int) koalabear.Element {
+	base := p.Base.EvaluateOnIthEntry(_Pi, i)
 	var res koalabear.Element
 	res.SetOne()
 	exp := p.Exp

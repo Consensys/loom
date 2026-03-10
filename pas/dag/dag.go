@@ -47,12 +47,12 @@ const (
 // so that the node is unique regardless of operand order in the source tree.
 type DAGNode struct {
 	Kind     NodeKind
-	Leaf     *sym.Leaf  // non-nil iff Kind == KindLeaf; stored as concrete type to avoid interface dispatch in hot eval path
-	Children []*DAGNode // len 2 for Add/Sub/Mul; len 1 for Pow; len 0 for Leaf
-	Exp      uint32     // exponent, only meaningful when Kind == KindPow
-	Index    int        // position in DAG.Nodes; used by EvalWithCache / EvalWithCacheVars
-	VarIdx   int        // for KindLeaf: index into vars slice for EvalWithCacheVars
-	IsConst  bool       // true iff Kind == KindLeaf and the leaf is a Const
+	Leaf     *sym.Leaf         // non-nil iff Kind == KindLeaf; stored as concrete type to avoid interface dispatch in hot eval path
+	Children []*DAGNode        // len 2 for Add/Sub/Mul; len 1 for Pow; len 0 for Leaf
+	Exp      uint32            // exponent, only meaningful when Kind == KindPow
+	Index    int               // position in DAG.Nodes; used by EvalWithCache / EvalWithCacheVars
+	VarIdx   int               // for KindLeaf: index into vars slice for EvalWithCacheVars
+	IsConst  bool              // true iff Kind == KindLeaf and the leaf is a Const
 	ConstVal koalabear.Element // valid iff IsConst; avoids the l.Type==Const branch in the hot eval path
 
 	key string // canonical key used for deduplication (unexported)
@@ -518,41 +518,6 @@ func absorbChildren(n *DAGNode, kind NodeKind, flat map[*DAGNode]*DAGNode) []*DA
 	return children
 }
 
-// String returns a human-readable multi-line tree representation of the DAG.
-//
-// Each unique node is printed once. Nodes referenced by more than one parent
-// are labelled (#0, #1, …) on their first occurrence and shown as "→ #N" on
-// every subsequent one, making sharing explicit without unrolling the graph.
-//
-// Example output for (a*b + c) where (a*b) is shared:
-//
-//	add
-//	├── #0: mul
-//	│   ├── col:a
-//	│   └── col:b
-//	├── col:c
-//	└── → #0
-func (d *DAG) String() string {
-	// Count how many parents reference each node.
-	refCount := dagRefCount(d.Root)
-
-	// Assign sequential IDs to shared nodes in topological order (d.Nodes is
-	// children-before-parents), so leaves and deep sub-expressions get lower IDs.
-	ids := make(map[*DAGNode]int, len(d.Nodes))
-	nextID := 0
-	for _, n := range d.Nodes {
-		if refCount[n] > 1 {
-			ids[n] = nextID
-			nextID++
-		}
-	}
-
-	var sb strings.Builder
-	visited := make(map[*DAGNode]bool, len(d.Nodes))
-	dagWriteNode(&sb, d.Root, ids, visited, "")
-	return strings.TrimRight(sb.String(), "\n")
-}
-
 // dagRefCount returns the number of parent references for every node in the
 // subtree rooted at root (i.e. the in-degree in the DAG).
 func dagRefCount(root *DAGNode) map[*DAGNode]int {
@@ -598,40 +563,6 @@ func dagNodeLabel(n *DAGNode) string {
 		return fmt.Sprintf("^%d", n.Exp)
 	}
 	return "?"
-}
-
-// dagWriteNode writes n and its subtree into sb.
-// The caller must have already written the connector for n's own line
-// (e.g. "├── " or "└── "); dagWriteNode writes the label and then recurses.
-// prefix is the continuation indent prepended to every line that belongs to
-// n's descendants.
-func dagWriteNode(sb *strings.Builder, n *DAGNode, ids map[*DAGNode]int, visited map[*DAGNode]bool, prefix string) {
-	id, shared := ids[n]
-
-	if shared && visited[n] {
-		// Already printed in full elsewhere: emit a back-reference.
-		fmt.Fprintf(sb, "→ #%d\n", id)
-		return
-	}
-
-	// Write the label line.
-	if shared {
-		visited[n] = true
-		fmt.Fprintf(sb, "#%d: %s\n", id, dagNodeLabel(n))
-	} else {
-		fmt.Fprintf(sb, "%s\n", dagNodeLabel(n))
-	}
-
-	// Recurse into children, drawing branch connectors.
-	for i, child := range n.Children {
-		if i < len(n.Children)-1 {
-			sb.WriteString(prefix + "├── ")
-			dagWriteNode(sb, child, ids, visited, prefix+"│   ")
-		} else {
-			sb.WriteString(prefix + "└── ")
-			dagWriteNode(sb, child, ids, visited, prefix+"    ")
-		}
-	}
 }
 
 // Eval evaluates the DAG at the given variable assignment. It processes nodes
@@ -752,23 +683,29 @@ func evalDAGNodeSliceVars(n *DAGNode, cache []koalabear.Element, vars []koalabea
 	panic(fmt.Sprintf("EvalWithCacheVars: unknown NodeKind %d", n.Kind))
 }
 
-// EvalWithIdx evaluates the DAG using vals indexed by Leaf.Idx (set externally
-// on each *sym.Leaf node). Const leaves return their value directly without
-// reading vals. cache must have length >= len(d.Nodes).
-func (d *DAG) EvalWithIdx(vals []koalabear.Element, cache []koalabear.Element) koalabear.Element {
+// EvalOnIthEntry evaluates the DAG at row i of the polynomial slice _Pi.
+// Each leaf node's Leaf.Idx field selects which polynomial in _Pi to read from
+// (must be set by the caller, e.g. via evalPointWiseInto setup).
+// Row selection follows the same rules as sym.Expr.EvaluateOnIthEntry:
+//   - Const leaf              : returns the constant value
+//   - len(_Pi[leaf.Idx]) == 1 : constant polynomial, returns _Pi[leaf.Idx][0]
+//   - ShiftedColumn leaf      : returns _Pi[leaf.Idx][(i+N+leaf.Shift)%N]
+//   - all other leaves        : returns _Pi[leaf.Idx][i]
+//
+// Composite nodes are evaluated in topological order using an internal cache
+// so that shared sub-expressions are computed only once.
+func (d *DAG) EvalOnIthEntry(_Pi [][]koalabear.Element, i int) koalabear.Element {
+	cache := make([]koalabear.Element, len(d.Nodes))
 	for _, n := range d.Nodes {
-		cache[n.Index] = evalDAGNodeSliceIdx(n, cache, vals)
+		cache[n.Index] = evalDAGNodeOnIthEntry(n, cache, _Pi, i)
 	}
 	return cache[d.Root.Index]
 }
 
-func evalDAGNodeSliceIdx(n *DAGNode, cache []koalabear.Element, vals []koalabear.Element) koalabear.Element {
+func evalDAGNodeOnIthEntry(n *DAGNode, cache []koalabear.Element, _Pi [][]koalabear.Element, i int) koalabear.Element {
 	switch n.Kind {
 	case KindLeaf:
-		if n.IsConst {
-			return n.ConstVal
-		}
-		return vals[n.Leaf.Idx]
+		return n.Leaf.EvaluateOnIthEntry(_Pi, i)
 
 	case KindAdd:
 		var acc koalabear.Element
@@ -807,7 +744,7 @@ func evalDAGNodeSliceIdx(n *DAGNode, cache []koalabear.Element, vals []koalabear
 		}
 		return res
 	}
-	panic(fmt.Sprintf("EvalWithIdx: unknown NodeKind %d", n.Kind))
+	panic(fmt.Sprintf("EvalOnIthEntry: unknown NodeKind %d", n.Kind))
 }
 
 // EvalWithCache evaluates the DAG using the caller-supplied cache slice instead

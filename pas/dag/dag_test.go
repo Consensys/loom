@@ -93,7 +93,7 @@ func TestDAGEvalSharedSubExpression(t *testing.T) {
 	// The DAG should have exactly 4 nodes: col:a, col:b, add(a,b), mul.
 	// sym.Without deduplication we would have 7 (two copies of col:a, col:b, add).
 	if len(dag.Nodes) != 4 {
-		t.Errorf("expected 4 DAG nodes, got %d: %s", len(dag.Nodes), dag.String())
+		t.Errorf("expected 4 DAG nodes, got %d", len(dag.Nodes))
 	}
 
 	// The Mul root's two children must be the same pointer (the shared Add node).
@@ -334,7 +334,7 @@ func TestDAGFactorize(t *testing.T) {
 			want := tc.expr.Evaluate(vals)
 			got := d.Eval(vals)
 			if !got.Equal(&want) {
-				t.Errorf("eval mismatch: got %s, want %s\nDAG:\n%s", got.String(), want.String(), d.String())
+				t.Errorf("eval mismatch: got %s, want %s\n", got.String(), want.String())
 			}
 
 			// EvalWithCacheVars must also produce the correct result.
@@ -355,11 +355,135 @@ func TestDAGFactorize(t *testing.T) {
 			mulsBefore := countMuls(unfactored)
 			mulsAfter := countMuls(d)
 			if mulsBefore-mulsAfter != tc.wantMulSave {
-				t.Errorf("Mul savings: got %d (before=%d after=%d), want %d\nFactorized DAG:\n%s",
-					mulsBefore-mulsAfter, mulsBefore, mulsAfter, tc.wantMulSave, d.String())
+				t.Errorf("Mul savings: got %d (before=%d after=%d), want %d\n",
+					mulsBefore-mulsAfter, mulsBefore, mulsAfter, tc.wantMulSave)
 			}
 		})
 	}
+}
+
+// setupPiSlice assigns Idx to every leaf in expr (deduplicating by name) and
+// returns _Pi where _Pi[leaf.Idx] is the polynomial for that leaf.
+// This mirrors the setup done inside evalPointWiseInto.
+func setupPiSlice(expr sym.Expr, pi map[string][]koalabear.Element) [][]koalabear.Element {
+	nameToIdx := make(map[string]int)
+	for _, l := range expr.LeavesFull(sym.NewConfig()) {
+		if _, ok := nameToIdx[l.Name]; !ok {
+			nameToIdx[l.Name] = len(nameToIdx)
+		}
+		l.Idx = nameToIdx[l.Name]
+	}
+	_Pi := make([][]koalabear.Element, len(nameToIdx))
+	for name, idx := range nameToIdx {
+		_Pi[idx] = pi[name]
+	}
+	return _Pi
+}
+
+func TestDAGEvalOnIthEntry(t *testing.T) {
+	const N = 8
+
+	makePoly := func(vals ...uint64) []koalabear.Element {
+		p := make([]koalabear.Element, len(vals))
+		for i, v := range vals {
+			p[i].SetUint64(v)
+		}
+		return p
+	}
+
+	t.Run("Regular_x0sq_plus_x1", func(t *testing.T) {
+		P0 := makePoly(1, 2, 3, 4, 5, 6, 7, 8)
+		P1 := makePoly(10, 20, 30, 40, 50, 60, 70, 80)
+		pi := map[string][]koalabear.Element{"x0": P0, "x1": P1}
+		expr := sym.NewCommittedColumn("x0").Pow(2).Add(sym.NewCommittedColumn("x1"))
+		d := ExprToDAG(expr)
+		_Pi := setupPiSlice(expr, pi)
+
+		for i := 0; i < N; i++ {
+			want := expr.EvaluateOnIthEntry(_Pi, i)
+			got := d.EvalOnIthEntry(_Pi, i)
+			if !got.Equal(&want) {
+				t.Errorf("row %d: got %s, want %s", i, got.String(), want.String())
+			}
+		}
+	})
+
+	t.Run("ConstantPolynomial", func(t *testing.T) {
+		// gamma is a length-1 (constant) polynomial; should always return gamma[0]
+		P0 := makePoly(3, 5, 7, 9, 11, 13, 15, 17)
+		var gVal koalabear.Element
+		gVal.SetUint64(42)
+		pi := map[string][]koalabear.Element{"x0": P0, "gamma": {gVal}}
+		expr := sym.NewCommittedColumn("x0").Sub(sym.NewCommittedColumn("gamma"))
+		d := ExprToDAG(expr)
+		_Pi := setupPiSlice(expr, pi)
+
+		for i := 0; i < N; i++ {
+			want := expr.EvaluateOnIthEntry(_Pi, i)
+			got := d.EvalOnIthEntry(_Pi, i)
+			if !got.Equal(&want) {
+				t.Errorf("row %d: got %s, want %s", i, got.String(), want.String())
+			}
+		}
+	})
+
+	t.Run("ConstLeaf", func(t *testing.T) {
+		var three koalabear.Element
+		three.SetUint64(3)
+		P0 := makePoly(4, 5, 6, 7, 8, 9, 10, 11)
+		pi := map[string][]koalabear.Element{"x0": P0}
+		expr := sym.NewCommittedColumn("x0").Sub(sym.NewConst(three))
+		d := ExprToDAG(expr)
+		_Pi := setupPiSlice(expr, pi)
+
+		for i := 0; i < N; i++ {
+			want := expr.EvaluateOnIthEntry(_Pi, i)
+			got := d.EvalOnIthEntry(_Pi, i)
+			if !got.Equal(&want) {
+				t.Errorf("row %d: got %s, want %s", i, got.String(), want.String())
+			}
+		}
+	})
+
+	t.Run("ShiftedColumn", func(t *testing.T) {
+		// E = x0(shift=1) - x0 → P0[(i+1)%N] - P0[i]
+		P0 := makePoly(1, 3, 2, 7, 5, 4, 6, 8)
+		pi := map[string][]koalabear.Element{"x0": P0}
+		expr := sym.NewShiftedColumn("x0", 1).Sub(sym.NewCommittedColumn("x0"))
+		d := ExprToDAG(expr)
+		_Pi := setupPiSlice(expr, pi)
+
+		for i := 0; i < N; i++ {
+			want := expr.EvaluateOnIthEntry(_Pi, i)
+			got := d.EvalOnIthEntry(_Pi, i)
+			if !got.Equal(&want) {
+				t.Errorf("row %d: got %s, want %s", i, got.String(), want.String())
+			}
+		}
+	})
+
+	t.Run("SharedSubExpression", func(t *testing.T) {
+		// (a*b + c) * (a*b - d): a*b is shared in the DAG
+		Pa := makePoly(2, 3, 5, 7, 11, 13, 17, 19)
+		Pb := makePoly(1, 2, 3, 4, 5, 6, 7, 8)
+		Pc := makePoly(10, 10, 10, 10, 10, 10, 10, 10)
+		Pd := makePoly(1, 1, 1, 1, 1, 1, 1, 1)
+		pi := map[string][]koalabear.Element{"a": Pa, "b": Pb, "c": Pc, "d": Pd}
+
+		ab1 := sym.NewCommittedColumn("a").Mul(sym.NewCommittedColumn("b"))
+		ab2 := sym.NewCommittedColumn("a").Mul(sym.NewCommittedColumn("b"))
+		expr := ab1.Add(sym.NewCommittedColumn("c")).Mul(ab2.Sub(sym.NewCommittedColumn("d")))
+		d := ExprToDAG(expr)
+		_Pi := setupPiSlice(expr, pi)
+
+		for i := 0; i < N; i++ {
+			want := expr.EvaluateOnIthEntry(_Pi, i)
+			got := d.EvalOnIthEntry(_Pi, i)
+			if !got.Equal(&want) {
+				t.Errorf("row %d: got %s, want %s", i, got.String(), want.String())
+			}
+		}
+	})
 }
 
 // TestDAGEvalComplex uses a rich expression with shared sub-expressions, all
@@ -380,7 +504,7 @@ func TestDAGEvalComplex(t *testing.T) {
 	// With sharing: col:a, col:b, mul(a,b), col:c, add, col:d, sub, mul(root) = 8 nodes.
 	// sym.Without sharing we would have 10 (two col:a, two col:b, two mul(a,b)).
 	if len(dag.Nodes) != 8 {
-		t.Errorf("expected 8 DAG nodes, got %d: %s", len(dag.Nodes), dag.String())
+		t.Errorf("expected 8 DAG nodes, got %d", len(dag.Nodes))
 	}
 
 	checkDAGEval(t, expr, vals)

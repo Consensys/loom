@@ -38,16 +38,15 @@ func evalPointWiseInto(Pi map[string]Polynomial, E sym.Expr, N int, mu *sync.Mut
 		name  string
 		shift int
 	}
-	varToIdx := make(map[varKey]int)
+	varToIdx := make(map[string]int)
 	allLeaves := E.LeavesFull(sym.NewConfig())
 	leaves := make([]*sym.Leaf, 0, len(allLeaves))
 	for _, l := range allLeaves {
-		key := varKey{l.Name, l.Shift}
-		if idx, ok := varToIdx[key]; ok {
+		if idx, ok := varToIdx[l.Name]; ok {
 			l.Idx = idx
 		} else {
 			l.Idx = len(leaves)
-			varToIdx[key] = l.Idx
+			varToIdx[l.Name] = l.Idx
 			leaves = append(leaves, l)
 		}
 	}
@@ -63,20 +62,8 @@ func evalPointWiseInto(Pi map[string]Polynomial, E sym.Expr, N int, mu *sync.Mut
 		mu.Unlock()
 	}
 
-	vals := make([]koalabear.Element, len(leaves))
 	for i := 0; i < N; i++ {
-		for _, l := range leaves {
-			if len(_Pi[l.Idx]) == 1 {
-				vals[l.Idx] = _Pi[l.Idx][0]
-				continue
-			}
-			if l.Type == sym.ShiftedColumn {
-				vals[l.Idx] = _Pi[l.Idx][(i+N+l.Shift)%N]
-				continue
-			}
-			vals[l.Idx] = _Pi[l.Idx][i]
-		}
-		dst[i] = E.EvaluateWithIdx(vals)
+		dst[i] = E.EvaluateOnIthEntry(_Pi, i)
 	}
 	return nil
 }
