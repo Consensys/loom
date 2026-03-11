@@ -16,9 +16,9 @@ func TestCopyConstraint(t *testing.T) {
 	const N = 16
 
 	// Permutation S: shift by 4 on the concatenated P1||P2 of size 32.
-	S := make([]int, 2*N)
+	S := make([]int64, 2*N)
 	for i := range S {
-		S[i] = (i + 4) % (2 * N)
+		S[i] = int64((i + 4) % (2 * N))
 	}
 
 	// Build 4-periodic columns P1 and P2 so that S(P1||P2) = P1||P2.
@@ -37,7 +37,7 @@ func TestCopyConstraint(t *testing.T) {
 	T := trace.Trace{"P1": p1, "P2": p2}
 
 	system := cs.NewSystem(N)
-	err := CopyConstraint(&system, []string{"P1", "P2"}, S)
+	err := CopyConstraintIOP(&system, []string{"P1", "P2"}, S)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,9 +101,9 @@ func TestCopyConstraintMultiSet(t *testing.T) {
 	const N = 16
 
 	// Permutation S: shift by 4 on the concatenated P1||P2 of size 32.
-	S := make([]int, 2*N)
+	S := make([]int64, 2*N)
 	for i := range S {
-		S[i] = (i + 4) % (2 * N)
+		S[i] = int64((i + 4) % (2 * N))
 	}
 
 	// Build 4-periodic columns P1 and P2 so that S(P1||P2) = P1||P2.
@@ -122,7 +122,7 @@ func TestCopyConstraintMultiSet(t *testing.T) {
 
 	system := cs.NewSystem(N)
 	// wires: two chunks, each with the column repeated twice: {P1,P1} and {P2,P2}
-	err := CopyConstraintMultiSet(&system, [][]string{{"P1", "P1"}, {"P2", "P2"}}, S)
+	err := CopyConstraintMultiSetIOP(&system, [][]string{{"P1", "P1"}, {"P2", "P2"}}, S)
 	if err != nil {
 		t.Fatal(err)
 	}

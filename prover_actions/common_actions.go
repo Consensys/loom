@@ -9,6 +9,42 @@ import (
 	"github.com/consensys/giop/trace"
 )
 
+// simple type of context, an identifier
+type IDCtx struct {
+	ID PAIdentifier
+}
+
+func (ctx IDCtx) GetID() PAIdentifier {
+	return ctx.ID
+}
+
+// Key no key for those type of actions
+func (ctx IDCtx) Key() string {
+	return ""
+}
+
+func (ctx IDCtx) String() string {
+	switch ctx.ID {
+	case GRAND_PRODUCT:
+		return "grand_product"
+	case GRAND_SUM:
+		return "grand_sum"
+	case COMPUTE_COL:
+		return "comCol"
+	case MULTIPLICITY:
+		return "multiplicity"
+	case FITLERED_ACC_POLY:
+		return "filtered acc poly"
+	case FIAT_SHAMIR:
+		return "fiat shamir"
+	}
+	return "not found"
+}
+
+func NewIDCtx(id PAIdentifier) IDCtx {
+	return IDCtx{ID: id}
+}
+
 // RegisterColumn registers P, whose id is ID, in T. Returns an error if the trace already exists
 func RegisterColumn(trace trace.Trace, ID string, P univariate.Polynomial, mu *sync.Mutex) error {
 	mu.Lock()

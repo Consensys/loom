@@ -9,7 +9,6 @@ import (
 	"github.com/consensys/giop/std"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/giop/verifier"
-	"github.com/consensys/giop/viewer"
 )
 
 func getKnownColumns(n int) map[string]bool {
@@ -45,20 +44,20 @@ func getIthPlonkRelation(n int) cs.Constraint {
 	return C
 }
 
-func getIthMultiSets(n int) (multiSetIds1 [][]string, multiSetIds2 [][]string) {
-	multiSetIds1 = [][]string{
-		[]string{ithInstance(ID_L, n), ID_ID1},
-		[]string{ithInstance(ID_R, n), ID_ID2},
-		[]string{ithInstance(ID_O, n), ID_ID3},
-	}
+// func getIthMultiSets(n int) (multiSetIds1 [][]string, multiSetIds2 [][]string) {
+// 	multiSetIds1 = [][]string{
+// 		[]string{ithInstance(ID_L, n), ID_ID1},
+// 		[]string{ithInstance(ID_R, n), ID_ID2},
+// 		[]string{ithInstance(ID_O, n), ID_ID3},
+// 	}
 
-	multiSetIds2 = [][]string{
-		[]string{ithInstance(ID_L, n), ID_S1},
-		[]string{ithInstance(ID_R, n), ID_S2},
-		[]string{ithInstance(ID_O, n), ID_S3},
-	}
-	return
-}
+// 	multiSetIds2 = [][]string{
+// 		[]string{ithInstance(ID_L, n), ID_S1},
+// 		[]string{ithInstance(ID_R, n), ID_S2},
+// 		[]string{ithInstance(ID_O, n), ID_S3},
+// 	}
+// 	return
+// }
 
 func mergeTrace(t1, t2 trace.Trace) trace.Trace {
 	res := make(trace.Trace, len(t1)+len(t2))
@@ -74,7 +73,7 @@ func mergeTrace(t1, t2 trace.Trace) trace.Trace {
 func BenchmarkCompile(b *testing.B) {
 
 	// This would be the result of a tracer in a real life example (here we use gnark as a tracer)
-	basetrace, N, _ := GetPlonkTrace()
+	basetrace, S, N, _ := GetPlonkTrace()
 
 	fulltrace := GetPublicPart(basetrace)
 
@@ -88,12 +87,10 @@ func BenchmarkCompile(b *testing.B) {
 
 	// This is the result of the constraint (lisp ?) file in a real life example. Here we know in advance the shape of the constraints
 	// QL*L + QR*R + QM*L*R + QO*O + QK = 0
-	// ( (L, ID1), (R, ID2), (O, ID3)) and ( (L, S1), (R, S2), (O, S3)) must be equal as multisets
 	for i := 0; i < nbTraces; i++ {
 		C := getIthPlonkRelation(i)
 		system.RegisterConstraint(C)
-		multiSetIds1, multiSetIds2 := getIthMultiSets(i)
-		_ = std.MultiSetEqualityUpToPermutationIOP(&system, multiSetIds1, multiSetIds2)
+		_ = std.CopyConstraintIOP(&system, []string{ithInstance(ID_L, i), ithInstance(ID_R, i), ithInstance(ID_O, i)}, S)
 
 	}
 
@@ -106,13 +103,13 @@ func BenchmarkCompile(b *testing.B) {
 func TestPlonk(t *testing.T) {
 
 	// This would be the result of a tracer in a real life example (here we use gnark as a tracer)
-	basetrace, N, err := GetPlonkTrace()
+	basetrace, S, N, err := GetPlonkTrace()
 	if err != nil {
 		t.Fatal(nil)
 	}
 	fulltrace := GetPublicPart(basetrace)
 
-	nbTraces := 5
+	nbTraces := 1
 	for i := 0; i < nbTraces; i++ {
 		ithprivatepart := GetPrivatePartCopy(basetrace, i)
 		fulltrace = mergeTrace(fulltrace, ithprivatepart)
@@ -126,8 +123,7 @@ func TestPlonk(t *testing.T) {
 	for i := 0; i < nbTraces; i++ {
 		C := getIthPlonkRelation(i)
 		system.RegisterConstraint(C)
-		multiSetIds1, multiSetIds2 := getIthMultiSets(i)
-		err = std.MultiSetEqualityUpToPermutationIOP(&system, multiSetIds1, multiSetIds2)
+		err = std.CopyConstraintIOP(&system, []string{ithInstance(ID_L, i), ithInstance(ID_R, i), ithInstance(ID_O, i)}, S)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -135,7 +131,7 @@ func TestPlonk(t *testing.T) {
 
 	cciop := cs.Compile(&system)
 
-	viewer.WriteProverActionsDagToHTML(cciop, "plonk_dag.html")
+	// viewer.WriteProverActionsDagToHTML(cciop, "plonk_dag.html")
 
 	proverRunTime := prover.NewRuntime(cciop, fulltrace)
 	// proof := cs.NewProof(N)

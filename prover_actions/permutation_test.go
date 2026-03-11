@@ -12,9 +12,9 @@ func TestPermutationGeneration(t *testing.T) {
 	const N = 16
 
 	// create a random permutation S of 32 elements (0..31 in random order)
-	S := make([]int, 2*N)
+	S := make([]int64, 2*N)
 	for i := range S {
-		S[i] = i
+		S[i] = int64(i)
 	}
 	rand.Shuffle(len(S), func(i, j int) { S[i], S[j] = S[j], S[i] })
 
@@ -25,7 +25,12 @@ func TestPermutationGeneration(t *testing.T) {
 	proof := NewProof(N)
 	mu := &sync.Mutex{}
 
-	err := ComputePermutationColumns(tr, &proof, mu, nil, []string{"P1", "P2"}, permCtx)
+	idChunks := []string{
+		GetPermutationSupportID(0),
+		GetPermutationSupportID(1),
+	}
+	outputs := append(idChunks, "P1", "P2")
+	err := ComputePermutationColumns(tr, &proof, mu, nil, outputs, permCtx)
 	if err != nil {
 		t.Fatalf("ComputePermutationColumns failed: %v", err)
 	}
@@ -44,11 +49,6 @@ func TestPermutationGeneration(t *testing.T) {
 	// for each index i in 0..31, the i-th element of (P1||P2) must equal
 	// the S[i]-th element of (ID_0||ID_1)
 	chunks := []string{"P1", "P2"}
-	idChunks := []string{
-		GetPermutationSupportID(0),
-		GetPermutationSupportID(1),
-	}
-
 	for i := 0; i < 2*N; i++ {
 		gotChunk, gotIdx := i/N, i%N
 		got := tr[chunks[gotChunk]][gotIdx]

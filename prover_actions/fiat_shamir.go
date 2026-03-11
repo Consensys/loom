@@ -105,6 +105,9 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sym.E
 			deps = append(deps, cacheDeps...)
 		}
 		dependenciesCommittedColumns = l1MinusL2(dependenciesCommittedColumns, deps)
+		for _, d := range dependenciesCommittedColumns {
+			fmt.Printf("%s ", d)
+		}
 
 		// 3. record the round
 		round := Round{

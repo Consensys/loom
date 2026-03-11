@@ -1,4 +1,4 @@
-package std
+package utils
 
 import (
 	"crypto/rand"

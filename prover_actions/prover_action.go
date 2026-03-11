@@ -12,67 +12,12 @@ var PARegister map[PAIdentifier]Action
 
 type PAIdentifier int
 
-const (
-	GRAND_SUM PAIdentifier = iota
-	GRAND_PRODUCT
-	LAGRANGE
-	COMPUTE_COL
-	MULTIPLICITY
-	FITLERED_ACC_POLY
-	FIAT_SHAMIR
-	PERMUTATION_GEN
-)
-
-func init() {
-	PARegister = make(map[PAIdentifier]Action)
-	PARegister[GRAND_PRODUCT] = ComputeGrandProduct
-	PARegister[GRAND_SUM] = ComputeGrandSum
-	PARegister[LAGRANGE] = ComputeLagrangeColumn
-	PARegister[COMPUTE_COL] = ComputeColumn
-	PARegister[MULTIPLICITY] = ComputeMultiplicity
-	PARegister[FITLERED_ACC_POLY] = ComputeFilteredAccPolynomial
-	PARegister[FIAT_SHAMIR] = ComputeChallenge
-	PARegister[PERMUTATION_GEN] = ComputePermutationColumns
-}
-
 type Action = func(trace.Trace, *Proof, *sync.Mutex, []sym.Expr, []string, Ctx) error
 
 type Ctx interface {
 	String() string
 	GetID() PAIdentifier
-}
-
-// simple type of context, an identifier
-type IDCtx struct {
-	ID PAIdentifier
-}
-
-func (ctx IDCtx) GetID() PAIdentifier {
-	return ctx.ID
-}
-
-func (ctx IDCtx) String() string {
-	switch ctx.ID {
-	case GRAND_PRODUCT:
-		return "grand_product"
-	case GRAND_SUM:
-		return "grand_sum"
-	case LAGRANGE:
-		return "lagrange"
-	case COMPUTE_COL:
-		return "comCol"
-	case MULTIPLICITY:
-		return "multiplicity"
-	case FITLERED_ACC_POLY:
-		return "filtered acc poly"
-	case FIAT_SHAMIR:
-		return "fiat shamir"
-	}
-	return "not found"
-}
-
-func NewIDCtx(id PAIdentifier) IDCtx {
-	return IDCtx{ID: id}
+	Key() string
 }
 
 // ProverAction functions telling how to solve for intermediate columns in a list of constraints

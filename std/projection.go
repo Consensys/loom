@@ -7,6 +7,7 @@ import (
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/pas/sym"
 	proveractions "github.com/consensys/giop/prover_actions"
+	"github.com/consensys/giop/utils"
 )
 
 // EqualityFilteredColumnsIOP proves that the ordered sequence of A-values selected by F1
@@ -88,7 +89,7 @@ func EqualityFilteredColumnsIOP(system *cs.System, A, F1, B, F2 string) error {
 //	|-------------------------------–-------------------------------------------------|
 func EqualityFilteredMultiColumnsIOP(system *cs.System, A []string, F1 string, B []string, F2 string) error {
 
-	gamma, err := RandomString(constants.SIZE_RANDOM_STRING)
+	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
@@ -124,20 +125,20 @@ func EqualityFilteredMultiColumnsIOP(system *cs.System, A []string, F1 string, B
 func equalityFilteredColumnsIOP(system *cs.System, A, B sym.Expr, F1, F2 string) error {
 
 	// 1. build filtered acc polynomials for A and B
-	_idAccFA, err := RandomString(constants.SIZE_RANDOM_STRING)
+	_idAccFA, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
 	idAccFA := fmt.Sprintf("FiltAcc_%s", _idAccFA)
 
-	_idAccFB, err := RandomString(constants.SIZE_RANDOM_STRING)
+	_idAccFB, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
 	idAccFB := fmt.Sprintf("FiltAcc_%s", _idAccFB)
 
 	// 2. sample alpha
-	_alpha, err := RandomString(constants.SIZE_RANDOM_STRING)
+	_alpha, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}

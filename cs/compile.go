@@ -22,6 +22,7 @@ func Fold(E []sym.Expr, alpha sym.Expr) sym.Expr {
 type CompiledIOP struct {
 	ProverActions     []proveractions.ProverAction
 	VanishingRelation dag.DAG
+	Cache             map[string]int // not serialised, used for building the IOP only, used to track already registered prover actions which have no inputs (lagrange, permutation)
 	N                 int
 }
 

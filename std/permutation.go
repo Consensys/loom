@@ -7,6 +7,7 @@ import (
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/pas/sym"
 	proveractions "github.com/consensys/giop/prover_actions"
+	"github.com/consensys/giop/utils"
 )
 
 // EqualityUpToPermutation proves that the multiset { ID1[j][i] } equals { ID2[j][i] }, up to permutation.
@@ -54,12 +55,12 @@ func EqualityUpToPermutationIOP(system *cs.System, ID1, ID2 []string) error {
 
 func equalityUpToPermutationIOP(system *cs.System, E1, E2 []sym.Expr) error {
 
-	_IDGrandProduct, err := RandomString(constants.SIZE_RANDOM_STRING)
+	_IDGrandProduct, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
 	IDGrandProduct := fmt.Sprintf("GP_%s", _IDGrandProduct)
-	gamma, err := RandomString(constants.SIZE_RANDOM_STRING)
+	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
@@ -149,33 +150,12 @@ func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string) 
 	}
 
 	return multiSetEqualityUpToPermutationIOP(system, E1, E2)
-	// alpha, err := RandomString(constants.SIZE_RANDOM_STRING)
-	// if err != nil {
-	// 	return err
-	// }
-	// system.RegisterProverAction(deps, []string{alpha}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
-
-	// // 2. fold ID1[i], ID2[i] for all i with alpha
-	// alphaExpr := sym.NewChallenge(alpha)
-	// F1 := make([]sym.Expr, len(E1))
-	// for i := 0; i < len(E1); i++ {
-	// 	F1[i] = cs.Fold(E1[i], alphaExpr)
-	// }
-	// F2 := make([]sym.Expr, len(E2))
-	// for i := 0; i < len(E2); i++ {
-	// 	F2[i] = cs.Fold(E2[i], alphaExpr)
-	// }
-
-	// // 3. equalityUpToPermutationIOP
-	// equalityUpToPermutationIOP(system, F1, F2)
-
-	// return nil
 }
 
 func multiSetEqualityUpToPermutationIOP(system *cs.System, E1, E2 [][]sym.Expr) error {
 
 	// 1. derive alpha
-	alpha, err := RandomString(constants.SIZE_RANDOM_STRING)
+	alpha, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}

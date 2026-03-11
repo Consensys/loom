@@ -2,7 +2,9 @@ package proveractions
 
 import (
 	"fmt"
+	"hash/fnv"
 	"math/big"
+	"strconv"
 
 	"github.com/consensys/giop/pas/univariate"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -14,6 +16,31 @@ import (
 // a special expression for such columns, like "Computable" or something, which should not be added in the commitments... During the verification
 // process, when a "Computable" Expr is found in the expression, we should have map [Lagrange_i]->func(i) koalabear.Element, so the verifier can recompute its value at zeta
 const Lagrange = "LAGRANGE"
+
+// LagrangeContext i, N = i-th Lagrange polynomial of X^N-1
+type LagrangeContext struct {
+	i, N int
+}
+
+func NewLagrangeContext(i, N int) LagrangeContext {
+	return LagrangeContext{i: i, N: N}
+}
+
+func (lc LagrangeContext) String() string {
+	return GetLagrangeID(lc.i, lc.N)
+}
+
+func (lc LagrangeContext) GetID() PAIdentifier {
+	return LAGRANGE
+}
+
+// Key fast, non crypto secure hash that ensures uniqueness
+func (lc LagrangeContext) Key() string {
+	h := fnv.New64a()
+	slc := lc.String()
+	h.Write([]byte(slc))
+	return strconv.FormatUint(h.Sum64(), 16)
+}
 
 // ComputableColumn special column that can be encoded with a formula F	, like Lagrange column.
 type ComputableColumn struct {

@@ -1,7 +1,10 @@
 package proveractions
 
 import (
+	"encoding/binary"
 	"fmt"
+	"hash/fnv"
+	"strconv"
 	"sync"
 
 	"github.com/consensys/giop/pas/sym"
@@ -19,10 +22,10 @@ func GetPermutationSupportID(i int) string {
 
 type PermutationContext struct {
 	// S full permutation, i -> S[i]
-	S []int
+	S []int64
 }
 
-func NewPermutationContext(S []int) PermutationContext {
+func NewPermutationContext(S []int64) PermutationContext {
 	return PermutationContext{S: S}
 }
 
@@ -32,6 +35,17 @@ func (pc PermutationContext) String() string {
 
 func (pc PermutationContext) GetID() PAIdentifier {
 	return PERMUTATION_GEN
+}
+
+// Key fast, non crypto secure hash that ensures uniqueness
+func (pc PermutationContext) Key() string {
+	h := fnv.New64a()
+	buf := make([]byte, 8)
+	for _, v := range pc.S {
+		binary.LittleEndian.PutUint64(buf, uint64(v))
+		h.Write(buf)
+	}
+	return strconv.FormatUint(h.Sum64(), 16)
 }
 
 func generateSupport(nbChunks, N int) ([][]koalabear.Element, error) {
@@ -57,7 +71,7 @@ func generateSupport(nbChunks, N int) ([][]koalabear.Element, error) {
 	return res, nil
 }
 
-func generatePermutation(support [][]koalabear.Element, S []int) [][]koalabear.Element {
+func generatePermutation(support [][]koalabear.Element, S []int64) [][]koalabear.Element {
 	res := make([][]koalabear.Element, len(support))
 	N := len(support[0])
 	for i := 0; i < len(support); i++ {
@@ -65,11 +79,15 @@ func generatePermutation(support [][]koalabear.Element, S []int) [][]koalabear.E
 	}
 	for i := 0; i < len(S); i++ {
 		s := S[i]
-		res[i/N][i%N].Set(&support[s/N][s%N])
+		res[i/N][i%N].Set(&support[int(s)/N][int(s)%N])
 	}
 	return res
 }
 
+// ComputePermutationColumns computes the columns to encode the permutation given in ctx
+// If the permutation spans n columns, outputs is of size 2n:
+// outputs[:n] -> ID of the permutation suppport (ID_0, ID_1, ..)
+// outputs[n:] -> ID of the permutation columns
 func ComputePermutationColumns(trace trace.Trace, proof *Proof, mu *sync.Mutex, _ []sym.Expr, outputs []string, ctx Ctx) error {
 
 	// 1. get the context
@@ -91,7 +109,7 @@ func ComputePermutationColumns(trace trace.Trace, proof *Proof, mu *sync.Mutex, 
 		return err
 	}
 	for i := 0; i < len(support); i++ {
-		err = RegisterColumn(trace, GetPermutationSupportID(i), support[i], mu)
+		err = RegisterColumn(trace, outputs[i], support[i], mu)
 		if err != nil {
 			return err
 		}
@@ -105,7 +123,7 @@ func ComputePermutationColumns(trace trace.Trace, proof *Proof, mu *sync.Mutex, 
 		return fmt.Errorf("expected at least %d outputs, got %d\n", nbChunks, len(outputs))
 	}
 	for i := 0; i < nbChunks; i++ {
-		err = RegisterColumn(trace, outputs[i], permutation[i], mu)
+		err = RegisterColumn(trace, outputs[nbChunks+i], permutation[i], mu)
 		if err != nil {
 			return err
 		}

@@ -7,6 +7,7 @@ import (
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/pas/sym"
 	proveractions "github.com/consensys/giop/prover_actions"
+	"github.com/consensys/giop/utils"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
@@ -58,22 +59,22 @@ func InclusionCheckIOP(system *cs.System, S, T string) error {
 
 func inclusionCheckIOP(system *cs.System, S, T sym.Expr) error {
 
-	_M, err := RandomString(constants.SIZE_RANDOM_STRING)
+	_M, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
 	M := fmt.Sprintf("Mult_%s", _M)
-	_grandSumS, err := RandomString(constants.SIZE_RANDOM_STRING)
+	_grandSumS, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
 	grandSumS := fmt.Sprintf("GSum_S_%s", _grandSumS)
-	_grandSumT, err := RandomString(constants.SIZE_RANDOM_STRING)
+	_grandSumT, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
 	grandSumT := fmt.Sprintf("GSum_T_%s", _grandSumT)
-	gamma, err := RandomString(constants.SIZE_RANDOM_STRING)
+	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
@@ -165,7 +166,7 @@ func inclusionCheckIOP(system *cs.System, S, T sym.Expr) error {
 //	|----------------------------------–---------------------------------------------|
 func InclusionCheckMultiSetIOP(system *cs.System, S, T []string) error {
 
-	gamma, err := RandomString(constants.SIZE_RANDOM_STRING)
+	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
