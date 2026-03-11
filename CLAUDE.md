@@ -44,6 +44,7 @@ go vet ./...
 | `crypto/dummycommitment/` | Toy commitment (digest = first coefficient) |
 | `viewer/` | HTML DAG visualisers, CSV trace viewer |
 | `plonk_example/` | Bridge from gnark PLONK traces to this IOP library |
+| `utils/` | `RandomString(n int) (string, error)` — crypto-random alphanumeric IDs used by all gadgets |
 
 ### `pas/sym` — symbolic expressions
 
@@ -89,12 +90,37 @@ Key functions in `iop_utils.go`:
 
 **Core types**:
 ```go
-type Action = func(trace.Trace, *Proof, *sync.Mutex, []sym.Expr, []string) error
+// Action is the function signature for all built-in prover actions.
+// The Ctx carries action-specific parameters (e.g. permutation, Lagrange index).
+type Action = func(trace.Trace, *Proof, *sync.Mutex, []sym.Expr, []string, Ctx) error
 
+// Ctx is the interface all context types must implement.
+type Ctx interface {
+    String() string
+    GetID() PAIdentifier
+    Key() string  // non-crypto hash for deduplication; empty string = no caching
+}
+
+type PAIdentifier int
+const (
+    GRAND_SUM PAIdentifier = iota
+    GRAND_PRODUCT
+    LAGRANGE
+    COMPUTE_COL
+    MULTIPLICITY
+    FITLERED_ACC_POLY  // note: typo in source
+    FIAT_SHAMIR
+    PERMUTATION_GEN
+)
+
+// PARegister maps PAIdentifier -> Action function (populated in init()).
+var PARegister map[PAIdentifier]Action
+
+// ProverAction dispatches via PARegister[Ctx.GetID()] at execution time.
 type ProverAction struct {
     Inputs  []sym.Expr
     Outputs []string
-    Exec    Action
+    Ctx     Ctx
 }
 
 type Round struct {
@@ -111,7 +137,12 @@ type Proof struct {
 }
 ```
 
-**Built-in action functions** (pass directly as `ProverAction.Exec`):
+**Context constructors**:
+- `NewIDCtx(id PAIdentifier) IDCtx` — for stateless built-in actions (grand product, grand sum, column compute, multiplicity, filtered acc, fiat-shamir). `Key()` returns `""` (no caching).
+- `NewLagrangeContext(i, N int) LagrangeContext` — for Lagrange columns; `Key()` is an FNV hash of `LAGRANGE_i_N`.
+- `NewPermutationContext(S []int64) PermutationContext` — for permutation columns; `Key()` is an FNV hash of `S`.
+
+**Built-in action functions** (registered in `PARegister`, all take `Ctx` as last param):
 - `ComputeChallenge` — commits to columns in `E`, derives FS challenge, appends a `Round` to `proof.Rounds`, stores the challenge as a constant column in the trace
 - `ComputeGrandProduct` — builds grand product column `R` from `E[0]/E[1]`
 - `ComputeGrandSum` — builds grand sum column from `E[0]/E[1]`
@@ -119,11 +150,14 @@ type Proof struct {
 - `ComputeMultiplicity` — computes multiplicity of `E[0]` in `E[1]`
 - `ComputeFilteredAccPolynomial` — builds filtered accumulator `R` from `E[0]` (values), `E[1]` (binary filter), `E[2]` (challenge α); `R[N-1]` is the Horner evaluation of selected entries
 - `ComputeLagrangeColumn` — generates the i-th Lagrange column (idempotent if already present)
+- `ComputePermutationColumns` — generates support columns (`ID_0, ID_1, …`) and permuted columns (`S_0, S_1, …`); `outputs[:nbChunks]` = support IDs, `outputs[nbChunks:]` = permuted IDs
 
 **Utilities**:
 - `GetColumnsId(E, opts...)` — extracts leaf column IDs from `[]sym.Expr`
 - `GetLagrangeID(i, N)` — canonical ID `LAGRANGE_i_N` for the i-th Lagrange column
+- `ParseLagrangeID(id) (int64, uint64, error)` — inverse of `GetLagrangeID`
 - `GetComputationableColumn(id)` — returns a `ComputableColumn` with `.F` (evaluator at a point) and `.Gen()` (generates the full column)
+- `GetPermutationSupportID(i int) string` — canonical ID `ID_i` for the i-th permutation support column
 - `RegisterColumn(trace, id, poly, mu)` — thread-safe column registration; errors if already present
 
 ### `cs` — constraint system
@@ -135,6 +169,7 @@ type Constraint = sym.Expr
 type System struct {
     Constraints   []Constraint
     ProverActions []proveractions.ProverAction
+    Cache         map[string]int  // deduplication: ctx.Key() -> index in ProverActions
     N             int
 }
 
@@ -144,6 +179,8 @@ type CompiledIOP struct {
     N                 int
 }
 ```
+
+`cs.NewSystem(N int) System` — constructor that initialises all fields including `Cache`.
 
 `cs.Compile(&system, opts...)` folds all constraints with `constants.FINAL_FOLDING_CHALLENGE`, converts to a `dag.DAG`, and flattens it. Option: `WithTargetDegree(d)` triggers degree reduction before folding.
 
@@ -157,9 +194,10 @@ type CompiledIOP struct {
 - `BuildFilteredAccPolynomialConstraint(E, F, alpha, R, N)` — two constraints encoding the filtered accumulator recurrence: `L_0·(R - F·E) = 0` and `(1-L_0)·(R - F·(α·R_prev+E) - (1-F)·R_prev) = 0`
 
 **System methods**:
-- `system.RegisterProverAction(inputs, outputs, exec)`
+- `system.RegisterProverAction(inputs []sym.Expr, outputs []string, ctx proveractions.Ctx)` — appends a `ProverAction`; no deduplication (use the helpers below for that)
 - `system.RegisterConstraint(C)` / `system.RegisterConstraints([]C)`
-- `system.RegisterithLagrangeColumn(i)` — registers the Lagrange column prover action
+- `system.RegisterithLagrangeColumn(i)` — idempotent; checks `Cache` before appending
+- `system.RegisterPermutation(S []int64) ([]string, error)` — idempotent via `Cache`; returns `allOutputs` where `allOutputs[:nbChunks]` are support IDs (`ID_0, ID_1, …`) and `allOutputs[nbChunks:]` are the permuted column IDs
 
 **Constants** (`constants/const.go`): `FINAL_FOLDING_CHALLENGE`, `FINAL_EVALUATION_POINT`, `FINAL_QUOTIENT` — prefixed with `github.com/consensys/giop@`. Also `GetShiftedName(id, shift)` / `SplitShiftedName(id)` for shifted column naming.
 
@@ -171,8 +209,10 @@ type CompiledIOP struct {
 - `InclusionCheckMultiSetIOP(system, S, T []string)` — same for row-tuples; folds with a FS challenge before scalar inclusion check
 - `EqualityFilteredColumnsIOP(system, A, F1, B, F2 string)` — proves the ordered sub-sequence of `A` selected by binary column `F1` equals the ordered sub-sequence of `B` selected by `F2`; uses a filtered accumulator (Horner) + boundary constraint
 - `EqualityFilteredMultiColumnsIOP(system, A []string, F1 string, B []string, F2 string)` — same for row-tuples; row-tuples are first compressed to scalars via a FS challenge γ, then delegates to `EqualityFilteredColumnsIOP`
+- `CopyConstraintIOP(system, wires []string, S []int64) error` — PLONK-style copy constraint: proves `{(wires[i], ID[i])}` = `{(wires[i], S(ID)[i])}` as multisets, where `S` is a fixed permutation. Uses `system.RegisterPermutation` + `MultiSetEqualityUpToPermutationIOP`.
+- `CopyConstraintMultiSetIOP(system, wires [][]string, S []int64) error` — same for multiple wire columns laid out as `(wires[0][0] || wires[0][1] || …)`, `(wires[1][0] || …)`, …
 
-All gadgets allocate fresh random IDs for intermediate columns/challenges via `RandomString`.
+All gadgets allocate fresh random IDs for intermediate columns/challenges via `utils.RandomString`.
 
 ### Prover pipeline (`prover/prove.go`)
 
@@ -206,7 +246,7 @@ All gadgets allocate fresh random IDs for intermediate columns/challenges via `R
 
 **`prover_actions/` package name**: the directory is `prover_actions/`; import with the alias `proveractions "github.com/consensys/giop/prover_actions"`.
 
-**Action mutex**: `Action` signature includes `*sync.Mutex`. Actions that write to the trace must use `RegisterColumn` (which locks internally). Actions that read from the trace or the proof must lock manually.
+**Action mutex**: `Action` signature is `func(trace.Trace, *Proof, *sync.Mutex, []sym.Expr, []string, Ctx) error`. Actions that write to the trace must use `RegisterColumn` (which locks internally). Actions that read from the trace or the proof must lock manually.
 
 **Shifted columns**: use `sym.NewShiftedColumn(id, shift)` for `P(ω^shift · X)`. Shifted openings are handled by `OpenShiftedCommitments` / `VerifyOpeningProofs`. Filter with `sym.WithoutShiftedColumns()` or `sym.WithoutCommittedColumns()` as needed.
 
