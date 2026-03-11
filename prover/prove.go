@@ -43,7 +43,7 @@ func (runtime *Runtime) Solve(knownColumns map[string]bool, proof *proveractions
 
 	// Build dependency tracking
 	for i, f := range funcs {
-		leaves := proveractions.GetColumnsId(f.Inputs)
+		leaves := proveractions.GetColumnsBaseId(f.Inputs)
 		for _, l := range leaves {
 			if !knownColumns[l] {
 				inDegree[i]++
@@ -203,7 +203,7 @@ func (runtime *Runtime) DeriveFinalFoldingChallenge(proof *proveractions.Proof) 
 	c.SetBytes(bc)
 
 	// 6. add the challenge as a constant column, since it might appear in other constraints
-	return proveractions.RegisterColumn(runtime.Trace, constants.FINAL_FOLDING_CHALLENGE, []koalabear.Element{c}, &runtime.Mu)
+	return proveractions.NewColumn(runtime.Trace, constants.FINAL_FOLDING_CHALLENGE, []koalabear.Element{c}, &runtime.Mu)
 }
 
 // ComputeQuotient computes H:=runtime.CompiledIOP.Constraint(runtime.Trace)/X^N-1 and commit to it, and
@@ -279,7 +279,7 @@ func (runtime *Runtime) DeriveOpeningChallenge(proof *proveractions.Proof) (koal
 	zeta.SetBytes(bzeta)
 
 	// register zeta in the trace
-	err = proveractions.RegisterColumn(runtime.Trace, constants.FINAL_EVALUATION_POINT, []koalabear.Element{zeta}, &runtime.Mu)
+	err = proveractions.NewColumn(runtime.Trace, constants.FINAL_EVALUATION_POINT, []koalabear.Element{zeta}, &runtime.Mu)
 	if err != nil {
 		return koalabear.Element{}, err
 	}

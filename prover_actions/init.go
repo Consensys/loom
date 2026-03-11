@@ -9,6 +9,7 @@ const (
 	FITLERED_ACC_POLY
 	FIAT_SHAMIR
 	PERMUTATION_GEN
+	REGISTER_COL
 )
 
 func init() {
@@ -21,4 +22,5 @@ func init() {
 	PARegister[FITLERED_ACC_POLY] = ComputeFilteredAccPolynomial
 	PARegister[FIAT_SHAMIR] = ComputeChallenge
 	PARegister[PERMUTATION_GEN] = ComputePermutationColumns
+	PARegister[REGISTER_COL] = RegisterColumn
 }

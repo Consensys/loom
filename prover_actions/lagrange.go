@@ -5,8 +5,11 @@ import (
 	"hash/fnv"
 	"math/big"
 	"strconv"
+	"sync"
 
+	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
@@ -107,4 +110,21 @@ func NewLagrangeColumn(id string) (ComputableColumn, error) {
 	}
 
 	return res, nil
+}
+
+// ComputeLagrangeColumn prover action to build a computable column, that is a column encoded by a formula.
+// If it exists, we don't throw an error, as the column might be generated from different IOPs.
+func ComputeLagrangeColumn(trace trace.Trace, _ *Proof, mu *sync.Mutex, _ []sym.Expr, output []string, _ Ctx) error {
+	id := output[0]
+	cc, err := GetComputationableColumn(output[0])
+	if err != nil {
+		return err
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if _, ok := trace[output[0]]; ok {
+		return nil
+	}
+	trace[id] = cc.Gen()
+	return nil
 }

@@ -24,6 +24,20 @@ func GetColumnsId(E []sym.Expr, opts ...sym.Option) []string {
 	return ids
 }
 
+// GetColumnsBaseId is like GetColumnsId but for ShiftedColumn leaves it returns the
+// base column name (e.g. "F1" instead of "F1_shift_-1"). Use this for dependency
+// tracking in the Kahn scheduler, where the scheduler only needs to know that the
+// underlying trace column is available, not a fictitious shifted-name column.
+func GetColumnsBaseId(E []sym.Expr) []string {
+	var ids []string
+	for _, expr := range E {
+		for _, leaf := range expr.LeavesFull(sym.NewConfig()) {
+			ids = append(ids, leaf.Name)
+		}
+	}
+	return sym.RemoveDuplicates(ids)
+}
+
 // GetChallengesID returns the list of the names of Challenges appearing in E
 func GetChallengesID(E []sym.Expr) []string {
 	var ids []string
@@ -105,9 +119,6 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sym.E
 			deps = append(deps, cacheDeps...)
 		}
 		dependenciesCommittedColumns = l1MinusL2(dependenciesCommittedColumns, deps)
-		for _, d := range dependenciesCommittedColumns {
-			fmt.Printf("%s ", d)
-		}
 
 		// 3. record the round
 		round := Round{
@@ -182,6 +193,6 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sym.E
 	c.SetBytes(bc)
 
 	// 8. add the challenge as a constant column, since it might appear in other constraints
-	return RegisterColumn(trace, challengeName, []koalabear.Element{c}, mu)
+	return NewColumn(trace, challengeName, []koalabear.Element{c}, mu)
 
 }

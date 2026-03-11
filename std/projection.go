@@ -44,8 +44,10 @@ func EqualityFilteredColumnsIOP(system *cs.System, A, F1, B, F2 string) error {
 
 	Aexpr := sym.NewCommittedColumn(A)
 	Bexpr := sym.NewCommittedColumn(B)
+	F1expr := sym.NewCommittedColumn(F1)
+	F2expr := sym.NewCommittedColumn(F2)
 
-	return equalityFilteredColumnsIOP(system, Aexpr, Bexpr, F1, F2)
+	return EqualityFilteredColumnsIOPExpr(system, Aexpr, Bexpr, F1expr, F2expr)
 }
 
 // EqualityFilteredMultiColumnsIOP proves that the ordered sequence of row-tuples of A selected by F1
@@ -118,11 +120,11 @@ func EqualityFilteredMultiColumnsIOP(system *cs.System, A []string, F1 string, B
 	BFolded := cs.Fold(BExpr, gammaExpr)
 
 	// 3. call equalityFilteredColumns
-	return equalityFilteredColumnsIOP(system, AFolded, BFolded, F1, F2)
+	return EqualityFilteredColumnsIOPExpr(system, AFolded, BFolded, sym.NewCommittedColumn(F1), sym.NewCommittedColumn(F2))
 
 }
 
-func equalityFilteredColumnsIOP(system *cs.System, A, B sym.Expr, F1, F2 string) error {
+func EqualityFilteredColumnsIOPExpr(system *cs.System, A, B, F1, F2 sym.Expr) error {
 
 	// 1. build filtered acc polynomials for A and B
 	_idAccFA, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
@@ -143,21 +145,21 @@ func equalityFilteredColumnsIOP(system *cs.System, A, B sym.Expr, F1, F2 string)
 		return err
 	}
 	alpha := sym.NewChallenge(_alpha)
-	F1Expr := sym.NewCommittedColumn(F1)
-	F2Expr := sym.NewCommittedColumn(F2)
-	depsAlpha := []sym.Expr{A, B, F1Expr, F2Expr}
+	// F1Expr := sym.NewCommittedColumn(F1)
+	// F2Expr := sym.NewCommittedColumn(F2)
+	depsAlpha := []sym.Expr{A, B, F1, F2}
 	system.RegisterProverAction(depsAlpha, []string{_alpha}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 3. create the filtered acc polynomials
-	inputsFA := []sym.Expr{A, F1Expr, alpha}
+	inputsFA := []sym.Expr{A, F1, alpha}
 	system.RegisterProverAction(inputsFA, []string{idAccFA}, proveractions.NewIDCtx(proveractions.FITLERED_ACC_POLY))
-	inputsFB := []sym.Expr{B, F2Expr, alpha}
+	inputsFB := []sym.Expr{B, F2, alpha}
 	system.RegisterProverAction(inputsFB, []string{idAccFB}, proveractions.NewIDCtx(proveractions.FITLERED_ACC_POLY))
 
 	// 4. register the constraints ensuring that the filtered acc polynomials
 	// FA and FB are correclty constructed
-	system.RegisterConstraints(cs.BuildFilteredAccPolynomialConstraint(A, F1Expr, alpha, idAccFA, system.N))
-	system.RegisterConstraints(cs.BuildFilteredAccPolynomialConstraint(B, F2Expr, alpha, idAccFB, system.N))
+	system.RegisterConstraints(cs.BuildFilteredAccPolynomialConstraint(A, F1, alpha, idAccFA, system.N))
+	system.RegisterConstraints(cs.BuildFilteredAccPolynomialConstraint(B, F2, alpha, idAccFB, system.N))
 
 	// 5. ensure FA[N-1]=FB[N-1]: the last entry holds the full filtered accumulation
 	accFA := sym.NewCommittedColumn(idAccFA)

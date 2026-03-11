@@ -45,8 +45,8 @@ func NewIDCtx(id PAIdentifier) IDCtx {
 	return IDCtx{ID: id}
 }
 
-// RegisterColumn registers P, whose id is ID, in T. Returns an error if the trace already exists
-func RegisterColumn(trace trace.Trace, ID string, P univariate.Polynomial, mu *sync.Mutex) error {
+// NewColumn registers P, whose id is ID, in T. Returns an error if the trace already exists
+func NewColumn(trace trace.Trace, ID string, P univariate.Polynomial, mu *sync.Mutex) error {
 	mu.Lock()
 	defer mu.Unlock()
 	if _, ok := trace[ID]; ok {
@@ -75,7 +75,7 @@ func ComputeGrandSum(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sym.Ex
 	grandSumID := GP[0]
 
 	// register the R in the trace
-	return RegisterColumn(trace, grandSumID, grandSum, mu)
+	return NewColumn(trace, grandSumID, grandSum, mu)
 
 }
 
@@ -96,25 +96,8 @@ func ComputeGrandProduct(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sy
 	RID := GP[0]
 
 	// register the R, R(wX) in the trace
-	return RegisterColumn(trace, RID, R, mu)
+	return NewColumn(trace, RID, R, mu)
 
-}
-
-// ComputeLagrangeColumn prover action to build a computable column, that is a column encoded by a formula.
-// If it exists, we don't throw an error, as the column might be generated from different IOPs.
-func ComputeLagrangeColumn(trace trace.Trace, _ *Proof, mu *sync.Mutex, _ []sym.Expr, output []string, _ Ctx) error {
-	id := output[0]
-	cc, err := GetComputationableColumn(output[0])
-	if err != nil {
-		return err
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if _, ok := trace[output[0]]; ok {
-		return nil
-	}
-	trace[id] = cc.Gen()
-	return nil
 }
 
 // ComputeColumn simplest prover action: build a new column whose name is output[0] and whose computation
@@ -135,7 +118,7 @@ func ComputeColumn(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sym.Expr
 		return err
 	}
 	// record the result polynomial
-	return RegisterColumn(trace, output[0], sum, mu)
+	return NewColumn(trace, output[0], sum, mu)
 
 }
 
@@ -156,7 +139,7 @@ func ComputeMultiplicity(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sy
 	if err != nil {
 		return err
 	}
-	return RegisterColumn(trace, M[0], _M, mu)
+	return NewColumn(trace, M[0], _M, mu)
 
 }
 
@@ -183,5 +166,5 @@ func ComputeFilteredAccPolynomial(trace trace.Trace, proof *Proof, mu *sync.Mute
 		return err
 	}
 
-	return RegisterColumn(trace, output[0], R, mu)
+	return NewColumn(trace, output[0], R, mu)
 }

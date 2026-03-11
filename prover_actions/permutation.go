@@ -109,7 +109,7 @@ func ComputePermutationColumns(trace trace.Trace, proof *Proof, mu *sync.Mutex, 
 		return err
 	}
 	for i := 0; i < len(support); i++ {
-		err = RegisterColumn(trace, outputs[i], support[i], mu)
+		err = NewColumn(trace, outputs[i], support[i], mu)
 		if err != nil {
 			return err
 		}
@@ -123,7 +123,7 @@ func ComputePermutationColumns(trace trace.Trace, proof *Proof, mu *sync.Mutex, 
 		return fmt.Errorf("expected at least %d outputs, got %d\n", nbChunks, len(outputs))
 	}
 	for i := 0; i < nbChunks; i++ {
-		err = RegisterColumn(trace, outputs[nbChunks+i], permutation[i], mu)
+		err = NewColumn(trace, outputs[nbChunks+i], permutation[i], mu)
 		if err != nil {
 			return err
 		}
