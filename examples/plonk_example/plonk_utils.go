@@ -3,7 +3,7 @@ package plonk_example
 import (
 	"fmt"
 
-	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/giop/univariate"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"

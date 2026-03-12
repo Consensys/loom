@@ -91,7 +91,7 @@ func l1DisjointUnionL2(l1, l2 []string) []string {
 
 // ComputeChallenge type of DerivationStep creates a challenge named GP[0] which is derived via FS
 // from the commitments of all the leaves appearing in E.
-func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, GP []string, _ Ctx) error {
+func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, GP []string, _ StepContext) error {
 	if len(GP) == 0 {
 		return fmt.Errorf("len(GP)=0, it must contain the name of the challenge")
 	}

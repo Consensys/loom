@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/cs"
-	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/giop/univariate"
 	"github.com/consensys/giop/prover"
 	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/giop/trace"

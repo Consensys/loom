@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/giop/univariate"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
@@ -33,7 +33,7 @@ func (lc LagrangeContext) String() string {
 	return GetLagrangeID(lc.i, lc.N)
 }
 
-func (lc LagrangeContext) GetID() PAIdentifier {
+func (lc LagrangeContext) GetID() StepKind {
 	return LAGRANGE
 }
 
@@ -114,7 +114,7 @@ func NewLagrangeColumn(id string) (VirtualColumn, error) {
 
 // ComputeLagrangeColumn prover action to build a computable column, that is a column encoded by a formula.
 // If it exists, we don't throw an error, as the column might be generated from different IOPs.
-func ComputeLagrangeColumn(trace trace.Trace, _ *Proof, mu *sync.Mutex, _ []expr.Expr, output []string, _ Ctx) error {
+func ComputeLagrangeColumn(trace trace.Trace, _ *Proof, mu *sync.Mutex, _ []expr.Expr, output []string, _ StepContext) error {
 	id := output[0]
 	cc, err := GetComputationableColumn(output[0])
 	if err != nil {

@@ -12,10 +12,10 @@ import (
 	proveractions "github.com/consensys/giop/prover_actions"
 )
 
-// actionLabel returns a display label for a DerivationStep from its Ctx.String().
+// actionLabel returns a display label for a DerivationStep from its StepContext.String().
 func actionLabel(pa proveractions.DerivationStep) string {
-	if pa.Ctx != nil {
-		return pa.Ctx.String()
+	if pa.StepContext != nil {
+		return pa.StepContext.String()
 	}
 	if len(pa.Outputs) == 0 {
 		return "action"

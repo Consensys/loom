@@ -5,25 +5,25 @@ import (
 	"sync"
 
 	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/giop/univariate"
 	"github.com/consensys/giop/trace"
 )
 
 // simple type of context, an identifier
-type IDCtx struct {
-	ID PAIdentifier
+type IDStepContext struct {
+	ID StepKind
 }
 
-func (ctx IDCtx) GetID() PAIdentifier {
+func (ctx IDStepContext) GetID() StepKind {
 	return ctx.ID
 }
 
 // Key no key for those type of actions
-func (ctx IDCtx) Key() string {
+func (ctx IDStepContext) Key() string {
 	return ""
 }
 
-func (ctx IDCtx) String() string {
+func (ctx IDStepContext) String() string {
 	switch ctx.ID {
 	case GRAND_PRODUCT:
 		return "grand_product"
@@ -41,8 +41,8 @@ func (ctx IDCtx) String() string {
 	return "not found"
 }
 
-func NewIDCtx(id PAIdentifier) IDCtx {
-	return IDCtx{ID: id}
+func NewIDStepContext(id StepKind) IDStepContext {
+	return IDStepContext{ID: id}
 }
 
 // NewColumn registers P, whose id is ID, in T. Returns an error if the trace already exists
@@ -58,7 +58,7 @@ func NewColumn(trace trace.Trace, ID string, P univariate.Polynomial, mu *sync.M
 
 // ComputeGrandSum builds the "grand sum" polynomial between E0:=E[0] and E1:=E[1], that
 // is a polnyomial GS such that GS[i]=Σ_{j⩽i}E0[j]/E1[j]
-func ComputeGrandSum(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, GP []string, _ Ctx) error {
+func ComputeGrandSum(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, GP []string, _ StepContext) error {
 
 	if len(E) != 2 {
 		return fmt.Errorf("len(E)=%d, expected 2", len(E))
@@ -82,7 +82,7 @@ func ComputeGrandSum(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.E
 // ComputeGrandProduct build the "grand product" polynomial between E0:=E[0] and E1:=E[1], that is it creates
 // a polynomial (=column) R such that R[0]=1, R[i+1]=R[i]E0[i]/E1[i], where E0[i] means the i-th entry of E0 evaluated on prot.trace.Trace
 // (same for E1). The relation R(wX)E1-RE0 mut vanish on X^N-1 iff E1[i] and E0[i] are permutated versions of each other
-func ComputeGrandProduct(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, GP []string, _ Ctx) error {
+func ComputeGrandProduct(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, GP []string, _ StepContext) error {
 
 	if len(E) != 2 {
 		return fmt.Errorf("E must have size 2, got %d", len(E))
@@ -105,7 +105,7 @@ func ComputeGrandProduct(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []ex
 // ComputeColumn computes a new polynomial Q (new column in the trace) such that ith that Q =E(IDs)
 // Returns the constraint Q-E(IDs), but does not record it. It is up to the caller to record it in the system.
 // func ComputeColumn(S *System, E expr.Expr, IDresult string) (Relation, error) {
-func ComputeColumn(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, output []string, _ Ctx) error {
+func ComputeColumn(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, output []string, _ StepContext) error {
 
 	if len(output) == 0 {
 		return fmt.Errorf("output needs to contain at list a name")
@@ -126,7 +126,7 @@ func ComputeColumn(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Exp
 // corresponding columnin in the trace with id GP[0]
 // Example: E[0]="S", E[1]="T", GP[0]="M" -> computes M such that
 // M[i] = #{j | j S[j]=T[i]}
-func ComputeMultiplicity(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, M []string, _ Ctx) error {
+func ComputeMultiplicity(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, M []string, _ StepContext) error {
 	if len(E) != 2 {
 		return fmt.Errorf("len(E)=%d, expected 2", len(E))
 	}
@@ -152,7 +152,7 @@ func ComputeMultiplicity(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []ex
 // After discarding non selected elmts in E_F we get [7, 6, 12], so R[N-1]=7α²+6α+12. R is subject to the following relations:
 // * R[0] = F[0]*E[0]
 // *  R[i] = F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1] for i>0
-func ComputeFilteredAccPolynomial(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, output []string, _ Ctx) error {
+func ComputeFilteredAccPolynomial(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, output []string, _ StepContext) error {
 
 	if len(E) != 3 {
 		return fmt.Errorf("len(E)=%d, expected 3", len(E))

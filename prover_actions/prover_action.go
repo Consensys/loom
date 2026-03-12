@@ -8,15 +8,15 @@ import (
 	"github.com/consensys/giop/trace"
 )
 
-var PARegister map[PAIdentifier]Step
+var PARegister map[StepKind]Step
 
-type PAIdentifier int
+type StepKind int
 
-type Step = func(trace.Trace, *Proof, *sync.Mutex, []expr.Expr, []string, Ctx) error
+type Step = func(trace.Trace, *Proof, *sync.Mutex, []expr.Expr, []string, StepContext) error
 
-type Ctx interface {
+type StepContext interface {
 	String() string
-	GetID() PAIdentifier
+	GetID() StepKind
 	Key() string
 }
 
@@ -24,15 +24,15 @@ type Ctx interface {
 type DerivationStep struct {
 	Inputs  []expr.Expr
 	Outputs []string
-	Ctx     Ctx // additional context needed in certain case (e.g. building columns representing a permutation)
+	StepContext     StepContext // additional context needed in certain case (e.g. building columns representing a permutation)
 }
 
 func (pa DerivationStep) Execute(trace trace.Trace, proof *Proof, mu *sync.Mutex) error {
-	if _, ok := PARegister[pa.Ctx.GetID()]; !ok {
+	if _, ok := PARegister[pa.StepContext.GetID()]; !ok {
 		return fmt.Errorf("prover action not found")
 	}
-	F := PARegister[pa.Ctx.GetID()]
-	return F(trace, proof, mu, pa.Inputs, pa.Outputs, pa.Ctx)
+	F := PARegister[pa.StepContext.GetID()]
+	return F(trace, proof, mu, pa.Inputs, pa.Outputs, pa.StepContext)
 }
 
 // List of functions needed for solving all the columns in FinalVanishingRelation

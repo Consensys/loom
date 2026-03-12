@@ -5,7 +5,7 @@ import (
 	"math/big"
 
 	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/pas/dag"
+	"github.com/consensys/giop/dag"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/gnark-crypto/utils"

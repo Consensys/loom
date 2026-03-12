@@ -33,7 +33,7 @@ func (pc PermutationContext) String() string {
 	return "gen_permutation"
 }
 
-func (pc PermutationContext) GetID() PAIdentifier {
+func (pc PermutationContext) GetID() StepKind {
 	return PERMUTATION_GEN
 }
 
@@ -88,16 +88,16 @@ func generatePermutation(support [][]koalabear.Element, S []int64) [][]koalabear
 // If the permutation spans n columns, outputs is of size 2n:
 // outputs[:n] -> ID of the permutation suppport (ID_0, ID_1, ..)
 // outputs[n:] -> ID of the permutation columns
-func ComputePermutationColumns(trace trace.Trace, proof *Proof, mu *sync.Mutex, _ []expr.Expr, outputs []string, ctx Ctx) error {
+func ComputePermutationColumns(trace trace.Trace, proof *Proof, mu *sync.Mutex, _ []expr.Expr, outputs []string, ctx StepContext) error {
 
 	// 1. get the context
-	permutationCtx, ok := ctx.(PermutationContext)
+	permutationStepContext, ok := ctx.(PermutationContext)
 	if !ok {
 		return fmt.Errorf("wrong context for ComputePermutationColumns")
 	}
 
 	// 2. the size of the permutation should be divisible by N, check how many chunk there are
-	sizePermutation := len(permutationCtx.S)
+	sizePermutation := len(permutationStepContext.S)
 	if sizePermutation%proof.N != 0 {
 		return fmt.Errorf("wrong permutation size: it should be a multiple of %d, got %d", proof.N, sizePermutation)
 	}
@@ -118,7 +118,7 @@ func ComputePermutationColumns(trace trace.Trace, proof *Proof, mu *sync.Mutex, 
 	// 4. generation of the permutation columns
 	// outputs must contain at least nbChunks names (the permuted column names);
 	// any extra entries are support-column aliases declared to the scheduler and ignored here.
-	permutation := generatePermutation(support, permutationCtx.S)
+	permutation := generatePermutation(support, permutationStepContext.S)
 	if len(outputs) < nbChunks {
 		return fmt.Errorf("expected at least %d outputs, got %d\n", nbChunks, len(outputs))
 	}

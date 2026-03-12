@@ -2,7 +2,7 @@ package cs
 
 import (
 	"github.com/consensys/giop/constants"
-	"github.com/consensys/giop/pas/dag"
+	"github.com/consensys/giop/dag"
 	"github.com/consensys/giop/expr"
 	proveractions "github.com/consensys/giop/prover_actions"
 )

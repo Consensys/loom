@@ -31,12 +31,12 @@ func NewBuilder(N int) Builder {
 }
 
 // RegisterDerivationStep adds a prover action to the underlying Builder
-func (system *Builder) RegisterDerivationStep(inputs []expr.Expr, outputs []string, ctx proveractions.Ctx) {
+func (system *Builder) RegisterDerivationStep(inputs []expr.Expr, outputs []string, ctx proveractions.StepContext) {
 
 	pa := proveractions.DerivationStep{
 		Inputs:  inputs,
 		Outputs: outputs,
-		Ctx:     ctx,
+		StepContext:     ctx,
 	}
 	system.DerivationPlan = append(system.DerivationPlan, pa)
 }

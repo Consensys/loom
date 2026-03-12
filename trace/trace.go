@@ -1,6 +1,6 @@
 package trace
 
-import "github.com/consensys/giop/pas/univariate"
+import "github.com/consensys/giop/univariate"
 
 // Trace list of columns with the size N of each column
 // type Trace = map[string]*univariate.Polynomial

@@ -27,12 +27,12 @@ func (bc BuilderContext) Key() string {
 	return ""
 }
 
-func (bc BuilderContext) GetID() PAIdentifier {
+func (bc BuilderContext) GetID() StepKind {
 	return REGISTER_COL
 }
 
 // _ReRegisterColumngisterColumn prover action for registering a public helper column, like a filter
-func RegisterColumn(trace trace.Trace, _ *Proof, mu *sync.Mutex, _ []expr.Expr, output []string, ctx Ctx) error {
+func RegisterColumn(trace trace.Trace, _ *Proof, mu *sync.Mutex, _ []expr.Expr, output []string, ctx StepContext) error {
 	mu.Lock()
 	defer mu.Unlock()
 	if len(output) != 1 {

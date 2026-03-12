@@ -18,7 +18,7 @@ func TestPermutationGeneration(t *testing.T) {
 	}
 	rand.Shuffle(len(S), func(i, j int) { S[i], S[j] = S[j], S[i] })
 
-	permCtx := PermutationContext{S: S}
+	permStepContext := PermutationContext{S: S}
 
 	// build a trace and call ComputePermutationColumns with proof.N=16, outputs "P1" and "P2"
 	tr := make(trace.Trace)
@@ -30,7 +30,7 @@ func TestPermutationGeneration(t *testing.T) {
 		GetPermutationSupportID(1),
 	}
 	outputs := append(idChunks, "P1", "P2")
-	err := ComputePermutationColumns(tr, &proof, mu, nil, outputs, permCtx)
+	err := ComputePermutationColumns(tr, &proof, mu, nil, outputs, permStepContext)
 	if err != nil {
 		t.Fatalf("ComputePermutationColumns failed: %v", err)
 	}

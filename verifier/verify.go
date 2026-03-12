@@ -10,7 +10,7 @@ import (
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/crypto/dummycommitment"
 	"github.com/consensys/giop/cs"
-	"github.com/consensys/giop/pas/dag"
+	"github.com/consensys/giop/dag"
 	"github.com/consensys/giop/expr"
 	proveractions "github.com/consensys/giop/prover_actions"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"

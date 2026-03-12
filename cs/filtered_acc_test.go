@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/pas/univariate"
+	"github.com/consensys/giop/univariate"
 	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"

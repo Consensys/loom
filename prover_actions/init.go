@@ -1,7 +1,7 @@
 package proveractions
 
 const (
-	GRAND_SUM PAIdentifier = iota
+	GRAND_SUM StepKind = iota
 	GRAND_PRODUCT
 	LAGRANGE
 	COMPUTE_COL
@@ -13,7 +13,7 @@ const (
 )
 
 func init() {
-	PARegister = make(map[PAIdentifier]Step)
+	PARegister = make(map[StepKind]Step)
 	PARegister[GRAND_PRODUCT] = ComputeGrandProduct
 	PARegister[GRAND_SUM] = ComputeGrandSum
 	PARegister[LAGRANGE] = ComputeLagrangeColumn
