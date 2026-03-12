@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/consensys/giop/internal/commitment"
-	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/trace"
+	"github.com/consensys/loom/internal/commitment"
+	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/trace"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )

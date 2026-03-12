@@ -5,10 +5,10 @@ import (
 	"os"
 	"testing"
 
-	"github.com/consensys/giop"
-	"github.com/consensys/giop/arguments"
-	"github.com/consensys/giop/constraint"
-	"github.com/consensys/giop/expr"
+	"github.com/consensys/loom"
+	"github.com/consensys/loom/arguments"
+	"github.com/consensys/loom/constraint"
+	"github.com/consensys/loom/expr"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
@@ -58,14 +58,14 @@ func TestFibonacci(t *testing.T) {
 	trace := GetFibonacciTrace(N, "A", "B", "C")
 	// viewer.WriteTraceToCSV("fibonacci.csv", trace, N)
 
-	proof, err := giop.Prove(cciop, trace, 1)
+	proof, err := loom.Prove(cciop, trace, 1)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(-1)
 	}
 
 	// verifierRunTime := verifier.NewRunTime(cciop)
-	err = giop.Verify(cciop, &proof, 1)
+	err = loom.Verify(cciop, &proof, 1)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(-1)

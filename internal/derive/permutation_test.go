@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/consensys/giop/trace"
+	"github.com/consensys/loom/trace"
 )
 
 func TestPermutationGeneration(t *testing.T) {

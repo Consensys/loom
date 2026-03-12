@@ -1,4 +1,4 @@
-module github.com/consensys/giop
+module github.com/consensys/loom
 
 go 1.25.6
 

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/consensys/giop/constraint"
-	derive "github.com/consensys/giop/internal/derive"
+	"github.com/consensys/loom/constraint"
+	derive "github.com/consensys/loom/internal/derive"
 )
 
 // actionLabel returns a display label for a DerivationStep from its StepContext.String().

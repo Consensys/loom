@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/template"
 
-	derive "github.com/consensys/giop/internal/derive"
+	derive "github.com/consensys/loom/internal/derive"
 )
 
 // Layout constants (pixels in the SVG coordinate space).
@@ -46,7 +46,7 @@ type dagPayload struct {
 
 // dagShortLabel strips the module-path prefix shared by the built-in challenge names.
 func dagShortLabel(id string) string {
-	return strings.TrimPrefix(id, "github.com/consensys/giop@")
+	return strings.TrimPrefix(id, "github.com/consensys/loom@")
 }
 
 // WriteDagToHTML writes a self-contained HTML file that visualises the DAG

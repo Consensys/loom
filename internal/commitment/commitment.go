@@ -1,7 +1,7 @@
 package commitment
 
 import (
-	"github.com/consensys/giop/internal/poly"
+	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 )

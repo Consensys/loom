@@ -5,7 +5,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/consensys/giop/trace"
+	"github.com/consensys/loom/trace"
 )
 
 func WriteTraceToCSV(filename string, trace trace.Trace, N int) error {

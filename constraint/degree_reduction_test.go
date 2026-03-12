@@ -4,9 +4,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/consensys/giop/expr"
-	derive "github.com/consensys/giop/internal/derive"
-	"github.com/consensys/giop/trace"
+	"github.com/consensys/loom/expr"
+	derive "github.com/consensys/loom/internal/derive"
+	"github.com/consensys/loom/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 

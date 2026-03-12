@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/internal/dag"
+	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/dag"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/gnark-crypto/utils"

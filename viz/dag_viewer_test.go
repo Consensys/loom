@@ -4,9 +4,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/consensys/giop/arguments"
-	"github.com/consensys/giop/constraint"
-	"github.com/consensys/giop/internal/prover"
+	"github.com/consensys/loom/arguments"
+	"github.com/consensys/loom/constraint"
+	"github.com/consensys/loom/internal/prover"
 )
 
 func TestWriteDerivationPlanDagToHTML(t *testing.T) {

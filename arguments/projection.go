@@ -3,11 +3,11 @@ package arguments
 import (
 	"fmt"
 
-	"github.com/consensys/giop/internal/constants"
-	"github.com/consensys/giop/constraint"
-	"github.com/consensys/giop/expr"
-	derive "github.com/consensys/giop/internal/derive"
-	"github.com/consensys/giop/internal/utils"
+	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/constraint"
+	"github.com/consensys/loom/expr"
+	derive "github.com/consensys/loom/internal/derive"
+	"github.com/consensys/loom/internal/utils"
 )
 
 // Projection proves that the ordered sequence of A-values selected by F1

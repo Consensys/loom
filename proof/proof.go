@@ -1,7 +1,7 @@
 package proof
 
 import (
-	"github.com/consensys/giop/internal/commitment"
+	"github.com/consensys/loom/internal/commitment"
 )
 
 // TranscriptRound represents one round of the Fiat-Shamir transcript.

@@ -1,11 +1,11 @@
-package giop
+package loom
 
 import (
-	"github.com/consensys/giop/constraint"
-	"github.com/consensys/giop/internal/prover"
-	"github.com/consensys/giop/proof"
-	"github.com/consensys/giop/trace"
-	"github.com/consensys/giop/internal/verifier"
+	"github.com/consensys/loom/constraint"
+	"github.com/consensys/loom/internal/prover"
+	"github.com/consensys/loom/proof"
+	"github.com/consensys/loom/trace"
+	"github.com/consensys/loom/internal/verifier"
 )
 
 func Prove(cciop constraint.Program, trace trace.Trace, nbWorkers int) (proof.Proof, error) {

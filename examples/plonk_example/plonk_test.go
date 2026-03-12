@@ -3,11 +3,11 @@ package plonk_example
 import (
 	"testing"
 
-	"github.com/consensys/giop"
-	"github.com/consensys/giop/arguments"
-	"github.com/consensys/giop/constraint"
-	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/trace"
+	"github.com/consensys/loom"
+	"github.com/consensys/loom/arguments"
+	"github.com/consensys/loom/constraint"
+	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/trace"
 )
 
 func getKnownColumns(n int) map[string]bool {
@@ -130,12 +130,12 @@ func TestPlonk(t *testing.T) {
 
 	cciop := system.Compile()
 
-	proof, err := giop.Prove(cciop, fulltrace, 1)
+	proof, err := loom.Prove(cciop, fulltrace, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = giop.Verify(cciop, &proof, 1)
+	err = loom.Verify(cciop, &proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

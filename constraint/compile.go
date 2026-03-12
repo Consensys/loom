@@ -1,10 +1,10 @@
 package constraint
 
 import (
-	"github.com/consensys/giop/internal/constants"
-	"github.com/consensys/giop/internal/dag"
-	derive "github.com/consensys/giop/internal/derive"
-	"github.com/consensys/giop/expr"
+	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/internal/dag"
+	derive "github.com/consensys/loom/internal/derive"
+	"github.com/consensys/loom/expr"
 )
 
 // Fold returns Σ_i αⁱE[i]

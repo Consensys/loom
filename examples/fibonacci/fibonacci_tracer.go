@@ -1,7 +1,7 @@
 package fibonacci
 
 import (
-	"github.com/consensys/giop/trace"
+	"github.com/consensys/loom/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 

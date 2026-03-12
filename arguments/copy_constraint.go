@@ -1,8 +1,8 @@
 package arguments
 
 import (
-	"github.com/consensys/giop/constraint"
-	"github.com/consensys/giop/expr"
+	"github.com/consensys/loom/constraint"
+	"github.com/consensys/loom/expr"
 )
 
 // CopyPermutation IOP generating a proof that Wires and S(Wires) are identical,

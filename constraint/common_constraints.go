@@ -1,8 +1,8 @@
 package constraint
 
 import (
-	derive "github.com/consensys/giop/internal/derive"
-	"github.com/consensys/giop/expr"
+	derive "github.com/consensys/loom/internal/derive"
+	"github.com/consensys/loom/expr"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 

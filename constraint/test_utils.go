@@ -5,11 +5,11 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/consensys/giop/internal/constants"
-	"github.com/consensys/giop/internal/dag"
-	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/internal/poly"
-	"github.com/consensys/giop/trace"
+	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/internal/dag"
+	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/poly"
+	"github.com/consensys/loom/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 )

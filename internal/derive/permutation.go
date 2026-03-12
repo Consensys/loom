@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/trace"
+	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 )

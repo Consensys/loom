@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/consensys/giop/expr"
+	"github.com/consensys/loom/expr"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 

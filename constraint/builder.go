@@ -3,10 +3,10 @@ package constraint
 import (
 	"fmt"
 
-	"github.com/consensys/giop/internal/constants"
-	"github.com/consensys/giop/internal/derive"
-	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/internal/utils"
+	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/internal/derive"
+	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/utils"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 

@@ -1,7 +1,7 @@
 package derive
 
 import (
-	"github.com/consensys/giop/proof"
+	"github.com/consensys/loom/proof"
 )
 
 // Re-export proof types so callers within internal/ can use the short names.
