@@ -14,7 +14,7 @@ import (
 func CopyPermutation(system *cs.Builder, wires []string, S []int64) error {
 
 	// 1. register the permutation
-	allOutputs, err := system.RegisterPermutation(S)
+	allOutputs, err := system.AddPermutationColumns(S)
 	if err != nil {
 		return err
 	}
@@ -52,7 +52,7 @@ func makeWiresAsExpr(wires [][]string) [][]expr.Expr {
 func CopyPermtutationTuple(system *cs.Builder, wires [][]string, S []int64) error {
 
 	// 1. register the permutation
-	allOutputs, err := system.RegisterPermutation(S)
+	allOutputs, err := system.AddPermutationColumns(S)
 	if err != nil {
 		return err
 	}

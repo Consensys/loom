@@ -69,12 +69,12 @@ func (system *Builder) RegisterithLagrangeColumn(i int) {
 	system.RegisterDerivationStep(nil, []string{derive.GetLagrangeID(i, system.N)}, derive.NewLagrangeContext(i, system.N))
 }
 
-// RegisterPermutation syntactic sugar to add a prover action for registering the columns
+// AddPermutationColumns syntactic sugar to add a prover action for registering the columns
 // encoding a fixed permutation given by S. The output is
 // output[:N] = [ID_0, ID_1, ..] -> support of the permutation
 // output[N:] = [S_0, S_1, ..] -> interpolation of S permuted entries of [ID_0, ID_1, ..]
 // We check if the permutation is not already recorded in the trace
-func (system *Builder) RegisterPermutation(S []int64) ([]string, error) {
+func (system *Builder) AddPermutationColumns(S []int64) ([]string, error) {
 
 	permutationContext := derive.NewPermutationContext(S)
 
