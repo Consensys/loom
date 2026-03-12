@@ -12,10 +12,10 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
-// BuildInclusionTrace creates a trace with two columns T and S such that:
+// BuildLookupTrace creates a trace with two columns T and S such that:
 // - T[i] = i+1 (all distinct)
 // - S[i] = T[i % (size/2)] (every value in S appears in T, with repetitions)
-func BuildInclusionTrace(t *testing.T, size int) trace.Trace {
+func BuildLookupTrace(t *testing.T, size int) trace.Trace {
 	Tcoeffs := make([]koalabear.Element, size)
 	for i := range Tcoeffs {
 		Tcoeffs[i].SetUint64(uint64(i + 1))
@@ -29,10 +29,10 @@ func BuildInclusionTrace(t *testing.T, size int) trace.Trace {
 	return trace.Trace{"T": Tcoeffs, "S": Scoeffs}
 }
 
-// BuildInclusionTupleTrace creates a trace with columns T0, T1, S0, S1 such that
+// BuildLookupTupleTrace creates a trace with columns T0, T1, S0, S1 such that
 // every row (S0[i], S1[i]) appears in the table {(T0[j], T1[j])} (subset with repetitions).
 // T0[i] = i+1, T1[i] = (i+1)*2; S copies the first half of T rows twice.
-func BuildInclusionTupleTrace(t *testing.T, size int) trace.Trace {
+func BuildLookupTupleTrace(t *testing.T, size int) trace.Trace {
 	T0coeffs := make([]koalabear.Element, size)
 	T1coeffs := make([]koalabear.Element, size)
 	for i := range T0coeffs {
@@ -50,14 +50,14 @@ func BuildInclusionTupleTrace(t *testing.T, size int) trace.Trace {
 	return trace.Trace{"T0": T0coeffs, "T1": T1coeffs, "S0": S0coeffs, "S1": S1coeffs}
 }
 
-func TestInclusion(t *testing.T) {
+func TestLookup(t *testing.T) {
 
 	size := 16
 
-	trace := BuildInclusionTrace(t, size)
+	trace := BuildLookupTrace(t, size)
 	system := cs.NewBuilder(size)
 
-	Inclusion(&system, "S", "T")
+	Lookup(&system, "S", "T")
 
 	cciop := cs.Compile(&system)
 
@@ -116,14 +116,14 @@ func TestInclusion(t *testing.T) {
 	}
 }
 
-func TestInclusionTuple(t *testing.T) {
+func TestLookupTuple(t *testing.T) {
 
 	size := 16
 
-	tr := BuildInclusionTupleTrace(t, size)
+	tr := BuildLookupTupleTrace(t, size)
 	system := cs.NewBuilder(size)
 
-	InclusionTuple(&system, []string{"S0", "S1"}, []string{"T0", "T1"})
+	LookupTuple(&system, []string{"S0", "S1"}, []string{"T0", "T1"})
 
 	cciop := cs.Compile(&system)
 
