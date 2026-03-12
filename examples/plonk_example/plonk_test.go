@@ -3,12 +3,11 @@ package plonk_example
 import (
 	"testing"
 
+	"github.com/consensys/giop"
 	"github.com/consensys/giop/arguments"
 	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/internal/prover"
 	"github.com/consensys/giop/trace"
-	"github.com/consensys/giop/internal/verifier"
 )
 
 func getKnownColumns(n int) map[string]bool {
@@ -131,60 +130,14 @@ func TestPlonk(t *testing.T) {
 
 	cciop := system.Compile()
 
-	// viewer.WriteDerivationPlanDagToHTML(cciop, "plonk_dag.html")
-
-	proverRunTime := prover.NewProver(cciop, fulltrace)
-	// proof := constraint.NewProof(N)
-
-	// Step 1: Solve — compute all intermediate columns (beta, gamma, Z, Z_shifted, LAGRANGE_0)
-	knowncolumns := getKnownColumns(nbTraces)
-
-	proof, err := proverRunTime.Prove(knowncolumns, 1)
+	proof, err := giop.Prove(cciop, fulltrace, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	verifierRunTime := verifier.NewRunTime(cciop)
-	err = verifierRunTime.Verify(&proof, 1)
+	err = giop.Verify(cciop, &proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	// err = proverRunTime.Solve(knowncolumns, &proof, 1)
-	// if err != nil {
-	// 	t.Fatal(err)
-	// }
-
-	// // Step 2: DeriveFinalFoldingChallenge — derive alpha, fold constraints
-	// err = proverRunTime.DeriveFinalFoldingChallenge(&proof)
-	// if err != nil {
-	// 	t.Fatal(err)
-	// }
-
-	// // Step 3: ComputeQuotient — compute H = C(trace) / (X^N - 1)
-	// err = proverRunTime.ComputeQuotient(&proof)
-	// if err != nil {
-	// 	t.Fatal(err)
-	// }
-
-	// // Step 4: DeriveOpeningChallenge — derive zeta
-	// zeta, err := proverRunTime.DeriveOpeningChallenge(&proof)
-	// if err != nil {
-	// 	t.Fatal(err)
-	// }
-
-	// // Step 5: OpenCommitments — evaluate all polynomials at zeta
-	// err = proverRunTime.OpenCommitments(&proof, zeta)
-	// if err != nil {
-	// 	t.Fatal(err)
-	// }
-
-	// viewer.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, "dag.html")
-
-	// verifierRunTime := verifier.NewRunTime(cciop)
-	// err = verifierRunTime.Verify(&proof, 1)
-	// if err != nil {
-	// 	t.Fatal(err)
-	// }
 
 }

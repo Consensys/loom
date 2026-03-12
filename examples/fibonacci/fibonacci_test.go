@@ -5,11 +5,10 @@ import (
 	"os"
 	"testing"
 
+	"github.com/consensys/giop"
 	"github.com/consensys/giop/arguments"
 	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/internal/prover"
-	"github.com/consensys/giop/internal/verifier"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
@@ -59,21 +58,14 @@ func TestFibonacci(t *testing.T) {
 	trace := GetFibonacciTrace(N, "A", "B", "C")
 	// viewer.WriteTraceToCSV("fibonacci.csv", trace, N)
 
-	proverRuntime := prover.NewProver(cciop, trace)
-
-	knownColumns := make(map[string]bool)
-	knownColumns["A"] = true
-	knownColumns["B"] = true
-	knownColumns["C"] = true
-
-	proof, err := proverRuntime.Prove(knownColumns, 1)
+	proof, err := giop.Prove(cciop, trace, 1)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(-1)
 	}
 
-	verifierRunTime := verifier.NewRunTime(cciop)
-	err = verifierRunTime.Verify(&proof, 1)
+	// verifierRunTime := verifier.NewRunTime(cciop)
+	err = giop.Verify(cciop, &proof, 1)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(-1)
