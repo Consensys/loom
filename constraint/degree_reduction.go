@@ -3,7 +3,6 @@ package constraint
 import (
 	"github.com/consensys/loom/internal/dag"
 	"github.com/consensys/loom/expr"
-	derive "github.com/consensys/loom/internal/derive"
 )
 
 // reduceDegree Computes a set of constraints equivalent to constraint, but of dergee <= targetDegree.
@@ -73,7 +72,7 @@ func reduceDegree(system *Builder, targetDegree int) {
 			system.AssertZero(newRelation)
 
 			// register the prover action of creating the column C := lowDegreeExpr(trace)
-			system.RegisterDerivationStep([]expr.Expr{lowDegreeExpr}, []string{lowDegreeExpr.String()}, derive.NewIDStepContext(derive.COMPUTE_COL))
+			system.AddComputeColumnStep(lowDegreeExpr, lowDegreeExpr.String())
 
 			// register the lowDegreeExpr
 			seenExpr[daglowDegreeExpr.Root.Key()] = lowDegreeExpr.String()

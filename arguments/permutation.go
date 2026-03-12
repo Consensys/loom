@@ -3,10 +3,9 @@ package arguments
 import (
 	"fmt"
 
-	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/constraint"
 	"github.com/consensys/loom/expr"
-	derive "github.com/consensys/loom/internal/derive"
+	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/utils"
 )
 
@@ -49,11 +48,11 @@ func Permutation(system *constraint.Builder, ID1, ID2 []string) error {
 		E2[i] = expr.Col(ID2[i])
 	}
 
-	return equalityUpToPermutationIOP(system, E1, E2)
+	return permutation(system, E1, E2)
 
 }
 
-func equalityUpToPermutationIOP(system *constraint.Builder, E1, E2 []expr.Expr) error {
+func permutation(system *constraint.Builder, E1, E2 []expr.Expr) error {
 
 	_IDGrandProduct, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
@@ -65,7 +64,7 @@ func equalityUpToPermutationIOP(system *constraint.Builder, E1, E2 []expr.Expr) 
 		return err
 	}
 
-	system.RegisterDerivationStep(append(E1, E2...), []string{gamma}, derive.NewIDStepContext(derive.FIAT_SHAMIR))
+	system.AddChallengeStep(append(E1, E2...), gamma)
 
 	// 1. sample gamma
 	E1MinusGamma := E1[0].Sub(expr.NewChallenge(gamma))
@@ -82,7 +81,7 @@ func equalityUpToPermutationIOP(system *constraint.Builder, E1, E2 []expr.Expr) 
 	system.AssertAllZero(gpRelation)
 
 	// 3. register the prover action for creating the grand product and grand product shifted
-	system.RegisterDerivationStep([]expr.Expr{E1MinusGamma, E2MinusGamma}, []string{IDGrandProduct}, derive.NewIDStepContext(derive.GRAND_PRODUCT))
+	system.AddGrandProductStep([]expr.Expr{E1MinusGamma, E2MinusGamma}, IDGrandProduct)
 
 	// 4. register the creation of the lagrange column
 	system.AddLagrangeColumn(0)
@@ -166,7 +165,7 @@ func permutationTuple(system *constraint.Builder, E1, E2 [][]expr.Expr) error {
 	for i := 0; i < len(E1); i++ {
 		deps = append(deps, E2[i]...)
 	}
-	system.RegisterDerivationStep(deps, []string{alpha}, derive.NewIDStepContext(derive.FIAT_SHAMIR))
+	system.AddChallengeStep(deps, alpha)
 
 	// 2. fold ID1[i], ID2[i] for all i with alpha
 	alphaExpr := expr.NewChallenge(alpha)
@@ -179,8 +178,8 @@ func permutationTuple(system *constraint.Builder, E1, E2 [][]expr.Expr) error {
 		F2[i] = constraint.Fold(E2[i], alphaExpr)
 	}
 
-	// 3. equalityUpToPermutationIOP
-	equalityUpToPermutationIOP(system, F1, F2)
+	// 3. permutation
+	permutation(system, F1, F2)
 
 	return nil
 

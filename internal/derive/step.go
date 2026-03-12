@@ -8,7 +8,7 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-var PARegister map[StepKind]Step
+var StepRegistry map[StepKind]Step
 
 type StepKind int
 
@@ -22,16 +22,16 @@ type StepContext interface {
 
 // DerivationStep functions telling how to solve for intermediate columns in a list of constraints
 type DerivationStep struct {
-	Inputs  []expr.Expr
-	Outputs []string
-	StepContext     StepContext // additional context needed in certain case (e.g. building columns representing a permutation)
+	Inputs      []expr.Expr
+	Outputs     []string
+	StepContext StepContext // additional context needed in certain case (e.g. building columns representing a permutation)
 }
 
 func (pa DerivationStep) Execute(trace trace.Trace, proof *Proof, mu *sync.Mutex) error {
-	if _, ok := PARegister[pa.StepContext.GetID()]; !ok {
+	if _, ok := StepRegistry[pa.StepContext.GetID()]; !ok {
 		return fmt.Errorf("prover action not found")
 	}
-	F := PARegister[pa.StepContext.GetID()]
+	F := StepRegistry[pa.StepContext.GetID()]
 	return F(trace, proof, mu, pa.Inputs, pa.Outputs, pa.StepContext)
 }
 

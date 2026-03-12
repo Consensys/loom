@@ -3,11 +3,11 @@ package constraint
 import (
 	"fmt"
 
+	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/derive"
-	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/utils"
-	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
 type Relation = expr.Expr
@@ -31,15 +31,47 @@ func NewBuilder(N int) Builder {
 	}
 }
 
-// RegisterDerivationStep adds a prover action to the underlying Builder
-func (system *Builder) RegisterDerivationStep(inputs []expr.Expr, outputs []string, ctx derive.StepContext) {
-
-	pa := derive.DerivationStep{
+func (system *Builder) registerDerivationStep(inputs []expr.Expr, outputs []string, ctx derive.StepContext) {
+	system.DerivationPlan = append(system.DerivationPlan, derive.DerivationStep{
 		Inputs:      inputs,
 		Outputs:     outputs,
 		StepContext: ctx,
-	}
-	system.DerivationPlan = append(system.DerivationPlan, pa)
+	})
+}
+
+// AddChallengeStep registers a Fiat-Shamir challenge derivation: the challenge named output
+// is bound to all columns in inputs.
+func (system *Builder) AddChallengeStep(inputs []expr.Expr, output string) {
+	system.registerDerivationStep(inputs, []string{output}, derive.NewIOPStepContext(derive.FIAT_SHAMIR))
+}
+
+// AddGrandProductStep registers a grand product column derivation.
+// inputs must be [E1, E2]; the column named output satisfies R[0]=1, R[i+1]=R[i]·E1[i]/E2[i].
+func (system *Builder) AddGrandProductStep(inputs []expr.Expr, output string) {
+	system.registerDerivationStep(inputs, []string{output}, derive.NewIOPStepContext(derive.GRAND_PRODUCT))
+}
+
+// AddGrandSumStep registers a grand sum column derivation.
+// inputs must be [M, E]; the column named output satisfies R[i] = Σ_{j≤i} M[j]/E[j].
+func (system *Builder) AddGrandSumStep(inputs []expr.Expr, output string) {
+	system.registerDerivationStep(inputs, []string{output}, derive.NewIOPStepContext(derive.GRAND_SUM))
+}
+
+// AddMultiplicityStep registers a multiplicity column derivation.
+// inputs must be [S, T]; the column named output satisfies M[i] = #{j | S[j]=T[i]}.
+func (system *Builder) AddMultiplicityStep(inputs []expr.Expr, output string) {
+	system.registerDerivationStep(inputs, []string{output}, derive.NewIOPStepContext(derive.MULTIPLICITY))
+}
+
+// AddFilteredAccStep registers a filtered accumulator column derivation.
+// inputs must be [E, F, alpha] where F is a binary filter column.
+func (system *Builder) AddFilteredAccStep(inputs []expr.Expr, output string) {
+	system.registerDerivationStep(inputs, []string{output}, derive.NewIOPStepContext(derive.FITLERED_ACC_POLY))
+}
+
+// AddComputeColumnStep registers a pointwise column computation: output[i] = input(trace[i]).
+func (system *Builder) AddComputeColumnStep(input expr.Expr, output string) {
+	system.registerDerivationStep([]expr.Expr{input}, []string{output}, derive.NewIOPStepContext(derive.COMPUTE_COL))
 }
 
 // Relations list of constraints, that the Columns in a trace must fulfil. The constraints
@@ -55,7 +87,7 @@ func (system *Builder) AssertAllZero(C []Relation) {
 }
 
 func (system *Builder) AddColumn(name string, content []koalabear.Element) {
-	system.RegisterDerivationStep(nil, []string{"F1"}, derive.NewBuilderContext(content))
+	system.registerDerivationStep(nil, []string{"F1"}, derive.NewBuilderContext(content))
 }
 
 // AddLagrangeColumn syntactic sugar to add a prover action for creating the i-th lagrange column
@@ -71,7 +103,7 @@ func (system *Builder) AddLagrangeColumn(i int) {
 	// 1. key depends only on ctx atm and not on ProverAciont
 	// 2. if the action already exists, we should return the output to reuse them and change the api
 	system.Cache[k] = len(system.DerivationPlan)
-	system.RegisterDerivationStep(nil, []string{derive.GetLagrangeID(i, system.N)}, derive.NewLagrangeContext(i, system.N))
+	system.registerDerivationStep(nil, []string{derive.GetLagrangeID(i, system.N)}, derive.NewLagrangeContext(i, system.N))
 }
 
 // AddPermutationColumns syntactic sugar to add a prover action for registering the columns
@@ -107,7 +139,7 @@ func (system *Builder) AddPermutationColumns(S []int64) ([]string, error) {
 	}
 	allOutputs := append(IDid, SId...)
 	system.Cache[k] = len(system.DerivationPlan)
-	system.RegisterDerivationStep(nil, allOutputs, permutationContext)
+	system.registerDerivationStep(nil, allOutputs, permutationContext)
 
 	return allOutputs, nil
 }

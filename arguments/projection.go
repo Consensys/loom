@@ -6,8 +6,7 @@ import (
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/constraint"
 	"github.com/consensys/loom/expr"
-	derive "github.com/consensys/loom/internal/derive"
-	"github.com/consensys/loom/internal/utils"
+"github.com/consensys/loom/internal/utils"
 )
 
 // Projection proves that the ordered sequence of A-values selected by F1
@@ -104,7 +103,7 @@ func ProjectionTuple(system *constraint.Builder, A []string, F1 string, B []stri
 	for i := 0; i < len(B); i++ {
 		foldingDeps[i+len(A)] = expr.Col(B[i])
 	}
-	system.RegisterDerivationStep(foldingDeps, []string{gamma}, derive.NewIDStepContext(derive.FIAT_SHAMIR))
+	system.AddChallengeStep(foldingDeps, gamma)
 
 	// 2. fold A and B
 	gammaExpr := expr.NewChallenge(gamma)
@@ -148,13 +147,11 @@ func ProjectionExpr(system *constraint.Builder, A, B, F1, F2 expr.Expr) error {
 	// F1Expr := expr.Col(F1)
 	// F2Expr := expr.Col(F2)
 	depsAlpha := []expr.Expr{A, B, F1, F2}
-	system.RegisterDerivationStep(depsAlpha, []string{_alpha}, derive.NewIDStepContext(derive.FIAT_SHAMIR))
+	system.AddChallengeStep(depsAlpha, _alpha)
 
 	// 3. create the filtered acc polynomials
-	inputsFA := []expr.Expr{A, F1, alpha}
-	system.RegisterDerivationStep(inputsFA, []string{idAccFA}, derive.NewIDStepContext(derive.FITLERED_ACC_POLY))
-	inputsFB := []expr.Expr{B, F2, alpha}
-	system.RegisterDerivationStep(inputsFB, []string{idAccFB}, derive.NewIDStepContext(derive.FITLERED_ACC_POLY))
+	system.AddFilteredAccStep([]expr.Expr{A, F1, alpha}, idAccFA)
+	system.AddFilteredAccStep([]expr.Expr{B, F2, alpha}, idAccFB)
 
 	// 4. register the constraints ensuring that the filtered acc polynomials
 	// FA and FB are correclty constructed

@@ -13,14 +13,14 @@ const (
 )
 
 func init() {
-	PARegister = make(map[StepKind]Step)
-	PARegister[GRAND_PRODUCT] = ComputeGrandProduct
-	PARegister[GRAND_SUM] = ComputeGrandSum
-	PARegister[LAGRANGE] = ComputeLagrangeColumn
-	PARegister[COMPUTE_COL] = ComputeColumn
-	PARegister[MULTIPLICITY] = ComputeMultiplicity
-	PARegister[FITLERED_ACC_POLY] = ComputeFilteredAccPolynomial
-	PARegister[FIAT_SHAMIR] = ComputeChallenge
-	PARegister[PERMUTATION_GEN] = ComputePermutationColumns
-	PARegister[REGISTER_COL] = RegisterColumn
+	StepRegistry = make(map[StepKind]Step)
+	StepRegistry[GRAND_PRODUCT] = ComputeGrandProduct
+	StepRegistry[GRAND_SUM] = ComputeGrandSum
+	StepRegistry[LAGRANGE] = ComputeLagrangeColumn
+	StepRegistry[COMPUTE_COL] = ComputeColumn
+	StepRegistry[MULTIPLICITY] = ComputeMultiplicity
+	StepRegistry[FITLERED_ACC_POLY] = ComputeFilteredAccPolynomial
+	StepRegistry[FIAT_SHAMIR] = ComputeChallenge
+	StepRegistry[PERMUTATION_GEN] = ComputePermutationColumns
+	StepRegistry[REGISTER_COL] = RegisterColumn
 }

@@ -10,21 +10,21 @@ import (
 )
 
 // simple type of context, an identifier
-type IDStepContext struct {
-	ID StepKind
+type IOPStepContext struct {
+	Kind StepKind
 }
 
-func (ctx IDStepContext) GetID() StepKind {
-	return ctx.ID
+func (ctx IOPStepContext) GetID() StepKind {
+	return ctx.Kind
 }
 
 // Key no key for those type of actions
-func (ctx IDStepContext) Key() string {
+func (ctx IOPStepContext) Key() string {
 	return ""
 }
 
-func (ctx IDStepContext) String() string {
-	switch ctx.ID {
+func (ctx IOPStepContext) String() string {
+	switch ctx.Kind {
 	case GRAND_PRODUCT:
 		return "grand_product"
 	case GRAND_SUM:
@@ -41,8 +41,8 @@ func (ctx IDStepContext) String() string {
 	return "not found"
 }
 
-func NewIDStepContext(id StepKind) IDStepContext {
-	return IDStepContext{ID: id}
+func NewIOPStepContext(kind StepKind) IOPStepContext {
+	return IOPStepContext{Kind: kind}
 }
 
 // NewColumn registers P, whose id is ID, in T. Returns an error if the trace already exists

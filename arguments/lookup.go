@@ -6,8 +6,7 @@ import (
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/constraint"
 	"github.com/consensys/loom/expr"
-	derive "github.com/consensys/loom/internal/derive"
-	"github.com/consensys/loom/internal/utils"
+"github.com/consensys/loom/internal/utils"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
@@ -81,19 +80,19 @@ func inclusionCheckIOP(system *constraint.Builder, S, T expr.Expr) error {
 
 	// 1. create the multiplicity polynomial
 	Mexpr := expr.Col(M)
-	system.RegisterDerivationStep([]expr.Expr{S, T}, []string{M}, derive.NewIDStepContext(derive.MULTIPLICITY))
+	system.AddMultiplicityStep([]expr.Expr{S, T}, M)
 
 	// 2. sample a challenge gamma, depending on M, S, and T
 	gammaDeps := []expr.Expr{S, T, Mexpr}
-	system.RegisterDerivationStep(gammaDeps, []string{gamma}, derive.NewIDStepContext(derive.FIAT_SHAMIR))
+	system.AddChallengeStep(gammaDeps, gamma)
 
 	// 3. compute the grand sums grandSum1:=Σ_i M[i]/(T[i]-γ), grandSum2:=Σ_i 1/(S[i]-γ)
 	oneExpr := expr.Const(koalabear.One())
 	SminusGamma := S.Sub(expr.NewChallenge(gamma))
-	system.RegisterDerivationStep([]expr.Expr{oneExpr, SminusGamma}, []string{grandSumS}, derive.NewIDStepContext(derive.GRAND_SUM))
+	system.AddGrandSumStep([]expr.Expr{oneExpr, SminusGamma}, grandSumS)
 
 	TminusGamma := T.Sub(expr.NewChallenge(gamma))
-	system.RegisterDerivationStep([]expr.Expr{Mexpr, TminusGamma}, []string{grandSumT}, derive.NewIDStepContext(derive.GRAND_SUM))
+	system.AddGrandSumStep([]expr.Expr{Mexpr, TminusGamma}, grandSumT)
 
 	// 4. register the constraints ensuring the grand sums are correctly constructed
 	grandSumRelationsT := constraint.BuildGrandSumRelations(Mexpr, TminusGamma, grandSumT, system.N)
@@ -179,7 +178,7 @@ func LookupTuple(system *constraint.Builder, S, T []string) error {
 	for i := 0; i < len(T); i++ {
 		foldingDeps[i+len(S)] = expr.Col(T[i])
 	}
-	system.RegisterDerivationStep(foldingDeps, []string{gamma}, derive.NewIDStepContext(derive.FIAT_SHAMIR))
+	system.AddChallengeStep(foldingDeps, gamma)
 
 	// 2. fold S and T
 	gammaExpr := expr.NewChallenge(gamma)
