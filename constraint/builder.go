@@ -4,9 +4,10 @@ import (
 	"fmt"
 
 	"github.com/consensys/giop/constants"
-	derive "github.com/consensys/giop/derive"
+	"github.com/consensys/giop/internal/derive"
 	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/internal/utils"
+	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
 type Relation = expr.Expr
@@ -51,6 +52,10 @@ func (system *Builder) AssertZero(C Relation) {
 
 func (system *Builder) AssertAllZero(C []Relation) {
 	system.Relations = append(system.Relations, C...)
+}
+
+func (system *Builder) AddColumn(name string, content []koalabear.Element) {
+	system.RegisterDerivationStep(nil, []string{"F1"}, derive.NewBuilderContext(content))
 }
 
 // AddLagrangeColumn syntactic sugar to add a prover action for creating the i-th lagrange column

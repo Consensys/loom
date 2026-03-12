@@ -11,7 +11,7 @@ import (
 	"github.com/consensys/giop/internal/commitment"
 	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/internal/dag"
-	derive "github.com/consensys/giop/derive"
+	derive "github.com/consensys/giop/internal/derive"
 	"github.com/consensys/giop/expr"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"

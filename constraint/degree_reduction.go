@@ -3,7 +3,7 @@ package constraint
 import (
 	"github.com/consensys/giop/internal/dag"
 	"github.com/consensys/giop/expr"
-	derive "github.com/consensys/giop/derive"
+	derive "github.com/consensys/giop/internal/derive"
 )
 
 // reduceDegree Computes a set of constraints equivalent to constraint, but of dergee <= targetDegree.

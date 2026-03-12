@@ -9,7 +9,7 @@ import (
 	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/internal/poly"
 	"github.com/consensys/giop/prover"
-	derive "github.com/consensys/giop/derive"
+	derive "github.com/consensys/giop/internal/derive"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/giop/verifier"
 	"github.com/consensys/gnark-crypto/field/koalabear"

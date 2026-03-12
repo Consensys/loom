@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/constraint"
-	derive "github.com/consensys/giop/derive"
+	derive "github.com/consensys/giop/internal/derive"
 	"github.com/consensys/giop/internal/poly"
 	"github.com/consensys/giop/prover"
 	"github.com/consensys/giop/trace"

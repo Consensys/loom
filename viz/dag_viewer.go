@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/template"
 
-	derive "github.com/consensys/giop/derive"
+	derive "github.com/consensys/giop/internal/derive"
 )
 
 // Layout constants (pixels in the SVG coordinate space).
