@@ -7,7 +7,7 @@ import (
 	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/expr"
 	derive "github.com/consensys/giop/derive"
-	"github.com/consensys/giop/utils"
+	"github.com/consensys/giop/internal/utils"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
@@ -108,8 +108,8 @@ func inclusionCheckIOP(system *constraint.Builder, S, T expr.Expr) error {
 	system.AssertZero(boundaryEquality)
 
 	// 6. register the creation of the 2 lagrange columns 0 and N-1
-	system.RegisterithLagrangeColumn(0)
-	system.RegisterithLagrangeColumn(system.N - 1)
+	system.AddLagrangeColumn(0)
+	system.AddLagrangeColumn(system.N - 1)
 
 	return nil
 }

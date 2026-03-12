@@ -6,7 +6,7 @@ import (
 	"github.com/consensys/giop/constants"
 	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/utils"
+	"github.com/consensys/giop/internal/utils"
 )
 
 type Relation = expr.Expr
@@ -53,9 +53,9 @@ func (system *Builder) AssertAllZero(C []Relation) {
 	system.Relations = append(system.Relations, C...)
 }
 
-// RegisterithLagrangeColumn syntactic sugar to add a prover action for creating the i-th lagrange column
+// AddLagrangeColumn syntactic sugar to add a prover action for creating the i-th lagrange column
 // by checking if the action is not already recorded in the cache
-func (system *Builder) RegisterithLagrangeColumn(i int) {
+func (system *Builder) AddLagrangeColumn(i int) {
 	ctx := derive.NewLagrangeContext(i, system.N)
 	k := ctx.Key()
 	if _, ok := system.Cache[k]; ok {

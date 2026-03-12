@@ -7,7 +7,7 @@ import (
 	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/expr"
 	derive "github.com/consensys/giop/derive"
-	"github.com/consensys/giop/utils"
+	"github.com/consensys/giop/internal/utils"
 )
 
 // EqualityUpToPermutation proves that the multiset { ID1[j][i] } equals { ID2[j][i] }, up to permutation.
@@ -85,7 +85,7 @@ func equalityUpToPermutationIOP(system *constraint.Builder, E1, E2 []expr.Expr) 
 	system.RegisterDerivationStep([]expr.Expr{E1MinusGamma, E2MinusGamma}, []string{IDGrandProduct}, derive.NewIDStepContext(derive.GRAND_PRODUCT))
 
 	// 4. register the creation of the lagrange column
-	system.RegisterithLagrangeColumn(0)
+	system.AddLagrangeColumn(0)
 
 	return nil
 }

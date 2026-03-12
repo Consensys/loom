@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/consensys/giop/crypto/dummycommitment"
+	"github.com/consensys/giop/internal/commitment"
 	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/trace"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
@@ -156,14 +156,14 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.
 			if !ok {
 				return nil, fmt.Errorf("polynomial %s not found in the trace", id)
 			}
-			com, err := dummycommitment.Commit(poly)
+			com, err := commitment.Commit(poly)
 			if err != nil {
 				return nil, err
 			}
 			if err := fs.Bind(challengeName, com.Marshal()); err != nil {
 				return nil, err
 			}
-			proof.OpeningProofs[id] = dummycommitment.PackedProof{Digest: com}
+			proof.OpeningProofs[id] = commitment.PackedProof{Digest: com}
 		}
 
 		// 6. Bind the challenge to the other challenges it depends on

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/poly"
+	"github.com/consensys/giop/internal/poly"
 	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"

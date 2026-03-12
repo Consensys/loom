@@ -1,6 +1,6 @@
 package trace
 
-import "github.com/consensys/giop/poly"
+import "github.com/consensys/giop/internal/poly"
 
 // Trace list of columns with the size N of each column
 // type Trace = map[string]*poly.Polynomial

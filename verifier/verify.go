@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 
 	"github.com/consensys/giop/constants"
-	"github.com/consensys/giop/crypto/dummycommitment"
+	"github.com/consensys/giop/internal/commitment"
 	"github.com/consensys/giop/constraint"
-	"github.com/consensys/giop/dag"
+	"github.com/consensys/giop/internal/dag"
 	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/expr"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
@@ -226,7 +226,7 @@ func (runtime *Verifier) VerifyOpeningProofs(proof *derive.Proof) error {
 		for _, op := range openingProof.OpeningProof { // one opening proof per shifted opening
 			shift := op.Shift
 			if shift == 0 {
-				err := dummycommitment.Verify(openingProof.Digest, op, runtime.Vars[constants.FINAL_EVALUATION_POINT])
+				err := commitment.Verify(openingProof.Digest, op, runtime.Vars[constants.FINAL_EVALUATION_POINT])
 				if err != nil {
 					return err
 				}
@@ -239,7 +239,7 @@ func (runtime *Verifier) VerifyOpeningProofs(proof *derive.Proof) error {
 				zetaShifted.Exp(zetaShifted, big.NewInt(int64(shift)))
 				z := runtime.Vars[constants.FINAL_EVALUATION_POINT]
 				zetaShifted.Mul(&zetaShifted, &z) // w^iζ
-				err := dummycommitment.Verify(openingProof.Digest, op, zetaShifted)
+				err := commitment.Verify(openingProof.Digest, op, zetaShifted)
 				if err != nil {
 					return err
 				}

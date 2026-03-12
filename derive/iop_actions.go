@@ -5,7 +5,7 @@ import (
 	"sync"
 
 	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/poly"
+	"github.com/consensys/giop/internal/poly"
 	"github.com/consensys/giop/trace"
 )
 

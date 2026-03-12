@@ -8,11 +8,11 @@ import (
 	"sync/atomic"
 
 	"github.com/consensys/giop/constants"
-	"github.com/consensys/giop/crypto/dummycommitment"
+	"github.com/consensys/giop/internal/commitment"
 	"github.com/consensys/giop/constraint"
 	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/poly"
+	"github.com/consensys/giop/internal/poly"
 	"github.com/consensys/giop/trace"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -173,12 +173,12 @@ func (runtime *Prover) DeriveFinalFoldingChallenge(proof *derive.Proof) error {
 		if !ok {
 			return fmt.Errorf("polynomial %s not found in the trace", id)
 		}
-		com, err := dummycommitment.Commit(poly)
+		com, err := commitment.Commit(poly)
 		err = fs.Bind(constants.FINAL_FOLDING_CHALLENGE, com.Marshal())
 		if err != nil {
 			return err
 		}
-		proof.OpeningProofs[id] = dummycommitment.PackedProof{Digest: com}
+		proof.OpeningProofs[id] = commitment.PackedProof{Digest: com}
 	}
 
 	// 4. Bind the challenge to the other challenges it depends on
@@ -219,11 +219,11 @@ func (runtime *Prover) ComputeQuotient(proof *derive.Proof) error {
 	// Convert from coset-Lagrange to standard Lagrange so Open can evaluate it correctly
 	poly.CosetLagrangeToLagrangeNormal(H)
 
-	digest, err := dummycommitment.Commit(H)
+	digest, err := commitment.Commit(H)
 	if err != nil {
 		return err
 	}
-	proof.OpeningProofs[constants.FINAL_QUOTIENT] = dummycommitment.PackedProof{Digest: digest}
+	proof.OpeningProofs[constants.FINAL_QUOTIENT] = commitment.PackedProof{Digest: digest}
 
 	// Store H in the trace so OpenCommitments can evaluate it at zeta later
 	runtime.Trace[constants.FINAL_QUOTIENT] = H
@@ -305,8 +305,8 @@ func (runtime *Prover) OpenNonShiftedCommitments(proof *derive.Proof, zeta koala
 		if !ok {
 			return fmt.Errorf("column %s not found in the trace", k)
 		}
-		com.OpeningProof = make([]dummycommitment.OpeningProof, 1)
-		com.OpeningProof[0], err = dummycommitment.Open(poly, zeta)
+		com.OpeningProof = make([]commitment.OpeningProof, 1)
+		com.OpeningProof[0], err = commitment.Open(poly, zeta)
 		if err != nil {
 			return err
 		}
@@ -351,7 +351,7 @@ func (runtime *Prover) OpenShiftedCommitments(proof *derive.Proof, zeta koalabea
 		}
 		zetaShifted.Exp(zetaShifted, big.NewInt(int64(absShift)))
 		zetaShifted.Mul(&zeta, &zetaShifted) // w^shift·ζ
-		openingProof, err := dummycommitment.Open(poly, zetaShifted)
+		openingProof, err := commitment.Open(poly, zetaShifted)
 		if err != nil {
 			return err
 		}

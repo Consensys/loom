@@ -47,7 +47,7 @@ func TestFibonacci(t *testing.T) {
 	arguments.ProjectionExpr(&system, colB, colC, F1, F2)
 
 	// A[0]=0, B[0]=1
-	system.RegisterithLagrangeColumn(0)
+	system.AddLagrangeColumn(0)
 	var zero, one koalabear.Element
 	one.SetOne()
 	system.AssertZero(constraint.BuildLocalRelation(colA, expr.Const(zero), 0, N))

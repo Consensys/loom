@@ -2,7 +2,7 @@ package constraint
 
 import (
 	"github.com/consensys/giop/constants"
-	"github.com/consensys/giop/dag"
+	"github.com/consensys/giop/internal/dag"
 	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/expr"
 )

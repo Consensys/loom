@@ -1,7 +1,7 @@
 package derive
 
 import (
-	"github.com/consensys/giop/crypto/dummycommitment"
+	"github.com/consensys/giop/internal/commitment"
 )
 
 // TranscriptRound an IOP is a list of rounds. At each round, a challenge (referenced by ChallengeName) is sent by the verifier
@@ -26,7 +26,7 @@ type Proof struct {
 	// It allows the prune the dependency graph of challenge creation.
 	cacheChallengeDependencies map[string][]string
 
-	OpeningProofs map[string]dummycommitment.PackedProof
+	OpeningProofs map[string]commitment.PackedProof
 
 	// The final constraint. The verifier checks a relation of the form C(P1, P2.. ) = Quotient * (X^n-1)
 	// VanishingRelation Relation
@@ -45,7 +45,7 @@ type Proof struct {
 
 func NewProof(N int) Proof {
 	return Proof{
-		OpeningProofs:              make(map[string]dummycommitment.PackedProof),
+		OpeningProofs:              make(map[string]commitment.PackedProof),
 		TranscriptRounds:                     make([]TranscriptRound, 0),
 		cacheChallengeDependencies: make(map[string][]string),
 		N:                          N,

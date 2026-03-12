@@ -1,7 +1,7 @@
 package constraint
 
 import (
-	"github.com/consensys/giop/dag"
+	"github.com/consensys/giop/internal/dag"
 	"github.com/consensys/giop/expr"
 	derive "github.com/consensys/giop/derive"
 )

@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/constants"
-	"github.com/consensys/giop/dag"
+	"github.com/consensys/giop/internal/dag"
 	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/poly"
+	"github.com/consensys/giop/internal/poly"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"

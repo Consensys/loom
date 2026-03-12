@@ -7,7 +7,7 @@ import (
 	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/expr"
 	derive "github.com/consensys/giop/derive"
-	"github.com/consensys/giop/utils"
+	"github.com/consensys/giop/internal/utils"
 )
 
 // Projection proves that the ordered sequence of A-values selected by F1
@@ -167,8 +167,8 @@ func ProjectionExpr(system *constraint.Builder, A, B, F1, F2 expr.Expr) error {
 	system.AssertZero(constraint.BuildLocalRelation(accFA, accFB, system.N-1, system.N))
 
 	// 6. Register Lagrange columns needed by BuildFilteredAccPolynomialRelation (L_0) and step 5 (L_{N-1})
-	system.RegisterithLagrangeColumn(0)
-	system.RegisterithLagrangeColumn(system.N - 1)
+	system.AddLagrangeColumn(0)
+	system.AddLagrangeColumn(system.N - 1)
 
 	return nil
 }

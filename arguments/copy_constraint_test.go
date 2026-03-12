@@ -5,7 +5,7 @@ import (
 
 	"github.com/consensys/giop/constraint"
 	derive "github.com/consensys/giop/derive"
-	"github.com/consensys/giop/poly"
+	"github.com/consensys/giop/internal/poly"
 	"github.com/consensys/giop/prover"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/giop/verifier"
