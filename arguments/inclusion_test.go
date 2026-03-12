@@ -55,7 +55,7 @@ func TestInclusion(t *testing.T) {
 	size := 16
 
 	trace := BuildInclusionTrace(t, size)
-	system := cs.NewSystem(size)
+	system := cs.NewBuilder(size)
 
 	Inclusion(&system, "S", "T")
 
@@ -121,7 +121,7 @@ func TestInclusionMultiSet(t *testing.T) {
 	size := 16
 
 	tr := BuildInclusionMultiSetTrace(t, size)
-	system := cs.NewSystem(size)
+	system := cs.NewBuilder(size)
 
 	InclusionMultiSet(&system, []string{"S0", "S1"}, []string{"T0", "T1"})
 

@@ -36,7 +36,7 @@ func TestCopyPermutation(t *testing.T) {
 
 	T := trace.Trace{"P1": p1, "P2": p2}
 
-	system := cs.NewSystem(N)
+	system := cs.NewBuilder(N)
 	err := CopyPermutation(&system, []string{"P1", "P2"}, S)
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestCopyPermutationMultiSet(t *testing.T) {
 
 	T := trace.Trace{"P1": p1, "P2": p2}
 
-	system := cs.NewSystem(N)
+	system := cs.NewBuilder(N)
 	// wires: two chunks, each with the column repeated twice: {P1,P1} and {P2,P2}
 	err := CopyPermtutationMultiSet(&system, [][]string{{"P1", "P1"}, {"P2", "P2"}}, S)
 	if err != nil {

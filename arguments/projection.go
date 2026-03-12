@@ -40,7 +40,7 @@ import (
 //	|   C3, C4: exprmetric constraints for FB                                         |
 //	|   C5: L_{N-1}·(FA - FB) = 0              (final accumulated values match)     |
 //	|-------------------------------–-------------------------------------------------|
-func Projection(system *cs.System, A, F1, B, F2 string) error {
+func Projection(system *cs.Builder, A, F1, B, F2 string) error {
 
 	Aexpr := expr.Col(A)
 	Bexpr := expr.Col(B)
@@ -89,7 +89,7 @@ func Projection(system *cs.System, A, F1, B, F2 string) error {
 //	|   C1–C4: recurrence + boundary constraints for FÃ and FB̃                       |
 //	|   C5:    L_{N-1}·(FÃ - FB̃) = 0   (final accumulated values match)             |
 //	|-------------------------------–-------------------------------------------------|
-func ProjectionMultiSet(system *cs.System, A []string, F1 string, B []string, F2 string) error {
+func ProjectionMultiSet(system *cs.Builder, A []string, F1 string, B []string, F2 string) error {
 
 	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
@@ -124,7 +124,7 @@ func ProjectionMultiSet(system *cs.System, A []string, F1 string, B []string, F2
 
 }
 
-func ProjectionExpr(system *cs.System, A, B, F1, F2 expr.Expr) error {
+func ProjectionExpr(system *cs.Builder, A, B, F1, F2 expr.Expr) error {
 
 	// 1. build filtered acc polynomials for A and B
 	_idAccFA, err := utils.RandomString(constants.SIZE_RANDOM_STRING)

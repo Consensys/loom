@@ -11,18 +11,18 @@ import (
 
 type Relation = expr.Expr
 
-// System defines a list of constraints and a list of solver functions form a DAG, need to build extra columns appearing in the
+// Builder defines a list of constraints and a list of solver functions form a DAG, need to build extra columns appearing in the
 // different constraints (for instance a solver might tell how to compute a grand product column, grand sum column, etc).
-type System struct {
+type Builder struct {
 	Relations   Relations
 	ProverActions []proveractions.ProverAction
 	Cache         map[string]int // cache storing already regisetered prover actions. The value is an entry in ProverActions
 	N             int
 }
 
-// NewSystem creates a new system, consisting of constraints vanishing on X^N-1
-func NewSystem(N int) System {
-	return System{
+// NewBuilder creates a new system, consisting of constraints vanishing on X^N-1
+func NewBuilder(N int) Builder {
+	return Builder{
 		Relations:   make(Relations, 0),
 		ProverActions: make(proveractions.ProverActions, 0),
 		Cache:         make(map[string]int),
@@ -30,8 +30,8 @@ func NewSystem(N int) System {
 	}
 }
 
-// RegisterProverAction adds a prover action to the underlying System
-func (system *System) RegisterProverAction(inputs []expr.Expr, outputs []string, ctx proveractions.Ctx) {
+// RegisterProverAction adds a prover action to the underlying Builder
+func (system *Builder) RegisterProverAction(inputs []expr.Expr, outputs []string, ctx proveractions.Ctx) {
 
 	pa := proveractions.ProverAction{
 		Inputs:  inputs,
@@ -45,17 +45,17 @@ func (system *System) RegisterProverAction(inputs []expr.Expr, outputs []string,
 // are algebraic expression, which evaluted on columns of a trace.Trace of size N mut vanish on X^N-1.
 type Relations = []Relation
 
-func (system *System) AssertZero(C Relation) {
+func (system *Builder) AssertZero(C Relation) {
 	system.Relations = append(system.Relations, C)
 }
 
-func (system *System) AssertAllZero(C []Relation) {
+func (system *Builder) AssertAllZero(C []Relation) {
 	system.Relations = append(system.Relations, C...)
 }
 
 // RegisterithLagrangeColumn syntactic sugar to add a prover action for creating the i-th lagrange column
 // by checking if the action is not already recorded in the cache
-func (system *System) RegisterithLagrangeColumn(i int) {
+func (system *Builder) RegisterithLagrangeColumn(i int) {
 	ctx := proveractions.NewLagrangeContext(i, system.N)
 	k := ctx.Key()
 	if _, ok := system.Cache[k]; ok {
@@ -74,7 +74,7 @@ func (system *System) RegisterithLagrangeColumn(i int) {
 // output[:N] = [ID_0, ID_1, ..] -> support of the permutation
 // output[N:] = [S_0, S_1, ..] -> interpolation of S permuted entries of [ID_0, ID_1, ..]
 // We check if the permutation is not already recorded in the trace
-func (system *System) RegisterPermutation(S []int64) ([]string, error) {
+func (system *Builder) RegisterPermutation(S []int64) ([]string, error) {
 
 	permutationContext := proveractions.NewPermutationContext(S)
 

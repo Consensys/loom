@@ -28,7 +28,7 @@ func TestFibonacci(t *testing.T) {
 	// 3. A[0]=0, B[0]=1
 
 	// vanishing constraint A + B - C = 0
-	system := cs.NewSystem(N)
+	system := cs.NewBuilder(N)
 	colA := expr.Col("A")
 	colB := expr.Col("B")
 	colC := expr.Col("C")

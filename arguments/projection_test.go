@@ -52,7 +52,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 		"F2": f2Vals,
 	}
 
-	system := cs.NewSystem(size)
+	system := cs.NewBuilder(size)
 
 	err := ProjectionMultiSet(&system, []string{"A", "A2"}, "F1", []string{"B", "B2"}, "F2")
 	if err != nil {
@@ -151,7 +151,7 @@ func TestEqualityFilteredColumns(t *testing.T) {
 	}
 
 	// create a new system
-	system := cs.NewSystem(size)
+	system := cs.NewBuilder(size)
 
 	// call EqualityFilteredColumns
 	err := Projection(&system, "A", "F1", "B", "F2")

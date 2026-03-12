@@ -11,7 +11,7 @@ import (
 
 func TestWriteProverActionsDagToHTML(t *testing.T) {
 	size := 16
-	system := cs.NewSystem(size)
+	system := cs.NewBuilder(size)
 	if err := arguments.PermutationMultiset(
 		&system,
 		[][]string{{"P0", "P1"}},
@@ -38,7 +38,7 @@ func TestWriteProverActionsDagToHTML(t *testing.T) {
 func TestWriteProofRoundsDagToHTML_Permutation(t *testing.T) {
 	size := 16
 	trace := cs.BuildPermutationCircuit(t, size)
-	system := cs.NewSystem(size)
+	system := cs.NewBuilder(size)
 	arguments.Permutation(&system, []string{"P0"}, []string{"P1"})
 
 	cciop := cs.Compile(&system)
@@ -65,7 +65,7 @@ func TestWriteProofRoundsDagToHTML_Permutation(t *testing.T) {
 func TestWriteProofRoundsDagToHTML_MultiSet(t *testing.T) {
 	size := 16
 	trace := cs.BuildPermutationMultiSet(t, size)
-	system := cs.NewSystem(size)
+	system := cs.NewBuilder(size)
 	if err := arguments.PermutationMultiset(
 		&system,
 		[][]string{{"P0", "P1"}},

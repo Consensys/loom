@@ -42,7 +42,7 @@ import (
 //	|   C_f = 0  mod X^N−1                                                         |
 //	|   (equivalent to C = 0 with high probability for random α)                   |
 //	|-------------------------------–-----------------------------------------------|
-func reduceDegree(system *System, targetDegree int) {
+func reduceDegree(system *Builder, targetDegree int) {
 
 	// seenExpr records already seen folded expressions (the AST doesn't account for common substrings). The key is a unique ID
 	// characterising a expr.Expr, derived from building its corresponding DAG. The value is the name of the reduced expression.

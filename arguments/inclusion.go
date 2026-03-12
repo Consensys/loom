@@ -47,7 +47,7 @@ import (
 //	|   C4: L_0·(GrandSumS·(S−γ) − 1) = 0  (GrandSumS[0] = 1/(S[0]−γ))          |
 //	|   C5: L_{N−1}·(GrandSumS − GrandSumT) = 0  (total sums equal)               |
 //	|-------------------------------–-----------------------------------------------|
-func Inclusion(system *cs.System, S, T string) error {
+func Inclusion(system *cs.Builder, S, T string) error {
 
 	// 1. create the multiplicity polynomial
 	Texpr := expr.Col(T)
@@ -57,7 +57,7 @@ func Inclusion(system *cs.System, S, T string) error {
 
 }
 
-func inclusionCheckIOP(system *cs.System, S, T expr.Expr) error {
+func inclusionCheckIOP(system *cs.Builder, S, T expr.Expr) error {
 
 	_M, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
@@ -164,7 +164,7 @@ func inclusionCheckIOP(system *cs.System, S, T expr.Expr) error {
 //	|   C4: L_0·(GrandSumS·(S_fold−γ) − 1) = 0                                     |
 //	|   C5: L_{N−1}·(GrandSumS − GrandSumT) = 0  (total sums equal)                |
 //	|----------------------------------–---------------------------------------------|
-func InclusionMultiSet(system *cs.System, S, T []string) error {
+func InclusionMultiSet(system *cs.Builder, S, T []string) error {
 
 	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {

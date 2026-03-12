@@ -83,7 +83,7 @@ func BenchmarkCompile(b *testing.B) {
 		fulltrace = mergeTrace(fulltrace, ithprivatepart)
 	}
 
-	system := cs.NewSystem(N)
+	system := cs.NewBuilder(N)
 
 	// This is the result of the constraint (lisp ?) file in a real life example. Here we know in advance the shape of the constraints
 	// QL*L + QR*R + QM*L*R + QO*O + QK = 0
@@ -115,7 +115,7 @@ func TestPlonk(t *testing.T) {
 		fulltrace = mergeTrace(fulltrace, ithprivatepart)
 	}
 
-	system := cs.NewSystem(N)
+	system := cs.NewBuilder(N)
 
 	// This is the result of the constraint (lisp ?) file in a real life example. Here we know in advance the shape of the constraints
 	// QL*L + QR*R + QM*L*R + QO*O + QK = 0
