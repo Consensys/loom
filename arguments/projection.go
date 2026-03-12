@@ -158,8 +158,8 @@ func ProjectionExpr(system *cs.System, A, B, F1, F2 expr.Expr) error {
 
 	// 4. register the constraints ensuring that the filtered acc polynomials
 	// FA and FB are correclty constructed
-	system.AssertZeros(cs.BuildFilteredAccPolynomialRelation(A, F1, alpha, idAccFA, system.N))
-	system.AssertZeros(cs.BuildFilteredAccPolynomialRelation(B, F2, alpha, idAccFB, system.N))
+	system.AssertAllZero(cs.BuildFilteredAccPolynomialRelation(A, F1, alpha, idAccFA, system.N))
+	system.AssertAllZero(cs.BuildFilteredAccPolynomialRelation(B, F2, alpha, idAccFB, system.N))
 
 	// 5. ensure FA[N-1]=FB[N-1]: the last entry holds the full filtered accumulation
 	accFA := expr.Col(idAccFA)

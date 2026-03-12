@@ -15,7 +15,7 @@ func TestGrandSumRelation(t *testing.T) {
 	trace := BuildRandomTrace(t, size)
 	system := NewSystem(size)
 	constraints := BuildGrandSumRelations(expr.Col("M"), expr.Col("E"), "GrandSum", size)
-	system.AssertZeros(constraints)
+	system.AssertAllZero(constraints)
 	proof := proveractions.NewProof(size)
 	E := expr.Col("E")
 	M := expr.Col("M")

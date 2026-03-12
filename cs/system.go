@@ -49,7 +49,7 @@ func (system *System) AssertZero(C Relation) {
 	system.Relations = append(system.Relations, C)
 }
 
-func (system *System) AssertZeros(C []Relation) {
+func (system *System) AssertAllZero(C []Relation) {
 	system.Relations = append(system.Relations, C...)
 }
 

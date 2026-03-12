@@ -34,7 +34,7 @@ func TestGrandProductRelation(t *testing.T) {
 	// add the constraint that the grand product is computed correctly to the system
 	system := NewSystem(size)
 	GPRelation := BuildGrandProductRelation(E1, E2, "R", size)
-	system.AssertZeros(GPRelation)
+	system.AssertAllZero(GPRelation)
 	proof := proveractions.NewProof(size)
 	proveractions.ComputeGrandProduct(trace, &proof, &mu, []expr.Expr{E1, E2}, []string{"R"}, nil)
 

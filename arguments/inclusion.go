@@ -98,8 +98,8 @@ func inclusionCheckIOP(system *cs.System, S, T expr.Expr) error {
 	// 4. register the constraints ensuring the grand sums are correctly constructed
 	grandSumRelationsT := cs.BuildGrandSumRelations(Mexpr, TminusGamma, grandSumT, system.N)
 	grandSumRelationsS := cs.BuildGrandSumRelations(oneExpr, SminusGamma, grandSumS, system.N)
-	system.AssertZeros(grandSumRelationsT)
-	system.AssertZeros(grandSumRelationsS)
+	system.AssertAllZero(grandSumRelationsT)
+	system.AssertAllZero(grandSumRelationsS)
 
 	// 5. ensure that grandSumT[N-1] = grandSumS[N-1]
 	grandSumSExpr := expr.Col(grandSumS)

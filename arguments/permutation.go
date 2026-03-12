@@ -79,7 +79,7 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 []expr.Expr) error {
 
 	// 2. register the grand product constraint (including the boundary constraint)
 	gpRelation := cs.BuildGrandProductRelation(E1MinusGamma, E2MinusGamma, IDGrandProduct, system.N)
-	system.AssertZeros(gpRelation)
+	system.AssertAllZero(gpRelation)
 
 	// 3. register the prover action for creating the grand product and grand product shifted
 	system.RegisterProverAction([]expr.Expr{E1MinusGamma, E2MinusGamma}, []string{IDGrandProduct}, proveractions.NewIDCtx(proveractions.GRAND_PRODUCT))
