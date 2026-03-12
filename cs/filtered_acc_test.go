@@ -76,7 +76,7 @@ func TestComputeFilteredAccPolynomial(t *testing.T) {
 			Sub(one.Sub(Fexpr).Mul(RPrev)),
 	)
 
-	constraints := []Constraint{C1, C2}
+	constraints := []Relation{C1, C2}
 
 	// 5. Verify both constraints vanish on X^N−1.
 	if err := BruteForceChecker(T, constraints, N); err != nil {

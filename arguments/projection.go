@@ -33,7 +33,7 @@ import (
 //	|   So FA[N-1] = Σ_{F1[i]=1} A[i] · α^(m-1-rank(i))  (Horner of selected A)    |
 //	| Commit(FA, FB)        -----→  | [Com(FA), Com(FB)]                             | ROUND 3
 //	|-------------------------------–-------------------------------------------------|
-//	|       (done via FoldConstraints + Finalize + Verify)                            |
+//	|       (done via FoldRelations + Finalize + Verify)                            |
 //	| Records constraints:                                                            |
 //	|   C1: L_0·(FA - F1·A) = 0                (boundary for FA)                    |
 //	|   C2: (1-L_0)·(FA - F1·(α·FA_prev+A) - (1-F1)·FA_prev) = 0  (recurrence FA) |
@@ -84,7 +84,7 @@ func EqualityFilteredColumnsIOP(system *cs.System, A, F1, B, F2 string) error {
 //	|   (FB̃ defined symmetrically with B̃, F2)                                        |
 //	| Commit(FÃ, FB̃)       -----→  | [Com(FÃ), Com(FB̃)]                             | ROUND 5
 //	|-------------------------------–-------------------------------------------------|
-//	|       (done via FoldConstraints + Finalize + Verify)                            |
+//	|       (done via FoldRelations + Finalize + Verify)                            |
 //	| Records constraints:                                                            |
 //	|   C1–C4: recurrence + boundary constraints for FÃ and FB̃                       |
 //	|   C5:    L_{N-1}·(FÃ - FB̃) = 0   (final accumulated values match)             |
@@ -158,15 +158,15 @@ func EqualityFilteredColumnsIOPExpr(system *cs.System, A, B, F1, F2 sym.Expr) er
 
 	// 4. register the constraints ensuring that the filtered acc polynomials
 	// FA and FB are correclty constructed
-	system.RegisterConstraints(cs.BuildFilteredAccPolynomialConstraint(A, F1, alpha, idAccFA, system.N))
-	system.RegisterConstraints(cs.BuildFilteredAccPolynomialConstraint(B, F2, alpha, idAccFB, system.N))
+	system.RegisterRelations(cs.BuildFilteredAccPolynomialRelation(A, F1, alpha, idAccFA, system.N))
+	system.RegisterRelations(cs.BuildFilteredAccPolynomialRelation(B, F2, alpha, idAccFB, system.N))
 
 	// 5. ensure FA[N-1]=FB[N-1]: the last entry holds the full filtered accumulation
 	accFA := sym.NewCommittedColumn(idAccFA)
 	accFB := sym.NewCommittedColumn(idAccFB)
-	system.RegisterConstraint(cs.BuildLocalConstraint(accFA, accFB, system.N-1, system.N))
+	system.RegisterRelation(cs.BuildLocalRelation(accFA, accFB, system.N-1, system.N))
 
-	// 6. Register Lagrange columns needed by BuildFilteredAccPolynomialConstraint (L_0) and step 5 (L_{N-1})
+	// 6. Register Lagrange columns needed by BuildFilteredAccPolynomialRelation (L_0) and step 5 (L_{N-1})
 	system.RegisterithLagrangeColumn(0)
 	system.RegisterithLagrangeColumn(system.N - 1)
 

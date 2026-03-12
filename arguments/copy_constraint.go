@@ -5,13 +5,13 @@ import (
 	"github.com/consensys/giop/pas/sym"
 )
 
-// CopyConstraintIOP IOP generating a proof that Wires and S(Wires) are identical,
+// CopyRelationIOP IOP generating a proof that Wires and S(Wires) are identical,
 // where S(Wires) is the permutation S applied on Wires:=(Wires[0] || Wires[1] || ...),
 // laid out horizontall.
 //
 // The name Wires comes from plonk, this constraint is here to ensure that a wiring
 // is correct.
-func CopyConstraintIOP(system *cs.System, wires []string, S []int64) error {
+func CopyRelationIOP(system *cs.System, wires []string, S []int64) error {
 
 	// 1. register the permutation
 	allOutputs, err := system.RegisterPermutation(S)
@@ -41,7 +41,7 @@ func makeWiresAsExpr(wires [][]string) [][]sym.Expr {
 	return res
 }
 
-// CopyConstraint IOP generating a proof that Wires and S(Wires) are identical,
+// CopyRelation IOP generating a proof that Wires and S(Wires) are identical,
 // where S(Wires) is the permutation S applied on each column of
 // (Wires[0][0] || Wires[0][1] || ...)
 // (Wires[1][0] || Wires[1][1] || ...)
@@ -49,7 +49,7 @@ func makeWiresAsExpr(wires [][]string) [][]sym.Expr {
 // ...
 // The name Wires comes from plonk, this constraint is here to ensure that a wiring
 // is correct.
-func CopyConstraintMultiSetIOP(system *cs.System, wires [][]string, S []int64) error {
+func CopyRelationMultiSetIOP(system *cs.System, wires [][]string, S []int64) error {
 
 	// 1. register the permutation
 	allOutputs, err := system.RegisterPermutation(S)

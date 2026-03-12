@@ -33,7 +33,7 @@ func TestFibonacci(t *testing.T) {
 	colB := sym.NewCommittedColumn("B")
 	colC := sym.NewCommittedColumn("C")
 	C1 := colA.Add(colB).Sub(colC)
-	system.RegisterConstraint(C1)
+	system.RegisterRelation(C1)
 
 	// Filter1(A)=Filter2(B), Filter1(B)=Filter2(C) where Filter1 = [0,1,1,1...], Filter2 = [1,1,1,...,1,0]
 	filter := make([]koalabear.Element, N)
@@ -50,8 +50,8 @@ func TestFibonacci(t *testing.T) {
 	system.RegisterithLagrangeColumn(0)
 	var zero, one koalabear.Element
 	one.SetOne()
-	system.RegisterConstraint(cs.BuildLocalConstraint(colA, sym.NewConst(zero), 0, N))
-	system.RegisterConstraint(cs.BuildLocalConstraint(colB, sym.NewConst(one), 0, N))
+	system.RegisterRelation(cs.BuildLocalRelation(colA, sym.NewConst(zero), 0, N))
+	system.RegisterRelation(cs.BuildLocalRelation(colB, sym.NewConst(one), 0, N))
 
 	cciop := cs.Compile(&system)
 

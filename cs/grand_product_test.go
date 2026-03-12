@@ -9,7 +9,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
-func TestGrandProductConstraint(t *testing.T) {
+func TestGrandProductRelation(t *testing.T) {
 
 	size := 16
 
@@ -33,8 +33,8 @@ func TestGrandProductConstraint(t *testing.T) {
 
 	// add the constraint that the grand product is computed correctly to the system
 	system := NewSystem(size)
-	GPConstraint := BuildGrandProductConstraint(E1, E2, "R", size)
-	system.RegisterConstraints(GPConstraint)
+	GPRelation := BuildGrandProductRelation(E1, E2, "R", size)
+	system.RegisterRelations(GPRelation)
 	proof := proveractions.NewProof(size)
 	proveractions.ComputeGrandProduct(trace, &proof, &mu, []sym.Expr{E1, E2}, []string{"R"}, nil)
 
@@ -62,12 +62,12 @@ func TestGrandProductConstraint(t *testing.T) {
 		}
 	}
 
-	err = BruteForceChecker(trace, system.Constraints, system.N)
+	err = BruteForceChecker(trace, system.Relations, system.N)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = QuotientChecker(trace, system.Constraints, system.N)
+	err = QuotientChecker(trace, system.Relations, system.N)
 	if err != nil {
 		t.Fatal(err)
 	}

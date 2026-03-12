@@ -53,7 +53,7 @@ func Compile(system *System, opts ...Option) CompiledIOP {
 	}
 
 	// 1. symoblically fold all the constraints using the folding challenge. The actual challenge is derived in prover/.
-	C := Fold(system.Constraints, sym.NewChallenge(constants.FINAL_FOLDING_CHALLENGE))
+	C := Fold(system.Relations, sym.NewChallenge(constants.FINAL_FOLDING_CHALLENGE))
 	CDag := dag.ExprToDAG(C)
 	CDag = CDag.Flatten()
 	return CompiledIOP{

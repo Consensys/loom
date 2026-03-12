@@ -33,7 +33,7 @@ func getKnownColumns(n int) map[string]bool {
 	return knowncolumns
 }
 
-func getIthPlonkRelation(n int) cs.Constraint {
+func getIthPlonkRelation(n int) cs.Relation {
 
 	C := sym.NewCommittedColumn(ID_Ql).Mul(sym.NewCommittedColumn(ithInstance(ID_L, n))).
 		Add(sym.NewCommittedColumn(ID_Qr).Mul(sym.NewCommittedColumn(ithInstance(ID_R, n)))).
@@ -89,8 +89,8 @@ func BenchmarkCompile(b *testing.B) {
 	// QL*L + QR*R + QM*L*R + QO*O + QK = 0
 	for i := 0; i < nbTraces; i++ {
 		C := getIthPlonkRelation(i)
-		system.RegisterConstraint(C)
-		_ = arguments.CopyConstraintIOP(&system, []string{ithInstance(ID_L, i), ithInstance(ID_R, i), ithInstance(ID_O, i)}, S)
+		system.RegisterRelation(C)
+		_ = arguments.CopyRelationIOP(&system, []string{ithInstance(ID_L, i), ithInstance(ID_R, i), ithInstance(ID_O, i)}, S)
 
 	}
 
@@ -122,8 +122,8 @@ func TestPlonk(t *testing.T) {
 	// ( (L, ID1), (R, ID2), (O, ID3)) and ( (L, S1), (R, S2), (O, S3)) must be equal as multisets
 	for i := 0; i < nbTraces; i++ {
 		C := getIthPlonkRelation(i)
-		system.RegisterConstraint(C)
-		err = arguments.CopyConstraintIOP(&system, []string{ithInstance(ID_L, i), ithInstance(ID_R, i), ithInstance(ID_O, i)}, S)
+		system.RegisterRelation(C)
+		err = arguments.CopyRelationIOP(&system, []string{ithInstance(ID_L, i), ithInstance(ID_R, i), ithInstance(ID_O, i)}, S)
 		if err != nil {
 			t.Fatal(err)
 		}

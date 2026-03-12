@@ -101,7 +101,7 @@ func BuildPermutationMultiSet(t *testing.T, size int) trace.Trace {
 
 // BruteForceChecker checks rows by rows a system by evaluating on the domain X^n-1,
 // and checks that it is zero on this domain
-func BruteForceChecker(T trace.Trace, constraints []Constraint, N int) error {
+func BruteForceChecker(T trace.Trace, constraints []Relation, N int) error {
 
 	for _, C := range constraints {
 
@@ -149,12 +149,12 @@ func lagrangeToCanonical(p []koalabear.Element) {
 	fft.BitReverse(p)
 }
 
-// QuotientChecker checks Constraint satisfiability of S. It returns an error if the constraint is not satisfied by the trace.
-// Constraint satisfiability means that C(T)=0 mod X^n-1 where C:=S.Constraint, T:=T. To make this check, we compute the quotient
+// QuotientChecker checks Relation satisfiability of S. It returns an error if the constraint is not satisfied by the trace.
+// Relation satisfiability means that C(T)=0 mod X^n-1 where C:=S.Relation, T:=T. To make this check, we compute the quotient
 // h = C(T) / X^n-1 where n is the size of the columns of T, and verify at a random point x that C(T)(x)-(x^n-1)*h(x)=0.
 //
 // It is a debugging function
-func QuotientChecker(T trace.Trace, constraints []Constraint, N int) error {
+func QuotientChecker(T trace.Trace, constraints []Relation, N int) error {
 
 	for _, C := range constraints {
 

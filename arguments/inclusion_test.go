@@ -71,21 +71,21 @@ func TestInclusion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+	sanityCheck(&proverRunTime, system.Relations, system.N, t)
 
 	// 2. DeriveFinalFoldingChallenge + sanity checks
 	err = proverRunTime.DeriveFinalFoldingChallenge(&proof)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+	sanityCheck(&proverRunTime, system.Relations, system.N, t)
 
 	// 3. ComputeQuotient + sanity checks
 	err = proverRunTime.ComputeQuotient(&proof)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+	sanityCheck(&proverRunTime, system.Relations, system.N, t)
 
 	// 4. DeriveOpeningChallenge + sanity checks
 	var zeta koalabear.Element
@@ -93,7 +93,7 @@ func TestInclusion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+	sanityCheck(&proverRunTime, system.Relations, system.N, t)
 
 	// 4b. OpenCommitments: evaluate all committed polynomials at zeta
 	err = proverRunTime.OpenCommitments(&proof, zeta)
@@ -137,21 +137,21 @@ func TestInclusionMultiSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+	sanityCheck(&proverRunTime, system.Relations, system.N, t)
 
 	// 2. DeriveFinalFoldingChallenge + sanity checks
 	err = proverRunTime.DeriveFinalFoldingChallenge(&proof)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+	sanityCheck(&proverRunTime, system.Relations, system.N, t)
 
 	// 3. ComputeQuotient + sanity checks
 	err = proverRunTime.ComputeQuotient(&proof)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+	sanityCheck(&proverRunTime, system.Relations, system.N, t)
 
 	// 4. DeriveOpeningChallenge + sanity checks
 	var zeta koalabear.Element
@@ -159,7 +159,7 @@ func TestInclusionMultiSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+	sanityCheck(&proverRunTime, system.Relations, system.N, t)
 
 	// 4b. OpenCommitments: evaluate all committed polynomials at zeta
 	err = proverRunTime.OpenCommitments(&proof, zeta)

@@ -8,14 +8,14 @@ import (
 	proveractions "github.com/consensys/giop/prover_actions"
 )
 
-func TestGrandSumConstraint(t *testing.T) {
+func TestGrandSumRelation(t *testing.T) {
 
 	size := 16
 
 	trace := BuildRandomTrace(t, size)
 	system := NewSystem(size)
-	constraints := BuildGrandSumConstraints(sym.NewCommittedColumn("M"), sym.NewCommittedColumn("E"), "GrandSum", size)
-	system.RegisterConstraints(constraints)
+	constraints := BuildGrandSumRelations(sym.NewCommittedColumn("M"), sym.NewCommittedColumn("E"), "GrandSum", size)
+	system.RegisterRelations(constraints)
 	proof := proveractions.NewProof(size)
 	E := sym.NewCommittedColumn("E")
 	M := sym.NewCommittedColumn("M")
@@ -26,12 +26,12 @@ func TestGrandSumConstraint(t *testing.T) {
 	}
 	proveractions.ComputeLagrangeColumn(trace, nil, &mu, nil, []string{proveractions.GetLagrangeID(0, size)}, nil)
 
-	err = BruteForceChecker(trace, system.Constraints, system.N)
+	err = BruteForceChecker(trace, system.Relations, system.N)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = QuotientChecker(trace, system.Constraints, system.N)
+	err = QuotientChecker(trace, system.Relations, system.N)
 	if err != nil {
 		t.Fatal(err)
 	}

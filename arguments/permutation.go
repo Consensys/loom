@@ -32,7 +32,7 @@ import (
 //	|     ∏_j(Q_j[i] - γ)          |                                               |
 //	| Commit(Z, Z_shifted)  -----→  | [Com(Z), Com(Z_shifted)]                     | ROUND 3
 //	|-------------------------------–-----------------------------------------------|
-//	|       (done via FoldConstraints + Finalize + Verify)                          |
+//	|       (done via FoldRelations + Finalize + Verify)                          |
 //	| Records two constraints:                                                      |
 //	|   C1: ∏_j(Q_j-γ)·Z_shifted - ∏_j(P_j-γ)·Z = 0 mod X^N-1                   |
 //	|   C2: (Z-1)·L_0 = 0  (enforces Z[0]=1)                                      |
@@ -78,8 +78,8 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 []sym.Expr) error {
 	}
 
 	// 2. register the grand product constraint (including the boundary constraint)
-	gpConstraint := cs.BuildGrandProductConstraint(E1MinusGamma, E2MinusGamma, IDGrandProduct, system.N)
-	system.RegisterConstraints(gpConstraint)
+	gpRelation := cs.BuildGrandProductRelation(E1MinusGamma, E2MinusGamma, IDGrandProduct, system.N)
+	system.RegisterRelations(gpRelation)
 
 	// 3. register the prover action for creating the grand product and grand product shifted
 	system.RegisterProverAction([]sym.Expr{E1MinusGamma, E2MinusGamma}, []string{IDGrandProduct}, proveractions.NewIDCtx(proveractions.GRAND_PRODUCT))
@@ -124,7 +124,7 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 []sym.Expr) error {
 //	|     ∏_s(F2_s[i] - γ)         |                                               |
 //	| Commit(Z, Z_shifted)  -----→  | [Com(Z), Com(Z_shifted)]                     | ROUND 4
 //	|-------------------------------–-----------------------------------------------|
-//	|       (done via FoldConstraints + Finalize + Verify)                          |
+//	|       (done via FoldRelations + Finalize + Verify)                          |
 //	| Records two constraints:                                                      |
 //	|   C1: ∏_s(F2_s-γ)·Z_shifted - ∏_s(F1_s-γ)·Z = 0 mod X^N-1                 |
 //	|   C2: (Z-1)·L_0 = 0  (enforces Z[0]=1)                                      |

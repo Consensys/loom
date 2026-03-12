@@ -204,10 +204,10 @@ func (runtime *Runtime) CheckRelation(proof *proveractions.Proof) error {
 	one := koalabear.One()
 	zetaNMinusOne.Set(&zeta).Exp(zetaNMinusOne, big.NewInt(int64(proof.N))).Sub(&zetaNMinusOne, &one)
 
-	vanishingConstraintAtZeta := runtime.VanishingRelation.Eval(runtime.Vars)
+	vanishingRelationAtZeta := runtime.VanishingRelation.Eval(runtime.Vars)
 
 	hzeta.Mul(&zetaNMinusOne, &hzeta)
-	if !vanishingConstraintAtZeta.Equal(&hzeta) {
+	if !vanishingRelationAtZeta.Equal(&hzeta) {
 		return fmt.Errorf("algebraic relation does not hold")
 	}
 

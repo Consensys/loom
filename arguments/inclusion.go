@@ -39,7 +39,7 @@ import (
 //	| Commit(GrandSumT, GrandSumS)  |                                               |
 //	|                       -----→  | [Com(GrandSumT), Com(GrandSumS)]             | ROUND 3
 //	|-------------------------------–-----------------------------------------------|
-//	|       (done via FoldConstraints + Finalize + Verify)                          |
+//	|       (done via FoldRelations + Finalize + Verify)                          |
 //	| Records five constraints:                                                     |
 //	|   C1: (1−L_0)·((GrandSumT−GrandSumT_{ω^{−1}X})·(T−γ) − M) = 0             |
 //	|   C2: L_0·(GrandSumT·(T−γ) − M) = 0  (GrandSumT[0] = M[0]/(T[0]−γ))       |
@@ -96,16 +96,16 @@ func inclusionCheckIOP(system *cs.System, S, T sym.Expr) error {
 	system.RegisterProverAction([]sym.Expr{Mexpr, TminusGamma}, []string{grandSumT}, proveractions.NewIDCtx(proveractions.GRAND_SUM))
 
 	// 4. register the constraints ensuring the grand sums are correctly constructed
-	grandSumConstraintsT := cs.BuildGrandSumConstraints(Mexpr, TminusGamma, grandSumT, system.N)
-	grandSumConstraintsS := cs.BuildGrandSumConstraints(oneExpr, SminusGamma, grandSumS, system.N)
-	system.RegisterConstraints(grandSumConstraintsT)
-	system.RegisterConstraints(grandSumConstraintsS)
+	grandSumRelationsT := cs.BuildGrandSumRelations(Mexpr, TminusGamma, grandSumT, system.N)
+	grandSumRelationsS := cs.BuildGrandSumRelations(oneExpr, SminusGamma, grandSumS, system.N)
+	system.RegisterRelations(grandSumRelationsT)
+	system.RegisterRelations(grandSumRelationsS)
 
 	// 5. ensure that grandSumT[N-1] = grandSumS[N-1]
 	grandSumSExpr := sym.NewCommittedColumn(grandSumS)
 	grandSumTExpr := sym.NewCommittedColumn(grandSumT)
-	boundaryEquality := cs.BuildLocalConstraint(grandSumSExpr, grandSumTExpr, system.N-1, system.N)
-	system.RegisterConstraint(boundaryEquality)
+	boundaryEquality := cs.BuildLocalRelation(grandSumSExpr, grandSumTExpr, system.N-1, system.N)
+	system.RegisterRelation(boundaryEquality)
 
 	// 6. register the creation of the 2 lagrange columns 0 and N-1
 	system.RegisterithLagrangeColumn(0)
@@ -156,7 +156,7 @@ func inclusionCheckIOP(system *cs.System, S, T sym.Expr) error {
 //	| Commit(GrandSumT, GrandSumS)     |                                             |
 //	|                          -----→  | [Com(GrandSumT), Com(GrandSumS)]            | ROUND 3
 //	|----------------------------------–---------------------------------------------|
-//	|       (done via FoldConstraints + Finalize + Verify)                           |
+//	|       (done via FoldRelations + Finalize + Verify)                           |
 //	| Records five constraints:        |                                             |
 //	|   C1: (1−L_0)·((GrandSumT−GrandSumT_{ω^{−1}X})·(T_fold−γ) − M) = 0          |
 //	|   C2: L_0·(GrandSumT·(T_fold−γ) − M) = 0                                     |

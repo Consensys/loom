@@ -12,7 +12,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
-func sanityCheck(proverRunTime *prover.Runtime, constraints []cs.Constraint, N int, t *testing.T) {
+func sanityCheck(proverRunTime *prover.Runtime, constraints []cs.Relation, N int, t *testing.T) {
 	err := cs.BruteForceChecker(proverRunTime.Trace, constraints, N)
 	if err != nil {
 		t.Fatal(err)

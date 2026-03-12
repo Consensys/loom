@@ -206,7 +206,7 @@ func (runtime *Runtime) DeriveFinalFoldingChallenge(proof *proveractions.Proof) 
 	return proveractions.NewColumn(runtime.Trace, constants.FINAL_FOLDING_CHALLENGE, []koalabear.Element{c}, &runtime.Mu)
 }
 
-// ComputeQuotient computes H:=runtime.CompiledIOP.Constraint(runtime.Trace)/X^N-1 and commit to it, and
+// ComputeQuotient computes H:=runtime.CompiledIOP.Relation(runtime.Trace)/X^N-1 and commit to it, and
 //
 //	and store it in the trace, it is needed to be opened later
 func (runtime *Runtime) ComputeQuotient(proof *proveractions.Proof) error {

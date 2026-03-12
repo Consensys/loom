@@ -104,7 +104,7 @@ func ComputeGrandProduct(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sy
 // requires executing E on trace
 // ComputeColumn computes a new polynomial Q (new column in the trace) such that ith that Q =E(IDs)
 // Returns the constraint Q-E(IDs), but does not record it. It is up to the caller to record it in the system.
-// func ComputeColumn(S *System, E sym.Expr, IDresult string) (Constraint, error) {
+// func ComputeColumn(S *System, E sym.Expr, IDresult string) (Relation, error) {
 func ComputeColumn(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sym.Expr, output []string, _ Ctx) error {
 
 	if len(output) == 0 {

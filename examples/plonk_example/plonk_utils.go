@@ -237,8 +237,8 @@ func GetPlonkTrace() (trace.Trace, []int64, int, error) {
 	}
 
 	nbPublic := ccs.GetNbPublicVariables()
-	nbConstraints := ccs.GetNbConstraints()
-	size := univariate.NextPowerOfTwo(nbConstraints + nbPublic)
+	nbRelations := ccs.GetNbConstraints()
+	size := univariate.NextPowerOfTwo(nbRelations + nbPublic)
 	d := fft.NewDomain(uint64(size))
 
 	publicTrace := gnark_plonk.NewTrace(spr, d)

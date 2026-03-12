@@ -37,7 +37,7 @@ func TestPermutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+	sanityCheck(&proverRunTime, system.Relations, system.N, t)
 
 	// 2. DeriveFinalFoldingChallenge + sanity checks
 	err = proverRunTime.DeriveFinalFoldingChallenge(&proof)
@@ -45,14 +45,14 @@ func TestPermutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	// viewer.WriteTraceToCSV("trace.csv", proverRunTime.Trace, system.N)
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+	sanityCheck(&proverRunTime, system.Relations, system.N, t)
 
 	// 3. ComputeQuotient + sanity checks
 	err = proverRunTime.ComputeQuotient(&proof)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+	sanityCheck(&proverRunTime, system.Relations, system.N, t)
 
 	// 4. DeriveOpeningChallenge + sanity checks
 	var zeta koalabear.Element
@@ -60,7 +60,7 @@ func TestPermutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+	sanityCheck(&proverRunTime, system.Relations, system.N, t)
 
 	// 4b. OpenCommitments: evaluate all committed polynomials (and the quotient) at zeta
 	err = proverRunTime.OpenCommitments(&proof, zeta)
@@ -107,21 +107,21 @@ func TestPermutationMultiSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+	sanityCheck(&proverRunTime, system.Relations, system.N, t)
 
 	// 2. DeriveFinalFoldingChallenge + sanity checks
 	err = proverRunTime.DeriveFinalFoldingChallenge(&proof)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+	sanityCheck(&proverRunTime, system.Relations, system.N, t)
 
 	// 3. ComputeQuotient + sanity checks
 	err = proverRunTime.ComputeQuotient(&proof)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+	sanityCheck(&proverRunTime, system.Relations, system.N, t)
 
 	// 4. DeriveOpeningChallenge + sanity checks
 	var zeta koalabear.Element
@@ -129,7 +129,7 @@ func TestPermutationMultiSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+	sanityCheck(&proverRunTime, system.Relations, system.N, t)
 
 	// 4b. OpenCommitments
 	err = proverRunTime.OpenCommitments(&proof, zeta)

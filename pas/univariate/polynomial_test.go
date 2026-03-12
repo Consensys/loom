@@ -774,7 +774,7 @@ func TestComputeQuotient(t *testing.T) {
 		verifyQuotientIdentity(t, Pi, E, Q, size)
 	})
 
-	t.Run("ConstantPiInConstraint", func(t *testing.T) {
+	t.Run("ConstantPiInRelation", func(t *testing.T) {
 		// E = f - gamma with f = [3,3,...] and gamma = 3 → quotient = 0
 		size := 8
 		var three koalabear.Element

@@ -49,7 +49,7 @@ func reduceDegree(system *System, targetDegree int) {
 	// ex: for computing P0^4 and targetDegree=2, we compute P0' = P0^2 only once, and then compute P0 = P0'^2
 	seenExpr := make(map[string]string)
 
-	for i, constraint := range system.Constraints {
+	for i, constraint := range system.Relations {
 		// stores the intermediate low degree expressions pruned form the current constraint
 		// being reduced
 		for constraint.Degree() > targetDegree {
@@ -69,8 +69,8 @@ func reduceDegree(system *System, targetDegree int) {
 
 			// register the creation of an auxiliary column C := lowDegreeExpr(trace)
 			// The ID of C is lowDegreeExpr.String()
-			newConstraint := BuildCorrectConstructionConstraint(lowDegreeExpr, lowDegreeExpr.String())
-			system.RegisterConstraint(newConstraint)
+			newRelation := BuildCorrectConstructionRelation(lowDegreeExpr, lowDegreeExpr.String())
+			system.RegisterRelation(newRelation)
 
 			// register the prover action of creating the column C := lowDegreeExpr(trace)
 			system.RegisterProverAction([]sym.Expr{lowDegreeExpr}, []string{lowDegreeExpr.String()}, proveractions.NewIDCtx(proveractions.COMPUTE_COL))
@@ -81,7 +81,7 @@ func reduceDegree(system *System, targetDegree int) {
 		}
 
 		// replace the high degree constraint in place by the latest low degree constraint pruned
-		system.Constraints[i] = constraint
+		system.Relations[i] = constraint
 
 	}
 }

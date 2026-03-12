@@ -30,7 +30,7 @@ func TestDegreeReduction(t *testing.T) {
 	system := NewSystem(N)
 	p0 := sym.NewCommittedColumn("P0")
 	p1 := sym.NewCommittedColumn("P1")
-	system.RegisterConstraint(p0.Pow(4).Sub(p1.Pow(4)))
+	system.RegisterRelation(p0.Pow(4).Sub(p1.Pow(4)))
 
 	// 3. Reduce the degree: each sub-expression of degree > targetDegree is extracted
 	//    into a fresh auxiliary column and replaced by a committed-column leaf.
@@ -41,14 +41,14 @@ func TestDegreeReduction(t *testing.T) {
 	reduceDegree(&system, 2)
 
 	// Every constraint must now have degree ≤ targetDegree.
-	for _, c := range system.Constraints {
+	for _, c := range system.Relations {
 		if d := c.Degree(); d > 2 {
 			t.Fatalf("constraint has degree %d after reduction: %s", d, c.String())
 		}
 	}
 	// Degree reduction should have introduced auxiliary constraints.
-	if len(system.Constraints) <= 1 {
-		t.Fatalf("expected auxiliary constraints after reduction, got %d total", len(system.Constraints))
+	if len(system.Relations) <= 1 {
+		t.Fatalf("expected auxiliary constraints after reduction, got %d total", len(system.Relations))
 	}
 
 	// 4. Execute all prover actions to populate T with the auxiliary columns.
@@ -65,10 +65,10 @@ func TestDegreeReduction(t *testing.T) {
 	}
 
 	// 5. All constraints must vanish on the trace.
-	if err := BruteForceChecker(T, system.Constraints, N); err != nil {
+	if err := BruteForceChecker(T, system.Relations, N); err != nil {
 		t.Fatal(err)
 	}
-	if err := QuotientChecker(T, system.Constraints, N); err != nil {
+	if err := QuotientChecker(T, system.Relations, N); err != nil {
 		t.Fatal(err)
 	}
 }
