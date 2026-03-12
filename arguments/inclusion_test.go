@@ -29,10 +29,10 @@ func BuildInclusionTrace(t *testing.T, size int) trace.Trace {
 	return trace.Trace{"T": Tcoeffs, "S": Scoeffs}
 }
 
-// BuildInclusionMultiSetTrace creates a trace with columns T0, T1, S0, S1 such that
+// BuildInclusionTupleTrace creates a trace with columns T0, T1, S0, S1 such that
 // every row (S0[i], S1[i]) appears in the table {(T0[j], T1[j])} (subset with repetitions).
 // T0[i] = i+1, T1[i] = (i+1)*2; S copies the first half of T rows twice.
-func BuildInclusionMultiSetTrace(t *testing.T, size int) trace.Trace {
+func BuildInclusionTupleTrace(t *testing.T, size int) trace.Trace {
 	T0coeffs := make([]koalabear.Element, size)
 	T1coeffs := make([]koalabear.Element, size)
 	for i := range T0coeffs {
@@ -116,14 +116,14 @@ func TestInclusion(t *testing.T) {
 	}
 }
 
-func TestInclusionMultiSet(t *testing.T) {
+func TestInclusionTuple(t *testing.T) {
 
 	size := 16
 
-	tr := BuildInclusionMultiSetTrace(t, size)
+	tr := BuildInclusionTupleTrace(t, size)
 	system := cs.NewBuilder(size)
 
-	InclusionMultiSet(&system, []string{"S0", "S1"}, []string{"T0", "T1"})
+	InclusionTuple(&system, []string{"S0", "S1"}, []string{"T0", "T1"})
 
 	cciop := cs.Compile(&system)
 

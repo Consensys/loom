@@ -72,10 +72,10 @@ func BuildPermutationCircuit(t *testing.T, size int) trace.Trace {
 	}
 }
 
-// BuildPermutationMultiSet creates a trace with four columns P0, P1, Q0, Q1 where
+// BuildPermutationTuple creates a trace with four columns P0, P1, Q0, Q1 where
 // the tuple multiset {(P0[i], P1[i])} equals {(Q0[i], Q1[i])} up to permutation.
 // (Q0, Q1) is a cyclic shift of (P0, P1): Q0[i]=P0[(i+1)%size], Q1[i]=P1[(i+1)%size].
-func BuildPermutationMultiSet(t *testing.T, size int) trace.Trace {
+func BuildPermutationTuple(t *testing.T, size int) trace.Trace {
 
 	coeffs0 := make([]koalabear.Element, size)
 	coeffs1 := make([]koalabear.Element, size)

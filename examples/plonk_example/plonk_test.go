@@ -44,7 +44,7 @@ func getIthPlonkRelation(n int) cs.Relation {
 	return C
 }
 
-// func getIthMultiSets(n int) (multiSetIds1 [][]string, multiSetIds2 [][]string) {
+// func getIthTuples(n int) (multiSetIds1 [][]string, multiSetIds2 [][]string) {
 // 	multiSetIds1 = [][]string{
 // 		[]string{ithInstance(ID_L, n), ID_ID1},
 // 		[]string{ithInstance(ID_R, n), ID_ID2},

@@ -54,7 +54,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 
 	system := cs.NewBuilder(size)
 
-	err := ProjectionMultiSet(&system, []string{"A", "A2"}, "F1", []string{"B", "B2"}, "F2")
+	err := ProjectionTuple(&system, []string{"A", "A2"}, "F1", []string{"B", "B2"}, "F2")
 	if err != nil {
 		t.Fatal(err)
 	}

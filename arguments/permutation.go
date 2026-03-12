@@ -90,7 +90,7 @@ func equalityUpToPermutationIOP(system *cs.Builder, E1, E2 []expr.Expr) error {
 	return nil
 }
 
-// MultiSetEqualityUpToPermutation proves that the multiset of tuples { (ID1[i][0][j], ID1[i][1][j], ..) }
+// TupleEqualityUpToPermutation proves that the multiset of tuples { (ID1[i][0][j], ID1[i][1][j], ..) }
 // equals the multiset of tuples { (ID2[i][0][j], ID2[i][1][j], ..) }.
 // It means that for each i, j there is k, l such that (ID1[i][0][j], ID1[i][1][j], ..) = (ID2[k][0][l], ID2[k][1][l], ..)
 //

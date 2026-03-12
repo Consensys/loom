@@ -62,9 +62,9 @@ func TestWriteProofRoundsDagToHTML_Permutation(t *testing.T) {
 	t.Logf("DAG HTML written to %s (%d bytes)", out, len(data))
 }
 
-func TestWriteProofRoundsDagToHTML_MultiSet(t *testing.T) {
+func TestWriteProofRoundsDagToHTML_Tuple(t *testing.T) {
 	size := 16
-	trace := cs.BuildPermutationMultiSet(t, size)
+	trace := cs.BuildPermutationTuple(t, size)
 	system := cs.NewBuilder(size)
 	if err := arguments.PermutationMultiset(
 		&system,

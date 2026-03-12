@@ -114,7 +114,7 @@ func inclusionCheckIOP(system *cs.Builder, S, T expr.Expr) error {
 	return nil
 }
 
-// InclusionMultiSet proves that every row-tuple (S[0][i], …, S[k−1][i])
+// InclusionTuple proves that every row-tuple (S[0][i], …, S[k−1][i])
 // appears in the multiset of row-tuples {(T[0][j], …, T[m−1][j])}.
 //
 // Tuples are compressed into scalars via a Fiat-Shamir folding challenge α:
@@ -164,7 +164,7 @@ func inclusionCheckIOP(system *cs.Builder, S, T expr.Expr) error {
 //	|   C4: L_0·(GrandSumS·(S_fold−γ) − 1) = 0                                     |
 //	|   C5: L_{N−1}·(GrandSumS − GrandSumT) = 0  (total sums equal)                |
 //	|----------------------------------–---------------------------------------------|
-func InclusionMultiSet(system *cs.Builder, S, T []string) error {
+func InclusionTuple(system *cs.Builder, S, T []string) error {
 
 	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {

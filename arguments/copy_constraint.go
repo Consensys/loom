@@ -49,7 +49,7 @@ func makeWiresAsExpr(wires [][]string) [][]expr.Expr {
 // ...
 // The name Wires comes from plonk, this constraint is here to ensure that a wiring
 // is correct.
-func CopyPermtutationMultiSet(system *cs.Builder, wires [][]string, S []int64) error {
+func CopyPermtutationTuple(system *cs.Builder, wires [][]string, S []int64) error {
 
 	// 1. register the permutation
 	allOutputs, err := system.RegisterPermutation(S)

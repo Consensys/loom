@@ -83,11 +83,11 @@ func TestPermutation(t *testing.T) {
 	}
 }
 
-func TestPermutationMultiSet(t *testing.T) {
+func TestPermutationTuple(t *testing.T) {
 
 	size := 16
 
-	trace := cs.BuildPermutationMultiSet(t, size)
+	trace := cs.BuildPermutationTuple(t, size)
 	system := cs.NewBuilder(size)
 
 	err := PermutationMultiset(&system, [][]string{{"P0", "P1"}}, [][]string{{"Q0", "Q1"}})

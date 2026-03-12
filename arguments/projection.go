@@ -50,7 +50,7 @@ func Projection(system *cs.Builder, A, F1, B, F2 string) error {
 	return ProjectionExpr(system, Aexpr, Bexpr, F1expr, F2expr)
 }
 
-// ProjectionMultiSet proves that the ordered sequence of row-tuples of A selected by F1
+// ProjectionTuple proves that the ordered sequence of row-tuples of A selected by F1
 // equals the ordered sequence of row-tuples of B selected by F2, where F1 and F2 are binary columns.
 // I.e., A[0],..,A[k-1] and B[0],..,B[l-1] are column lists, and the tuples
 // (A[0][i],..,A[k-1][i]) for F1[i]=1 must match (B[0][i],..,B[l-1][i]) for F2[i]=1 in order.
@@ -89,7 +89,7 @@ func Projection(system *cs.Builder, A, F1, B, F2 string) error {
 //	|   C1–C4: recurrence + boundary constraints for FÃ and FB̃                       |
 //	|   C5:    L_{N-1}·(FÃ - FB̃) = 0   (final accumulated values match)             |
 //	|-------------------------------–-------------------------------------------------|
-func ProjectionMultiSet(system *cs.Builder, A []string, F1 string, B []string, F2 string) error {
+func ProjectionTuple(system *cs.Builder, A []string, F1 string, B []string, F2 string) error {
 
 	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {

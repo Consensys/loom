@@ -97,7 +97,7 @@ func TestCopyPermutation(t *testing.T) {
 	}
 }
 
-func TestCopyPermutationMultiSet(t *testing.T) {
+func TestCopyPermutationTuple(t *testing.T) {
 	const N = 16
 
 	// Permutation S: shift by 4 on the concatenated P1||P2 of size 32.
@@ -122,7 +122,7 @@ func TestCopyPermutationMultiSet(t *testing.T) {
 
 	system := cs.NewBuilder(N)
 	// wires: two chunks, each with the column repeated twice: {P1,P1} and {P2,P2}
-	err := CopyPermtutationMultiSet(&system, [][]string{{"P1", "P1"}, {"P2", "P2"}}, S)
+	err := CopyPermtutationTuple(&system, [][]string{{"P1", "P1"}, {"P2", "P2"}}, S)
 	if err != nil {
 		t.Fatal(err)
 	}
