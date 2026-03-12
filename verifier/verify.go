@@ -154,8 +154,8 @@ func (runtime *Runtime) ComputeChallenges(proof *proveractions.Proof, nbWorkers 
 
 }
 
-// EvaluateComputableColumns evaluates the computable columns at zeta and stores the results in runtime.Vars.
-func (runtime *Runtime) EvaluateComputableColumns() error {
+// EvaluateVirtualColumns evaluates the computable columns at zeta and stores the results in runtime.Vars.
+func (runtime *Runtime) EvaluateVirtualColumns() error {
 
 	ccLeaves := runtime.VanishingRelation.Leaves(expr.NewConfig(expr.WithoutChallenges(), expr.WithoutCommittedColumns(), expr.WithoutRotatedColumns()))
 	ccLeaves = expr.RemoveDuplicates(ccLeaves)
@@ -256,7 +256,7 @@ func (runtime *Runtime) Verify(proof *proveractions.Proof, nbWorkers int) error 
 		return err
 	}
 
-	err = runtime.EvaluateComputableColumns()
+	err = runtime.EvaluateVirtualColumns()
 	if err != nil {
 		return err
 	}

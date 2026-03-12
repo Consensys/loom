@@ -15,7 +15,7 @@ import (
 
 // Lagrange standard identifier across systems for Lagrange polynomial, suffixed by an integer to specify which Lagrange polynomial
 //
-// TODO this is a special case (maybe the only case ?) of a ComputableColumn column, that should be recomputed by the verifier. We need
+// TODO this is a special case (maybe the only case ?) of a VirtualColumn column, that should be recomputed by the verifier. We need
 // a special expression for such columns, like "Computable" or something, which should not be added in the commitments... During the verification
 // process, when a "Computable" Expr is found in the expression, we should have map [Lagrange_i]->func(i) koalabear.Element, so the verifier can recompute its value at zeta
 const Lagrange = "LAGRANGE"
@@ -45,8 +45,8 @@ func (lc LagrangeContext) Key() string {
 	return strconv.FormatUint(h.Sum64(), 16)
 }
 
-// ComputableColumn special column that can be encoded with a formula F	, like Lagrange column.
-type ComputableColumn struct {
+// VirtualColumn special column that can be encoded with a formula F	, like Lagrange column.
+type VirtualColumn struct {
 	id  string                                    // ID of the computable column
 	F   func(koalabear.Element) koalabear.Element // function F encoding the column (e.g. ω^i/N (z^N-1)/(1-ω^i) for Lagrange_i_N)
 	Gen func() univariate.Polynomial              // generate the column -> it is the evaluation of F on the domain of size N
@@ -71,11 +71,11 @@ func ParseLagrangeID(id string) (int64, uint64, error) {
 // NewLagrangeColumn from id of format: LAGRANGE__<entry>_<N> returns the
 // entry-th lagrange function on domain N: L_i(z)->z
 // It assumes id is correctly formed
-func NewLagrangeColumn(id string) (ComputableColumn, error) {
+func NewLagrangeColumn(id string) (VirtualColumn, error) {
 
 	i, N, err := ParseLagrangeID(id)
 	if err != nil {
-		return ComputableColumn{"", nil, nil}, err
+		return VirtualColumn{"", nil, nil}, err
 	}
 
 	// L_i(z) = (ω^i / N) · (z^N − 1) / (z − ω^i)
@@ -88,7 +88,7 @@ func NewLagrangeColumn(id string) (ComputableColumn, error) {
 	var omegaiOverN koalabear.Element
 	omegaiOverN.Div(&omegai, &nk) // ω^i / N
 
-	var res ComputableColumn
+	var res VirtualColumn
 	res.id = id
 	res.F = func(_z koalabear.Element) koalabear.Element {
 		var num koalabear.Element

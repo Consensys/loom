@@ -47,8 +47,8 @@ func TestDAGEvalLeaves(t *testing.T) {
 
 	checkDAGEval(t, expr.Col("x"), vals)
 	checkDAGEval(t, expr.NewChallenge("alpha"), vals)
-	checkDAGEval(t, expr.VirtualCol("L0"), vals)
-	checkDAGEval(t, expr.NewConst(c), vals)
+	checkDAGEval(t, expr.Virtual("L0"), vals)
+	checkDAGEval(t, expr.Const(c), vals)
 }
 
 // TestDAGEvalOperators checks each binary operator and Pow individually.
@@ -164,12 +164,12 @@ func TestDAGLeaves(t *testing.T) {
 	all := expr.NewConfig()
 	woCC := expr.NewConfig(expr.WithoutCommittedColumns())
 	woChal := expr.NewConfig(expr.WithoutChallenges())
-	woComp := expr.NewConfig(expr.WithoutVirtualColumns())
+	woComp := expr.NewConfig(expr.WithoutVirtualumns())
 
 	mixed := expr.Col("x").
 		Mul(expr.NewChallenge("gamma")).
-		Add(expr.VirtualCol("L0")).
-		Sub(expr.NewConst(c))
+		Add(expr.Virtual("L0")).
+		Sub(expr.Const(c))
 
 	tests := []struct {
 		name   string
@@ -180,13 +180,13 @@ func TestDAGLeaves(t *testing.T) {
 		// Individual leaf kinds with default config
 		{"CommittedColumn/all", expr.Col("x"), all, []string{"x"}},
 		{"Challenge/all", expr.NewChallenge("alpha"), all, []string{"alpha"}},
-		{"ComputableColumn/all", expr.VirtualCol("L0"), all, []string{"L0"}},
-		{"Const/all", expr.NewConst(c), all, []string{}}, // Const never included
+		{"VirtualColumn/all", expr.Virtual("L0"), all, []string{"L0"}},
+		{"Const/all", expr.Const(c), all, []string{}}, // Const never included
 
 		// Filtering individual leaf kinds
 		{"CommittedColumn/woCC", expr.Col("x"), woCC, []string{}},
 		{"Challenge/woChal", expr.NewChallenge("alpha"), woChal, []string{}},
-		{"ComputableColumn/woComp", expr.VirtualCol("L0"), woComp, []string{}},
+		{"VirtualColumn/woComp", expr.Virtual("L0"), woComp, []string{}},
 
 		// DAG deduplication
 		{"SharedLeaf", // a+a → col:a once
@@ -226,10 +226,10 @@ func TestDAGDegree(t *testing.T) {
 	}{
 		// Leaves
 		{"CommittedColumn", expr.Col("x"), 1},
-		{"ComputableColumn", expr.VirtualCol("L0"), 1},
+		{"VirtualColumn", expr.Virtual("L0"), 1},
 		{"Challenge", expr.NewChallenge("alpha"), 0},    // Challenge is degree 0
-		{"ConstNonZero", expr.NewConst(one), 0},         // non-zero constant
-		{"ConstZero", expr.NewConst(zero), expr.NegInf}, // zero polynomial
+		{"ConstNonZero", expr.Const(one), 0},         // non-zero constant
+		{"ConstZero", expr.Const(zero), expr.NegInf}, // zero polynomial
 
 		// Binary operators
 		{"Add(1,1)", expr.Col("a").Add(expr.Col("b")), 1},
@@ -432,7 +432,7 @@ func TestDAGEvalOnIthEntry(t *testing.T) {
 		three.SetUint64(3)
 		P0 := makePoly(4, 5, 6, 7, 8, 9, 10, 11)
 		pi := map[string][]koalabear.Element{"x0": P0}
-		expr := expr.Col("x0").Sub(expr.NewConst(three))
+		expr := expr.Col("x0").Sub(expr.Const(three))
 		d := ExprToDAG(expr)
 		_Pi := setupPiSlice(expr, pi)
 

@@ -88,7 +88,7 @@ func inclusionCheckIOP(system *cs.Builder, S, T expr.Expr) error {
 	system.RegisterProverAction(gammaDeps, []string{gamma}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 3. compute the grand sums grandSum1:=Σ_i M[i]/(T[i]-γ), grandSum2:=Σ_i 1/(S[i]-γ)
-	oneExpr := expr.NewConst(koalabear.One())
+	oneExpr := expr.Const(koalabear.One())
 	SminusGamma := S.Sub(expr.NewChallenge(gamma))
 	system.RegisterProverAction([]expr.Expr{oneExpr, SminusGamma}, []string{grandSumS}, proveractions.NewIDCtx(proveractions.GRAND_SUM))
 

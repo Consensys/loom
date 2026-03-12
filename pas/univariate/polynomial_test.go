@@ -279,7 +279,7 @@ func TestEvaluateOnIthEntry(t *testing.T) {
 		three.SetUint64(3)
 		P0 := makeLagrangePoly(4, 5, 6, 7, 8, 9, 10, 11)
 		Pi := map[string]Polynomial{"x0": P0}
-		E := expr.Col("x0").Sub(expr.NewConst(three))
+		E := expr.Col("x0").Sub(expr.Const(three))
 
 		_Pi := setupPiSlice(Pi, E)
 		R, err := BuildPointwiseEvaluation(Pi, E, size, nil)
@@ -589,7 +589,7 @@ func TestBuildGrandSum(t *testing.T) {
 		}
 
 		E := expr.Col("P")
-		M := expr.NewConst(koalabear.One())
+		M := expr.Const(koalabear.One())
 		T := map[string]Polynomial{"P": P}
 		R, err := BuildGrandSum(T, E, M, size, nil)
 		if err != nil {
@@ -727,7 +727,7 @@ func TestComputeQuotient(t *testing.T) {
 
 		var minusOne koalabear.Element
 		minusOne.Neg(&one)
-		E := expr.Col("f").Mul(expr.Col("f").Add(expr.NewConst(minusOne)))
+		E := expr.Col("f").Mul(expr.Col("f").Add(expr.Const(minusOne)))
 		EDag := dag.ExprToDAG(E)
 
 		Q, err := ComputeQuotient(Pi, *EDag, size)

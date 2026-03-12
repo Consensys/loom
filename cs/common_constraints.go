@@ -17,7 +17,7 @@ func BuildGrandProductRelation(E1, E2 expr.Expr, GP string, N int) []Relation {
 	recurrenceRelation := A.Sub(B)
 
 	// 2. GP[0]=1
-	boundaryRelation := BuildLocalRelation(expr.Col(GP), expr.NewConst(koalabear.One()), 0, N)
+	boundaryRelation := BuildLocalRelation(expr.Col(GP), expr.Const(koalabear.One()), 0, N)
 	return []Relation{recurrenceRelation, boundaryRelation}
 }
 
@@ -27,8 +27,8 @@ func BuildGrandProductRelation(E1, E2 expr.Expr, GP string, N int) []Relation {
 func BuildGrandSumRelations(M, E expr.Expr, grandSum string, N int) []Relation {
 
 	// 1. (1-Lagrange_0) * ( (IDGrandSum - IDGrandSum(w^1 X))*E - M)=0
-	lagrange := expr.VirtualCol(proveractions.GetLagrangeID(0, N))
-	p1 := expr.NewConst(koalabear.One()).Sub(lagrange)
+	lagrange := expr.Virtual(proveractions.GetLagrangeID(0, N))
+	p1 := expr.Const(koalabear.One()).Sub(lagrange)
 	diffGrandSum := expr.Col(grandSum).Sub(expr.Rot(grandSum, -1))
 	p2 := diffGrandSum.Mul(E).Sub(M)
 	recurrenceRelation := p1.Mul(p2)
@@ -45,7 +45,7 @@ func BuildGrandSumRelations(M, E expr.Expr, grandSum string, N int) []Relation {
 // is equivalent to E[i]=M[i]
 func BuildLocalRelation(E, M expr.Expr, i int, N int) Relation {
 	lagrangeID := proveractions.GetLagrangeID(i, N)
-	localRelation := expr.VirtualCol(lagrangeID).Mul(E.Sub(M))
+	localRelation := expr.Virtual(lagrangeID).Mul(E.Sub(M))
 	return localRelation
 }
 
@@ -68,10 +68,10 @@ func BuildFilteredAccPolynomialRelation(E, F, alpha expr.Expr, R string, N int) 
 	one := koalabear.One()
 	RShifted := expr.Rot(R, -1)
 	path1 := F.Mul(alpha.Mul(RShifted).Add(E))
-	path2 := RShifted.Mul(expr.NewConst(one).Sub(F))
+	path2 := RShifted.Mul(expr.Const(one).Sub(F))
 	path1 = path1.Add(path2) //  F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1]
-	lagrange0 := expr.VirtualCol(proveractions.GetLagrangeID(0, N))
-	recurrenceRelation := expr.Col(R).Sub(path1).Mul(expr.NewConst(one).Sub(lagrange0)) // (R[i] - (F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1])) * (1 - lagrange0)
+	lagrange0 := expr.Virtual(proveractions.GetLagrangeID(0, N))
+	recurrenceRelation := expr.Col(R).Sub(path1).Mul(expr.Const(one).Sub(lagrange0)) // (R[i] - (F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1])) * (1 - lagrange0)
 
 	return []Relation{boundaryRelation, recurrenceRelation}
 

@@ -31,7 +31,7 @@ func fnvKeyUint(s string) uint64 {
 type NodeKind int
 
 const (
-	KindLeaf NodeKind = iota // leaf: CommittedColumn, Challenge, ComputableColumn, or Const
+	KindLeaf NodeKind = iota // leaf: CommittedColumn, Challenge, VirtualColumn, or Const
 	KindAdd
 	KindSub
 	KindMul
@@ -142,7 +142,7 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 				prefix = "col"
 			case expr.ChallengeColumn:
 				prefix = "chal"
-			case expr.ComputableColumn:
+			case expr.VirtualColumn:
 				prefix = "comp"
 			case expr.ConstantColumn:
 				prefix = "const"
@@ -547,7 +547,7 @@ func dagNodeLabel(n *DAGNode) string {
 			return "shifted:" + n.Leaf.String()
 		case expr.ChallengeColumn:
 			return "chal:" + n.Leaf.Name
-		case expr.ComputableColumn:
+		case expr.VirtualColumn:
 			return "comp:" + n.Leaf.Name
 		case expr.ConstantColumn:
 			return "const:" + n.Leaf.Value.String()
@@ -805,7 +805,7 @@ func evalDAGNodeSlice(n *DAGNode, cache []koalabear.Element, vals map[string]koa
 // Leaves returns the String() representation of every unique leaf in the DAG
 // that is not excluded by config. The filtering rules are identical to those
 // of Expr.Leaves: WithoutCommittedColumns, WithoutChallenges, and
-// WithoutVirtualColumns suppress the corresponding leaf kinds; Const leaves
+// WithoutVirtualumns suppress the corresponding leaf kinds; Const leaves
 // are never included. Because the DAG deduplicates nodes, each
 // structurally-identical leaf appears at most once.
 func (d *DAG) Leaves(config expr.Config) []string {
@@ -820,7 +820,7 @@ func (d *DAG) Leaves(config expr.Config) []string {
 
 // Degree returns the total degree of the DAG expression, following the same
 // conventions as Expr.Degree:
-//   - CommittedColumn and ComputableColumn leaves have degree 1.
+//   - CommittedColumn and VirtualColumn leaves have degree 1.
 //   - Challenge and non-zero Const leaves have degree 0.
 //   - The zero Const leaf has degree NegInf (math.MinInt).
 //   - Add/Sub: max of children's degrees (n-ary after Flatten).

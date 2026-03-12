@@ -66,8 +66,8 @@ func TestComputeFilteredAccPolynomial(t *testing.T) {
 	// where R_prev = R(ω^{−1}·X), i.e. the column R shifted by −1.
 	Rexpr := expr.Col("R")
 	RPrev := expr.Rot("R", -1)
-	L0 := expr.VirtualCol(proveractions.GetLagrangeID(0, N))
-	one := expr.NewConst(koalabear.One())
+	L0 := expr.Virtual(proveractions.GetLagrangeID(0, N))
+	one := expr.Const(koalabear.One())
 
 	C1 := L0.Mul(Rexpr.Sub(Fexpr.Mul(Eexpr)))
 	C2 := one.Sub(L0).Mul(

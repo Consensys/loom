@@ -12,7 +12,7 @@ func TestString(t *testing.T) {
 	five.SetUint64(5)
 
 	a := Col("x")
-	b := NewConst(five)
+	b := Const(five)
 	c := &Add{Left: a, Right: b}
 	d := &Mul{Left: a, Right: c}
 
@@ -62,15 +62,15 @@ func TestLeaves(t *testing.T) {
 	five.SetUint64(5)
 
 	all := NewConfig()
-	woCC := NewConfig(WithoutVirtualColumns())
+	woCC := NewConfig(WithoutVirtualumns())
 	woChal := NewConfig(WithoutChallenges())
-	woAll := NewConfig(WithoutVirtualColumns(), WithoutChallenges())
+	woAll := NewConfig(WithoutVirtualumns(), WithoutChallenges())
 
 	// --- Leaf nodes ---
 
-	// ComputableColumn: present by default, absent when excluded
-	AssertSameSet(t, VirtualCol("L0").Leaves(all), []string{"L0"})
-	AssertSameSet(t, VirtualCol("L0").Leaves(woCC), []string{})
+	// VirtualColumn: present by default, absent when excluded
+	AssertSameSet(t, Virtual("L0").Leaves(all), []string{"L0"})
+	AssertSameSet(t, Virtual("L0").Leaves(woCC), []string{})
 
 	// CommittedColumn: always present regardless of config
 	AssertSameSet(t, Col("x").Leaves(all), []string{"x"})
@@ -78,7 +78,7 @@ func TestLeaves(t *testing.T) {
 	AssertSameSet(t, Col("x").Leaves(woChal), []string{"x"})
 
 	// Const: never present
-	AssertSameSet(t, NewConst(five).Leaves(all), []string{})
+	AssertSameSet(t, Const(five).Leaves(all), []string{})
 
 	// Challenge: present by default, absent when excluded
 	AssertSameSet(t, NewChallenge("beta").Leaves(all), []string{"beta"})
@@ -86,45 +86,45 @@ func TestLeaves(t *testing.T) {
 
 	// --- Composite expressions ---
 
-	// ComputableColumn + CommittedColumn
-	e := VirtualCol("L0").Add(Col("x"))
+	// VirtualColumn + CommittedColumn
+	e := Virtual("L0").Add(Col("x"))
 	AssertSameSet(t, e.Leaves(all), []string{"L0", "x"})
 	AssertSameSet(t, e.Leaves(woCC), []string{"x"})
 
-	// ComputableColumn * Challenge
-	e = VirtualCol("L0").Mul(NewChallenge("gamma"))
+	// VirtualColumn * Challenge
+	e = Virtual("L0").Mul(NewChallenge("gamma"))
 	AssertSameSet(t, e.Leaves(all), []string{"L0", "gamma"})
 	AssertSameSet(t, e.Leaves(woCC), []string{"gamma"})
 	AssertSameSet(t, e.Leaves(woChal), []string{"L0"})
 	AssertSameSet(t, e.Leaves(woAll), []string{})
 
-	// Multiple ComputableColumns
-	e = VirtualCol("L0").Add(VirtualCol("L1"))
+	// Multiple VirtualColumns
+	e = Virtual("L0").Add(Virtual("L1"))
 	AssertSameSet(t, e.Leaves(all), []string{"L0", "L1"})
 	AssertSameSet(t, e.Leaves(woCC), []string{})
 
-	// Sub: ComputableColumn on the right
-	e = Col("x").Sub(VirtualCol("L0"))
+	// Sub: VirtualColumn on the right
+	e = Col("x").Sub(Virtual("L0"))
 	AssertSameSet(t, e.Leaves(all), []string{"x", "L0"})
 	AssertSameSet(t, e.Leaves(woCC), []string{"x"})
 
-	// Pow: ComputableColumn inside
-	AssertSameSet(t, VirtualCol("L0").Pow(2).Leaves(all), []string{"L0"})
-	AssertSameSet(t, VirtualCol("L0").Pow(2).Leaves(woCC), []string{})
+	// Pow: VirtualColumn inside
+	AssertSameSet(t, Virtual("L0").Pow(2).Leaves(all), []string{"L0"})
+	AssertSameSet(t, Virtual("L0").Pow(2).Leaves(woCC), []string{})
 
-	// Pow: CommittedColumn inside — no ComputableColumn
+	// Pow: CommittedColumn inside — no VirtualColumn
 	AssertSameSet(t, Col("x").Pow(3).Leaves(all), []string{"x"})
 	AssertSameSet(t, Col("x").Pow(3).Leaves(woCC), []string{"x"})
 
 	// Nested: (x + L0) * (y - alpha) — all four leaf types interact
-	e = Col("x").Add(VirtualCol("L0")).Mul(Col("y").Sub(NewChallenge("alpha")))
+	e = Col("x").Add(Virtual("L0")).Mul(Col("y").Sub(NewChallenge("alpha")))
 	AssertSameSet(t, e.Leaves(all), []string{"x", "L0", "y", "alpha"})
 	AssertSameSet(t, e.Leaves(woCC), []string{"x", "y", "alpha"})
 	AssertSameSet(t, e.Leaves(woChal), []string{"x", "L0", "y"})
 	AssertSameSet(t, e.Leaves(woAll), []string{"x", "y"})
 
-	// Same ComputableColumn appearing multiple times — deduplicated
-	e = VirtualCol("L0").Add(VirtualCol("L0"))
+	// Same VirtualColumn appearing multiple times — deduplicated
+	e = Virtual("L0").Add(Virtual("L0"))
 	AssertSameSet(t, e.Leaves(all), []string{"L0"})
 }
 
@@ -154,12 +154,12 @@ func TestReplaceLeafByExpression(t *testing.T) {
 	}
 
 	// Const: never replaced regardless of the leaf name
-	if got := NewConst(five).ReplaceLeafByExpression("5", Col("y")); got.String() != "5" {
+	if got := Const(five).ReplaceLeafByExpression("5", Col("y")); got.String() != "5" {
 		t.Errorf("expected '5', got '%s'", got.String())
 	}
 
 	// Add: only the matching child is replaced
-	e := Col("x").Add(NewConst(five))
+	e := Col("x").Add(Const(five))
 	if got := e.ReplaceLeafByExpression("x", Col("y")); got.String() != "(y + 5)" {
 		t.Errorf("expected '(y + 5)', got '%s'", got.String())
 	}
@@ -216,7 +216,7 @@ func TestEval(t *testing.T) {
 	input[x2.Name] = three
 	input[x3.Name] = four
 
-	e := x0.Mul(x1).Add(x2).Mul(x3).Add(NewConst(one)).Mul(NewConst(two)).Add(NewConst(three)).Mul(NewConst(four))
+	e := x0.Mul(x1).Add(x2).Mul(x3).Add(Const(one)).Mul(Const(two)).Add(Const(three)).Mul(Const(four))
 
 	var expected, result koalabear.Element
 	expected.SetUint64(180) // (((((((x_0 * x_1) + x_2) * x_3) + 1) * 2) + 3) * 4)

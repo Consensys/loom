@@ -50,8 +50,8 @@ func TestFibonacci(t *testing.T) {
 	system.RegisterithLagrangeColumn(0)
 	var zero, one koalabear.Element
 	one.SetOne()
-	system.AssertZero(cs.BuildLocalRelation(colA, expr.NewConst(zero), 0, N))
-	system.AssertZero(cs.BuildLocalRelation(colB, expr.NewConst(one), 0, N))
+	system.AssertZero(cs.BuildLocalRelation(colA, expr.Const(zero), 0, N))
+	system.AssertZero(cs.BuildLocalRelation(colB, expr.Const(one), 0, N))
 
 	cciop := cs.Compile(&system)
 
