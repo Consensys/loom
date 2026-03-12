@@ -5,13 +5,13 @@ import (
 	"github.com/consensys/giop/pas/sym"
 )
 
-// CopyRelationIOP IOP generating a proof that Wires and S(Wires) are identical,
+// CopyPermutation IOP generating a proof that Wires and S(Wires) are identical,
 // where S(Wires) is the permutation S applied on Wires:=(Wires[0] || Wires[1] || ...),
 // laid out horizontall.
 //
 // The name Wires comes from plonk, this constraint is here to ensure that a wiring
 // is correct.
-func CopyRelationIOP(system *cs.System, wires []string, S []int64) error {
+func CopyPermutation(system *cs.System, wires []string, S []int64) error {
 
 	// 1. register the permutation
 	allOutputs, err := system.RegisterPermutation(S)
@@ -19,7 +19,7 @@ func CopyRelationIOP(system *cs.System, wires []string, S []int64) error {
 		return err
 	}
 
-	// 2. call MultiSetEqualityUpToPermutationIOP on {Wires, ID}, {Wires, Permuation}
+	// 2. call PermutationMultiset on {Wires, ID}, {Wires, Permuation}
 	multiSet1 := make([][]string, len(wires))
 	multiSet2 := make([][]string, len(wires))
 	for i := 0; i < len(wires); i++ {
@@ -27,7 +27,7 @@ func CopyRelationIOP(system *cs.System, wires []string, S []int64) error {
 		multiSet2[i] = []string{wires[i], allOutputs[len(wires)+i]}
 	}
 
-	return MultiSetEqualityUpToPermutationIOP(system, multiSet1, multiSet2)
+	return PermutationMultiset(system, multiSet1, multiSet2)
 }
 
 func makeWiresAsExpr(wires [][]string) [][]sym.Expr {
@@ -49,7 +49,7 @@ func makeWiresAsExpr(wires [][]string) [][]sym.Expr {
 // ...
 // The name Wires comes from plonk, this constraint is here to ensure that a wiring
 // is correct.
-func CopyRelationMultiSetIOP(system *cs.System, wires [][]string, S []int64) error {
+func CopyPermtutationMultiSet(system *cs.System, wires [][]string, S []int64) error {
 
 	// 1. register the permutation
 	allOutputs, err := system.RegisterPermutation(S)
@@ -70,5 +70,5 @@ func CopyRelationMultiSetIOP(system *cs.System, wires [][]string, S []int64) err
 		multiSet2[i][len(wires)] = sym.NewCommittedColumn(allOutputs[len(wires)+i])
 	}
 
-	return multiSetEqualityUpToPermutationIOP(system, multiSet1, multiSet2)
+	return multiSetPermutation(system, multiSet1, multiSet2)
 }

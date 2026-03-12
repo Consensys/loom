@@ -57,7 +57,7 @@ func TestInclusion(t *testing.T) {
 	trace := BuildInclusionTrace(t, size)
 	system := cs.NewSystem(size)
 
-	InclusionCheckIOP(&system, "S", "T")
+	Inclusion(&system, "S", "T")
 
 	cciop := cs.Compile(&system)
 
@@ -123,7 +123,7 @@ func TestInclusionMultiSet(t *testing.T) {
 	tr := BuildInclusionMultiSetTrace(t, size)
 	system := cs.NewSystem(size)
 
-	InclusionCheckMultiSetIOP(&system, []string{"S0", "S1"}, []string{"T0", "T1"})
+	InclusionMultiSet(&system, []string{"S0", "S1"}, []string{"T0", "T1"})
 
 	cciop := cs.Compile(&system)
 

@@ -37,7 +37,7 @@ import (
 //	|   C1: ∏_j(Q_j-γ)·Z_shifted - ∏_j(P_j-γ)·Z = 0 mod X^N-1                   |
 //	|   C2: (Z-1)·L_0 = 0  (enforces Z[0]=1)                                      |
 //	|-------------------------------–-----------------------------------------------|
-func EqualityUpToPermutationIOP(system *cs.System, ID1, ID2 []string) error {
+func Permutation(system *cs.System, ID1, ID2 []string) error {
 
 	// 1. sample gamma: register the prover action ComputeChallenge
 	E1 := make([]sym.Expr, len(ID1))
@@ -130,8 +130,8 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 []sym.Expr) error {
 //	|   C2: (Z-1)·L_0 = 0  (enforces Z[0]=1)                                      |
 //	|-------------------------------–-----------------------------------------------|
 //
-// func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string, IDGrandProduct string, alpha, gamma string) error {
-func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string) error {
+// func PermutationMultiset(system *cs.System, ID1, ID2 [][]string, IDGrandProduct string, alpha, gamma string) error {
+func PermutationMultiset(system *cs.System, ID1, ID2 [][]string) error {
 
 	// 1. sample alpha: register the prover action ComputeChallenge, depending on all ids in ID1, ID2
 	E1 := make([][]sym.Expr, len(ID1))
@@ -149,10 +149,10 @@ func MultiSetEqualityUpToPermutationIOP(system *cs.System, ID1, ID2 [][]string) 
 		}
 	}
 
-	return multiSetEqualityUpToPermutationIOP(system, E1, E2)
+	return multiSetPermutation(system, E1, E2)
 }
 
-func multiSetEqualityUpToPermutationIOP(system *cs.System, E1, E2 [][]sym.Expr) error {
+func multiSetPermutation(system *cs.System, E1, E2 [][]sym.Expr) error {
 
 	// 1. derive alpha
 	alpha, err := utils.RandomString(constants.SIZE_RANDOM_STRING)

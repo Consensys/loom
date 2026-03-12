@@ -12,7 +12,7 @@ import (
 func TestWriteProverActionsDagToHTML(t *testing.T) {
 	size := 16
 	system := cs.NewSystem(size)
-	if err := arguments.MultiSetEqualityUpToPermutationIOP(
+	if err := arguments.PermutationMultiset(
 		&system,
 		[][]string{{"P0", "P1"}},
 		[][]string{{"Q0", "Q1"}},
@@ -39,7 +39,7 @@ func TestWriteProofRoundsDagToHTML_Permutation(t *testing.T) {
 	size := 16
 	trace := cs.BuildPermutationCircuit(t, size)
 	system := cs.NewSystem(size)
-	arguments.EqualityUpToPermutationIOP(&system, []string{"P0"}, []string{"P1"})
+	arguments.Permutation(&system, []string{"P0"}, []string{"P1"})
 
 	cciop := cs.Compile(&system)
 	rt := prover.NewRuntime(cciop, trace)
@@ -66,7 +66,7 @@ func TestWriteProofRoundsDagToHTML_MultiSet(t *testing.T) {
 	size := 16
 	trace := cs.BuildPermutationMultiSet(t, size)
 	system := cs.NewSystem(size)
-	if err := arguments.MultiSetEqualityUpToPermutationIOP(
+	if err := arguments.PermutationMultiset(
 		&system,
 		[][]string{{"P0", "P1"}},
 		[][]string{{"Q0", "Q1"}},

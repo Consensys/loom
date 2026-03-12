@@ -11,7 +11,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
-// InclusionCheckIOP proves that every value in S appears in T (S ⊆ T as multisets).
+// Inclusion proves that every value in S appears in T (S ⊆ T as multisets).
 // It implements the lookup argument of section 5.4.1 of https://eprint.iacr.org/2022/1633.pdf.
 //
 // The core identity checked is:
@@ -47,7 +47,7 @@ import (
 //	|   C4: L_0·(GrandSumS·(S−γ) − 1) = 0  (GrandSumS[0] = 1/(S[0]−γ))          |
 //	|   C5: L_{N−1}·(GrandSumS − GrandSumT) = 0  (total sums equal)               |
 //	|-------------------------------–-----------------------------------------------|
-func InclusionCheckIOP(system *cs.System, S, T string) error {
+func Inclusion(system *cs.System, S, T string) error {
 
 	// 1. create the multiplicity polynomial
 	Texpr := sym.NewCommittedColumn(T)
@@ -114,7 +114,7 @@ func inclusionCheckIOP(system *cs.System, S, T sym.Expr) error {
 	return nil
 }
 
-// InclusionCheckMultiSetIOP proves that every row-tuple (S[0][i], …, S[k−1][i])
+// InclusionMultiSet proves that every row-tuple (S[0][i], …, S[k−1][i])
 // appears in the multiset of row-tuples {(T[0][j], …, T[m−1][j])}.
 //
 // Tuples are compressed into scalars via a Fiat-Shamir folding challenge α:
@@ -124,7 +124,7 @@ func inclusionCheckIOP(system *cs.System, S, T sym.Expr) error {
 //
 // By Schwartz-Zippel, tuple inclusion holds iff (with overwhelming probability
 // over α) {S_fold[i]} ⊆ {T_fold[i]}. This scalar inclusion is then checked via
-// InclusionCheckIOP using the core identity:
+// Inclusion using the core identity:
 //
 //	Σ_i M[i]/(T_fold[i]−γ) = Σ_j 1/(S_fold[j]−γ)
 //
@@ -164,7 +164,7 @@ func inclusionCheckIOP(system *cs.System, S, T sym.Expr) error {
 //	|   C4: L_0·(GrandSumS·(S_fold−γ) − 1) = 0                                     |
 //	|   C5: L_{N−1}·(GrandSumS − GrandSumT) = 0  (total sums equal)                |
 //	|----------------------------------–---------------------------------------------|
-func InclusionCheckMultiSetIOP(system *cs.System, S, T []string) error {
+func InclusionMultiSet(system *cs.System, S, T []string) error {
 
 	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
@@ -194,7 +194,7 @@ func InclusionCheckMultiSetIOP(system *cs.System, S, T []string) error {
 	SFolded := cs.Fold(SExpr, gammaExpr)
 	TFolded := cs.Fold(TExpr, gammaExpr)
 
-	// 3. calls the InclusionCheckIOP on the folded S and T
+	// 3. calls the Inclusion on the folded S and T
 	return inclusionCheckIOP(system, SFolded, TFolded)
 
 }

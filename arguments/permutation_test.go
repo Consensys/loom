@@ -22,7 +22,7 @@ func TestPermutation(t *testing.T) {
 	trace := cs.BuildPermutationCircuit(t, size)
 	system := cs.NewSystem(size)
 
-	EqualityUpToPermutationIOP(&system, []string{"P0"}, []string{"P1"})
+	Permutation(&system, []string{"P0"}, []string{"P1"})
 
 	cciop := cs.Compile(&system)
 
@@ -90,7 +90,7 @@ func TestPermutationMultiSet(t *testing.T) {
 	trace := cs.BuildPermutationMultiSet(t, size)
 	system := cs.NewSystem(size)
 
-	err := MultiSetEqualityUpToPermutationIOP(&system, [][]string{{"P0", "P1"}}, [][]string{{"Q0", "Q1"}})
+	err := PermutationMultiset(&system, [][]string{{"P0", "P1"}}, [][]string{{"Q0", "Q1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func BenchmarkPermutation(b *testing.B) {
 
 	system := cs.NewSystem(size)
 
-	_ = EqualityUpToPermutationIOP(&system, s1, s2)
+	_ = Permutation(&system, s1, s2)
 
 	knowncolumns := make(map[string]bool)
 	for _, s := range s1 {

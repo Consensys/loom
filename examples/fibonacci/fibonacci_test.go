@@ -43,8 +43,8 @@ func TestFibonacci(t *testing.T) {
 	system.RegisterProverAction(nil, []string{"F1"}, proveractions.NewBuilderContext(filter))
 	F1 := sym.NewCommittedColumn("F1")
 	F2 := sym.NewShiftedColumn("F1", 1)
-	arguments.EqualityFilteredColumnsIOPExpr(&system, colA, colB, F1, F2)
-	arguments.EqualityFilteredColumnsIOPExpr(&system, colB, colC, F1, F2)
+	arguments.ProjectionExpr(&system, colA, colB, F1, F2)
+	arguments.ProjectionExpr(&system, colB, colC, F1, F2)
 
 	// A[0]=0, B[0]=1
 	system.RegisterithLagrangeColumn(0)

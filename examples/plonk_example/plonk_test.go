@@ -90,7 +90,7 @@ func BenchmarkCompile(b *testing.B) {
 	for i := 0; i < nbTraces; i++ {
 		C := getIthPlonkRelation(i)
 		system.AssertZero(C)
-		_ = arguments.CopyRelationIOP(&system, []string{ithInstance(ID_L, i), ithInstance(ID_R, i), ithInstance(ID_O, i)}, S)
+		_ = arguments.CopyPermutation(&system, []string{ithInstance(ID_L, i), ithInstance(ID_R, i), ithInstance(ID_O, i)}, S)
 
 	}
 
@@ -123,7 +123,7 @@ func TestPlonk(t *testing.T) {
 	for i := 0; i < nbTraces; i++ {
 		C := getIthPlonkRelation(i)
 		system.AssertZero(C)
-		err = arguments.CopyRelationIOP(&system, []string{ithInstance(ID_L, i), ithInstance(ID_R, i), ithInstance(ID_O, i)}, S)
+		err = arguments.CopyPermutation(&system, []string{ithInstance(ID_L, i), ithInstance(ID_R, i), ithInstance(ID_O, i)}, S)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -12,7 +12,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
-func TestCopyRelation(t *testing.T) {
+func TestCopyPermutation(t *testing.T) {
 	const N = 16
 
 	// Permutation S: shift by 4 on the concatenated P1||P2 of size 32.
@@ -37,7 +37,7 @@ func TestCopyRelation(t *testing.T) {
 	T := trace.Trace{"P1": p1, "P2": p2}
 
 	system := cs.NewSystem(N)
-	err := CopyRelationIOP(&system, []string{"P1", "P2"}, S)
+	err := CopyPermutation(&system, []string{"P1", "P2"}, S)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestCopyRelation(t *testing.T) {
 	}
 }
 
-func TestCopyRelationMultiSet(t *testing.T) {
+func TestCopyPermutationMultiSet(t *testing.T) {
 	const N = 16
 
 	// Permutation S: shift by 4 on the concatenated P1||P2 of size 32.
@@ -122,7 +122,7 @@ func TestCopyRelationMultiSet(t *testing.T) {
 
 	system := cs.NewSystem(N)
 	// wires: two chunks, each with the column repeated twice: {P1,P1} and {P2,P2}
-	err := CopyRelationMultiSetIOP(&system, [][]string{{"P1", "P1"}, {"P2", "P2"}}, S)
+	err := CopyPermtutationMultiSet(&system, [][]string{{"P1", "P1"}, {"P2", "P2"}}, S)
 	if err != nil {
 		t.Fatal(err)
 	}

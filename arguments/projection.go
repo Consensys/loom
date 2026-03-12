@@ -10,7 +10,7 @@ import (
 	"github.com/consensys/giop/utils"
 )
 
-// EqualityFilteredColumnsIOP proves that the ordered sequence of A-values selected by F1
+// Projection proves that the ordered sequence of A-values selected by F1
 // equals the ordered sequence of B-values selected by F2, where F1 and F2 are binary columns.
 // I.e., if the selected indices are i_0 < i_1 < ... < i_{m-1} and j_0 < j_1 < ... < j_{m-1}, then
 // A[i_0] = B[j_0], A[i_1] = B[j_1], ..., A[i_{m-1}] = B[j_{m-1}].
@@ -40,22 +40,22 @@ import (
 //	|   C3, C4: symmetric constraints for FB                                         |
 //	|   C5: L_{N-1}·(FA - FB) = 0              (final accumulated values match)     |
 //	|-------------------------------–-------------------------------------------------|
-func EqualityFilteredColumnsIOP(system *cs.System, A, F1, B, F2 string) error {
+func Projection(system *cs.System, A, F1, B, F2 string) error {
 
 	Aexpr := sym.NewCommittedColumn(A)
 	Bexpr := sym.NewCommittedColumn(B)
 	F1expr := sym.NewCommittedColumn(F1)
 	F2expr := sym.NewCommittedColumn(F2)
 
-	return EqualityFilteredColumnsIOPExpr(system, Aexpr, Bexpr, F1expr, F2expr)
+	return ProjectionExpr(system, Aexpr, Bexpr, F1expr, F2expr)
 }
 
-// EqualityFilteredMultiColumnsIOP proves that the ordered sequence of row-tuples of A selected by F1
+// ProjectionMultiSet proves that the ordered sequence of row-tuples of A selected by F1
 // equals the ordered sequence of row-tuples of B selected by F2, where F1 and F2 are binary columns.
 // I.e., A[0],..,A[k-1] and B[0],..,B[l-1] are column lists, and the tuples
 // (A[0][i],..,A[k-1][i]) for F1[i]=1 must match (B[0][i],..,B[l-1][i]) for F2[i]=1 in order.
 //
-// Row-tuples are first compressed into scalars via γ, then EqualityFilteredColumnsIOP is applied.
+// Row-tuples are first compressed into scalars via γ, then Projection is applied.
 //
 // It models the following Σ-protocol (N = domain size):
 //
@@ -89,7 +89,7 @@ func EqualityFilteredColumnsIOP(system *cs.System, A, F1, B, F2 string) error {
 //	|   C1–C4: recurrence + boundary constraints for FÃ and FB̃                       |
 //	|   C5:    L_{N-1}·(FÃ - FB̃) = 0   (final accumulated values match)             |
 //	|-------------------------------–-------------------------------------------------|
-func EqualityFilteredMultiColumnsIOP(system *cs.System, A []string, F1 string, B []string, F2 string) error {
+func ProjectionMultiSet(system *cs.System, A []string, F1 string, B []string, F2 string) error {
 
 	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
@@ -120,11 +120,11 @@ func EqualityFilteredMultiColumnsIOP(system *cs.System, A []string, F1 string, B
 	BFolded := cs.Fold(BExpr, gammaExpr)
 
 	// 3. call equalityFilteredColumns
-	return EqualityFilteredColumnsIOPExpr(system, AFolded, BFolded, sym.NewCommittedColumn(F1), sym.NewCommittedColumn(F2))
+	return ProjectionExpr(system, AFolded, BFolded, sym.NewCommittedColumn(F1), sym.NewCommittedColumn(F2))
 
 }
 
-func EqualityFilteredColumnsIOPExpr(system *cs.System, A, B, F1, F2 sym.Expr) error {
+func ProjectionExpr(system *cs.System, A, B, F1, F2 sym.Expr) error {
 
 	// 1. build filtered acc polynomials for A and B
 	_idAccFA, err := utils.RandomString(constants.SIZE_RANDOM_STRING)

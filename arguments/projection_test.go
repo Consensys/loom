@@ -54,7 +54,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 
 	system := cs.NewSystem(size)
 
-	err := EqualityFilteredMultiColumnsIOP(&system, []string{"A", "A2"}, "F1", []string{"B", "B2"}, "F2")
+	err := ProjectionMultiSet(&system, []string{"A", "A2"}, "F1", []string{"B", "B2"}, "F2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestEqualityFilteredColumns(t *testing.T) {
 	system := cs.NewSystem(size)
 
 	// call EqualityFilteredColumns
-	err := EqualityFilteredColumnsIOP(&system, "A", "F1", "B", "F2")
+	err := Projection(&system, "A", "F1", "B", "F2")
 	if err != nil {
 		t.Fatal(err)
 	}
