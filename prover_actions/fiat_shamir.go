@@ -42,7 +42,7 @@ func GetColumnsBaseId(E []expr.Expr) []string {
 func GetChallengesID(E []expr.Expr) []string {
 	var ids []string
 	for _, c := range E {
-		n := c.Leaves(expr.NewConfig(expr.WithoutComputableColumns(), expr.WithoutCommittedColumns()))
+		n := c.Leaves(expr.NewConfig(expr.WithoutVirtualColumns(), expr.WithoutCommittedColumns()))
 		expr.RemoveDuplicates(n) // avoid the expression to grow too big
 		ids = append(ids, n...)
 	}

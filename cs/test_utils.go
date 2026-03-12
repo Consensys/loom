@@ -181,7 +181,7 @@ func QuotientChecker(T trace.Trace, constraints []Relation, N int) error {
 		// For each leaf, evaluate the trace polynomial at z (or w^shift*z for shifted columns)
 		leavesNormal := expr.RemoveDuplicates(C.Leaves(expr.NewConfig(expr.WithoutRotatedColumns())))
 		leavesShifted := expr.RemoveDuplicates(C.Leaves(expr.NewConfig(
-			expr.WithoutChallenges(), expr.WithoutCommittedColumns(), expr.WithoutComputableColumns())))
+			expr.WithoutChallenges(), expr.WithoutCommittedColumns(), expr.WithoutVirtualColumns())))
 		vals := make(map[string]koalabear.Element, len(leavesNormal)+len(leavesShifted))
 		for _, l := range leavesNormal {
 			poly := T[l]

@@ -15,8 +15,8 @@ const (
 	CommittedColumn LeafType = iota
 	RotatedColumn
 	ComputableColumn
-	Challenge
-	Const
+	ChallengeColumn
+	ConstantColumn
 )
 
 type Leaf struct {
@@ -29,10 +29,10 @@ type Leaf struct {
 
 // Config useful for querying the leaves
 type Config struct {
-	WoCommittedColumns  bool
-	WoComputableColumns bool
-	WoRotatedColumns    bool
-	WoChallenges        bool
+	WoCommittedColumns bool
+	WoVirtualColumns   bool
+	WoRotatedColumns   bool
+	WoChallenges       bool
 }
 
 type Option func(*Config)
@@ -52,9 +52,9 @@ func WithoutCommittedColumns() Option {
 }
 
 // Leaves() doesnt return the ComputableColumns
-func WithoutComputableColumns() Option {
+func WithoutVirtualColumns() Option {
 	return func(c *Config) {
-		c.WoComputableColumns = true
+		c.WoVirtualColumns = true
 	}
 }
 
@@ -73,9 +73,9 @@ func NewConfig(opts ...Option) Config {
 	return res
 }
 
-var OnlyChallenges = []Option{WithoutComputableColumns(), WithoutCommittedColumns(), WithoutRotatedColumns()}
-var OnlyCommittedColumns = []Option{WithoutComputableColumns(), WithoutChallenges(), WithoutRotatedColumns()}
-var OnlyRotatedColumns = []Option{WithoutComputableColumns(), WithoutChallenges(), WithoutCommittedColumns()}
+var OnlyChallenges = []Option{WithoutVirtualColumns(), WithoutCommittedColumns(), WithoutRotatedColumns()}
+var OnlyCommittedColumns = []Option{WithoutVirtualColumns(), WithoutChallenges(), WithoutRotatedColumns()}
+var OnlyRotatedColumns = []Option{WithoutVirtualColumns(), WithoutChallenges(), WithoutCommittedColumns()}
 
 // The LeafType encodes the status of a column at the protocol level:
 //   - CommittedColumn: the prover commits to this column
@@ -135,18 +135,18 @@ func VirtualCol(name string) *Leaf {
 }
 
 func NewChallenge(name string) *Leaf {
-	return &Leaf{Type: Challenge, Name: name}
+	return &Leaf{Type: ChallengeColumn, Name: name}
 }
 
 func NewConst(value koalabear.Element) *Leaf {
-	return &Leaf{Type: Const, Value: value}
+	return &Leaf{Type: ConstantColumn, Value: value}
 }
 
 func (l *Leaf) String() string {
 	switch l.Type {
 	case RotatedColumn:
 		return fmt.Sprintf("%s_shift_%d", l.Name, l.Shift)
-	case Const:
+	case ConstantColumn:
 		return l.Value.String()
 	default:
 		return l.Name
@@ -155,12 +155,12 @@ func (l *Leaf) String() string {
 
 func (l *Leaf) Degree() int {
 	switch l.Type {
-	case Const:
+	case ConstantColumn:
 		if l.Value.IsZero() {
 			return NegInf
 		}
 		return 0
-	case Challenge:
+	case ChallengeColumn:
 		return 0
 	default: // CommittedColumn, RotatedColumn, ComputableColumn
 		return 1
@@ -190,23 +190,23 @@ func (l *Leaf) Leaves(config Config) []string {
 		}
 		return []string{l.String()}
 	case ComputableColumn:
-		if config.WoComputableColumns {
+		if config.WoVirtualColumns {
 			return []string{}
 		}
 		return []string{l.Name}
-	case Challenge:
+	case ChallengeColumn:
 		if config.WoChallenges {
 			return []string{}
 		}
 		return []string{l.Name}
-	case Const:
+	case ConstantColumn:
 		return []string{}
 	}
 	return []string{}
 }
 
 func (l *Leaf) ReplaceLeafByExpression(leaf string, e Expr) Expr {
-	if l.Type == Const {
+	if l.Type == ConstantColumn {
 		return l
 	}
 	if l.String() == leaf {
@@ -218,7 +218,7 @@ func (l *Leaf) ReplaceLeafByExpression(leaf string, e Expr) Expr {
 func (l *Leaf) Prune(deg int) Expr { return pruneSearch(l, deg) }
 
 func (l *Leaf) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
-	if l.Type == Const {
+	if l.Type == ConstantColumn {
 		return l.Value
 	}
 	key := l.String()
@@ -230,7 +230,7 @@ func (l *Leaf) Evaluate(vals map[string]koalabear.Element) koalabear.Element {
 }
 
 func (l *Leaf) EvaluateOnIthEntry(_Pi [][]koalabear.Element, i int) koalabear.Element {
-	if l.Type == Const {
+	if l.Type == ConstantColumn {
 		return l.Value
 	}
 	p := _Pi[l.Idx]
@@ -457,14 +457,14 @@ func (l *Leaf) LeavesFull(config Config) []*Leaf {
 			return nil
 		}
 	case ComputableColumn:
-		if config.WoComputableColumns {
+		if config.WoVirtualColumns {
 			return nil
 		}
-	case Challenge:
+	case ChallengeColumn:
 		if config.WoChallenges {
 			return nil
 		}
-	case Const:
+	case ConstantColumn:
 		return nil
 	}
 	return []*Leaf{l}

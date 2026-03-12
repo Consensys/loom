@@ -62,9 +62,9 @@ func TestLeaves(t *testing.T) {
 	five.SetUint64(5)
 
 	all := NewConfig()
-	woCC := NewConfig(WithoutComputableColumns())
+	woCC := NewConfig(WithoutVirtualColumns())
 	woChal := NewConfig(WithoutChallenges())
-	woAll := NewConfig(WithoutComputableColumns(), WithoutChallenges())
+	woAll := NewConfig(WithoutVirtualColumns(), WithoutChallenges())
 
 	// --- Leaf nodes ---
 

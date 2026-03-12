@@ -137,7 +137,7 @@ func BuildFilteredAccPolynomial(P map[string]Polynomial, E, F, alpha expr.Expr, 
 		return Polynomial{}, fmt.Errorf("alpha must be a leaf")
 	}
 	alphaExpr := alpha.(*expr.Leaf)
-	if alphaExpr.Type != expr.Challenge {
+	if alphaExpr.Type != expr.ChallengeColumn {
 		return Polynomial{}, fmt.Errorf("alpha must be a challenge")
 	}
 	_alpha := P[alpha.String()]

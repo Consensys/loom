@@ -47,7 +47,7 @@ const (
 // so that the node is unique regardless of operand order in the source tree.
 type DAGNode struct {
 	Kind     NodeKind
-	Leaf     *expr.Leaf         // non-nil iff Kind == KindLeaf; stored as concrete type to avoid interface dispatch in hot eval path
+	Leaf     *expr.Leaf        // non-nil iff Kind == KindLeaf; stored as concrete type to avoid interface dispatch in hot eval path
 	Children []*DAGNode        // len 2 for Add/Sub/Mul; len 1 for Pow; len 0 for Leaf
 	Exp      uint32            // exponent, only meaningful when Kind == KindPow
 	Index    int               // position in DAG.Nodes; used by EvalWithCache / EvalWithCacheVars
@@ -140,18 +140,18 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 				prefix = "shifted"
 			case expr.CommittedColumn:
 				prefix = "col"
-			case expr.Challenge:
+			case expr.ChallengeColumn:
 				prefix = "chal"
 			case expr.ComputableColumn:
 				prefix = "comp"
-			case expr.Const:
+			case expr.ConstantColumn:
 				prefix = "const"
 			}
 			key := dagKey(prefix, v.String())
 			lv := v
 			result[e] = b.intern(key, func() *DAGNode {
 				n := &DAGNode{Kind: KindLeaf, Leaf: lv, VarIdx: b.assignVarIdx(lv.String())}
-				if lv.Type == expr.Const {
+				if lv.Type == expr.ConstantColumn {
 					n.IsConst = true
 					n.ConstVal = lv.Value
 				}
@@ -545,11 +545,11 @@ func dagNodeLabel(n *DAGNode) string {
 			return "col:" + n.Leaf.Name
 		case expr.RotatedColumn:
 			return "shifted:" + n.Leaf.String()
-		case expr.Challenge:
+		case expr.ChallengeColumn:
 			return "chal:" + n.Leaf.Name
 		case expr.ComputableColumn:
 			return "comp:" + n.Leaf.Name
-		case expr.Const:
+		case expr.ConstantColumn:
 			return "const:" + n.Leaf.Value.String()
 		}
 		return n.Leaf.String()
@@ -805,7 +805,7 @@ func evalDAGNodeSlice(n *DAGNode, cache []koalabear.Element, vals map[string]koa
 // Leaves returns the String() representation of every unique leaf in the DAG
 // that is not excluded by config. The filtering rules are identical to those
 // of Expr.Leaves: WithoutCommittedColumns, WithoutChallenges, and
-// WithoutComputableColumns suppress the corresponding leaf kinds; Const leaves
+// WithoutVirtualColumns suppress the corresponding leaf kinds; Const leaves
 // are never included. Because the DAG deduplicates nodes, each
 // structurally-identical leaf appears at most once.
 func (d *DAG) Leaves(config expr.Config) []string {

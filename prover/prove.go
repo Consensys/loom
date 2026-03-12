@@ -148,7 +148,7 @@ func (runtime *Runtime) DeriveFinalFoldingChallenge(proof *proveractions.Proof) 
 	// 1. create the dependencies of the folding challenge to all the polynomials not committed
 	var round proveractions.Round
 	round.ChallengeName = constants.FINAL_FOLDING_CHALLENGE
-	leaves := runtime.Program.VanishingRelation.Leaves(expr.NewConfig(expr.WithoutChallenges(), expr.WithoutComputableColumns(), expr.WithoutRotatedColumns()))
+	leaves := runtime.Program.VanishingRelation.Leaves(expr.NewConfig(expr.WithoutChallenges(), expr.WithoutVirtualColumns(), expr.WithoutRotatedColumns()))
 	round.DependenciesCommittedColumns = make([]string, 0, len(leaves))
 	for _, l := range leaves {
 		if _, ok := proof.OpeningProofs[l]; !ok { // <- the column whose ID is l is not committed, we add it to bindings
@@ -321,7 +321,7 @@ func (runtime *Runtime) OpenShiftedCommitments(proof *proveractions.Proof, zeta 
 
 	// query the leaves corresponding to RotatedColumns
 	leavesShifted := runtime.Program.VanishingRelation.Leaves(
-		expr.NewConfig(expr.WithoutChallenges(), expr.WithoutComputableColumns(), expr.WithoutCommittedColumns()))
+		expr.NewConfig(expr.WithoutChallenges(), expr.WithoutVirtualColumns(), expr.WithoutCommittedColumns()))
 	leavesShifted = expr.RemoveDuplicates(leavesShifted)
 
 	// open the RotatedColumns
