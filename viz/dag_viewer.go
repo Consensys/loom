@@ -1,4 +1,4 @@
-package viewer
+package viz
 
 import (
 	"encoding/json"

@@ -1,73 +1,109 @@
-package std
+package arguments
 
 import (
+	"fmt"
+	"os"
+	"runtime/pprof"
 	"testing"
 
 	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/pas/univariate"
 	"github.com/consensys/giop/prover"
 	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/giop/verifier"
-	"github.com/consensys/giop/viewer"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
-// BuildInclusionTrace creates a trace with two columns T and S such that:
-// - T[i] = i+1 (all distinct)
-// - S[i] = T[i % (size/2)] (every value in S appears in T, with repetitions)
-func BuildInclusionTrace(t *testing.T, size int) trace.Trace {
-	Tcoeffs := make([]koalabear.Element, size)
-	for i := range Tcoeffs {
-		Tcoeffs[i].SetUint64(uint64(i + 1))
-	}
-
-	Scoeffs := make([]koalabear.Element, size)
-	for i := range Scoeffs {
-		Scoeffs[i] = Tcoeffs[i%(size/2)]
-	}
-
-	return trace.Trace{"T": Tcoeffs, "S": Scoeffs}
-}
-
-// BuildInclusionMultiSetTrace creates a trace with columns T0, T1, S0, S1 such that
-// every row (S0[i], S1[i]) appears in the table {(T0[j], T1[j])} (subset with repetitions).
-// T0[i] = i+1, T1[i] = (i+1)*2; S copies the first half of T rows twice.
-func BuildInclusionMultiSetTrace(t *testing.T, size int) trace.Trace {
-	T0coeffs := make([]koalabear.Element, size)
-	T1coeffs := make([]koalabear.Element, size)
-	for i := range T0coeffs {
-		T0coeffs[i].SetUint64(uint64(i + 1))
-		T1coeffs[i].SetUint64(uint64((i + 1) * 2))
-	}
-
-	S0coeffs := make([]koalabear.Element, size)
-	S1coeffs := make([]koalabear.Element, size)
-	for i := range S0coeffs {
-		S0coeffs[i] = T0coeffs[i%(size/2)]
-		S1coeffs[i] = T1coeffs[i%(size/2)]
-	}
-
-	return trace.Trace{"T0": T0coeffs, "T1": T1coeffs, "S0": S0coeffs, "S1": S1coeffs}
-}
-
-func TestInclusion(t *testing.T) {
+func TestPermutation(t *testing.T) {
 
 	size := 16
 
-	trace := BuildInclusionTrace(t, size)
+	trace := cs.BuildPermutationCircuit(t, size)
 	system := cs.NewSystem(size)
 
-	InclusionCheckIOP(&system, "S", "T")
+	EqualityUpToPermutationIOP(&system, []string{"P0"}, []string{"P1"})
 
 	cciop := cs.Compile(&system)
 
 	proverRunTime := prover.NewRuntime(cciop, trace)
 
-	knowncolumns := map[string]bool{"T": true, "S": true}
+	// begin proving
+	knowncolumns := map[string]bool{"P0": true, "P1": true}
 	proof := proveractions.NewProof(system.N)
 
 	// 1. Solve + sanity checks
 	err := proverRunTime.Solve(knowncolumns, &proof, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+
+	// 2. DeriveFinalFoldingChallenge + sanity checks
+	err = proverRunTime.DeriveFinalFoldingChallenge(&proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// viewer.WriteTraceToCSV("trace.csv", proverRunTime.Trace, system.N)
+	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+
+	// 3. ComputeQuotient + sanity checks
+	err = proverRunTime.ComputeQuotient(&proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+
+	// 4. DeriveOpeningChallenge + sanity checks
+	var zeta koalabear.Element
+	zeta, err = proverRunTime.DeriveOpeningChallenge(&proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+
+	// 4b. OpenCommitments: evaluate all committed polynomials (and the quotient) at zeta
+	err = proverRunTime.OpenCommitments(&proof, zeta)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 5. Build verifier verifierRunTime and derive the challenge + sanity check: are the verifier challenges in sync with the prover's
+	verifierRunTime := verifier.NewRunTime(cciop)
+	err = verifierRunTime.ComputeChallenges(&proof, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	CheckFiatShamir(&proverRunTime, &verifierRunTime, &proof, zeta, t)
+
+	// 6. verify
+	err = verifierRunTime.Verify(&proof, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPermutationMultiSet(t *testing.T) {
+
+	size := 16
+
+	trace := cs.BuildPermutationMultiSet(t, size)
+	system := cs.NewSystem(size)
+
+	err := MultiSetEqualityUpToPermutationIOP(&system, [][]string{{"P0", "P1"}}, [][]string{{"Q0", "Q1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	knowncolumns := map[string]bool{"P0": true, "P1": true, "Q0": true, "Q1": true}
+	cciop := cs.Compile(&system)
+
+	proverRunTime := prover.NewRuntime(cciop, trace)
+
+	proof := proveractions.NewProof(system.N)
+
+	// 1. Solve + sanity checks
+	err = proverRunTime.Solve(knowncolumns, &proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,13 +131,13 @@ func TestInclusion(t *testing.T) {
 	}
 	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
 
-	// 4b. OpenCommitments: evaluate all committed polynomials at zeta
+	// 4b. OpenCommitments
 	err = proverRunTime.OpenCommitments(&proof, zeta)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// 5. Build verifier runtime and derive challenges
+	// 5. Build verifier runtime and check Fiat-Shamir consistency
 	verifierRunTime := verifier.NewRunTime(cciop)
 	err = verifierRunTime.ComputeChallenges(&proof, 1)
 	if err != nil {
@@ -116,70 +152,64 @@ func TestInclusion(t *testing.T) {
 	}
 }
 
-func TestInclusionMultiSet(t *testing.T) {
+func BenchmarkPermutation(b *testing.B) {
 
-	size := 16
+	size := 1 << 10
+	nbPolys := 5
+	p1 := make([]univariate.Polynomial, nbPolys)
+	for i := 0; i < nbPolys; i++ {
+		p1[i] = make(univariate.Polynomial, size)
+		for j := 0; j < size; j++ {
+			p1[i][j].SetRandom()
+		}
+	}
+	p2 := make([]univariate.Polynomial, nbPolys)
+	for i := 0; i < nbPolys; i++ {
+		p2[i] = make(univariate.Polynomial, size)
+		for j := 0; j < size; j++ {
+			p2[i][j].Set(&p1[(i+1)%nbPolys][(j+1)%size])
+		}
+	}
 
-	tr := BuildInclusionMultiSetTrace(t, size)
+	trace := make(trace.Trace)
+	s1 := make([]string, nbPolys)
+	s2 := make([]string, nbPolys)
+	for i := 0; i < nbPolys; i++ {
+		s1[i] = fmt.Sprintf("P1_%d", i)
+		s2[i] = fmt.Sprintf("P2_%d", i)
+		trace[fmt.Sprintf("P1_%d", i)] = p1[i]
+		trace[fmt.Sprintf("P2_%d", i)] = p2[i]
+	}
+
 	system := cs.NewSystem(size)
 
-	InclusionCheckMultiSetIOP(&system, []string{"S0", "S1"}, []string{"T0", "T1"})
+	_ = EqualityUpToPermutationIOP(&system, s1, s2)
 
+	knowncolumns := make(map[string]bool)
+	for _, s := range s1 {
+		knowncolumns[s] = true
+	}
+	for _, s := range s2 {
+		knowncolumns[s] = true
+	}
 	cciop := cs.Compile(&system)
 
-	proverRunTime := prover.NewRuntime(cciop, tr)
+	f, _ := os.Create("cpu.prof")
+	pprof.StartCPUProfile(f)
+	b.Run("prover", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
 
-	knowncolumns := map[string]bool{"T0": true, "T1": true, "S0": true, "S1": true}
-	proof := proveractions.NewProof(system.N)
+			_trace := make(map[string]univariate.Polynomial)
+			for i := 0; i < nbPolys; i++ {
+				_trace[fmt.Sprintf("P1_%d", i)] = trace[fmt.Sprintf("P1_%d", i)]
+				_trace[fmt.Sprintf("P2_%d", i)] = trace[fmt.Sprintf("P2_%d", i)]
+			}
 
-	// 1. Solve + sanity checks
-	err := proverRunTime.Solve(knowncolumns, &proof, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+			proverRunTime := prover.NewRuntime(cciop, _trace)
+			proverRunTime.Prove(knowncolumns, 1)
 
-	// 2. DeriveFinalFoldingChallenge + sanity checks
-	err = proverRunTime.DeriveFinalFoldingChallenge(&proof)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
+		}
+	})
+	pprof.StopCPUProfile()
 
-	// 3. ComputeQuotient + sanity checks
-	err = proverRunTime.ComputeQuotient(&proof)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
-
-	// 4. DeriveOpeningChallenge + sanity checks
-	var zeta koalabear.Element
-	zeta, err = proverRunTime.DeriveOpeningChallenge(&proof)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sanityCheck(&proverRunTime, system.Constraints, system.N, t)
-
-	// 4b. OpenCommitments: evaluate all committed polynomials at zeta
-	err = proverRunTime.OpenCommitments(&proof, zeta)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	viewer.WriteProofRoundsDagToHTML(proof.Rounds, "rounds.html")
-
-	// 5. Build verifier runtime and derive challenges
-	verifierRunTime := verifier.NewRunTime(cciop)
-	err = verifierRunTime.ComputeChallenges(&proof, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	CheckFiatShamir(&proverRunTime, &verifierRunTime, &proof, zeta, t)
-
-	// 6. Verify
-	err = verifierRunTime.Verify(&proof, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
 }

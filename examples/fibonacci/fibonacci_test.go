@@ -5,13 +5,12 @@ import (
 	"os"
 	"testing"
 
+	"github.com/consensys/giop/arguments"
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/prover"
 	proveractions "github.com/consensys/giop/prover_actions"
-	"github.com/consensys/giop/std"
 	"github.com/consensys/giop/verifier"
-	"github.com/consensys/giop/viewer"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
@@ -19,8 +18,8 @@ func TestFibonacci(t *testing.T) {
 
 	N := 16
 
-	// 2. characterizing the fact that the columns A, B, C are the steps of a Fibo sequence
-	// is captured by the following constraints:
+	// characterizing the fact that the columns A, B, C are the steps of a Fibo sequence
+	// is captured by the following constraints (this is completely arbitrary, there are other ways to shape the trace):
 	// 1. A + B - C = 0 (it means that row wise: a + b = c)
 	// 2. 	* Filter1(A)=Filter2(B),
 	// 		* Filter1(B)=Filter2(C)
@@ -44,8 +43,8 @@ func TestFibonacci(t *testing.T) {
 	system.RegisterProverAction(nil, []string{"F1"}, proveractions.NewBuilderContext(filter))
 	F1 := sym.NewCommittedColumn("F1")
 	F2 := sym.NewShiftedColumn("F1", 1)
-	std.EqualityFilteredColumnsIOPExpr(&system, colA, colB, F1, F2)
-	std.EqualityFilteredColumnsIOPExpr(&system, colB, colC, F1, F2)
+	arguments.EqualityFilteredColumnsIOPExpr(&system, colA, colB, F1, F2)
+	arguments.EqualityFilteredColumnsIOPExpr(&system, colB, colC, F1, F2)
 
 	// A[0]=0, B[0]=1
 	system.RegisterithLagrangeColumn(0)
@@ -59,7 +58,7 @@ func TestFibonacci(t *testing.T) {
 	// Now that the system is compiled, fetch the trace and generate the proof
 
 	trace := GetFibonacciTrace(N, "A", "B", "C")
-	viewer.WriteTraceToCSV("fibonacci.csv", trace, N)
+	// viewer.WriteTraceToCSV("fibonacci.csv", trace, N)
 
 	proverRuntime := prover.NewRuntime(cciop, trace)
 

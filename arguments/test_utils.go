@@ -1,4 +1,4 @@
-package std
+package arguments
 
 import (
 	"testing"

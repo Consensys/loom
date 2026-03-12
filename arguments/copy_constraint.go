@@ -1,4 +1,4 @@
-package std
+package arguments
 
 import (
 	"github.com/consensys/giop/cs"

@@ -3,10 +3,10 @@ package plonk_example
 import (
 	"testing"
 
+	"github.com/consensys/giop/arguments"
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/pas/sym"
 	"github.com/consensys/giop/prover"
-	"github.com/consensys/giop/std"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/giop/verifier"
 )
@@ -90,7 +90,7 @@ func BenchmarkCompile(b *testing.B) {
 	for i := 0; i < nbTraces; i++ {
 		C := getIthPlonkRelation(i)
 		system.RegisterConstraint(C)
-		_ = std.CopyConstraintIOP(&system, []string{ithInstance(ID_L, i), ithInstance(ID_R, i), ithInstance(ID_O, i)}, S)
+		_ = arguments.CopyConstraintIOP(&system, []string{ithInstance(ID_L, i), ithInstance(ID_R, i), ithInstance(ID_O, i)}, S)
 
 	}
 
@@ -123,7 +123,7 @@ func TestPlonk(t *testing.T) {
 	for i := 0; i < nbTraces; i++ {
 		C := getIthPlonkRelation(i)
 		system.RegisterConstraint(C)
-		err = std.CopyConstraintIOP(&system, []string{ithInstance(ID_L, i), ithInstance(ID_R, i), ithInstance(ID_O, i)}, S)
+		err = arguments.CopyConstraintIOP(&system, []string{ithInstance(ID_L, i), ithInstance(ID_R, i), ithInstance(ID_O, i)}, S)
 		if err != nil {
 			t.Fatal(err)
 		}
