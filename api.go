@@ -2,13 +2,13 @@ package giop
 
 import (
 	"github.com/consensys/giop/constraint"
-	"github.com/consensys/giop/internal/derive"
+	"github.com/consensys/giop/proof"
 	"github.com/consensys/giop/prover"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/giop/verifier"
 )
 
-func Prove(cciop constraint.Program, trace trace.Trace, nbWorkers int) (derive.Proof, error) {
+func Prove(cciop constraint.Program, trace trace.Trace, nbWorkers int) (proof.Proof, error) {
 
 	knownColumns := make(map[string]bool)
 	for k, _ := range trace {
@@ -22,7 +22,7 @@ func Prove(cciop constraint.Program, trace trace.Trace, nbWorkers int) (derive.P
 	return _prover.Prove(knownColumns, nbWorkers)
 }
 
-func Verify(cciop constraint.Program, proof *derive.Proof, nbWorkers int) error {
+func Verify(cciop constraint.Program, p *proof.Proof, nbWorkers int) error {
 	verifierRunTime := verifier.NewRunTime(cciop)
-	return verifierRunTime.Verify(proof, nbWorkers)
+	return verifierRunTime.Verify(p, nbWorkers)
 }

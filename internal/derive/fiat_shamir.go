@@ -112,10 +112,10 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.
 		// if they appear in it -> round.DependenciesChallenges already accout for them.
 		deps := make([]string, 0, len(dependenciesChallenges))
 		for _, c := range dependenciesChallenges {
-			if _, ok := proof.cacheChallengeDependencies[c]; !ok {
+			cacheDeps, ok := proof.GetChallengeDeps(c)
+			if !ok {
 				return nil, fmt.Errorf("challenge %s not recorded in cacheChallengeDependencies", c)
 			}
-			cacheDeps := proof.cacheChallengeDependencies[c]
 			deps = append(deps, cacheDeps...)
 		}
 		dependenciesCommittedColumns = l1MinusL2(dependenciesCommittedColumns, deps)
@@ -129,10 +129,10 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.
 		proof.TranscriptRounds = append(proof.TranscriptRounds, round)
 
 		// 4. add the current challenge to the cacheChallengeDependencies map
-		if _, ok := proof.cacheChallengeDependencies[challengeName]; ok {
+		if _, ok := proof.GetChallengeDeps(challengeName); ok {
 			return nil, fmt.Errorf("challenge %s is already recorded", challengeName)
 		}
-		proof.cacheChallengeDependencies[challengeName] = l1DisjointUnionL2(round.DependenciesCommittedColumns, deps)
+		proof.SetChallengeDeps(challengeName, l1DisjointUnionL2(round.DependenciesCommittedColumns, deps))
 
 		// 5. Commit to all the polynomials whose name matches leaves. Record the commitments in the proof, and update FS along the way
 		fs := fiatshamir.NewTranscript(sha256.New())
