@@ -15,8 +15,8 @@ type Relation = expr.Expr
 // different constraints (for instance a solver might tell how to compute a grand product column, grand sum column, etc).
 type Builder struct {
 	Relations   Relations
-	ProverActions []proveractions.ProverAction
-	Cache         map[string]int // cache storing already regisetered prover actions. The value is an entry in ProverActions
+	DerivationPlan []proveractions.DerivationStep
+	Cache         map[string]int // cache storing already regisetered prover actions. The value is an entry in DerivationPlan
 	N             int
 }
 
@@ -24,21 +24,21 @@ type Builder struct {
 func NewBuilder(N int) Builder {
 	return Builder{
 		Relations:   make(Relations, 0),
-		ProverActions: make(proveractions.ProverActions, 0),
+		DerivationPlan: make(proveractions.DerivationPlan, 0),
 		Cache:         make(map[string]int),
 		N:             N,
 	}
 }
 
-// RegisterProverAction adds a prover action to the underlying Builder
-func (system *Builder) RegisterProverAction(inputs []expr.Expr, outputs []string, ctx proveractions.Ctx) {
+// RegisterDerivationStep adds a prover action to the underlying Builder
+func (system *Builder) RegisterDerivationStep(inputs []expr.Expr, outputs []string, ctx proveractions.Ctx) {
 
-	pa := proveractions.ProverAction{
+	pa := proveractions.DerivationStep{
 		Inputs:  inputs,
 		Outputs: outputs,
 		Ctx:     ctx,
 	}
-	system.ProverActions = append(system.ProverActions, pa)
+	system.DerivationPlan = append(system.DerivationPlan, pa)
 }
 
 // Relations list of constraints, that the Columns in a trace must fulfil. The constraints
@@ -61,12 +61,12 @@ func (system *Builder) RegisterithLagrangeColumn(i int) {
 	if _, ok := system.Cache[k]; ok {
 		return
 	}
-	// TODO this should be in RegisterProverAction.
+	// TODO this should be in RegisterDerivationStep.
 	// Pb:
 	// 1. key depends only on ctx atm and not on ProverAciont
 	// 2. if the action already exists, we should return the output to reuse them and change the api
-	system.Cache[k] = len(system.ProverActions)
-	system.RegisterProverAction(nil, []string{proveractions.GetLagrangeID(i, system.N)}, proveractions.NewLagrangeContext(i, system.N))
+	system.Cache[k] = len(system.DerivationPlan)
+	system.RegisterDerivationStep(nil, []string{proveractions.GetLagrangeID(i, system.N)}, proveractions.NewLagrangeContext(i, system.N))
 }
 
 // RegisterPermutation syntactic sugar to add a prover action for registering the columns
@@ -82,7 +82,7 @@ func (system *Builder) RegisterPermutation(S []int64) ([]string, error) {
 	k := permutationContext.Key()
 	if _, ok := system.Cache[k]; ok {
 		idx := system.Cache[k]
-		return system.ProverActions[idx].Outputs, nil
+		return system.DerivationPlan[idx].Outputs, nil
 	}
 
 	// otherwise we register it
@@ -101,8 +101,8 @@ func (system *Builder) RegisterPermutation(S []int64) ([]string, error) {
 		SId[i] = fmt.Sprintf("%s_%d", pid, i)
 	}
 	allOutputs := append(IDid, SId...)
-	system.Cache[k] = len(system.ProverActions)
-	system.RegisterProverAction(nil, allOutputs, permutationContext)
+	system.Cache[k] = len(system.DerivationPlan)
+	system.RegisterDerivationStep(nil, allOutputs, permutationContext)
 
 	return allOutputs, nil
 }

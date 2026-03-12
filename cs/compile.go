@@ -17,10 +17,10 @@ func Fold(E []expr.Expr, alpha expr.Expr) expr.Expr {
 	return res
 }
 
-// Program DAG containing all tha proverActions, and the final constraint that must vanish
+// Program DAG containing all tha proverSteps, and the final constraint that must vanish
 // on X^N-1
 type Program struct {
-	ProverActions     []proveractions.ProverAction
+	DerivationPlan     []proveractions.DerivationStep
 	VanishingRelation dag.DAG
 	Cache             map[string]int // not serialised, used for building the IOP only, used to track already registered prover actions which have no inputs (lagrange, permutation)
 	N                 int
@@ -57,7 +57,7 @@ func Compile(system *Builder, opts ...Option) Program {
 	CDag := dag.ExprToDAG(C)
 	CDag = CDag.Flatten()
 	return Program{
-		ProverActions:     system.ProverActions,
+		DerivationPlan:     system.DerivationPlan,
 		VanishingRelation: *CDag,
 		N:                 system.N,
 	}

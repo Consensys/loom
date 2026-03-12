@@ -57,7 +57,7 @@ func TestDegreeReduction(t *testing.T) {
 	//    "already registered"; skip it silently since the column is already correct.
 	proof := proveractions.NewProof(N)
 	var mu sync.Mutex
-	for _, pa := range system.ProverActions {
+	for _, pa := range system.DerivationPlan {
 		if err := pa.Execute(T, &proof, &mu); err != nil {
 			// "already registered" errors are expected for duplicate auxiliary columns
 			_ = err

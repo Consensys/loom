@@ -64,7 +64,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 	knownColumns := map[string]bool{"A": true, "A2": true, "B": true, "B2": true, "F1": true, "F2": true}
 	proof := proveractions.NewProof(system.N)
 
-	viz.WriteProverActionsDagToHTML(cciop, "pa_projection_multi.html")
+	viz.WriteDerivationPlanDagToHTML(cciop, "pa_projection_multi.html")
 
 	err = proverRunTime.Solve(knownColumns, &proof, 1)
 	if err != nil {

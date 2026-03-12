@@ -104,7 +104,7 @@ func ProjectionTuple(system *cs.Builder, A []string, F1 string, B []string, F2 s
 	for i := 0; i < len(B); i++ {
 		foldingDeps[i+len(A)] = expr.Col(B[i])
 	}
-	system.RegisterProverAction(foldingDeps, []string{gamma}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
+	system.RegisterDerivationStep(foldingDeps, []string{gamma}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 2. fold A and B
 	gammaExpr := expr.NewChallenge(gamma)
@@ -148,13 +148,13 @@ func ProjectionExpr(system *cs.Builder, A, B, F1, F2 expr.Expr) error {
 	// F1Expr := expr.Col(F1)
 	// F2Expr := expr.Col(F2)
 	depsAlpha := []expr.Expr{A, B, F1, F2}
-	system.RegisterProverAction(depsAlpha, []string{_alpha}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
+	system.RegisterDerivationStep(depsAlpha, []string{_alpha}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 3. create the filtered acc polynomials
 	inputsFA := []expr.Expr{A, F1, alpha}
-	system.RegisterProverAction(inputsFA, []string{idAccFA}, proveractions.NewIDCtx(proveractions.FITLERED_ACC_POLY))
+	system.RegisterDerivationStep(inputsFA, []string{idAccFA}, proveractions.NewIDCtx(proveractions.FITLERED_ACC_POLY))
 	inputsFB := []expr.Expr{B, F2, alpha}
-	system.RegisterProverAction(inputsFB, []string{idAccFB}, proveractions.NewIDCtx(proveractions.FITLERED_ACC_POLY))
+	system.RegisterDerivationStep(inputsFB, []string{idAccFB}, proveractions.NewIDCtx(proveractions.FITLERED_ACC_POLY))
 
 	// 4. register the constraints ensuring that the filtered acc polynomials
 	// FA and FB are correclty constructed

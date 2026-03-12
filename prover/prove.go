@@ -35,7 +35,7 @@ func NewRuntime(cciop cs.Program, trace trace.Trace) Runtime {
 // Kahn's style scheduler for Functions (with parallel schedule)
 func (runtime *Runtime) Solve(knownColumns map[string]bool, proof *proveractions.Proof, nbWorker int) error {
 
-	funcs := runtime.Program.ProverActions
+	funcs := runtime.Program.DerivationPlan
 	n := len(funcs)
 
 	inDegree := make([]int32, n)

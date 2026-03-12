@@ -81,19 +81,19 @@ func inclusionCheckIOP(system *cs.Builder, S, T expr.Expr) error {
 
 	// 1. create the multiplicity polynomial
 	Mexpr := expr.Col(M)
-	system.RegisterProverAction([]expr.Expr{S, T}, []string{M}, proveractions.NewIDCtx(proveractions.MULTIPLICITY))
+	system.RegisterDerivationStep([]expr.Expr{S, T}, []string{M}, proveractions.NewIDCtx(proveractions.MULTIPLICITY))
 
 	// 2. sample a challenge gamma, depending on M, S, and T
 	gammaDeps := []expr.Expr{S, T, Mexpr}
-	system.RegisterProverAction(gammaDeps, []string{gamma}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
+	system.RegisterDerivationStep(gammaDeps, []string{gamma}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 3. compute the grand sums grandSum1:=Σ_i M[i]/(T[i]-γ), grandSum2:=Σ_i 1/(S[i]-γ)
 	oneExpr := expr.Const(koalabear.One())
 	SminusGamma := S.Sub(expr.NewChallenge(gamma))
-	system.RegisterProverAction([]expr.Expr{oneExpr, SminusGamma}, []string{grandSumS}, proveractions.NewIDCtx(proveractions.GRAND_SUM))
+	system.RegisterDerivationStep([]expr.Expr{oneExpr, SminusGamma}, []string{grandSumS}, proveractions.NewIDCtx(proveractions.GRAND_SUM))
 
 	TminusGamma := T.Sub(expr.NewChallenge(gamma))
-	system.RegisterProverAction([]expr.Expr{Mexpr, TminusGamma}, []string{grandSumT}, proveractions.NewIDCtx(proveractions.GRAND_SUM))
+	system.RegisterDerivationStep([]expr.Expr{Mexpr, TminusGamma}, []string{grandSumT}, proveractions.NewIDCtx(proveractions.GRAND_SUM))
 
 	// 4. register the constraints ensuring the grand sums are correctly constructed
 	grandSumRelationsT := cs.BuildGrandSumRelations(Mexpr, TminusGamma, grandSumT, system.N)
@@ -179,7 +179,7 @@ func LookupTuple(system *cs.Builder, S, T []string) error {
 	for i := 0; i < len(T); i++ {
 		foldingDeps[i+len(S)] = expr.Col(T[i])
 	}
-	system.RegisterProverAction(foldingDeps, []string{gamma}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
+	system.RegisterDerivationStep(foldingDeps, []string{gamma}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 2. fold S and T
 	gammaExpr := expr.NewChallenge(gamma)

@@ -9,7 +9,7 @@ import (
 	"github.com/consensys/giop/prover"
 )
 
-func TestWriteProverActionsDagToHTML(t *testing.T) {
+func TestWriteDerivationPlanDagToHTML(t *testing.T) {
 	size := 16
 	system := cs.NewBuilder(size)
 	if err := arguments.PermutationMultiset(
@@ -22,7 +22,7 @@ func TestWriteProverActionsDagToHTML(t *testing.T) {
 	cciop := cs.Compile(&system)
 
 	out := t.TempDir() + "/prover_dag.html"
-	if err := WriteProverActionsDagToHTML(cciop, out); err != nil {
+	if err := WriteDerivationPlanDagToHTML(cciop, out); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(out)

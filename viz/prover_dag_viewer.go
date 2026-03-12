@@ -12,8 +12,8 @@ import (
 	proveractions "github.com/consensys/giop/prover_actions"
 )
 
-// actionLabel returns a display label for a ProverAction from its Ctx.String().
-func actionLabel(pa proveractions.ProverAction) string {
+// actionLabel returns a display label for a DerivationStep from its Ctx.String().
+func actionLabel(pa proveractions.DerivationStep) string {
 	if pa.Ctx != nil {
 		return pa.Ctx.String()
 	}
@@ -27,21 +27,21 @@ func actionLabel(pa proveractions.ProverAction) string {
 	return "→ " + strings.Join(parts, ", ")
 }
 
-// WriteProverActionsDagToHTML writes a self-contained HTML file visualising the
-// DAG of ProverActions inside cciop.
+// WriteDerivationPlanDagToHTML writes a self-contained HTML file visualising the
+// DAG of DerivationPlan inside cciop.
 //
-// Each ProverAction is a node. Column IDs extracted from its Inputs that never
+// Each DerivationStep is a node. Column IDs extracted from its Inputs that never
 // appear as any action's Output are "known" (initial) columns. Column IDs that
 // appear as some action's Output are "computed" columns.
 //
 // Visual conventions:
 //   - Blue rectangles     : known (initial) input columns
 //   - Green rectangles    : computed output columns
-//   - Orange rounded rect : ProverAction node (labelled by its output columns)
+//   - Orange rounded rect : DerivationStep node (labelled by its output columns)
 //   - Dashed blue arrow   : column → action (input dependency)
 //   - Solid orange arrow  : action → column (produced output)
-func WriteProverActionsDagToHTML(cciop cs.Program, filename string) error {
-	actions := cciop.ProverActions
+func WriteDerivationPlanDagToHTML(cciop cs.Program, filename string) error {
+	actions := cciop.DerivationPlan
 
 	// ── 1. find which columns are produced by actions ────────────────────────
 	producedBy := make(map[string]bool)
@@ -87,7 +87,7 @@ func WriteProverActionsDagToHTML(cciop cs.Program, filename string) error {
 	}
 
 	// ── 3. layer assignment ─────────────────────────────────────────────────
-	// ProverActions are already in topological order (from Kahn's compiler).
+	// DerivationPlan are already in topological order (from Kahn's compiler).
 	layerOf := make(map[string]int)
 	for id, k := range kindOf {
 		if k == "known" {
@@ -173,20 +173,20 @@ func WriteProverActionsDagToHTML(cciop cs.Program, filename string) error {
 	}
 	defer f.Close()
 
-	tmpl, err := template.New("prover_dag").Parse(proverActionsHTMLTemplate)
+	tmpl, err := template.New("prover_dag").Parse(proverStepsHTMLTemplate)
 	if err != nil {
 		return fmt.Errorf("prover dag: template: %w", err)
 	}
 	return tmpl.Execute(f, string(payload))
 }
 
-// proverActionsHTMLTemplate is a self-contained HTML page for the prover actions DAG.
+// proverStepsHTMLTemplate is a self-contained HTML page for the prover actions DAG.
 // {{.}} is replaced by the JSON payload string.
-const proverActionsHTMLTemplate = `<!DOCTYPE html>
+const proverStepsHTMLTemplate = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Prover Actions DAG</title>
+<title>Prover Steps DAG</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{
@@ -237,7 +237,7 @@ svg{width:100%;height:100%}
 <body>
 
 <div id="bar">
-  <h1>&#x25B6;&nbsp;Prover Actions <span>DAG</span></h1>
+  <h1>&#x25B6;&nbsp;Prover Steps <span>DAG</span></h1>
   <div id="legend">
     <div class="li">
       <svg width="13" height="13">

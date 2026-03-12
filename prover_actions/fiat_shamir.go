@@ -89,7 +89,7 @@ func l1DisjointUnionL2(l1, l2 []string) []string {
 	return res
 }
 
-// ComputeChallenge type of ProverAction creates a challenge named GP[0] which is derived via FS
+// ComputeChallenge type of DerivationStep creates a challenge named GP[0] which is derived via FS
 // from the commitments of all the leaves appearing in E.
 func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, GP []string, _ Ctx) error {
 	if len(GP) == 0 {

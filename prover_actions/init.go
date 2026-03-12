@@ -13,7 +13,7 @@ const (
 )
 
 func init() {
-	PARegister = make(map[PAIdentifier]Action)
+	PARegister = make(map[PAIdentifier]Step)
 	PARegister[GRAND_PRODUCT] = ComputeGrandProduct
 	PARegister[GRAND_SUM] = ComputeGrandSum
 	PARegister[LAGRANGE] = ComputeLagrangeColumn

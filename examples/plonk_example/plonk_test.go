@@ -131,7 +131,7 @@ func TestPlonk(t *testing.T) {
 
 	cciop := cs.Compile(&system)
 
-	// viewer.WriteProverActionsDagToHTML(cciop, "plonk_dag.html")
+	// viewer.WriteDerivationPlanDagToHTML(cciop, "plonk_dag.html")
 
 	proverRunTime := prover.NewRuntime(cciop, fulltrace)
 	// proof := cs.NewProof(N)
