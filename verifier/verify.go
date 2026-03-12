@@ -31,49 +31,49 @@ func NewRunTime(cciop cs.Program) Verifier {
 	}
 }
 
-// DeriveChallenge derive the challenge of corresponding to proof.Rounds[i]
+// DeriveChallenge derive the challenge of corresponding to proof.TranscriptRounds[i]
 func (runtime *Verifier) DeriveChallenge(proof *derive.Proof, i int) error {
 
 	fs := fiatshamir.NewTranscript(sha256.New())
 
 	// create the challenge
-	err := fs.NewChallenge(proof.Rounds[i].ChallengeName)
+	err := fs.NewChallenge(proof.TranscriptRounds[i].ChallengeName)
 	if err != nil {
 		return err
 	}
 
 	// bind the challenge to its commitments dependencies
-	for _, l := range proof.Rounds[i].DependenciesCommittedColumns {
+	for _, l := range proof.TranscriptRounds[i].DependenciesCommittedColumns {
 		com, ok := proof.OpeningProofs[l]
 		if !ok {
 			return fmt.Errorf("commitment %s not registered in the proof", l)
 		}
-		fs.Bind(proof.Rounds[i].ChallengeName, com.Digest.Marshal())
+		fs.Bind(proof.TranscriptRounds[i].ChallengeName, com.Digest.Marshal())
 	}
 
 	// bind the challenge to its other challenges dependencies
-	for _, l := range proof.Rounds[i].DependenciesChallenges {
+	for _, l := range proof.TranscriptRounds[i].DependenciesChallenges {
 		challenge, ok := runtime.Vars[l]
 		if !ok {
 			return fmt.Errorf("challenge %s not registered in vars", l)
 		}
-		fs.Bind(proof.Rounds[i].ChallengeName, challenge.Marshal())
+		fs.Bind(proof.TranscriptRounds[i].ChallengeName, challenge.Marshal())
 	}
 
 	// compute the challenge and store it in runtime.Vars
-	bc, err := fs.ComputeChallenge(proof.Rounds[i].ChallengeName)
+	bc, err := fs.ComputeChallenge(proof.TranscriptRounds[i].ChallengeName)
 	if err != nil {
 		return err
 	}
 	var c koalabear.Element
 	c.SetBytes(bc)
-	runtime.Vars[proof.Rounds[i].ChallengeName] = c
+	runtime.Vars[proof.TranscriptRounds[i].ChallengeName] = c
 
 	return nil
 }
 
 // ComputeChallenges compute challenges using Kahn's style scheduler.
-// *The nodes are proof.Rounds
+// *The nodes are proof.TranscriptRounds
 // * node input are DependenciesChallenges
 // * node output is ChallengeName
 func (runtime *Verifier) ComputeChallenges(proof *derive.Proof, nbWorkers int) error {
@@ -82,7 +82,7 @@ func (runtime *Verifier) ComputeChallenges(proof *derive.Proof, nbWorkers int) e
 	// depend on other challenges.
 	known := make(map[string]bool)
 
-	nodes := proof.Rounds
+	nodes := proof.TranscriptRounds
 	n := len(nodes)
 
 	inDegree := make([]int32, n)

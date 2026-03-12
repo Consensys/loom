@@ -121,12 +121,12 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.
 		dependenciesCommittedColumns = l1MinusL2(dependenciesCommittedColumns, deps)
 
 		// 3. record the round
-		round := Round{
+		round := TranscriptRound{
 			ChallengeName:                challengeName,
 			DependenciesCommittedColumns: dependenciesCommittedColumns,
 			DependenciesChallenges:       dependenciesChallenges,
 		}
-		proof.Rounds = append(proof.Rounds, round)
+		proof.TranscriptRounds = append(proof.TranscriptRounds, round)
 
 		// 4. add the current challenge to the cacheChallengeDependencies map
 		if _, ok := proof.cacheChallengeDependencies[challengeName]; ok {

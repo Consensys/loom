@@ -114,7 +114,7 @@ func (runtime *Prover) Solve(knownColumns map[string]bool, proof *derive.Proof, 
 
 // FinalChallenges returns the last challenges in the DAG whose nodes are
 // {inputs: rounds[i].DependenciesChallenges, output: rounds[i].ChallengeName}
-func FinalChallenges(rounds []derive.Round) []string {
+func FinalChallenges(rounds []derive.TranscriptRound) []string {
 	usedAsInput := make(map[string]bool)
 	produced := make(map[string]bool)
 
@@ -146,7 +146,7 @@ func (runtime *Prover) DeriveFinalFoldingChallenge(proof *derive.Proof) error {
 	// data to ensure it cannot have been derived prior to running all the previous IOPs and commitments
 
 	// 1. create the dependencies of the folding challenge to all the polynomials not committed
-	var round derive.Round
+	var round derive.TranscriptRound
 	round.ChallengeName = constants.FINAL_FOLDING_CHALLENGE
 	leaves := runtime.Program.VanishingRelation.Leaves(expr.NewConfig(expr.WithoutChallenges(), expr.WithoutVirtualumns(), expr.WithoutRotatedColumns()))
 	round.DependenciesCommittedColumns = make([]string, 0, len(leaves))
@@ -157,8 +157,8 @@ func (runtime *Prover) DeriveFinalFoldingChallenge(proof *derive.Proof) error {
 	}
 
 	// 2. create the dependencies of the folding challenge to the challenges which are the outputs of the DAG whose inputs/outputs are challenges
-	round.DependenciesChallenges = FinalChallenges(proof.Rounds)
-	proof.Rounds = append(proof.Rounds, round)
+	round.DependenciesChallenges = FinalChallenges(proof.TranscriptRounds)
+	proof.TranscriptRounds = append(proof.TranscriptRounds, round)
 
 	// Now 1. and 2. guarantee the order: now we know that teh challenge cannot have been generated prior to committing to everything and prior to running every sub protocols
 
@@ -235,11 +235,11 @@ func (runtime *Prover) ComputeQuotient(proof *derive.Proof) error {
 func (runtime *Prover) DeriveOpeningChallenge(proof *derive.Proof) (koalabear.Element, error) {
 
 	// register the round in the proof
-	var round derive.Round
+	var round derive.TranscriptRound
 	round.ChallengeName = constants.FINAL_EVALUATION_POINT
 	round.DependenciesCommittedColumns = []string{constants.FINAL_QUOTIENT}
 	round.DependenciesChallenges = []string{constants.FINAL_FOLDING_CHALLENGE}
-	proof.Rounds = append(proof.Rounds, round)
+	proof.TranscriptRounds = append(proof.TranscriptRounds, round)
 
 	// derive the challenge, depending on :
 	// * proof.OpeningProofs[constants.FINAL_QUOTIENT].Digest

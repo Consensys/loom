@@ -59,7 +59,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cciop := cs.Compile(&system)
+	cciop := system.Compile()
 	proverRunTime := prover.NewProver(cciop, T)
 	knownColumns := map[string]bool{"A": true, "A2": true, "B": true, "B2": true, "F1": true, "F2": true}
 	proof := derive.NewProof(system.N)
@@ -103,7 +103,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 	}
 	CheckFiatShamir(&proverRunTime, &verifierRunTime, &proof, zeta, t)
 
-	viz.WriteProofRoundsDagToHTML(proof.Rounds, "projection_multi_rounds.html")
+	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, "projection_multi_rounds.html")
 
 	err = verifierRunTime.Verify(&proof, 1)
 	if err != nil {
@@ -159,7 +159,7 @@ func TestEqualityFilteredColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cciop := cs.Compile(&system)
+	cciop := system.Compile()
 	proverRunTime := prover.NewProver(cciop, T)
 	knownColumns := map[string]bool{"A": true, "B": true, "F1": true, "F2": true}
 	proof := derive.NewProof(system.N)

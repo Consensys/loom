@@ -4,9 +4,9 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/cs"
+	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/poly"
 	"github.com/consensys/giop/prover"
-	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/giop/verifier"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -42,7 +42,8 @@ func TestCopyPermutation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cciop := cs.Compile(&system)
+	// cciop := system.Compile()
+	cciop := system.Compile()
 	proverRunTime := prover.NewProver(cciop, T)
 	knownColumns := map[string]bool{"P1": true, "P2": true}
 	proof := derive.NewProof(system.N)
@@ -127,7 +128,7 @@ func TestCopyPermutationTuple(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cciop := cs.Compile(&system)
+	cciop := system.Compile()
 	proverRunTime := prover.NewProver(cciop, T)
 	knownColumns := map[string]bool{"P1": true, "P2": true}
 	proof := derive.NewProof(system.N)

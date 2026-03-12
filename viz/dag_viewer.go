@@ -52,7 +52,7 @@ func dagShortLabel(id string) string {
 // WriteDagToHTML writes a self-contained HTML file that visualises the DAG
 // formed by rounds.
 //
-// Each Round contributes one challenge node (output) that depends on:
+// Each TranscriptRound contributes one challenge node (output) that depends on:
 //   - DependenciesCommittedColumns  → committed-column leaf nodes (always known)
 //   - DependenciesChallenges        → other challenge nodes (Kahn's unknowns)
 //
@@ -61,7 +61,7 @@ func dagShortLabel(id string) string {
 //   - Purple rounded rectangles : challenge nodes
 //   - Dashed blue arrows  : committed column → challenge
 //   - Solid purple arrows : challenge → challenge
-func WriteProofRoundsDagToHTML(rounds []derive.Round, filename string) error {
+func WriteProofTranscriptRoundsDagToHTML(rounds []derive.TranscriptRound, filename string) error {
 	// ── 1. collect unique nodes and edges ─────────────────────────────────────
 	kindOf := make(map[string]string) // id → "committed" | "challenge"
 	var edges []dagEdge
@@ -210,7 +210,7 @@ const dagHTMLTemplate = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>IOP Round DAG</title>
+<title>IOP TranscriptRound DAG</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{
@@ -259,7 +259,7 @@ svg{width:100%;height:100%}
 <body>
 
 <div id="bar">
-  <h1>&#x25B6;&nbsp;IOP Round <span>DAG</span></h1>
+  <h1>&#x25B6;&nbsp;IOP TranscriptRound <span>DAG</span></h1>
   <div id="legend">
     <div class="li">
       <svg width="13" height="13">

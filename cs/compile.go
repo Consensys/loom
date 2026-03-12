@@ -3,8 +3,8 @@ package cs
 import (
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/dag"
-	"github.com/consensys/giop/expr"
 	derive "github.com/consensys/giop/derive"
+	"github.com/consensys/giop/expr"
 )
 
 // Fold returns Σ_i αⁱE[i]
@@ -20,7 +20,7 @@ func Fold(E []expr.Expr, alpha expr.Expr) expr.Expr {
 // Program DAG containing all tha proverSteps, and the final constraint that must vanish
 // on X^N-1
 type Program struct {
-	DerivationPlan     []derive.DerivationStep
+	DerivationPlan    []derive.DerivationStep
 	VanishingRelation dag.DAG
 	Cache             map[string]int // not serialised, used for building the IOP only, used to track already registered prover actions which have no inputs (lagrange, permutation)
 	N                 int
@@ -40,7 +40,7 @@ func WithTargetDegree(targetDegree int) Option {
 
 // Fold all the constraints by sampling a random challenge, derived from the necessary data to ensure that this challenge
 // cannot have been derived derived prior to any of the prover<->interactions and commitments
-func Compile(system *Builder, opts ...Option) Program {
+func (system *Builder) Compile(opts ...Option) Program {
 
 	var config Config
 	for _, opt := range opts {
@@ -57,7 +57,7 @@ func Compile(system *Builder, opts ...Option) Program {
 	CDag := dag.ExprToDAG(C)
 	CDag = CDag.Flatten()
 	return Program{
-		DerivationPlan:     system.DerivationPlan,
+		DerivationPlan:    system.DerivationPlan,
 		VanishingRelation: *CDag,
 		N:                 system.N,
 	}

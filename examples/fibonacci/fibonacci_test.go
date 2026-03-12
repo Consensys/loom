@@ -53,7 +53,7 @@ func TestFibonacci(t *testing.T) {
 	system.AssertZero(cs.BuildLocalRelation(colA, expr.Const(zero), 0, N))
 	system.AssertZero(cs.BuildLocalRelation(colB, expr.Const(one), 0, N))
 
-	cciop := cs.Compile(&system)
+	cciop := system.Compile()
 
 	// Now that the system is compiled, fetch the trace and generate the proof
 

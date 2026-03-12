@@ -19,7 +19,7 @@ func TestWriteDerivationPlanDagToHTML(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	cciop := cs.Compile(&system)
+	cciop := system.Compile()
 
 	out := t.TempDir() + "/prover_dag.html"
 	if err := WriteDerivationPlanDagToHTML(cciop, out); err != nil {
@@ -35,13 +35,13 @@ func TestWriteDerivationPlanDagToHTML(t *testing.T) {
 	t.Logf("Prover actions DAG HTML written to %s (%d bytes)", out, len(data))
 }
 
-func TestWriteProofRoundsDagToHTML_Permutation(t *testing.T) {
+func TestWriteProofTranscriptRoundsDagToHTML_Permutation(t *testing.T) {
 	size := 16
 	trace := cs.BuildPermutationCircuit(t, size)
 	system := cs.NewBuilder(size)
 	arguments.Permutation(&system, []string{"P0"}, []string{"P1"})
 
-	cciop := cs.Compile(&system)
+	cciop := system.Compile()
 	rt := prover.NewProver(cciop, trace)
 	proof, err := rt.Prove(map[string]bool{"P0": true, "P1": true}, 1)
 	if err != nil {
@@ -49,7 +49,7 @@ func TestWriteProofRoundsDagToHTML_Permutation(t *testing.T) {
 	}
 
 	out := t.TempDir() + "/dag_permutation.html"
-	if err := WriteProofRoundsDagToHTML(proof.Rounds, out); err != nil {
+	if err := WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, out); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(out)
@@ -62,7 +62,7 @@ func TestWriteProofRoundsDagToHTML_Permutation(t *testing.T) {
 	t.Logf("DAG HTML written to %s (%d bytes)", out, len(data))
 }
 
-func TestWriteProofRoundsDagToHTML_Tuple(t *testing.T) {
+func TestWriteProofTranscriptRoundsDagToHTML_Tuple(t *testing.T) {
 	size := 16
 	trace := cs.BuildPermutationTuple(t, size)
 	system := cs.NewBuilder(size)
@@ -74,7 +74,7 @@ func TestWriteProofRoundsDagToHTML_Tuple(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cciop := cs.Compile(&system)
+	cciop := system.Compile()
 	rt := prover.NewProver(cciop, trace)
 	proof, err := rt.Prove(map[string]bool{"P0": true, "P1": true, "Q0": true, "Q1": true}, 1)
 	if err != nil {
@@ -82,7 +82,7 @@ func TestWriteProofRoundsDagToHTML_Tuple(t *testing.T) {
 	}
 
 	out := t.TempDir() + "/dag_multiset.html"
-	if err := WriteProofRoundsDagToHTML(proof.Rounds, out); err != nil {
+	if err := WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, out); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(out)

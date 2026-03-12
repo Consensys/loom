@@ -59,7 +59,7 @@ func TestLookup(t *testing.T) {
 
 	Lookup(&system, "S", "T")
 
-	cciop := cs.Compile(&system)
+	cciop := system.Compile()
 
 	proverRunTime := prover.NewProver(cciop, trace)
 
@@ -125,7 +125,7 @@ func TestLookupTuple(t *testing.T) {
 
 	LookupTuple(&system, []string{"S0", "S1"}, []string{"T0", "T1"})
 
-	cciop := cs.Compile(&system)
+	cciop := system.Compile()
 
 	proverRunTime := prover.NewProver(cciop, tr)
 
@@ -167,7 +167,7 @@ func TestLookupTuple(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	viz.WriteProofRoundsDagToHTML(proof.Rounds, "rounds.html")
+	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, "rounds.html")
 
 	// 5. Build verifier runtime and derive challenges
 	verifierRunTime := verifier.NewRunTime(cciop)

@@ -95,7 +95,7 @@ func BenchmarkCompile(b *testing.B) {
 	}
 
 	for i := 0; i < b.N; i++ {
-		cs.Compile(&system)
+		system.Compile()
 	}
 
 }
@@ -129,7 +129,7 @@ func TestPlonk(t *testing.T) {
 		}
 	}
 
-	cciop := cs.Compile(&system)
+	cciop := system.Compile()
 
 	// viewer.WriteDerivationPlanDagToHTML(cciop, "plonk_dag.html")
 
@@ -179,7 +179,7 @@ func TestPlonk(t *testing.T) {
 	// 	t.Fatal(err)
 	// }
 
-	// viewer.WriteProofRoundsDagToHTML(proof.Rounds, "dag.html")
+	// viewer.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, "dag.html")
 
 	// verifierRunTime := verifier.NewRunTime(cciop)
 	// err = verifierRunTime.Verify(&proof, 1)
