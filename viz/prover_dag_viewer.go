@@ -40,7 +40,7 @@ func actionLabel(pa proveractions.ProverAction) string {
 //   - Orange rounded rect : ProverAction node (labelled by its output columns)
 //   - Dashed blue arrow   : column → action (input dependency)
 //   - Solid orange arrow  : action → column (produced output)
-func WriteProverActionsDagToHTML(cciop cs.CompiledIOP, filename string) error {
+func WriteProverActionsDagToHTML(cciop cs.Program, filename string) error {
 	actions := cciop.ProverActions
 
 	// ── 1. find which columns are produced by actions ────────────────────────

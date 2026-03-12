@@ -25,7 +25,7 @@ func sanityCheck(proverRunTime *prover.Runtime, constraints []cs.Relation, N int
 
 func CheckFiatShamir(proverRunTime *prover.Runtime, verifierRunTime *verifier.Runtime, proof *proveractions.Proof, zeta koalabear.Element, t *testing.T) {
 
-	proverChallenges := proverRunTime.CompiledIOP.VanishingRelation.Leaves(
+	proverChallenges := proverRunTime.Program.VanishingRelation.Leaves(
 		expr.NewConfig(expr.WithoutCommittedColumns(),
 			expr.WithoutComputableColumns(),
 			expr.WithoutRotatedColumns()))

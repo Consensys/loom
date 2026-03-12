@@ -18,16 +18,16 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
-// Runtime contains the data needed to run the CompiledIOP to generate the proof.
+// Runtime contains the data needed to run the Program to generate the proof.
 type Runtime struct {
-	CompiledIOP cs.CompiledIOP
+	Program cs.Program
 	Trace       trace.Trace
 	Mu          sync.Mutex
 }
 
-func NewRuntime(cciop cs.CompiledIOP, trace trace.Trace) Runtime {
+func NewRuntime(cciop cs.Program, trace trace.Trace) Runtime {
 	return Runtime{
-		CompiledIOP: cciop,
+		Program: cciop,
 		Trace:       trace,
 	}
 }
@@ -35,7 +35,7 @@ func NewRuntime(cciop cs.CompiledIOP, trace trace.Trace) Runtime {
 // Kahn's style scheduler for Functions (with parallel schedule)
 func (runtime *Runtime) Solve(knownColumns map[string]bool, proof *proveractions.Proof, nbWorker int) error {
 
-	funcs := runtime.CompiledIOP.ProverActions
+	funcs := runtime.Program.ProverActions
 	n := len(funcs)
 
 	inDegree := make([]int32, n)
@@ -140,7 +140,7 @@ func FinalChallenges(rounds []proveractions.Round) []string {
 // cannot have been derived derived prior to any of the prover<->interactions and commitments
 func (runtime *Runtime) DeriveFinalFoldingChallenge(proof *proveractions.Proof) error {
 
-	// proof.VanishingRelation = runtime.CompiledIOP.VanishingRelation
+	// proof.VanishingRelation = runtime.Program.VanishingRelation
 
 	// generate the folding challenge whose name is constants.FINAL_FOLDING_CHALLENGE, and which must be be bound to all the necessary
 	// data to ensure it cannot have been derived prior to running all the previous IOPs and commitments
@@ -148,7 +148,7 @@ func (runtime *Runtime) DeriveFinalFoldingChallenge(proof *proveractions.Proof) 
 	// 1. create the dependencies of the folding challenge to all the polynomials not committed
 	var round proveractions.Round
 	round.ChallengeName = constants.FINAL_FOLDING_CHALLENGE
-	leaves := runtime.CompiledIOP.VanishingRelation.Leaves(expr.NewConfig(expr.WithoutChallenges(), expr.WithoutComputableColumns(), expr.WithoutRotatedColumns()))
+	leaves := runtime.Program.VanishingRelation.Leaves(expr.NewConfig(expr.WithoutChallenges(), expr.WithoutComputableColumns(), expr.WithoutRotatedColumns()))
 	round.DependenciesCommittedColumns = make([]string, 0, len(leaves))
 	for _, l := range leaves {
 		if _, ok := proof.OpeningProofs[l]; !ok { // <- the column whose ID is l is not committed, we add it to bindings
@@ -206,12 +206,12 @@ func (runtime *Runtime) DeriveFinalFoldingChallenge(proof *proveractions.Proof) 
 	return proveractions.NewColumn(runtime.Trace, constants.FINAL_FOLDING_CHALLENGE, []koalabear.Element{c}, &runtime.Mu)
 }
 
-// ComputeQuotient computes H:=runtime.CompiledIOP.Relation(runtime.Trace)/X^N-1 and commit to it, and
+// ComputeQuotient computes H:=runtime.Program.Relation(runtime.Trace)/X^N-1 and commit to it, and
 //
 //	and store it in the trace, it is needed to be opened later
 func (runtime *Runtime) ComputeQuotient(proof *proveractions.Proof) error {
 
-	H, err := univariate.ComputeQuotient(runtime.Trace, runtime.CompiledIOP.VanishingRelation, runtime.CompiledIOP.N)
+	H, err := univariate.ComputeQuotient(runtime.Trace, runtime.Program.VanishingRelation, runtime.Program.N)
 	if err != nil {
 		return fmt.Errorf("ComputeQuotient: %w", err)
 	}
@@ -320,7 +320,7 @@ func (runtime *Runtime) OpenNonShiftedCommitments(proof *proveractions.Proof, ze
 func (runtime *Runtime) OpenShiftedCommitments(proof *proveractions.Proof, zeta koalabear.Element) error {
 
 	// query the leaves corresponding to RotatedColumns
-	leavesShifted := runtime.CompiledIOP.VanishingRelation.Leaves(
+	leavesShifted := runtime.Program.VanishingRelation.Leaves(
 		expr.NewConfig(expr.WithoutChallenges(), expr.WithoutComputableColumns(), expr.WithoutCommittedColumns()))
 	leavesShifted = expr.RemoveDuplicates(leavesShifted)
 
@@ -365,7 +365,7 @@ func (runtime *Runtime) OpenShiftedCommitments(proof *proveractions.Proof, zeta 
 
 func (runtime *Runtime) Prove(knownColumns map[string]bool, nbWorkers int) (proveractions.Proof, error) {
 
-	proof := proveractions.NewProof(runtime.CompiledIOP.N)
+	proof := proveractions.NewProof(runtime.Program.N)
 
 	// 1. Solve
 	err := runtime.Solve(knownColumns, &proof, nbWorkers)

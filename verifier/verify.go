@@ -24,7 +24,7 @@ type Runtime struct {
 }
 
 // NewRunTime creates the Runtime for the given compiled IOP.
-func NewRunTime(cciop cs.CompiledIOP) Runtime {
+func NewRunTime(cciop cs.Program) Runtime {
 	return Runtime{
 		Vars:              make(map[string]koalabear.Element),
 		VanishingRelation: cciop.VanishingRelation,

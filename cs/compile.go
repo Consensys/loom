@@ -17,9 +17,9 @@ func Fold(E []expr.Expr, alpha expr.Expr) expr.Expr {
 	return res
 }
 
-// CompiledIOP DAG containing all tha proverActions, and the final constraint that must vanish
+// Program DAG containing all tha proverActions, and the final constraint that must vanish
 // on X^N-1
-type CompiledIOP struct {
+type Program struct {
 	ProverActions     []proveractions.ProverAction
 	VanishingRelation dag.DAG
 	Cache             map[string]int // not serialised, used for building the IOP only, used to track already registered prover actions which have no inputs (lagrange, permutation)
@@ -40,7 +40,7 @@ func WithTargetDegree(targetDegree int) Option {
 
 // Fold all the constraints by sampling a random challenge, derived from the necessary data to ensure that this challenge
 // cannot have been derived derived prior to any of the prover<->interactions and commitments
-func Compile(system *Builder, opts ...Option) CompiledIOP {
+func Compile(system *Builder, opts ...Option) Program {
 
 	var config Config
 	for _, opt := range opts {
@@ -56,7 +56,7 @@ func Compile(system *Builder, opts ...Option) CompiledIOP {
 	C := Fold(system.Relations, expr.NewChallenge(constants.FINAL_FOLDING_CHALLENGE))
 	CDag := dag.ExprToDAG(C)
 	CDag = CDag.Flatten()
-	return CompiledIOP{
+	return Program{
 		ProverActions:     system.ProverActions,
 		VanishingRelation: *CDag,
 		N:                 system.N,
