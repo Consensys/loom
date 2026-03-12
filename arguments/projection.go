@@ -158,13 +158,13 @@ func EqualityFilteredColumnsIOPExpr(system *cs.System, A, B, F1, F2 sym.Expr) er
 
 	// 4. register the constraints ensuring that the filtered acc polynomials
 	// FA and FB are correclty constructed
-	system.RegisterRelations(cs.BuildFilteredAccPolynomialRelation(A, F1, alpha, idAccFA, system.N))
-	system.RegisterRelations(cs.BuildFilteredAccPolynomialRelation(B, F2, alpha, idAccFB, system.N))
+	system.AssertZeros(cs.BuildFilteredAccPolynomialRelation(A, F1, alpha, idAccFA, system.N))
+	system.AssertZeros(cs.BuildFilteredAccPolynomialRelation(B, F2, alpha, idAccFB, system.N))
 
 	// 5. ensure FA[N-1]=FB[N-1]: the last entry holds the full filtered accumulation
 	accFA := sym.NewCommittedColumn(idAccFA)
 	accFB := sym.NewCommittedColumn(idAccFB)
-	system.RegisterRelation(cs.BuildLocalRelation(accFA, accFB, system.N-1, system.N))
+	system.AssertZero(cs.BuildLocalRelation(accFA, accFB, system.N-1, system.N))
 
 	// 6. Register Lagrange columns needed by BuildFilteredAccPolynomialRelation (L_0) and step 5 (L_{N-1})
 	system.RegisterithLagrangeColumn(0)

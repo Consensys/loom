@@ -98,14 +98,14 @@ func inclusionCheckIOP(system *cs.System, S, T sym.Expr) error {
 	// 4. register the constraints ensuring the grand sums are correctly constructed
 	grandSumRelationsT := cs.BuildGrandSumRelations(Mexpr, TminusGamma, grandSumT, system.N)
 	grandSumRelationsS := cs.BuildGrandSumRelations(oneExpr, SminusGamma, grandSumS, system.N)
-	system.RegisterRelations(grandSumRelationsT)
-	system.RegisterRelations(grandSumRelationsS)
+	system.AssertZeros(grandSumRelationsT)
+	system.AssertZeros(grandSumRelationsS)
 
 	// 5. ensure that grandSumT[N-1] = grandSumS[N-1]
 	grandSumSExpr := sym.NewCommittedColumn(grandSumS)
 	grandSumTExpr := sym.NewCommittedColumn(grandSumT)
 	boundaryEquality := cs.BuildLocalRelation(grandSumSExpr, grandSumTExpr, system.N-1, system.N)
-	system.RegisterRelation(boundaryEquality)
+	system.AssertZero(boundaryEquality)
 
 	// 6. register the creation of the 2 lagrange columns 0 and N-1
 	system.RegisterithLagrangeColumn(0)

@@ -30,7 +30,7 @@ func TestDegreeReduction(t *testing.T) {
 	system := NewSystem(N)
 	p0 := sym.NewCommittedColumn("P0")
 	p1 := sym.NewCommittedColumn("P1")
-	system.RegisterRelation(p0.Pow(4).Sub(p1.Pow(4)))
+	system.AssertZero(p0.Pow(4).Sub(p1.Pow(4)))
 
 	// 3. Reduce the degree: each sub-expression of degree > targetDegree is extracted
 	//    into a fresh auxiliary column and replaced by a committed-column leaf.

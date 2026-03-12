@@ -89,7 +89,7 @@ func BenchmarkCompile(b *testing.B) {
 	// QL*L + QR*R + QM*L*R + QO*O + QK = 0
 	for i := 0; i < nbTraces; i++ {
 		C := getIthPlonkRelation(i)
-		system.RegisterRelation(C)
+		system.AssertZero(C)
 		_ = arguments.CopyRelationIOP(&system, []string{ithInstance(ID_L, i), ithInstance(ID_R, i), ithInstance(ID_O, i)}, S)
 
 	}
@@ -122,7 +122,7 @@ func TestPlonk(t *testing.T) {
 	// ( (L, ID1), (R, ID2), (O, ID3)) and ( (L, S1), (R, S2), (O, S3)) must be equal as multisets
 	for i := 0; i < nbTraces; i++ {
 		C := getIthPlonkRelation(i)
-		system.RegisterRelation(C)
+		system.AssertZero(C)
 		err = arguments.CopyRelationIOP(&system, []string{ithInstance(ID_L, i), ithInstance(ID_R, i), ithInstance(ID_O, i)}, S)
 		if err != nil {
 			t.Fatal(err)

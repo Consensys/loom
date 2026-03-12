@@ -70,7 +70,7 @@ func reduceDegree(system *System, targetDegree int) {
 			// register the creation of an auxiliary column C := lowDegreeExpr(trace)
 			// The ID of C is lowDegreeExpr.String()
 			newRelation := BuildCorrectConstructionRelation(lowDegreeExpr, lowDegreeExpr.String())
-			system.RegisterRelation(newRelation)
+			system.AssertZero(newRelation)
 
 			// register the prover action of creating the column C := lowDegreeExpr(trace)
 			system.RegisterProverAction([]sym.Expr{lowDegreeExpr}, []string{lowDegreeExpr.String()}, proveractions.NewIDCtx(proveractions.COMPUTE_COL))

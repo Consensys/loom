@@ -45,11 +45,11 @@ func (system *System) RegisterProverAction(inputs []sym.Expr, outputs []string, 
 // are algebraic expression, which evaluted on columns of a trace.Trace of size N mut vanish on X^N-1.
 type Relations = []Relation
 
-func (system *System) RegisterRelation(C Relation) {
+func (system *System) AssertZero(C Relation) {
 	system.Relations = append(system.Relations, C)
 }
 
-func (system *System) RegisterRelations(C []Relation) {
+func (system *System) AssertZeros(C []Relation) {
 	system.Relations = append(system.Relations, C...)
 }
 
