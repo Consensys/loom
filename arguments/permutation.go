@@ -42,11 +42,11 @@ func Permutation(system *cs.System, ID1, ID2 []string) error {
 	// 1. sample gamma: register the prover action ComputeChallenge
 	E1 := make([]expr.Expr, len(ID1))
 	for i := 0; i < len(ID1); i++ {
-		E1[i] = expr.NewCommittedColumn(ID1[i])
+		E1[i] = expr.Col(ID1[i])
 	}
 	E2 := make([]expr.Expr, len(ID2))
 	for i := 0; i < len(ID2); i++ {
-		E2[i] = expr.NewCommittedColumn(ID2[i])
+		E2[i] = expr.Col(ID2[i])
 	}
 
 	return equalityUpToPermutationIOP(system, E1, E2)
@@ -138,14 +138,14 @@ func PermutationMultiset(system *cs.System, ID1, ID2 [][]string) error {
 	for i := 0; i < len(E1); i++ {
 		E1[i] = make([]expr.Expr, len(ID1[i]))
 		for j := 0; j < len(ID1[i]); j++ {
-			E1[i][j] = expr.NewCommittedColumn(ID1[i][j])
+			E1[i][j] = expr.Col(ID1[i][j])
 		}
 	}
 	E2 := make([][]expr.Expr, len(ID2))
 	for i := 0; i < len(E2); i++ {
 		E2[i] = make([]expr.Expr, len(ID2[i]))
 		for j := 0; j < len(ID2[i]); j++ {
-			E2[i][j] = expr.NewCommittedColumn(ID2[i][j])
+			E2[i][j] = expr.Col(ID2[i][j])
 		}
 	}
 

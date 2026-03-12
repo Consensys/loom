@@ -62,7 +62,7 @@ func reduceDegree(system *System, targetDegree int) {
 			// If the expression has already been seen, replace the expression with its folded counterpart
 			daglowDegreeExpr := dag.ExprToDAG(lowDegreeExpr)
 			if seen, ok := seenExpr[daglowDegreeExpr.Root.Key()]; ok {
-				cc := expr.NewCommittedColumn(seen)
+				cc := expr.Col(seen)
 				constraint.ReplaceLeafByExpression(lowDegreeExpr.String(), cc)
 				continue
 			}

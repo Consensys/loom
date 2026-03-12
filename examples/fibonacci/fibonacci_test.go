@@ -29,9 +29,9 @@ func TestFibonacci(t *testing.T) {
 
 	// vanishing constraint A + B - C = 0
 	system := cs.NewSystem(N)
-	colA := expr.NewCommittedColumn("A")
-	colB := expr.NewCommittedColumn("B")
-	colC := expr.NewCommittedColumn("C")
+	colA := expr.Col("A")
+	colB := expr.Col("B")
+	colC := expr.Col("C")
 	C1 := colA.Add(colB).Sub(colC)
 	system.AssertZero(C1)
 
@@ -41,8 +41,8 @@ func TestFibonacci(t *testing.T) {
 		filter[i].SetOne()
 	}
 	system.RegisterProverAction(nil, []string{"F1"}, proveractions.NewBuilderContext(filter))
-	F1 := expr.NewCommittedColumn("F1")
-	F2 := expr.NewShiftedColumn("F1", 1)
+	F1 := expr.Col("F1")
+	F2 := expr.RotatedCol("F1", 1)
 	arguments.ProjectionExpr(&system, colA, colB, F1, F2)
 	arguments.ProjectionExpr(&system, colB, colC, F1, F2)
 

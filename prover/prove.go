@@ -148,7 +148,7 @@ func (runtime *Runtime) DeriveFinalFoldingChallenge(proof *proveractions.Proof) 
 	// 1. create the dependencies of the folding challenge to all the polynomials not committed
 	var round proveractions.Round
 	round.ChallengeName = constants.FINAL_FOLDING_CHALLENGE
-	leaves := runtime.CompiledIOP.VanishingRelation.Leaves(expr.NewConfig(expr.WithoutChallenges(), expr.WithoutComputableColumns(), expr.WithoutShiftedColumns()))
+	leaves := runtime.CompiledIOP.VanishingRelation.Leaves(expr.NewConfig(expr.WithoutChallenges(), expr.WithoutComputableColumns(), expr.WithoutRotatedColumns()))
 	round.DependenciesCommittedColumns = make([]string, 0, len(leaves))
 	for _, l := range leaves {
 		if _, ok := proof.OpeningProofs[l]; !ok { // <- the column whose ID is l is not committed, we add it to bindings
@@ -319,12 +319,12 @@ func (runtime *Runtime) OpenNonShiftedCommitments(proof *proveractions.Proof, ze
 // OpenCommitments open all columns at zeta
 func (runtime *Runtime) OpenShiftedCommitments(proof *proveractions.Proof, zeta koalabear.Element) error {
 
-	// query the leaves corresponding to ShiftedColumns
+	// query the leaves corresponding to RotatedColumns
 	leavesShifted := runtime.CompiledIOP.VanishingRelation.Leaves(
 		expr.NewConfig(expr.WithoutChallenges(), expr.WithoutComputableColumns(), expr.WithoutCommittedColumns()))
 	leavesShifted = expr.RemoveDuplicates(leavesShifted)
 
-	// open the ShiftedColumns
+	// open the RotatedColumns
 	w, err := koalabear.Generator(uint64(proof.N))
 	if err != nil {
 		return err

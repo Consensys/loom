@@ -14,11 +14,11 @@ func TestGrandSumRelation(t *testing.T) {
 
 	trace := BuildRandomTrace(t, size)
 	system := NewSystem(size)
-	constraints := BuildGrandSumRelations(expr.NewCommittedColumn("M"), expr.NewCommittedColumn("E"), "GrandSum", size)
+	constraints := BuildGrandSumRelations(expr.Col("M"), expr.Col("E"), "GrandSum", size)
 	system.AssertZeros(constraints)
 	proof := proveractions.NewProof(size)
-	E := expr.NewCommittedColumn("E")
-	M := expr.NewCommittedColumn("M")
+	E := expr.Col("E")
+	M := expr.Col("M")
 	var mu sync.Mutex
 	err := proveractions.ComputeGrandSum(trace, &proof, &mu, []expr.Expr{M, E}, []string{"GrandSum"}, nil)
 	if err != nil {

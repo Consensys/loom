@@ -28,8 +28,8 @@ func TestDegreeReduction(t *testing.T) {
 
 	// 2. Create a system with the single degree-4 constraint P0^4 - P1^4.
 	system := NewSystem(N)
-	p0 := expr.NewCommittedColumn("P0")
-	p1 := expr.NewCommittedColumn("P1")
+	p0 := expr.Col("P0")
+	p1 := expr.Col("P1")
 	system.AssertZero(p0.Pow(4).Sub(p1.Pow(4)))
 
 	// 3. Reduce the degree: each sub-expression of degree > targetDegree is extracted

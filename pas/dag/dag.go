@@ -136,7 +136,7 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 		case *expr.Leaf:
 			var prefix string
 			switch v.Type {
-			case expr.ShiftedColumn:
+			case expr.RotatedColumn:
 				prefix = "shifted"
 			case expr.CommittedColumn:
 				prefix = "col"
@@ -543,7 +543,7 @@ func dagNodeLabel(n *DAGNode) string {
 		switch n.Leaf.Type {
 		case expr.CommittedColumn:
 			return "col:" + n.Leaf.Name
-		case expr.ShiftedColumn:
+		case expr.RotatedColumn:
 			return "shifted:" + n.Leaf.String()
 		case expr.Challenge:
 			return "chal:" + n.Leaf.Name
@@ -689,7 +689,7 @@ func evalDAGNodeSliceVars(n *DAGNode, cache []koalabear.Element, vars []koalabea
 // Row selection follows the same rules as expr.Expr.EvaluateOnIthEntry:
 //   - Const leaf              : returns the constant value
 //   - len(_Pi[leaf.Idx]) == 1 : constant polynomial, returns _Pi[leaf.Idx][0]
-//   - ShiftedColumn leaf      : returns _Pi[leaf.Idx][(i+N+leaf.Shift)%N]
+//   - RotatedColumn leaf      : returns _Pi[leaf.Idx][(i+N+leaf.Shift)%N]
 //   - all other leaves        : returns _Pi[leaf.Idx][i]
 //
 // Composite nodes are evaluated in topological order using an internal cache

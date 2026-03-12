@@ -35,7 +35,7 @@ func makeWiresAsExpr(wires [][]string) [][]expr.Expr {
 	for i := 0; i < len(wires); i++ {
 		res[i] = make([]expr.Expr, len(wires[i]))
 		for j := 0; j < len(res[i]); j++ {
-			res[i][j] = expr.NewCommittedColumn(wires[i][j])
+			res[i][j] = expr.Col(wires[i][j])
 		}
 	}
 	return res
@@ -66,8 +66,8 @@ func CopyPermtutationMultiSet(system *cs.System, wires [][]string, S []int64) er
 		multiSet2[i] = make([]expr.Expr, len(wires)+1)
 		copy(multiSet1[i], wiresExpr[i])
 		copy(multiSet2[i], wiresExpr[i])
-		multiSet1[i][len(wires)] = expr.NewCommittedColumn(allOutputs[i])
-		multiSet2[i][len(wires)] = expr.NewCommittedColumn(allOutputs[len(wires)+i])
+		multiSet1[i][len(wires)] = expr.Col(allOutputs[i])
+		multiSet2[i][len(wires)] = expr.Col(allOutputs[len(wires)+i])
 	}
 
 	return multiSetPermutation(system, multiSet1, multiSet2)

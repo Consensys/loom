@@ -105,7 +105,7 @@ func BruteForceChecker(T trace.Trace, constraints []Relation, N int) error {
 
 	for _, C := range constraints {
 
-		leaves := expr.RemoveDuplicates(C.Leaves(expr.NewConfig(expr.WithoutShiftedColumns())))
+		leaves := expr.RemoveDuplicates(C.Leaves(expr.NewConfig(expr.WithoutRotatedColumns())))
 
 		// validate all live columns are present before touching any row
 		for _, l := range leaves {
@@ -179,7 +179,7 @@ func QuotientChecker(T trace.Trace, constraints []Relation, N int) error {
 		hz := evalCanonical(hCoeffs, z)
 
 		// For each leaf, evaluate the trace polynomial at z (or w^shift*z for shifted columns)
-		leavesNormal := expr.RemoveDuplicates(C.Leaves(expr.NewConfig(expr.WithoutShiftedColumns())))
+		leavesNormal := expr.RemoveDuplicates(C.Leaves(expr.NewConfig(expr.WithoutRotatedColumns())))
 		leavesShifted := expr.RemoveDuplicates(C.Leaves(expr.NewConfig(
 			expr.WithoutChallenges(), expr.WithoutCommittedColumns(), expr.WithoutComputableColumns())))
 		vals := make(map[string]koalabear.Element, len(leavesNormal)+len(leavesShifted))

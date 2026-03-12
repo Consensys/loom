@@ -39,8 +39,8 @@ func TestComputeFilteredAccPolynomial(t *testing.T) {
 
 	// 3. Compute R = BuildFilteredAccPolynomial(E, F, alpha) and store it in the trace.
 	var mu sync.Mutex
-	Eexpr := expr.NewCommittedColumn("E")
-	Fexpr := expr.NewCommittedColumn("F")
+	Eexpr := expr.Col("E")
+	Fexpr := expr.Col("F")
 	alphaExpr := expr.NewChallenge("alpha")
 
 	R, err := univariate.BuildFilteredAccPolynomial(T, Eexpr, Fexpr, alphaExpr, N, &mu)
@@ -64,9 +64,9 @@ func TestComputeFilteredAccPolynomial(t *testing.T) {
 	//       enforces R[i] = F[i]·(alpha·R[i−1] + E[i]) + (1−F[i])·R[i−1]  for i > 0
 	//
 	// where R_prev = R(ω^{−1}·X), i.e. the column R shifted by −1.
-	Rexpr := expr.NewCommittedColumn("R")
-	RPrev := expr.NewShiftedColumn("R", -1)
-	L0 := expr.NewComputableColumn(proveractions.GetLagrangeID(0, N))
+	Rexpr := expr.Col("R")
+	RPrev := expr.RotatedCol("R", -1)
+	L0 := expr.VirtualCol(proveractions.GetLagrangeID(0, N))
 	one := expr.NewConst(koalabear.One())
 
 	C1 := L0.Mul(Rexpr.Sub(Fexpr.Mul(Eexpr)))

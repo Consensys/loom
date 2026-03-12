@@ -24,7 +24,7 @@ func GetColumnsId(E []expr.Expr, opts ...expr.Option) []string {
 	return ids
 }
 
-// GetColumnsBaseId is like GetColumnsId but for ShiftedColumn leaves it returns the
+// GetColumnsBaseId is like GetColumnsId but for RotatedColumn leaves it returns the
 // base column name (e.g. "F1" instead of "F1_shift_-1"). Use this for dependency
 // tracking in the Kahn scheduler, where the scheduler only needs to know that the
 // underlying trace column is available, not a fictitious shifted-name column.

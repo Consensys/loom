@@ -28,7 +28,7 @@ func CheckFiatShamir(proverRunTime *prover.Runtime, verifierRunTime *verifier.Ru
 	proverChallenges := proverRunTime.CompiledIOP.VanishingRelation.Leaves(
 		expr.NewConfig(expr.WithoutCommittedColumns(),
 			expr.WithoutComputableColumns(),
-			expr.WithoutShiftedColumns()))
+			expr.WithoutRotatedColumns()))
 	proverChallenges = expr.RemoveDuplicates(proverChallenges)
 	mapProverChallenges := make(map[string]koalabear.Element)
 	for _, c := range proverChallenges {

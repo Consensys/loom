@@ -50,8 +50,8 @@ import (
 func Inclusion(system *cs.System, S, T string) error {
 
 	// 1. create the multiplicity polynomial
-	Texpr := expr.NewCommittedColumn(T)
-	Sexpr := expr.NewCommittedColumn(S)
+	Texpr := expr.Col(T)
+	Sexpr := expr.Col(S)
 
 	return inclusionCheckIOP(system, Sexpr, Texpr)
 
@@ -80,7 +80,7 @@ func inclusionCheckIOP(system *cs.System, S, T expr.Expr) error {
 	}
 
 	// 1. create the multiplicity polynomial
-	Mexpr := expr.NewCommittedColumn(M)
+	Mexpr := expr.Col(M)
 	system.RegisterProverAction([]expr.Expr{S, T}, []string{M}, proveractions.NewIDCtx(proveractions.MULTIPLICITY))
 
 	// 2. sample a challenge gamma, depending on M, S, and T
@@ -102,8 +102,8 @@ func inclusionCheckIOP(system *cs.System, S, T expr.Expr) error {
 	system.AssertZeros(grandSumRelationsS)
 
 	// 5. ensure that grandSumT[N-1] = grandSumS[N-1]
-	grandSumSExpr := expr.NewCommittedColumn(grandSumS)
-	grandSumTExpr := expr.NewCommittedColumn(grandSumT)
+	grandSumSExpr := expr.Col(grandSumS)
+	grandSumTExpr := expr.Col(grandSumT)
 	boundaryEquality := cs.BuildLocalRelation(grandSumSExpr, grandSumTExpr, system.N-1, system.N)
 	system.AssertZero(boundaryEquality)
 
@@ -174,10 +174,10 @@ func InclusionMultiSet(system *cs.System, S, T []string) error {
 	// 1. sample a challenge for folding
 	foldingDeps := make([]expr.Expr, len(S)+len(T))
 	for i := 0; i < len(S); i++ {
-		foldingDeps[i] = expr.NewCommittedColumn(S[i])
+		foldingDeps[i] = expr.Col(S[i])
 	}
 	for i := 0; i < len(T); i++ {
-		foldingDeps[i+len(S)] = expr.NewCommittedColumn(T[i])
+		foldingDeps[i+len(S)] = expr.Col(T[i])
 	}
 	system.RegisterProverAction(foldingDeps, []string{gamma}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
@@ -186,10 +186,10 @@ func InclusionMultiSet(system *cs.System, S, T []string) error {
 	SExpr := make([]expr.Expr, len(S))
 	TExpr := make([]expr.Expr, len(T))
 	for i := 0; i < len(S); i++ {
-		SExpr[i] = expr.NewCommittedColumn(S[i])
+		SExpr[i] = expr.Col(S[i])
 	}
 	for i := 0; i < len(T); i++ {
-		TExpr[i] = expr.NewCommittedColumn(T[i])
+		TExpr[i] = expr.Col(T[i])
 	}
 	SFolded := cs.Fold(SExpr, gammaExpr)
 	TFolded := cs.Fold(TExpr, gammaExpr)

@@ -42,10 +42,10 @@ import (
 //	|-------------------------------–-------------------------------------------------|
 func Projection(system *cs.System, A, F1, B, F2 string) error {
 
-	Aexpr := expr.NewCommittedColumn(A)
-	Bexpr := expr.NewCommittedColumn(B)
-	F1expr := expr.NewCommittedColumn(F1)
-	F2expr := expr.NewCommittedColumn(F2)
+	Aexpr := expr.Col(A)
+	Bexpr := expr.Col(B)
+	F1expr := expr.Col(F1)
+	F2expr := expr.Col(F2)
 
 	return ProjectionExpr(system, Aexpr, Bexpr, F1expr, F2expr)
 }
@@ -99,10 +99,10 @@ func ProjectionMultiSet(system *cs.System, A []string, F1 string, B []string, F2
 	// 1. sample a challenge for folding
 	foldingDeps := make([]expr.Expr, len(A)+len(B))
 	for i := 0; i < len(A); i++ {
-		foldingDeps[i] = expr.NewCommittedColumn(A[i])
+		foldingDeps[i] = expr.Col(A[i])
 	}
 	for i := 0; i < len(B); i++ {
-		foldingDeps[i+len(A)] = expr.NewCommittedColumn(B[i])
+		foldingDeps[i+len(A)] = expr.Col(B[i])
 	}
 	system.RegisterProverAction(foldingDeps, []string{gamma}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
@@ -111,16 +111,16 @@ func ProjectionMultiSet(system *cs.System, A []string, F1 string, B []string, F2
 	AExpr := make([]expr.Expr, len(A))
 	BExpr := make([]expr.Expr, len(B))
 	for i := 0; i < len(A); i++ {
-		AExpr[i] = expr.NewCommittedColumn(A[i])
+		AExpr[i] = expr.Col(A[i])
 	}
 	for i := 0; i < len(B); i++ {
-		BExpr[i] = expr.NewCommittedColumn(B[i])
+		BExpr[i] = expr.Col(B[i])
 	}
 	AFolded := cs.Fold(AExpr, gammaExpr)
 	BFolded := cs.Fold(BExpr, gammaExpr)
 
 	// 3. call equalityFilteredColumns
-	return ProjectionExpr(system, AFolded, BFolded, expr.NewCommittedColumn(F1), expr.NewCommittedColumn(F2))
+	return ProjectionExpr(system, AFolded, BFolded, expr.Col(F1), expr.Col(F2))
 
 }
 
@@ -145,8 +145,8 @@ func ProjectionExpr(system *cs.System, A, B, F1, F2 expr.Expr) error {
 		return err
 	}
 	alpha := expr.NewChallenge(_alpha)
-	// F1Expr := expr.NewCommittedColumn(F1)
-	// F2Expr := expr.NewCommittedColumn(F2)
+	// F1Expr := expr.Col(F1)
+	// F2Expr := expr.Col(F2)
 	depsAlpha := []expr.Expr{A, B, F1, F2}
 	system.RegisterProverAction(depsAlpha, []string{_alpha}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
@@ -162,8 +162,8 @@ func ProjectionExpr(system *cs.System, A, B, F1, F2 expr.Expr) error {
 	system.AssertZeros(cs.BuildFilteredAccPolynomialRelation(B, F2, alpha, idAccFB, system.N))
 
 	// 5. ensure FA[N-1]=FB[N-1]: the last entry holds the full filtered accumulation
-	accFA := expr.NewCommittedColumn(idAccFA)
-	accFB := expr.NewCommittedColumn(idAccFB)
+	accFA := expr.Col(idAccFA)
+	accFB := expr.Col(idAccFB)
 	system.AssertZero(cs.BuildLocalRelation(accFA, accFB, system.N-1, system.N))
 
 	// 6. Register Lagrange columns needed by BuildFilteredAccPolynomialRelation (L_0) and step 5 (L_{N-1})

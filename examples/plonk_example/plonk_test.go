@@ -35,11 +35,11 @@ func getKnownColumns(n int) map[string]bool {
 
 func getIthPlonkRelation(n int) cs.Relation {
 
-	C := expr.NewCommittedColumn(ID_Ql).Mul(expr.NewCommittedColumn(ithInstance(ID_L, n))).
-		Add(expr.NewCommittedColumn(ID_Qr).Mul(expr.NewCommittedColumn(ithInstance(ID_R, n)))).
-		Add(expr.NewCommittedColumn(ID_Qm).Mul(expr.NewCommittedColumn(ithInstance(ID_L, n))).Mul(expr.NewCommittedColumn(ithInstance(ID_R, n)))).
-		Add(expr.NewCommittedColumn(ID_Qo).Mul(expr.NewCommittedColumn(ithInstance(ID_O, n)))).
-		Add(expr.NewCommittedColumn(ID_Qk))
+	C := expr.Col(ID_Ql).Mul(expr.Col(ithInstance(ID_L, n))).
+		Add(expr.Col(ID_Qr).Mul(expr.Col(ithInstance(ID_R, n)))).
+		Add(expr.Col(ID_Qm).Mul(expr.Col(ithInstance(ID_L, n))).Mul(expr.Col(ithInstance(ID_R, n)))).
+		Add(expr.Col(ID_Qo).Mul(expr.Col(ithInstance(ID_O, n)))).
+		Add(expr.Col(ID_Qk))
 
 	return C
 }

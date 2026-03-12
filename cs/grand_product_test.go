@@ -22,8 +22,8 @@ func TestGrandProductRelation(t *testing.T) {
 
 	addChallengeInTrace(trace, challenge) // <- simulate SendMeAChallenge
 
-	E1 := expr.NewCommittedColumn("P0").Sub(expr.NewChallenge("gamma"))
-	E2 := expr.NewCommittedColumn("P1").Sub(expr.NewChallenge("gamma"))
+	E1 := expr.Col("P0").Sub(expr.NewChallenge("gamma"))
+	E2 := expr.Col("P1").Sub(expr.NewChallenge("gamma"))
 
 	var mu sync.Mutex
 	err := proveractions.ComputeLagrangeColumn(trace, nil, &mu, nil, []string{proveractions.GetLagrangeID(0, size)}, nil)

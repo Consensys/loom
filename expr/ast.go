@@ -13,7 +13,7 @@ type LeafType int
 
 const (
 	CommittedColumn LeafType = iota
-	ShiftedColumn
+	RotatedColumn
 	ComputableColumn
 	Challenge
 	Const
@@ -31,16 +31,16 @@ type Leaf struct {
 type Config struct {
 	WoCommittedColumns  bool
 	WoComputableColumns bool
-	WoShiftedColumns    bool
+	WoRotatedColumns    bool
 	WoChallenges        bool
 }
 
 type Option func(*Config)
 
-// Leaves() doesnt return the ShiftedColumns
-func WithoutShiftedColumns() Option {
+// Leaves() doesnt return the RotatedColumns
+func WithoutRotatedColumns() Option {
 	return func(c *Config) {
-		c.WoShiftedColumns = true
+		c.WoRotatedColumns = true
 	}
 }
 
@@ -73,15 +73,15 @@ func NewConfig(opts ...Option) Config {
 	return res
 }
 
-var OnlyChallenges = []Option{WithoutComputableColumns(), WithoutCommittedColumns(), WithoutShiftedColumns()}
-var OnlyCommittedColumns = []Option{WithoutComputableColumns(), WithoutChallenges(), WithoutShiftedColumns()}
-var OnlyShiftedColumns = []Option{WithoutComputableColumns(), WithoutChallenges(), WithoutCommittedColumns()}
+var OnlyChallenges = []Option{WithoutComputableColumns(), WithoutCommittedColumns(), WithoutRotatedColumns()}
+var OnlyCommittedColumns = []Option{WithoutComputableColumns(), WithoutChallenges(), WithoutRotatedColumns()}
+var OnlyRotatedColumns = []Option{WithoutComputableColumns(), WithoutChallenges(), WithoutCommittedColumns()}
 
 // The LeafType encodes the status of a column at the protocol level:
 //   - CommittedColumn: the prover commits to this column
 //   - ComputableColumn: recomputable by the verifier (e.g. Lagrange basis columns)
 //   - Challenge: a Fiat-Shamir challenge (degree 0)
-//   - ShiftedColumn: a column evaluated at a shifted point P(ω^shift·X)
+//   - RotatedColumn: a column evaluated at a shifted point P(ω^shift·X)
 //   - Const: a constant field element (degree 0)
 
 type Expr interface {
@@ -101,7 +101,7 @@ type Expr interface {
 	ReplaceLeafByExpression(leaf string, e Expr) Expr
 
 	// recurse through expr, until an Expr (call it E) of degree <= deg is found.
-	// When E is found, remove E from expr and replace this subexpression with NewCommittedColumn(E.String())
+	// When E is found, remove E from expr and replace this subexpression with Col(E.String())
 	// Return E.
 	Prune(deg int) Expr
 
@@ -110,7 +110,7 @@ type Expr interface {
 	// Row selection rules:
 	//   - Const leaf          : returns the constant value (ignores _Pi and i)
 	//   - len(_Pi[l.Idx]) == 1: constant polynomial, always returns _Pi[l.Idx][0]
-	//   - ShiftedColumn leaf  : returns _Pi[l.Idx][(i + N + l.Shift) % N] where N = len(_Pi[l.Idx])
+	//   - RotatedColumn leaf  : returns _Pi[l.Idx][(i + N + l.Shift) % N] where N = len(_Pi[l.Idx])
 	//   - all other leaves    : returns _Pi[l.Idx][i]
 	// Leaf Idx values must be set by the caller before invoking this method (e.g. via LeavesFull).
 	EvaluateOnIthEntry(_Pi [][]koalabear.Element, i int) koalabear.Element
@@ -122,15 +122,15 @@ type Expr interface {
 	Evaluate(vals map[string]koalabear.Element) koalabear.Element
 }
 
-func NewCommittedColumn(name string) *Leaf {
+func Col(name string) *Leaf {
 	return &Leaf{Type: CommittedColumn, Name: name}
 }
 
-func NewShiftedColumn(name string, shift int) *Leaf {
-	return &Leaf{Type: ShiftedColumn, Shift: shift, Name: name}
+func RotatedCol(name string, shift int) *Leaf {
+	return &Leaf{Type: RotatedColumn, Shift: shift, Name: name}
 }
 
-func NewComputableColumn(name string) *Leaf {
+func VirtualCol(name string) *Leaf {
 	return &Leaf{Type: ComputableColumn, Name: name}
 }
 
@@ -144,7 +144,7 @@ func NewConst(value koalabear.Element) *Leaf {
 
 func (l *Leaf) String() string {
 	switch l.Type {
-	case ShiftedColumn:
+	case RotatedColumn:
 		return fmt.Sprintf("%s_shift_%d", l.Name, l.Shift)
 	case Const:
 		return l.Value.String()
@@ -162,7 +162,7 @@ func (l *Leaf) Degree() int {
 		return 0
 	case Challenge:
 		return 0
-	default: // CommittedColumn, ShiftedColumn, ComputableColumn
+	default: // CommittedColumn, RotatedColumn, ComputableColumn
 		return 1
 	}
 }
@@ -184,8 +184,8 @@ func (l *Leaf) Leaves(config Config) []string {
 			return []string{}
 		}
 		return []string{l.Name}
-	case ShiftedColumn:
-		if config.WoShiftedColumns {
+	case RotatedColumn:
+		if config.WoRotatedColumns {
 			return []string{}
 		}
 		return []string{l.String()}
@@ -238,7 +238,7 @@ func (l *Leaf) EvaluateOnIthEntry(_Pi [][]koalabear.Element, i int) koalabear.El
 		return p[0]
 	}
 	N := len(p)
-	if l.Type == ShiftedColumn {
+	if l.Type == RotatedColumn {
 		return p[(i+N+l.Shift)%N]
 	}
 	return p[i]
@@ -372,7 +372,7 @@ func isPrunable(e Expr) bool {
 }
 
 // pruneSearch recurses through expr looking for a composite child node E with degree <= deg.
-// When found, E is replaced in-place with NewCommittedColumn(E.String()) and E is returned.
+// When found, E is replaced in-place with Col(E.String()) and E is returned.
 // Leaf children are skipped (they are already leaves; replacing them is a no-op).
 // Returns nil if no such sub-expression is found.
 func pruneSearch(expr Expr, deg int) Expr {
@@ -382,12 +382,12 @@ func pruneSearch(expr Expr, deg int) Expr {
 	case *Add:
 		if isPrunable(e.Left) && e.Left.Degree() <= deg {
 			found := e.Left
-			e.Left = NewCommittedColumn(found.String())
+			e.Left = Col(found.String())
 			return found
 		}
 		if isPrunable(e.Right) && e.Right.Degree() <= deg {
 			found := e.Right
-			e.Right = NewCommittedColumn(found.String())
+			e.Right = Col(found.String())
 			return found
 		}
 		if r := pruneSearch(e.Left, deg); r != nil {
@@ -397,12 +397,12 @@ func pruneSearch(expr Expr, deg int) Expr {
 	case *Sub:
 		if isPrunable(e.Left) && e.Left.Degree() <= deg {
 			found := e.Left
-			e.Left = NewCommittedColumn(found.String())
+			e.Left = Col(found.String())
 			return found
 		}
 		if isPrunable(e.Right) && e.Right.Degree() <= deg {
 			found := e.Right
-			e.Right = NewCommittedColumn(found.String())
+			e.Right = Col(found.String())
 			return found
 		}
 		if r := pruneSearch(e.Left, deg); r != nil {
@@ -412,12 +412,12 @@ func pruneSearch(expr Expr, deg int) Expr {
 	case *Mul:
 		if isPrunable(e.Left) && e.Left.Degree() <= deg {
 			found := e.Left
-			e.Left = NewCommittedColumn(found.String())
+			e.Left = Col(found.String())
 			return found
 		}
 		if isPrunable(e.Right) && e.Right.Degree() <= deg {
 			found := e.Right
-			e.Right = NewCommittedColumn(found.String())
+			e.Right = Col(found.String())
 			return found
 		}
 		if r := pruneSearch(e.Left, deg); r != nil {
@@ -427,7 +427,7 @@ func pruneSearch(expr Expr, deg int) Expr {
 	case *Pow:
 		if isPrunable(e.Base) && e.Base.Degree() <= deg {
 			found := e.Base
-			e.Base = NewCommittedColumn(found.String())
+			e.Base = Col(found.String())
 			return found
 		}
 		return pruneSearch(e.Base, deg)
@@ -452,8 +452,8 @@ func (l *Leaf) LeavesFull(config Config) []*Leaf {
 		if config.WoCommittedColumns {
 			return nil
 		}
-	case ShiftedColumn:
-		if config.WoShiftedColumns {
+	case RotatedColumn:
+		if config.WoRotatedColumns {
 			return nil
 		}
 	case ComputableColumn:

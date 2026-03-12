@@ -45,17 +45,17 @@ func TestDAGEvalLeaves(t *testing.T) {
 	var c koalabear.Element
 	c.SetUint64(42)
 
-	checkDAGEval(t, expr.NewCommittedColumn("x"), vals)
+	checkDAGEval(t, expr.Col("x"), vals)
 	checkDAGEval(t, expr.NewChallenge("alpha"), vals)
-	checkDAGEval(t, expr.NewComputableColumn("L0"), vals)
+	checkDAGEval(t, expr.VirtualCol("L0"), vals)
 	checkDAGEval(t, expr.NewConst(c), vals)
 }
 
 // TestDAGEvalOperators checks each binary operator and Pow individually.
 func TestDAGEvalOperators(t *testing.T) {
 	vals := u64Vals("a", uint64(3), "b", uint64(5))
-	a := expr.NewCommittedColumn("a")
-	b := expr.NewCommittedColumn("b")
+	a := expr.Col("a")
+	b := expr.Col("b")
 
 	tests := []struct {
 		name string
@@ -64,10 +64,10 @@ func TestDAGEvalOperators(t *testing.T) {
 		{"Add", a.Add(b)},
 		{"Sub", a.Sub(b)},
 		{"Mul", a.Mul(b)},
-		{"Pow0", &expr.Pow{Base: expr.NewCommittedColumn("a"), Exp: 0}},
-		{"Pow1", &expr.Pow{Base: expr.NewCommittedColumn("a"), Exp: 1}},
-		{"Pow2", &expr.Pow{Base: expr.NewCommittedColumn("a"), Exp: 2}},
-		{"Pow7", expr.NewCommittedColumn("a").Pow(7)}, // uses squareAndMultiply
+		{"Pow0", &expr.Pow{Base: expr.Col("a"), Exp: 0}},
+		{"Pow1", &expr.Pow{Base: expr.Col("a"), Exp: 1}},
+		{"Pow2", &expr.Pow{Base: expr.Col("a"), Exp: 2}},
+		{"Pow7", expr.Col("a").Pow(7)}, // uses squareAndMultiply
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,8 +84,8 @@ func TestDAGEvalSharedSubExpression(t *testing.T) {
 	vals := u64Vals("a", uint64(3), "b", uint64(5))
 
 	// Build two independent AST trees for (a+b), then multiply them.
-	sum1 := expr.NewCommittedColumn("a").Add(expr.NewCommittedColumn("b"))
-	sum2 := expr.NewCommittedColumn("a").Add(expr.NewCommittedColumn("b"))
+	sum1 := expr.Col("a").Add(expr.Col("b"))
+	sum2 := expr.Col("a").Add(expr.Col("b"))
 	expr := sum1.Mul(sum2)
 
 	dag := ExprToDAG(expr)
@@ -114,8 +114,8 @@ func TestDAGEvalCommutativity(t *testing.T) {
 	vals := u64Vals("a", uint64(3), "b", uint64(5))
 
 	// (a+b) - (b+a): in the field this is 0; in the DAG both Add nodes must be shared.
-	expr := expr.NewCommittedColumn("a").Add(expr.NewCommittedColumn("b")).
-		Sub(expr.NewCommittedColumn("b").Add(expr.NewCommittedColumn("a")))
+	expr := expr.Col("a").Add(expr.Col("b")).
+		Sub(expr.Col("b").Add(expr.Col("a")))
 
 	dag := ExprToDAG(expr)
 
@@ -134,10 +134,10 @@ func TestDAGEvalCommutativity(t *testing.T) {
 // nodes does not change the evaluated result.
 func TestDAGFlattenEvalChains(t *testing.T) {
 	vals := u64Vals("a", uint64(2), "b", uint64(3), "c", uint64(5), "d", uint64(7))
-	a := expr.NewCommittedColumn("a")
-	b := expr.NewCommittedColumn("b")
-	c := expr.NewCommittedColumn("c")
-	d := expr.NewCommittedColumn("d")
+	a := expr.Col("a")
+	b := expr.Col("b")
+	c := expr.Col("c")
+	d := expr.Col("d")
 
 	tests := []struct {
 		name string
@@ -166,9 +166,9 @@ func TestDAGLeaves(t *testing.T) {
 	woChal := expr.NewConfig(expr.WithoutChallenges())
 	woComp := expr.NewConfig(expr.WithoutComputableColumns())
 
-	mixed := expr.NewCommittedColumn("x").
+	mixed := expr.Col("x").
 		Mul(expr.NewChallenge("gamma")).
-		Add(expr.NewComputableColumn("L0")).
+		Add(expr.VirtualCol("L0")).
 		Sub(expr.NewConst(c))
 
 	tests := []struct {
@@ -178,23 +178,23 @@ func TestDAGLeaves(t *testing.T) {
 		want   []string // expected, order-independent
 	}{
 		// Individual leaf kinds with default config
-		{"CommittedColumn/all", expr.NewCommittedColumn("x"), all, []string{"x"}},
+		{"CommittedColumn/all", expr.Col("x"), all, []string{"x"}},
 		{"Challenge/all", expr.NewChallenge("alpha"), all, []string{"alpha"}},
-		{"ComputableColumn/all", expr.NewComputableColumn("L0"), all, []string{"L0"}},
+		{"ComputableColumn/all", expr.VirtualCol("L0"), all, []string{"L0"}},
 		{"Const/all", expr.NewConst(c), all, []string{}}, // Const never included
 
 		// Filtering individual leaf kinds
-		{"CommittedColumn/woCC", expr.NewCommittedColumn("x"), woCC, []string{}},
+		{"CommittedColumn/woCC", expr.Col("x"), woCC, []string{}},
 		{"Challenge/woChal", expr.NewChallenge("alpha"), woChal, []string{}},
-		{"ComputableColumn/woComp", expr.NewComputableColumn("L0"), woComp, []string{}},
+		{"ComputableColumn/woComp", expr.VirtualCol("L0"), woComp, []string{}},
 
 		// DAG deduplication
 		{"SharedLeaf", // a+a → col:a once
-			expr.NewCommittedColumn("a").Add(expr.NewCommittedColumn("a")),
+			expr.Col("a").Add(expr.Col("a")),
 			all, []string{"a"}},
 		{"SharedSubExpr", // (a+b)*(a+b) → a and b once each
-			expr.NewCommittedColumn("a").Add(expr.NewCommittedColumn("b")).
-				Mul(expr.NewCommittedColumn("a").Add(expr.NewCommittedColumn("b"))),
+			expr.Col("a").Add(expr.Col("b")).
+				Mul(expr.Col("a").Add(expr.Col("b"))),
 			all, []string{"a", "b"}},
 
 		// Mixed leaf kinds with filtering
@@ -225,28 +225,28 @@ func TestDAGDegree(t *testing.T) {
 		want int
 	}{
 		// Leaves
-		{"CommittedColumn", expr.NewCommittedColumn("x"), 1},
-		{"ComputableColumn", expr.NewComputableColumn("L0"), 1},
+		{"CommittedColumn", expr.Col("x"), 1},
+		{"ComputableColumn", expr.VirtualCol("L0"), 1},
 		{"Challenge", expr.NewChallenge("alpha"), 0},    // Challenge is degree 0
 		{"ConstNonZero", expr.NewConst(one), 0},         // non-zero constant
 		{"ConstZero", expr.NewConst(zero), expr.NegInf}, // zero polynomial
 
 		// Binary operators
-		{"Add(1,1)", expr.NewCommittedColumn("a").Add(expr.NewCommittedColumn("b")), 1},
-		{"Sub(1,0)", expr.NewCommittedColumn("a").Sub(expr.NewChallenge("g")), 1},
-		{"Mul(1,1)", expr.NewCommittedColumn("a").Mul(expr.NewCommittedColumn("b")), 2},
-		{"Mul(1,0)", expr.NewCommittedColumn("a").Mul(expr.NewChallenge("g")), 1},
-		{"Pow2", &expr.Pow{Base: expr.NewCommittedColumn("a"), Exp: 2}, 2},
-		{"Pow5", expr.NewCommittedColumn("a").Pow(5), 5},
-		{"Pow0", &expr.Pow{Base: expr.NewCommittedColumn("a"), Exp: 0}, 0},
+		{"Add(1,1)", expr.Col("a").Add(expr.Col("b")), 1},
+		{"Sub(1,0)", expr.Col("a").Sub(expr.NewChallenge("g")), 1},
+		{"Mul(1,1)", expr.Col("a").Mul(expr.Col("b")), 2},
+		{"Mul(1,0)", expr.Col("a").Mul(expr.NewChallenge("g")), 1},
+		{"Pow2", &expr.Pow{Base: expr.Col("a"), Exp: 2}, 2},
+		{"Pow5", expr.Col("a").Pow(5), 5},
+		{"Pow0", &expr.Pow{Base: expr.Col("a"), Exp: 0}, 0},
 
 		// Challenge treated as degree-0 in a larger expression
-		{"AddChallenge", expr.NewCommittedColumn("a").Add(expr.NewChallenge("g")), 1},
-		{"MulChallenge", expr.NewCommittedColumn("a").Mul(expr.NewChallenge("g")).Mul(expr.NewCommittedColumn("b")), 2},
+		{"AddChallenge", expr.Col("a").Add(expr.NewChallenge("g")), 1},
+		{"MulChallenge", expr.Col("a").Mul(expr.NewChallenge("g")).Mul(expr.Col("b")), 2},
 
 		// Flattened n-ary chains should have the same degree as the AST
-		{"AddChain", expr.NewCommittedColumn("a").Add(expr.NewCommittedColumn("b")).Add(expr.NewCommittedColumn("c")), 1},
-		{"MulChain", expr.NewCommittedColumn("a").Mul(expr.NewCommittedColumn("b")).Mul(expr.NewCommittedColumn("c")), 3},
+		{"AddChain", expr.Col("a").Add(expr.Col("b")).Add(expr.Col("c")), 1},
+		{"MulChain", expr.Col("a").Mul(expr.Col("b")).Mul(expr.Col("c")), 3},
 	}
 
 	for _, tc := range tests {
@@ -272,10 +272,10 @@ func TestDAGDegree(t *testing.T) {
 // TestDAGFactorize verifies that Factorize correctly applies
 // add(mul(x,y),mul(x,z)) → mul(x,add(y,z)) and preserves evaluation results.
 func TestDAGFactorize(t *testing.T) {
-	x := expr.NewCommittedColumn("x")
-	y := expr.NewCommittedColumn("y")
-	z := expr.NewCommittedColumn("z")
-	w := expr.NewCommittedColumn("w")
+	x := expr.Col("x")
+	y := expr.Col("y")
+	z := expr.Col("z")
+	w := expr.Col("w")
 	vals := u64Vals("x", uint64(2), "y", uint64(3), "z", uint64(5), "w", uint64(7))
 
 	cases := []struct {
@@ -395,7 +395,7 @@ func TestDAGEvalOnIthEntry(t *testing.T) {
 		P0 := makePoly(1, 2, 3, 4, 5, 6, 7, 8)
 		P1 := makePoly(10, 20, 30, 40, 50, 60, 70, 80)
 		pi := map[string][]koalabear.Element{"x0": P0, "x1": P1}
-		expr := expr.NewCommittedColumn("x0").Pow(2).Add(expr.NewCommittedColumn("x1"))
+		expr := expr.Col("x0").Pow(2).Add(expr.Col("x1"))
 		d := ExprToDAG(expr)
 		_Pi := setupPiSlice(expr, pi)
 
@@ -414,7 +414,7 @@ func TestDAGEvalOnIthEntry(t *testing.T) {
 		var gVal koalabear.Element
 		gVal.SetUint64(42)
 		pi := map[string][]koalabear.Element{"x0": P0, "gamma": {gVal}}
-		expr := expr.NewCommittedColumn("x0").Sub(expr.NewCommittedColumn("gamma"))
+		expr := expr.Col("x0").Sub(expr.Col("gamma"))
 		d := ExprToDAG(expr)
 		_Pi := setupPiSlice(expr, pi)
 
@@ -432,7 +432,7 @@ func TestDAGEvalOnIthEntry(t *testing.T) {
 		three.SetUint64(3)
 		P0 := makePoly(4, 5, 6, 7, 8, 9, 10, 11)
 		pi := map[string][]koalabear.Element{"x0": P0}
-		expr := expr.NewCommittedColumn("x0").Sub(expr.NewConst(three))
+		expr := expr.Col("x0").Sub(expr.NewConst(three))
 		d := ExprToDAG(expr)
 		_Pi := setupPiSlice(expr, pi)
 
@@ -445,11 +445,11 @@ func TestDAGEvalOnIthEntry(t *testing.T) {
 		}
 	})
 
-	t.Run("ShiftedColumn", func(t *testing.T) {
+	t.Run("RotatedColumn", func(t *testing.T) {
 		// E = x0(shift=1) - x0 → P0[(i+1)%N] - P0[i]
 		P0 := makePoly(1, 3, 2, 7, 5, 4, 6, 8)
 		pi := map[string][]koalabear.Element{"x0": P0}
-		expr := expr.NewShiftedColumn("x0", 1).Sub(expr.NewCommittedColumn("x0"))
+		expr := expr.RotatedCol("x0", 1).Sub(expr.Col("x0"))
 		d := ExprToDAG(expr)
 		_Pi := setupPiSlice(expr, pi)
 
@@ -470,9 +470,9 @@ func TestDAGEvalOnIthEntry(t *testing.T) {
 		Pd := makePoly(1, 1, 1, 1, 1, 1, 1, 1)
 		pi := map[string][]koalabear.Element{"a": Pa, "b": Pb, "c": Pc, "d": Pd}
 
-		ab1 := expr.NewCommittedColumn("a").Mul(expr.NewCommittedColumn("b"))
-		ab2 := expr.NewCommittedColumn("a").Mul(expr.NewCommittedColumn("b"))
-		expr := ab1.Add(expr.NewCommittedColumn("c")).Mul(ab2.Sub(expr.NewCommittedColumn("d")))
+		ab1 := expr.Col("a").Mul(expr.Col("b"))
+		ab2 := expr.Col("a").Mul(expr.Col("b"))
+		expr := ab1.Add(expr.Col("c")).Mul(ab2.Sub(expr.Col("d")))
 		d := ExprToDAG(expr)
 		_Pi := setupPiSlice(expr, pi)
 
@@ -495,9 +495,9 @@ func TestDAGEvalComplex(t *testing.T) {
 	vals := u64Vals("a", uint64(2), "b", uint64(3), "c", uint64(5), "d", uint64(7))
 
 	// Build (a*b + c) * (a*b - d) using two independent trees for a*b.
-	ab1 := expr.NewCommittedColumn("a").Mul(expr.NewCommittedColumn("b"))
-	ab2 := expr.NewCommittedColumn("a").Mul(expr.NewCommittedColumn("b"))
-	expr := ab1.Add(expr.NewCommittedColumn("c")).Mul(ab2.Sub(expr.NewCommittedColumn("d")))
+	ab1 := expr.Col("a").Mul(expr.Col("b"))
+	ab2 := expr.Col("a").Mul(expr.Col("b"))
+	expr := ab1.Add(expr.Col("c")).Mul(ab2.Sub(expr.Col("d")))
 
 	dag := ExprToDAG(expr)
 
