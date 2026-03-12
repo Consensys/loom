@@ -61,7 +61,7 @@ func TestLookup(t *testing.T) {
 
 	cciop := cs.Compile(&system)
 
-	proverRunTime := prover.NewRuntime(cciop, trace)
+	proverRunTime := prover.NewProver(cciop, trace)
 
 	knowncolumns := map[string]bool{"T": true, "S": true}
 	proof := derive.NewProof(system.N)
@@ -127,7 +127,7 @@ func TestLookupTuple(t *testing.T) {
 
 	cciop := cs.Compile(&system)
 
-	proverRunTime := prover.NewRuntime(cciop, tr)
+	proverRunTime := prover.NewProver(cciop, tr)
 
 	knowncolumns := map[string]bool{"T0": true, "T1": true, "S0": true, "S1": true}
 	proof := derive.NewProof(system.N)

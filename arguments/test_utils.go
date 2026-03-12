@@ -5,14 +5,14 @@ import (
 
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/cs"
+	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/prover"
-	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/verifier"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
-func sanityCheck(proverRunTime *prover.Runtime, constraints []cs.Relation, N int, t *testing.T) {
+func sanityCheck(proverRunTime *prover.Prover, constraints []cs.Relation, N int, t *testing.T) {
 	err := cs.BruteForceChecker(proverRunTime.Trace, constraints, N)
 	if err != nil {
 		t.Fatal(err)
@@ -23,7 +23,7 @@ func sanityCheck(proverRunTime *prover.Runtime, constraints []cs.Relation, N int
 	}
 }
 
-func CheckFiatShamir(proverRunTime *prover.Runtime, verifierRunTime *verifier.Runtime, proof *derive.Proof, zeta koalabear.Element, t *testing.T) {
+func CheckFiatShamir(proverRunTime *prover.Prover, verifierRunTime *verifier.Verifier, proof *derive.Proof, zeta koalabear.Element, t *testing.T) {
 
 	proverChallenges := proverRunTime.Program.VanishingRelation.Leaves(
 		expr.NewConfig(expr.WithoutCommittedColumns(),

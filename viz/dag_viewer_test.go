@@ -42,7 +42,7 @@ func TestWriteProofRoundsDagToHTML_Permutation(t *testing.T) {
 	arguments.Permutation(&system, []string{"P0"}, []string{"P1"})
 
 	cciop := cs.Compile(&system)
-	rt := prover.NewRuntime(cciop, trace)
+	rt := prover.NewProver(cciop, trace)
 	proof, err := rt.Prove(map[string]bool{"P0": true, "P1": true}, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func TestWriteProofRoundsDagToHTML_Tuple(t *testing.T) {
 	}
 
 	cciop := cs.Compile(&system)
-	rt := prover.NewRuntime(cciop, trace)
+	rt := prover.NewProver(cciop, trace)
 	proof, err := rt.Prove(map[string]bool{"P0": true, "P1": true, "Q0": true, "Q1": true}, 1)
 	if err != nil {
 		t.Fatal(err)

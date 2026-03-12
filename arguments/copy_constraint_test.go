@@ -43,7 +43,7 @@ func TestCopyPermutation(t *testing.T) {
 	}
 
 	cciop := cs.Compile(&system)
-	proverRunTime := prover.NewRuntime(cciop, T)
+	proverRunTime := prover.NewProver(cciop, T)
 	knownColumns := map[string]bool{"P1": true, "P2": true}
 	proof := derive.NewProof(system.N)
 
@@ -128,7 +128,7 @@ func TestCopyPermutationTuple(t *testing.T) {
 	}
 
 	cciop := cs.Compile(&system)
-	proverRunTime := prover.NewRuntime(cciop, T)
+	proverRunTime := prover.NewProver(cciop, T)
 	knownColumns := map[string]bool{"P1": true, "P2": true}
 	proof := derive.NewProof(system.N)
 

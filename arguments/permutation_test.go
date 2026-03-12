@@ -26,7 +26,7 @@ func TestPermutation(t *testing.T) {
 
 	cciop := cs.Compile(&system)
 
-	proverRunTime := prover.NewRuntime(cciop, trace)
+	proverRunTime := prover.NewProver(cciop, trace)
 
 	// begin proving
 	knowncolumns := map[string]bool{"P0": true, "P1": true}
@@ -98,7 +98,7 @@ func TestPermutationTuple(t *testing.T) {
 	knowncolumns := map[string]bool{"P0": true, "P1": true, "Q0": true, "Q1": true}
 	cciop := cs.Compile(&system)
 
-	proverRunTime := prover.NewRuntime(cciop, trace)
+	proverRunTime := prover.NewProver(cciop, trace)
 
 	proof := derive.NewProof(system.N)
 
@@ -205,7 +205,7 @@ func BenchmarkPermutation(b *testing.B) {
 				_trace[fmt.Sprintf("P2_%d", i)] = trace[fmt.Sprintf("P2_%d", i)]
 			}
 
-			proverRunTime := prover.NewRuntime(cciop, _trace)
+			proverRunTime := prover.NewProver(cciop, _trace)
 			proverRunTime.Prove(knowncolumns, 1)
 
 		}

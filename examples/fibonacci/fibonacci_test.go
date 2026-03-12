@@ -60,7 +60,7 @@ func TestFibonacci(t *testing.T) {
 	trace := GetFibonacciTrace(N, "A", "B", "C")
 	// viewer.WriteTraceToCSV("fibonacci.csv", trace, N)
 
-	proverRuntime := prover.NewRuntime(cciop, trace)
+	proverRuntime := prover.NewProver(cciop, trace)
 
 	knownColumns := make(map[string]bool)
 	knownColumns["A"] = true

@@ -133,7 +133,7 @@ func TestPlonk(t *testing.T) {
 
 	// viewer.WriteDerivationPlanDagToHTML(cciop, "plonk_dag.html")
 
-	proverRunTime := prover.NewRuntime(cciop, fulltrace)
+	proverRunTime := prover.NewProver(cciop, fulltrace)
 	// proof := cs.NewProof(N)
 
 	// Step 1: Solve — compute all intermediate columns (beta, gamma, Z, Z_shifted, LAGRANGE_0)

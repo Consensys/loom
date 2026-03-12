@@ -60,7 +60,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 	}
 
 	cciop := cs.Compile(&system)
-	proverRunTime := prover.NewRuntime(cciop, T)
+	proverRunTime := prover.NewProver(cciop, T)
 	knownColumns := map[string]bool{"A": true, "A2": true, "B": true, "B2": true, "F1": true, "F2": true}
 	proof := derive.NewProof(system.N)
 
@@ -160,7 +160,7 @@ func TestEqualityFilteredColumns(t *testing.T) {
 	}
 
 	cciop := cs.Compile(&system)
-	proverRunTime := prover.NewRuntime(cciop, T)
+	proverRunTime := prover.NewProver(cciop, T)
 	knownColumns := map[string]bool{"A": true, "B": true, "F1": true, "F2": true}
 	proof := derive.NewProof(system.N)
 
