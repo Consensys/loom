@@ -27,7 +27,7 @@ func CopyPermutation(system *constraint.Builder, wires []string, S []int64) erro
 		multiSet2[i] = []string{wires[i], allOutputs[len(wires)+i]}
 	}
 
-	return PermutationMultiset(system, multiSet1, multiSet2)
+	return PermutationTuple(system, multiSet1, multiSet2)
 }
 
 func makeWiresAsExpr(wires [][]string) [][]expr.Expr {
@@ -70,5 +70,5 @@ func CopyPermtutationTuple(system *constraint.Builder, wires [][]string, S []int
 		multiSet2[i][len(wires)] = expr.Col(allOutputs[len(wires)+i])
 	}
 
-	return multiSetPermutation(system, multiSet1, multiSet2)
+	return permutationTuple(system, multiSet1, multiSet2)
 }

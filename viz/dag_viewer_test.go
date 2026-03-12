@@ -12,7 +12,7 @@ import (
 func TestWriteDerivationPlanDagToHTML(t *testing.T) {
 	size := 16
 	system := constraint.NewBuilder(size)
-	if err := arguments.PermutationMultiset(
+	if err := arguments.PermutationTuple(
 		&system,
 		[][]string{{"P0", "P1"}},
 		[][]string{{"Q0", "Q1"}},
@@ -66,7 +66,7 @@ func TestWriteProofTranscriptRoundsDagToHTML_Tuple(t *testing.T) {
 	size := 16
 	trace := constraint.BuildPermutationTuple(t, size)
 	system := constraint.NewBuilder(size)
-	if err := arguments.PermutationMultiset(
+	if err := arguments.PermutationTuple(
 		&system,
 		[][]string{{"P0", "P1"}},
 		[][]string{{"Q0", "Q1"}},

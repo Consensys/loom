@@ -130,8 +130,8 @@ func equalityUpToPermutationIOP(system *constraint.Builder, E1, E2 []expr.Expr) 
 //	|   C2: (Z-1)·L_0 = 0  (enforces Z[0]=1)                                      |
 //	|-------------------------------–-----------------------------------------------|
 //
-// func PermutationMultiset(system *constraint.Builder, ID1, ID2 [][]string, IDGrandProduct string, alpha, gamma string) error {
-func PermutationMultiset(system *constraint.Builder, ID1, ID2 [][]string) error {
+// func PermutationTuple(system *constraint.Builder, ID1, ID2 [][]string, IDGrandProduct string, alpha, gamma string) error {
+func PermutationTuple(system *constraint.Builder, ID1, ID2 [][]string) error {
 
 	// 1. sample alpha: register the prover action ComputeChallenge, depending on all ids in ID1, ID2
 	E1 := make([][]expr.Expr, len(ID1))
@@ -149,10 +149,10 @@ func PermutationMultiset(system *constraint.Builder, ID1, ID2 [][]string) error 
 		}
 	}
 
-	return multiSetPermutation(system, E1, E2)
+	return permutationTuple(system, E1, E2)
 }
 
-func multiSetPermutation(system *constraint.Builder, E1, E2 [][]expr.Expr) error {
+func permutationTuple(system *constraint.Builder, E1, E2 [][]expr.Expr) error {
 
 	// 1. derive alpha
 	alpha, err := utils.RandomString(constants.SIZE_RANDOM_STRING)

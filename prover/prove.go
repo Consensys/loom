@@ -8,10 +8,10 @@ import (
 	"sync/atomic"
 
 	"github.com/consensys/giop/constants"
-	"github.com/consensys/giop/internal/commitment"
 	"github.com/consensys/giop/constraint"
-	derive "github.com/consensys/giop/internal/derive"
 	"github.com/consensys/giop/expr"
+	"github.com/consensys/giop/internal/commitment"
+	derive "github.com/consensys/giop/internal/derive"
 	"github.com/consensys/giop/internal/poly"
 	"github.com/consensys/giop/trace"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"

@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/constraint"
+	derive "github.com/consensys/giop/internal/derive"
 	"github.com/consensys/giop/internal/poly"
 	"github.com/consensys/giop/prover"
-	derive "github.com/consensys/giop/internal/derive"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/giop/verifier"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -90,7 +90,7 @@ func TestPermutationTuple(t *testing.T) {
 	trace := constraint.BuildPermutationTuple(t, size)
 	system := constraint.NewBuilder(size)
 
-	err := PermutationMultiset(&system, [][]string{{"P0", "P1"}}, [][]string{{"Q0", "Q1"}})
+	err := PermutationTuple(&system, [][]string{{"P0", "P1"}}, [][]string{{"Q0", "Q1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
