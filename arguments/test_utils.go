@@ -3,12 +3,12 @@ package arguments
 import (
 	"testing"
 
-	"github.com/consensys/giop/constants"
+	"github.com/consensys/giop/internal/constants"
 	"github.com/consensys/giop/constraint"
-	derive "github.com/consensys/giop/internal/derive"
 	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/prover"
-	"github.com/consensys/giop/verifier"
+	derive "github.com/consensys/giop/internal/derive"
+	"github.com/consensys/giop/internal/prover"
+	"github.com/consensys/giop/internal/verifier"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 

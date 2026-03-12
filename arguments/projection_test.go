@@ -5,10 +5,10 @@ import (
 
 	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/internal/poly"
-	"github.com/consensys/giop/prover"
+	"github.com/consensys/giop/internal/prover"
 	derive "github.com/consensys/giop/internal/derive"
 	"github.com/consensys/giop/trace"
-	"github.com/consensys/giop/verifier"
+	"github.com/consensys/giop/internal/verifier"
 	"github.com/consensys/giop/viz"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )

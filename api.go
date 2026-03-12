@@ -2,10 +2,10 @@ package giop
 
 import (
 	"github.com/consensys/giop/constraint"
+	"github.com/consensys/giop/internal/prover"
 	"github.com/consensys/giop/proof"
-	"github.com/consensys/giop/prover"
 	"github.com/consensys/giop/trace"
-	"github.com/consensys/giop/verifier"
+	"github.com/consensys/giop/internal/verifier"
 )
 
 func Prove(cciop constraint.Program, trace trace.Trace, nbWorkers int) (proof.Proof, error) {

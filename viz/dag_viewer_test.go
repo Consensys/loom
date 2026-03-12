@@ -6,7 +6,7 @@ import (
 
 	"github.com/consensys/giop/arguments"
 	"github.com/consensys/giop/constraint"
-	"github.com/consensys/giop/prover"
+	"github.com/consensys/giop/internal/prover"
 )
 
 func TestWriteDerivationPlanDagToHTML(t *testing.T) {

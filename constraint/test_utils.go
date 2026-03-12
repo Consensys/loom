@@ -5,7 +5,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/consensys/giop/constants"
+	"github.com/consensys/giop/internal/constants"
 	"github.com/consensys/giop/internal/dag"
 	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/internal/poly"

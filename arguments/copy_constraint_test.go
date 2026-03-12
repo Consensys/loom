@@ -6,9 +6,9 @@ import (
 	"github.com/consensys/giop/constraint"
 	derive "github.com/consensys/giop/internal/derive"
 	"github.com/consensys/giop/internal/poly"
-	"github.com/consensys/giop/prover"
+	"github.com/consensys/giop/internal/prover"
 	"github.com/consensys/giop/trace"
-	"github.com/consensys/giop/verifier"
+	"github.com/consensys/giop/internal/verifier"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 

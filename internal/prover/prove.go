@@ -7,7 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/consensys/giop/constants"
+	"github.com/consensys/giop/internal/constants"
 	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/internal/commitment"

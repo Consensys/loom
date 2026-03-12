@@ -8,8 +8,8 @@ import (
 	"github.com/consensys/giop/arguments"
 	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/prover"
-	"github.com/consensys/giop/verifier"
+	"github.com/consensys/giop/internal/prover"
+	"github.com/consensys/giop/internal/verifier"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
