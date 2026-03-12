@@ -1,4 +1,4 @@
-package univariate
+package poly
 
 import (
 	"math/big"

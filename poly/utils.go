@@ -1,4 +1,4 @@
-package univariate
+package poly
 
 // isPowerOfTwo checks if n is a power of two
 func isPowerOfTwo(n int) bool {

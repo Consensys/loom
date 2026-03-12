@@ -5,7 +5,7 @@ import (
 	"sync"
 
 	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/univariate"
+	"github.com/consensys/giop/poly"
 	"github.com/consensys/giop/trace"
 )
 
@@ -46,7 +46,7 @@ func NewIDStepContext(id StepKind) IDStepContext {
 }
 
 // NewColumn registers P, whose id is ID, in T. Returns an error if the trace already exists
-func NewColumn(trace trace.Trace, ID string, P univariate.Polynomial, mu *sync.Mutex) error {
+func NewColumn(trace trace.Trace, ID string, P poly.Polynomial, mu *sync.Mutex) error {
 	mu.Lock()
 	defer mu.Unlock()
 	if _, ok := trace[ID]; ok {
@@ -68,7 +68,7 @@ func ComputeGrandSum(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.E
 	}
 
 	// build the polynomials R
-	grandSum, err := univariate.BuildGrandSum(trace, E[1], E[0], proof.N, mu)
+	grandSum, err := poly.BuildGrandSum(trace, E[1], E[0], proof.N, mu)
 	if err != nil {
 		return err
 	}
@@ -89,7 +89,7 @@ func ComputeGrandProduct(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []ex
 	}
 
 	// build the polynomials R, R(wX)
-	R, err := univariate.BuildGrandProduct(trace, E[0], E[1], proof.N, mu)
+	R, err := poly.BuildGrandProduct(trace, E[0], E[1], proof.N, mu)
 	if err != nil {
 		return err
 	}
@@ -113,7 +113,7 @@ func ComputeColumn(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Exp
 	if len(E) == 0 {
 		return fmt.Errorf("E needs to contain at list an expression")
 	}
-	sum, err := univariate.BuildPointwiseEvaluation(trace, E[0], proof.N, mu)
+	sum, err := poly.BuildPointwiseEvaluation(trace, E[0], proof.N, mu)
 	if err != nil {
 		return err
 	}
@@ -135,7 +135,7 @@ func ComputeMultiplicity(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []ex
 	}
 	S := E[0]
 	T := E[1]
-	_M, err := univariate.BuildMultiplicityPolynomial(trace, S, T, proof.N, mu)
+	_M, err := poly.BuildMultiplicityPolynomial(trace, S, T, proof.N, mu)
 	if err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func ComputeFilteredAccPolynomial(trace trace.Trace, proof *Proof, mu *sync.Mute
 		return fmt.Errorf("len(output)=%d, expected 1", len(output))
 	}
 
-	R, err := univariate.BuildFilteredAccPolynomial(trace, E[0], E[1], E[2], proof.N, mu)
+	R, err := poly.BuildFilteredAccPolynomial(trace, E[0], E[1], E[2], proof.N, mu)
 	if err != nil {
 		return err
 	}

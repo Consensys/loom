@@ -1,7 +1,7 @@
 package dummycommitment
 
 import (
-	"github.com/consensys/giop/univariate"
+	"github.com/consensys/giop/poly"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 )
@@ -23,12 +23,12 @@ type OpeningProof struct {
 }
 
 // Commit commits to a polynomial (first evaluation as dummy hash)
-func Commit(p univariate.Polynomial) (Digest, error) {
+func Commit(p poly.Polynomial) (Digest, error) {
 	return Digest{p[0]}, nil
 }
 
 // Open evaluates the polynomial (in Lagrange Normal basis) at the given point.
-func Open(p univariate.Polynomial, point koalabear.Element) (OpeningProof, error) {
+func Open(p poly.Polynomial, point koalabear.Element) (OpeningProof, error) {
 	if len(p) == 1 {
 		return OpeningProof{ClaimedValue: p[0]}, nil
 	}

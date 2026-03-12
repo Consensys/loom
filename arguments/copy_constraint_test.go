@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/cs"
-	"github.com/consensys/giop/univariate"
+	"github.com/consensys/giop/poly"
 	"github.com/consensys/giop/prover"
 	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/trace"
@@ -27,8 +27,8 @@ func TestCopyPermutation(t *testing.T) {
 	for i := range base {
 		base[i].SetRandom()
 	}
-	p1 := make(univariate.Polynomial, N)
-	p2 := make(univariate.Polynomial, N)
+	p1 := make(poly.Polynomial, N)
+	p2 := make(poly.Polynomial, N)
 	for j := 0; j < N; j++ {
 		p1[j].Set(&base[j%4])
 		p2[j].Set(&base[j%4])
@@ -111,8 +111,8 @@ func TestCopyPermutationTuple(t *testing.T) {
 	for i := range base {
 		base[i].SetRandom()
 	}
-	p1 := make(univariate.Polynomial, N)
-	p2 := make(univariate.Polynomial, N)
+	p1 := make(poly.Polynomial, N)
+	p2 := make(poly.Polynomial, N)
 	for j := 0; j < N; j++ {
 		p1[j].Set(&base[j%4])
 		p2[j].Set(&base[j%4])

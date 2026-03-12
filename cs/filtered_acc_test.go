@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/univariate"
+	"github.com/consensys/giop/poly"
 	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -16,8 +16,8 @@ func TestComputeFilteredAccPolynomial(t *testing.T) {
 	N := 16
 
 	// 1. Build a trace with a random column E and a binary filter F (alternating 0/1).
-	eVals := make(univariate.Polynomial, N)
-	fVals := make(univariate.Polynomial, N)
+	eVals := make(poly.Polynomial, N)
+	fVals := make(poly.Polynomial, N)
 	for i := range eVals {
 		eVals[i].SetRandom()
 		if i%2 == 0 {
@@ -43,7 +43,7 @@ func TestComputeFilteredAccPolynomial(t *testing.T) {
 	Fexpr := expr.Col("F")
 	alphaExpr := expr.NewChallenge("alpha")
 
-	R, err := univariate.BuildFilteredAccPolynomial(T, Eexpr, Fexpr, alphaExpr, N, &mu)
+	R, err := poly.BuildFilteredAccPolynomial(T, Eexpr, Fexpr, alphaExpr, N, &mu)
 	if err != nil {
 		t.Fatal(err)
 	}

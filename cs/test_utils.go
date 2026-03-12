@@ -8,7 +8,7 @@ import (
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/dag"
 	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/univariate"
+	"github.com/consensys/giop/poly"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
@@ -114,7 +114,7 @@ func BruteForceChecker(T trace.Trace, constraints []Relation, N int) error {
 			}
 		}
 
-		vals, err := univariate.BuildPointwiseEvaluation(T, C, N, nil)
+		vals, err := poly.BuildPointwiseEvaluation(T, C, N, nil)
 		if err != nil {
 			return err
 		}
@@ -160,13 +160,13 @@ func QuotientChecker(T trace.Trace, constraints []Relation, N int) error {
 
 		// Compute H = C(trace) / (X^N - 1) in coset-Lagrange form
 		Cdag := dag.ExprToDAG(C)
-		H, err := univariate.ComputeQuotient(T, *Cdag, N)
+		H, err := poly.ComputeQuotient(T, *Cdag, N)
 		if err != nil {
 			return fmt.Errorf("ComputeQuotient failed: %w", err)
 		}
 
 		// Convert H from coset-Lagrange to standard Lagrange Normal
-		univariate.CosetLagrangeToLagrangeNormal(H)
+		poly.CosetLagrangeToLagrangeNormal(H)
 
 		// Pick a random evaluation point
 		var z koalabear.Element

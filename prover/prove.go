@@ -11,7 +11,7 @@ import (
 	"github.com/consensys/giop/crypto/dummycommitment"
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/expr"
-	"github.com/consensys/giop/univariate"
+	"github.com/consensys/giop/poly"
 	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/trace"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
@@ -211,13 +211,13 @@ func (runtime *Runtime) DeriveFinalFoldingChallenge(proof *derive.Proof) error {
 //	and store it in the trace, it is needed to be opened later
 func (runtime *Runtime) ComputeQuotient(proof *derive.Proof) error {
 
-	H, err := univariate.ComputeQuotient(runtime.Trace, runtime.Program.VanishingRelation, runtime.Program.N)
+	H, err := poly.ComputeQuotient(runtime.Trace, runtime.Program.VanishingRelation, runtime.Program.N)
 	if err != nil {
 		return fmt.Errorf("ComputeQuotient: %w", err)
 	}
 
 	// Convert from coset-Lagrange to standard Lagrange so Open can evaluate it correctly
-	univariate.CosetLagrangeToLagrangeNormal(H)
+	poly.CosetLagrangeToLagrangeNormal(H)
 
 	digest, err := dummycommitment.Commit(H)
 	if err != nil {

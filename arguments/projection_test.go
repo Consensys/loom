@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/cs"
-	"github.com/consensys/giop/univariate"
+	"github.com/consensys/giop/poly"
 	"github.com/consensys/giop/prover"
 	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/trace"
@@ -19,14 +19,14 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 
 	// Same construction as TestEqualityFilteredColumns, but A and B are
 	// duplicated into two-column lists [A, A2] and [B, B2].
-	aVals := make(univariate.Polynomial, size)
+	aVals := make(poly.Polynomial, size)
 	for i := range aVals {
 		aVals[i].SetRandom()
 	}
 
-	f1Vals := make(univariate.Polynomial, size)
-	f2Vals := make(univariate.Polynomial, size)
-	bVals := make(univariate.Polynomial, size)
+	f1Vals := make(poly.Polynomial, size)
+	f2Vals := make(poly.Polynomial, size)
+	bVals := make(poly.Polynomial, size)
 	for i := 0; i < size; i++ {
 		if i%2 == 0 {
 			f1Vals[i].SetOne()
@@ -38,8 +38,8 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 	}
 
 	// Duplicate: A2 = A, B2 = B
-	aVals2 := make(univariate.Polynomial, size)
-	bVals2 := make(univariate.Polynomial, size)
+	aVals2 := make(poly.Polynomial, size)
+	bVals2 := make(poly.Polynomial, size)
 	copy(aVals2, aVals)
 	copy(bVals2, bVals)
 
@@ -125,14 +125,14 @@ func TestEqualityFilteredColumns(t *testing.T) {
 	// B filtered by F2 gives [B[1], B[3], ..., B[15]]  (8 values)
 	// We set B[2k+1] = A[2k], so both filtered sequences are identical.
 	// Non-selected entries of B are arbitrary.
-	aVals := make(univariate.Polynomial, size)
+	aVals := make(poly.Polynomial, size)
 	for i := range aVals {
 		aVals[i].SetRandom()
 	}
 
-	f1Vals := make(univariate.Polynomial, size) // selects even rows of A
-	f2Vals := make(univariate.Polynomial, size) // selects odd  rows of B
-	bVals := make(univariate.Polynomial, size)
+	f1Vals := make(poly.Polynomial, size) // selects even rows of A
+	f2Vals := make(poly.Polynomial, size) // selects odd  rows of B
+	bVals := make(poly.Polynomial, size)
 	for i := 0; i < size; i++ {
 		if i%2 == 0 {
 			f1Vals[i].SetOne()

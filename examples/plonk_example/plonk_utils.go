@@ -3,7 +3,7 @@ package plonk_example
 import (
 	"fmt"
 
-	"github.com/consensys/giop/univariate"
+	"github.com/consensys/giop/poly"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
@@ -37,9 +37,9 @@ func ithInstance(id string, num int) string {
 	return fmt.Sprintf("%d-%s", num, id)
 }
 
-// gnarkCryptoPolyToUnivariatePoly converts *iop.Polynomial to univariate.Polynomial
+// gnarkCryptoPolyToUnivariatePoly converts *iop.Polynomial to poly.Polynomial
 // (i.e., []koalabear.Element in Lagrange Normal form).
-func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial) (univariate.Polynomial, error) {
+func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial) (poly.Polynomial, error) {
 	c := p.Coefficients()
 	coeffs := make([]koalabear.Element, len(c))
 	copy(coeffs, c)
@@ -63,7 +63,7 @@ func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial) (univariate.Polynomial, 
 		if p.Layout == iop.BitReverse {
 			fft.BitReverse(coeffs)
 		}
-		univariate.CosetLagrangeToLagrangeNormal(coeffs)
+		poly.CosetLagrangeToLagrangeNormal(coeffs)
 	default:
 		return nil, fmt.Errorf("unsupported polynomial basis")
 	}
@@ -238,7 +238,7 @@ func GetPlonkTrace() (trace.Trace, []int64, int, error) {
 
 	nbPublic := ccs.GetNbPublicVariables()
 	nbRelations := ccs.GetNbConstraints()
-	size := univariate.NextPowerOfTwo(nbRelations + nbPublic)
+	size := poly.NextPowerOfTwo(nbRelations + nbPublic)
 	d := fft.NewDomain(uint64(size))
 
 	publicTrace := gnark_plonk.NewTrace(spr, d)

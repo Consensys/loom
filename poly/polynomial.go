@@ -1,6 +1,6 @@
 // /!\ In this package, every inputs polynomials must be in lagrange basis (the inputs come from columns of a trace).
 
-package univariate
+package poly
 
 import (
 	"fmt"

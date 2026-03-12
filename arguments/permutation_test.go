@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/cs"
-	"github.com/consensys/giop/univariate"
+	"github.com/consensys/giop/poly"
 	"github.com/consensys/giop/prover"
 	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/trace"
@@ -156,16 +156,16 @@ func BenchmarkPermutation(b *testing.B) {
 
 	size := 1 << 10
 	nbPolys := 5
-	p1 := make([]univariate.Polynomial, nbPolys)
+	p1 := make([]poly.Polynomial, nbPolys)
 	for i := 0; i < nbPolys; i++ {
-		p1[i] = make(univariate.Polynomial, size)
+		p1[i] = make(poly.Polynomial, size)
 		for j := 0; j < size; j++ {
 			p1[i][j].SetRandom()
 		}
 	}
-	p2 := make([]univariate.Polynomial, nbPolys)
+	p2 := make([]poly.Polynomial, nbPolys)
 	for i := 0; i < nbPolys; i++ {
-		p2[i] = make(univariate.Polynomial, size)
+		p2[i] = make(poly.Polynomial, size)
 		for j := 0; j < size; j++ {
 			p2[i][j].Set(&p1[(i+1)%nbPolys][(j+1)%size])
 		}
@@ -199,7 +199,7 @@ func BenchmarkPermutation(b *testing.B) {
 	b.Run("prover", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 
-			_trace := make(map[string]univariate.Polynomial)
+			_trace := make(map[string]poly.Polynomial)
 			for i := 0; i < nbPolys; i++ {
 				_trace[fmt.Sprintf("P1_%d", i)] = trace[fmt.Sprintf("P1_%d", i)]
 				_trace[fmt.Sprintf("P2_%d", i)] = trace[fmt.Sprintf("P2_%d", i)]
