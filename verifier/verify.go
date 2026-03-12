@@ -11,7 +11,7 @@ import (
 	"github.com/consensys/giop/crypto/dummycommitment"
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/pas/dag"
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	proveractions "github.com/consensys/giop/prover_actions"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -157,8 +157,8 @@ func (runtime *Runtime) ComputeChallenges(proof *proveractions.Proof, nbWorkers 
 // EvaluateComputableColumns evaluates the computable columns at zeta and stores the results in runtime.Vars.
 func (runtime *Runtime) EvaluateComputableColumns() error {
 
-	ccLeaves := runtime.VanishingRelation.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutCommittedColumns(), sym.WithoutShiftedColumns()))
-	ccLeaves = sym.RemoveDuplicates(ccLeaves)
+	ccLeaves := runtime.VanishingRelation.Leaves(expr.NewConfig(expr.WithoutChallenges(), expr.WithoutCommittedColumns(), expr.WithoutShiftedColumns()))
+	ccLeaves = expr.RemoveDuplicates(ccLeaves)
 
 	for _, l := range ccLeaves {
 		cc, err := proveractions.GetComputationableColumn(l)

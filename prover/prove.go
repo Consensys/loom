@@ -10,7 +10,7 @@ import (
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/crypto/dummycommitment"
 	"github.com/consensys/giop/cs"
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/pas/univariate"
 	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/giop/trace"
@@ -148,7 +148,7 @@ func (runtime *Runtime) DeriveFinalFoldingChallenge(proof *proveractions.Proof) 
 	// 1. create the dependencies of the folding challenge to all the polynomials not committed
 	var round proveractions.Round
 	round.ChallengeName = constants.FINAL_FOLDING_CHALLENGE
-	leaves := runtime.CompiledIOP.VanishingRelation.Leaves(sym.NewConfig(sym.WithoutChallenges(), sym.WithoutComputableColumns(), sym.WithoutShiftedColumns()))
+	leaves := runtime.CompiledIOP.VanishingRelation.Leaves(expr.NewConfig(expr.WithoutChallenges(), expr.WithoutComputableColumns(), expr.WithoutShiftedColumns()))
 	round.DependenciesCommittedColumns = make([]string, 0, len(leaves))
 	for _, l := range leaves {
 		if _, ok := proof.OpeningProofs[l]; !ok { // <- the column whose ID is l is not committed, we add it to bindings
@@ -321,8 +321,8 @@ func (runtime *Runtime) OpenShiftedCommitments(proof *proveractions.Proof, zeta 
 
 	// query the leaves corresponding to ShiftedColumns
 	leavesShifted := runtime.CompiledIOP.VanishingRelation.Leaves(
-		sym.NewConfig(sym.WithoutChallenges(), sym.WithoutComputableColumns(), sym.WithoutCommittedColumns()))
-	leavesShifted = sym.RemoveDuplicates(leavesShifted)
+		expr.NewConfig(expr.WithoutChallenges(), expr.WithoutComputableColumns(), expr.WithoutCommittedColumns()))
+	leavesShifted = expr.RemoveDuplicates(leavesShifted)
 
 	// open the ShiftedColumns
 	w, err := koalabear.Generator(uint64(proof.N))

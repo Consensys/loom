@@ -2,7 +2,7 @@ package cs
 
 import (
 	"github.com/consensys/giop/pas/dag"
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	proveractions "github.com/consensys/giop/prover_actions"
 )
 
@@ -45,7 +45,7 @@ import (
 func reduceDegree(system *System, targetDegree int) {
 
 	// seenExpr records already seen folded expressions (the AST doesn't account for common substrings). The key is a unique ID
-	// characterising a sym.Expr, derived from building its corresponding DAG. The value is the name of the reduced expression.
+	// characterising a expr.Expr, derived from building its corresponding DAG. The value is the name of the reduced expression.
 	// ex: for computing P0^4 and targetDegree=2, we compute P0' = P0^2 only once, and then compute P0 = P0'^2
 	seenExpr := make(map[string]string)
 
@@ -62,7 +62,7 @@ func reduceDegree(system *System, targetDegree int) {
 			// If the expression has already been seen, replace the expression with its folded counterpart
 			daglowDegreeExpr := dag.ExprToDAG(lowDegreeExpr)
 			if seen, ok := seenExpr[daglowDegreeExpr.Root.Key()]; ok {
-				cc := sym.NewCommittedColumn(seen)
+				cc := expr.NewCommittedColumn(seen)
 				constraint.ReplaceLeafByExpression(lowDegreeExpr.String(), cc)
 				continue
 			}
@@ -73,7 +73,7 @@ func reduceDegree(system *System, targetDegree int) {
 			system.AssertZero(newRelation)
 
 			// register the prover action of creating the column C := lowDegreeExpr(trace)
-			system.RegisterProverAction([]sym.Expr{lowDegreeExpr}, []string{lowDegreeExpr.String()}, proveractions.NewIDCtx(proveractions.COMPUTE_COL))
+			system.RegisterProverAction([]expr.Expr{lowDegreeExpr}, []string{lowDegreeExpr.String()}, proveractions.NewIDCtx(proveractions.COMPUTE_COL))
 
 			// register the lowDegreeExpr
 			seenExpr[daglowDegreeExpr.Root.Key()] = lowDegreeExpr.String()

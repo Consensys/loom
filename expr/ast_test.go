@@ -1,4 +1,4 @@
-package sym
+package expr
 
 import (
 	"testing"

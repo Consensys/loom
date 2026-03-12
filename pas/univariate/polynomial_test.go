@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/pas/dag"
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 )
@@ -72,7 +72,7 @@ func TestEvalPointWise(t *testing.T) {
 			coeffs1[i].SetUint64(uint64(2 * (i + 1)))
 		}
 
-		C := sym.NewCommittedColumn("x0").Pow(2).Add(sym.NewCommittedColumn("x1"))
+		C := expr.NewCommittedColumn("x0").Pow(2).Add(expr.NewCommittedColumn("x1"))
 		Pi := map[string]Polynomial{"x0": coeffs0, "x1": coeffs1}
 
 		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
@@ -95,7 +95,7 @@ func TestEvalPointWise(t *testing.T) {
 		P0 := makeLagrangePoly(10, 20, 30, 40, 50, 60, 70, 80)
 		P1 := makeLagrangePoly(1, 2, 3, 4, 5, 6, 7, 8)
 
-		C := sym.NewCommittedColumn("x0").Sub(sym.NewCommittedColumn("x1"))
+		C := expr.NewCommittedColumn("x0").Sub(expr.NewCommittedColumn("x1"))
 		Pi := map[string]Polynomial{"x0": P0, "x1": P1}
 
 		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
@@ -115,7 +115,7 @@ func TestEvalPointWise(t *testing.T) {
 		P0 := makeLagrangePoly(2, 4, 6, 8, 10, 12, 14, 16)
 		P1 := makeLagrangePoly(3, 3, 3, 3, 3, 3, 3, 3)
 
-		C := sym.NewCommittedColumn("x0").Mul(sym.NewCommittedColumn("x1"))
+		C := expr.NewCommittedColumn("x0").Mul(expr.NewCommittedColumn("x1"))
 		Pi := map[string]Polynomial{"x0": P0, "x1": P1}
 
 		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
@@ -137,9 +137,9 @@ func TestEvalPointWise(t *testing.T) {
 		P2 := makeLagrangePoly(10, 10, 10, 10, 10, 10, 10, 10)
 		P3 := makeLagrangePoly(1, 1, 1, 1, 1, 1, 1, 1)
 
-		C := sym.NewCommittedColumn("x0").Mul(sym.NewCommittedColumn("x1")).
-			Add(sym.NewCommittedColumn("x2")).
-			Sub(sym.NewCommittedColumn("x3"))
+		C := expr.NewCommittedColumn("x0").Mul(expr.NewCommittedColumn("x1")).
+			Add(expr.NewCommittedColumn("x2")).
+			Sub(expr.NewCommittedColumn("x3"))
 		Pi := map[string]Polynomial{"x0": P0, "x1": P1, "x2": P2, "x3": P3}
 
 		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
@@ -160,7 +160,7 @@ func TestEvalPointWise(t *testing.T) {
 		size := 8
 		P0 := makeLagrangePoly(0, 1, 2, 3, 5, 7, 11, 13)
 
-		C := sym.NewCommittedColumn("x0").Mul(sym.NewCommittedColumn("x0")).Sub(sym.NewCommittedColumn("x0"))
+		C := expr.NewCommittedColumn("x0").Mul(expr.NewCommittedColumn("x0")).Sub(expr.NewCommittedColumn("x0"))
 		Pi := map[string]Polynomial{"x0": P0}
 
 		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
@@ -182,7 +182,7 @@ func TestEvalPointWise(t *testing.T) {
 		P1 := makeLagrangePoly(1, 2, 3, 4, 5, 6, 7, 8)
 		P2 := makeLagrangePoly(2, 2, 2, 2, 2, 2, 2, 2)
 
-		C := sym.NewCommittedColumn("x0").Sub(sym.NewCommittedColumn("x1")).Mul(sym.NewCommittedColumn("x2"))
+		C := expr.NewCommittedColumn("x0").Sub(expr.NewCommittedColumn("x1")).Mul(expr.NewCommittedColumn("x2"))
 		Pi := map[string]Polynomial{"x0": P0, "x1": P1, "x2": P2}
 
 		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
@@ -202,14 +202,14 @@ func TestEvalPointWise(t *testing.T) {
 // setupPiSlice assigns Idx values to every leaf in E and returns _Pi []Polynomial,
 // where _Pi[l.Idx] is the polynomial for leaf l drawn from Pi.
 // This mirrors the setup done inside evalPointWiseInto.
-func setupPiSlice(Pi map[string]Polynomial, E sym.Expr) []Polynomial {
+func setupPiSlice(Pi map[string]Polynomial, E expr.Expr) []Polynomial {
 	type varKey struct {
 		name  string
 		shift int
 	}
 	varToIdx := make(map[varKey]int)
-	allLeaves := E.LeavesFull(sym.NewConfig())
-	var unique []*sym.Leaf
+	allLeaves := E.LeavesFull(expr.NewConfig())
+	var unique []*expr.Leaf
 	for _, l := range allLeaves {
 		key := varKey{l.Name, l.Shift}
 		if idx, ok := varToIdx[key]; ok {
@@ -235,7 +235,7 @@ func TestEvaluateOnIthEntry(t *testing.T) {
 		P0 := makeLagrangePoly(1, 2, 3, 4, 5, 6, 7, 8)
 		P1 := makeLagrangePoly(10, 20, 30, 40, 50, 60, 70, 80)
 		Pi := map[string]Polynomial{"x0": P0, "x1": P1}
-		E := sym.NewCommittedColumn("x0").Pow(2).Add(sym.NewCommittedColumn("x1"))
+		E := expr.NewCommittedColumn("x0").Pow(2).Add(expr.NewCommittedColumn("x1"))
 
 		_Pi := setupPiSlice(Pi, E)
 		R, err := BuildPointwiseEvaluation(Pi, E, size, nil)
@@ -257,7 +257,7 @@ func TestEvaluateOnIthEntry(t *testing.T) {
 		var gVal koalabear.Element
 		gVal.SetUint64(42)
 		Pi := map[string]Polynomial{"x0": P0, "gamma": {gVal}}
-		E := sym.NewCommittedColumn("x0").Sub(sym.NewCommittedColumn("gamma"))
+		E := expr.NewCommittedColumn("x0").Sub(expr.NewCommittedColumn("gamma"))
 
 		_Pi := setupPiSlice(Pi, E)
 		R, err := BuildPointwiseEvaluation(Pi, E, size, nil)
@@ -279,7 +279,7 @@ func TestEvaluateOnIthEntry(t *testing.T) {
 		three.SetUint64(3)
 		P0 := makeLagrangePoly(4, 5, 6, 7, 8, 9, 10, 11)
 		Pi := map[string]Polynomial{"x0": P0}
-		E := sym.NewCommittedColumn("x0").Sub(sym.NewConst(three))
+		E := expr.NewCommittedColumn("x0").Sub(expr.NewConst(three))
 
 		_Pi := setupPiSlice(Pi, E)
 		R, err := BuildPointwiseEvaluation(Pi, E, size, nil)
@@ -299,7 +299,7 @@ func TestEvaluateOnIthEntry(t *testing.T) {
 		size := 8
 		P0 := makeLagrangePoly(1, 3, 2, 7, 5, 4, 6, 8)
 		Pi := map[string]Polynomial{"x0": P0}
-		E := sym.NewShiftedColumn("x0", 1).Sub(sym.NewCommittedColumn("x0"))
+		E := expr.NewShiftedColumn("x0", 1).Sub(expr.NewCommittedColumn("x0"))
 
 		_Pi := setupPiSlice(Pi, E)
 		for i := 0; i < size; i++ {
@@ -317,7 +317,7 @@ func TestEvaluateOnIthEntry(t *testing.T) {
 		size := 8
 		P0 := makeLagrangePoly(2, 4, 6, 8, 10, 12, 14, 16)
 		Pi := map[string]Polynomial{"x0": P0}
-		E := sym.NewShiftedColumn("x0", -1)
+		E := expr.NewShiftedColumn("x0", -1)
 
 		_Pi := setupPiSlice(Pi, E)
 		for i := 0; i < size; i++ {
@@ -398,8 +398,8 @@ func TestBuildGrandProduct(t *testing.T) {
 		size := 8
 		P := makeLagrangePoly(2, 3, 4, 5, 6, 7, 8, 9)
 		Pi := map[string]Polynomial{"x": P}
-		E0 := sym.NewCommittedColumn("x")
-		E1 := sym.NewCommittedColumn("x")
+		E0 := expr.NewCommittedColumn("x")
+		E1 := expr.NewCommittedColumn("x")
 
 		R, err := BuildGrandProduct(Pi, E0, E1, size, nil)
 		if err != nil {
@@ -424,8 +424,8 @@ func TestBuildGrandProduct(t *testing.T) {
 			"x":   P,
 			"one": []koalabear.Element{one},
 		}
-		E0 := sym.NewCommittedColumn("x")
-		E1 := sym.NewCommittedColumn("one")
+		E0 := expr.NewCommittedColumn("x")
+		E1 := expr.NewCommittedColumn("one")
 
 		R, err := BuildGrandProduct(Pi, E0, E1, size, nil)
 		if err != nil {
@@ -445,8 +445,8 @@ func TestBuildGrandProduct(t *testing.T) {
 		P0 := makeLagrangePoly(7, 3, 11, 5, 2, 9, 4, 6)
 		P1 := makeLagrangePoly(1, 2, 3, 4, 5, 6, 7, 8)
 		Pi := map[string]Polynomial{"x": P0, "y": P1}
-		E0 := sym.NewCommittedColumn("x")
-		E1 := sym.NewCommittedColumn("y")
+		E0 := expr.NewCommittedColumn("x")
+		E1 := expr.NewCommittedColumn("y")
 
 		R, err := BuildGrandProduct(Pi, E0, E1, size, nil)
 		if err != nil {
@@ -465,8 +465,8 @@ func TestBuildGrandProduct(t *testing.T) {
 		P0 := makeLagrangePoly(6, 10, 3, 15, 2, 8, 5, 9)
 		P1 := makeLagrangePoly(2, 5, 1, 3, 2, 4, 1, 3)
 		Pi := map[string]Polynomial{"x": P0, "y": P1}
-		E0 := sym.NewCommittedColumn("x")
-		E1 := sym.NewCommittedColumn("y")
+		E0 := expr.NewCommittedColumn("x")
+		E1 := expr.NewCommittedColumn("y")
 
 		R, err := BuildGrandProduct(Pi, E0, E1, size, nil)
 		if err != nil {
@@ -494,8 +494,8 @@ func TestBuildGrandProduct(t *testing.T) {
 		P0 := makeLagrangePoly(1, 2, 3, 4, 5, 6, 7, 8)
 		P1 := makeLagrangePoly(1, 0, 1, 1, 1, 1, 1, 1)
 		Pi := map[string]Polynomial{"x": P0, "y": P1}
-		E0 := sym.NewCommittedColumn("x")
-		E1 := sym.NewCommittedColumn("y")
+		E0 := expr.NewCommittedColumn("x")
+		E1 := expr.NewCommittedColumn("y")
 
 		_, err := BuildGrandProduct(Pi, E0, E1, size, nil)
 		if err == nil {
@@ -588,8 +588,8 @@ func TestBuildGrandSum(t *testing.T) {
 			P[i].Inverse(&P[i])
 		}
 
-		E := sym.NewCommittedColumn("P")
-		M := sym.NewConst(koalabear.One())
+		E := expr.NewCommittedColumn("P")
+		M := expr.NewConst(koalabear.One())
 		T := map[string]Polynomial{"P": P}
 		R, err := BuildGrandSum(T, E, M, size, nil)
 		if err != nil {
@@ -613,14 +613,14 @@ func TestBuildGrandSum(t *testing.T) {
 // verifyQuotientIdentity checks E(Pi(x)) == Q(x)*(x^N-1) at a random point x.
 // Q is in coset-Lagrange form (as returned by ComputeQuotient).
 // Pi polynomials are in Lagrange Normal form.
-func verifyQuotientIdentity(t *testing.T, Pi map[string]Polynomial, E sym.Expr, Q Polynomial, N int) {
+func verifyQuotientIdentity(t *testing.T, Pi map[string]Polynomial, E expr.Expr, Q Polynomial, N int) {
 	t.Helper()
 
 	var x koalabear.Element
 	x.SetRandom()
 
 	// Evaluate each Pi[name] at x
-	leaves := sym.RemoveDuplicates(E.Leaves(sym.NewConfig()))
+	leaves := expr.RemoveDuplicates(E.Leaves(expr.NewConfig()))
 	piAtX := make(map[string]koalabear.Element, len(leaves))
 	for _, name := range leaves {
 		piAtX[name] = evalLagrangeNormalAt(Pi[name], x)
@@ -670,10 +670,10 @@ func TestBuildFilteredAccPolynomial(t *testing.T) {
 			"f":     F,
 			"alpha": {alphaVal},
 		}
-		Eexpr := sym.NewCommittedColumn("e")
-		Fexpr := sym.NewCommittedColumn("f")
+		Eexpr := expr.NewCommittedColumn("e")
+		Fexpr := expr.NewCommittedColumn("f")
 
-		R, err := BuildFilteredAccPolynomial(Pi, Eexpr, Fexpr, sym.NewChallenge("alpha"), N, nil)
+		R, err := BuildFilteredAccPolynomial(Pi, Eexpr, Fexpr, expr.NewChallenge("alpha"), N, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -697,7 +697,7 @@ func TestComputeQuotient(t *testing.T) {
 		size := 8
 		P := makeLagrangePoly(1, 2, 3, 4, 5, 6, 7, 8)
 		Pi := map[string]Polynomial{"f": P, "g": P}
-		E := sym.NewCommittedColumn("f").Sub(sym.NewCommittedColumn("g"))
+		E := expr.NewCommittedColumn("f").Sub(expr.NewCommittedColumn("g"))
 		EDag := dag.ExprToDAG(E)
 
 		Q, err := ComputeQuotient(Pi, *EDag, size)
@@ -727,7 +727,7 @@ func TestComputeQuotient(t *testing.T) {
 
 		var minusOne koalabear.Element
 		minusOne.Neg(&one)
-		E := sym.NewCommittedColumn("f").Mul(sym.NewCommittedColumn("f").Add(sym.NewConst(minusOne)))
+		E := expr.NewCommittedColumn("f").Mul(expr.NewCommittedColumn("f").Add(expr.NewConst(minusOne)))
 		EDag := dag.ExprToDAG(E)
 
 		Q, err := ComputeQuotient(Pi, *EDag, size)
@@ -752,7 +752,7 @@ func TestComputeQuotient(t *testing.T) {
 			c2[i].SetRandom()
 		}
 
-		trunc := sym.NewCommittedColumn("x0").Pow(3).Add(sym.NewCommittedColumn("x1").Mul(sym.NewCommittedColumn("x2")))
+		trunc := expr.NewCommittedColumn("x0").Pow(3).Add(expr.NewCommittedColumn("x1").Mul(expr.NewCommittedColumn("x2")))
 		truncVals := make(map[string]koalabear.Element, 3)
 		for i := 0; i < size; i++ {
 			truncVals["x0"], truncVals["x1"], truncVals["x2"] = c0[i], c1[i], c2[i]
@@ -761,9 +761,9 @@ func TestComputeQuotient(t *testing.T) {
 		}
 
 		Pi := map[string]Polynomial{"x0": c0, "x1": c1, "x2": c2, "x3": c3}
-		E := sym.NewCommittedColumn("x0").Pow(3).
-			Add(sym.NewCommittedColumn("x1").Mul(sym.NewCommittedColumn("x2"))).
-			Add(sym.NewCommittedColumn("x3"))
+		E := expr.NewCommittedColumn("x0").Pow(3).
+			Add(expr.NewCommittedColumn("x1").Mul(expr.NewCommittedColumn("x2"))).
+			Add(expr.NewCommittedColumn("x3"))
 		EDag := dag.ExprToDAG(E)
 
 		Q, err := ComputeQuotient(Pi, *EDag, size)
@@ -782,7 +782,7 @@ func TestComputeQuotient(t *testing.T) {
 
 		P := makeLagrangePoly(3, 3, 3, 3, 3, 3, 3, 3)
 		Pi := map[string]Polynomial{"f": P, "gamma": []koalabear.Element{three}}
-		E := sym.NewCommittedColumn("f").Sub(sym.NewCommittedColumn("gamma"))
+		E := expr.NewCommittedColumn("f").Sub(expr.NewCommittedColumn("gamma"))
 		EDag := dag.ExprToDAG(E)
 
 		Q, err := ComputeQuotient(Pi, *EDag, size)

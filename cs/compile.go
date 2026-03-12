@@ -3,12 +3,12 @@ package cs
 import (
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/pas/dag"
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	proveractions "github.com/consensys/giop/prover_actions"
 )
 
 // Fold returns Σ_i αⁱE[i]
-func Fold(E []sym.Expr, alpha sym.Expr) sym.Expr {
+func Fold(E []expr.Expr, alpha expr.Expr) expr.Expr {
 	res := E[len(E)-1]
 	for i := len(E) - 2; i >= 0; i-- {
 		res = res.Mul(alpha).Add(E[i])
@@ -52,8 +52,8 @@ func Compile(system *System, opts ...Option) CompiledIOP {
 		reduceDegree(system, config.targetDegree)
 	}
 
-	// 1. symoblically fold all the constraints using the folding challenge. The actual challenge is derived in prover/.
-	C := Fold(system.Relations, sym.NewChallenge(constants.FINAL_FOLDING_CHALLENGE))
+	// 1. exproblically fold all the constraints using the folding challenge. The actual challenge is derived in prover/.
+	C := Fold(system.Relations, expr.NewChallenge(constants.FINAL_FOLDING_CHALLENGE))
 	CDag := dag.ExprToDAG(C)
 	CDag = CDag.Flatten()
 	return CompiledIOP{

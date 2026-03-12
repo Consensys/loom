@@ -6,21 +6,21 @@ import (
 	"sync"
 
 	"github.com/consensys/giop/crypto/dummycommitment"
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/trace"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
 // GetCommittedColumnsID returns the list of the names appearing in E
-func GetColumnsId(E []sym.Expr, opts ...sym.Option) []string {
+func GetColumnsId(E []expr.Expr, opts ...expr.Option) []string {
 	var ids []string
 	for _, c := range E {
-		n := c.Leaves(sym.NewConfig(opts...))
-		sym.RemoveDuplicates(n) // avoid the expression to grow too big
+		n := c.Leaves(expr.NewConfig(opts...))
+		expr.RemoveDuplicates(n) // avoid the expression to grow too big
 		ids = append(ids, n...)
 	}
-	ids = sym.RemoveDuplicates(ids)
+	ids = expr.RemoveDuplicates(ids)
 	return ids
 }
 
@@ -28,25 +28,25 @@ func GetColumnsId(E []sym.Expr, opts ...sym.Option) []string {
 // base column name (e.g. "F1" instead of "F1_shift_-1"). Use this for dependency
 // tracking in the Kahn scheduler, where the scheduler only needs to know that the
 // underlying trace column is available, not a fictitious shifted-name column.
-func GetColumnsBaseId(E []sym.Expr) []string {
+func GetColumnsBaseId(E []expr.Expr) []string {
 	var ids []string
-	for _, expr := range E {
-		for _, leaf := range expr.LeavesFull(sym.NewConfig()) {
+	for _, e := range E {
+		for _, leaf := range e.LeavesFull(expr.NewConfig()) {
 			ids = append(ids, leaf.Name)
 		}
 	}
-	return sym.RemoveDuplicates(ids)
+	return expr.RemoveDuplicates(ids)
 }
 
 // GetChallengesID returns the list of the names of Challenges appearing in E
-func GetChallengesID(E []sym.Expr) []string {
+func GetChallengesID(E []expr.Expr) []string {
 	var ids []string
 	for _, c := range E {
-		n := c.Leaves(sym.NewConfig(sym.WithoutComputableColumns(), sym.WithoutCommittedColumns()))
-		sym.RemoveDuplicates(n) // avoid the expression to grow too big
+		n := c.Leaves(expr.NewConfig(expr.WithoutComputableColumns(), expr.WithoutCommittedColumns()))
+		expr.RemoveDuplicates(n) // avoid the expression to grow too big
 		ids = append(ids, n...)
 	}
-	ids = sym.RemoveDuplicates(ids)
+	ids = expr.RemoveDuplicates(ids)
 	return ids
 }
 
@@ -91,7 +91,7 @@ func l1DisjointUnionL2(l1, l2 []string) []string {
 
 // ComputeChallenge type of ProverAction creates a challenge named GP[0] which is derived via FS
 // from the commitments of all the leaves appearing in E.
-func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sym.Expr, GP []string, _ Ctx) error {
+func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, GP []string, _ Ctx) error {
 	if len(GP) == 0 {
 		return fmt.Errorf("len(GP)=0, it must contain the name of the challenge")
 	}
@@ -105,8 +105,8 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []sym.E
 		// 1. the challenge dependencies are CommittedColumns AND challenges, otherwise
 		// the prover<->verifier interactionit is oblivious of the FS order and gives security gaps. We don't take
 		// the Computationable columns, because they are recomputed by the verifier.
-		dependenciesCommittedColumns := GetColumnsId(E, sym.OnlyCommittedColumns...)
-		dependenciesChallenges := GetColumnsId(E, sym.OnlyChallenges...)
+		dependenciesCommittedColumns := GetColumnsId(E, expr.OnlyCommittedColumns...)
+		dependenciesChallenges := GetColumnsId(E, expr.OnlyChallenges...)
 
 		// 2. find on which commitments depend dependenciesChallenges, and remove them from dependenciesCommittedColumns
 		// if they appear in it -> round.DependenciesChallenges already accout for them.

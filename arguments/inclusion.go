@@ -5,7 +5,7 @@ import (
 
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/cs"
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/giop/utils"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -50,14 +50,14 @@ import (
 func Inclusion(system *cs.System, S, T string) error {
 
 	// 1. create the multiplicity polynomial
-	Texpr := sym.NewCommittedColumn(T)
-	Sexpr := sym.NewCommittedColumn(S)
+	Texpr := expr.NewCommittedColumn(T)
+	Sexpr := expr.NewCommittedColumn(S)
 
 	return inclusionCheckIOP(system, Sexpr, Texpr)
 
 }
 
-func inclusionCheckIOP(system *cs.System, S, T sym.Expr) error {
+func inclusionCheckIOP(system *cs.System, S, T expr.Expr) error {
 
 	_M, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
@@ -80,20 +80,20 @@ func inclusionCheckIOP(system *cs.System, S, T sym.Expr) error {
 	}
 
 	// 1. create the multiplicity polynomial
-	Mexpr := sym.NewCommittedColumn(M)
-	system.RegisterProverAction([]sym.Expr{S, T}, []string{M}, proveractions.NewIDCtx(proveractions.MULTIPLICITY))
+	Mexpr := expr.NewCommittedColumn(M)
+	system.RegisterProverAction([]expr.Expr{S, T}, []string{M}, proveractions.NewIDCtx(proveractions.MULTIPLICITY))
 
 	// 2. sample a challenge gamma, depending on M, S, and T
-	gammaDeps := []sym.Expr{S, T, Mexpr}
+	gammaDeps := []expr.Expr{S, T, Mexpr}
 	system.RegisterProverAction(gammaDeps, []string{gamma}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 3. compute the grand sums grandSum1:=Σ_i M[i]/(T[i]-γ), grandSum2:=Σ_i 1/(S[i]-γ)
-	oneExpr := sym.NewConst(koalabear.One())
-	SminusGamma := S.Sub(sym.NewChallenge(gamma))
-	system.RegisterProverAction([]sym.Expr{oneExpr, SminusGamma}, []string{grandSumS}, proveractions.NewIDCtx(proveractions.GRAND_SUM))
+	oneExpr := expr.NewConst(koalabear.One())
+	SminusGamma := S.Sub(expr.NewChallenge(gamma))
+	system.RegisterProverAction([]expr.Expr{oneExpr, SminusGamma}, []string{grandSumS}, proveractions.NewIDCtx(proveractions.GRAND_SUM))
 
-	TminusGamma := T.Sub(sym.NewChallenge(gamma))
-	system.RegisterProverAction([]sym.Expr{Mexpr, TminusGamma}, []string{grandSumT}, proveractions.NewIDCtx(proveractions.GRAND_SUM))
+	TminusGamma := T.Sub(expr.NewChallenge(gamma))
+	system.RegisterProverAction([]expr.Expr{Mexpr, TminusGamma}, []string{grandSumT}, proveractions.NewIDCtx(proveractions.GRAND_SUM))
 
 	// 4. register the constraints ensuring the grand sums are correctly constructed
 	grandSumRelationsT := cs.BuildGrandSumRelations(Mexpr, TminusGamma, grandSumT, system.N)
@@ -102,8 +102,8 @@ func inclusionCheckIOP(system *cs.System, S, T sym.Expr) error {
 	system.AssertZeros(grandSumRelationsS)
 
 	// 5. ensure that grandSumT[N-1] = grandSumS[N-1]
-	grandSumSExpr := sym.NewCommittedColumn(grandSumS)
-	grandSumTExpr := sym.NewCommittedColumn(grandSumT)
+	grandSumSExpr := expr.NewCommittedColumn(grandSumS)
+	grandSumTExpr := expr.NewCommittedColumn(grandSumT)
 	boundaryEquality := cs.BuildLocalRelation(grandSumSExpr, grandSumTExpr, system.N-1, system.N)
 	system.AssertZero(boundaryEquality)
 
@@ -172,24 +172,24 @@ func InclusionMultiSet(system *cs.System, S, T []string) error {
 	}
 
 	// 1. sample a challenge for folding
-	foldingDeps := make([]sym.Expr, len(S)+len(T))
+	foldingDeps := make([]expr.Expr, len(S)+len(T))
 	for i := 0; i < len(S); i++ {
-		foldingDeps[i] = sym.NewCommittedColumn(S[i])
+		foldingDeps[i] = expr.NewCommittedColumn(S[i])
 	}
 	for i := 0; i < len(T); i++ {
-		foldingDeps[i+len(S)] = sym.NewCommittedColumn(T[i])
+		foldingDeps[i+len(S)] = expr.NewCommittedColumn(T[i])
 	}
 	system.RegisterProverAction(foldingDeps, []string{gamma}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 2. fold S and T
-	gammaExpr := sym.NewChallenge(gamma)
-	SExpr := make([]sym.Expr, len(S))
-	TExpr := make([]sym.Expr, len(T))
+	gammaExpr := expr.NewChallenge(gamma)
+	SExpr := make([]expr.Expr, len(S))
+	TExpr := make([]expr.Expr, len(T))
 	for i := 0; i < len(S); i++ {
-		SExpr[i] = sym.NewCommittedColumn(S[i])
+		SExpr[i] = expr.NewCommittedColumn(S[i])
 	}
 	for i := 0; i < len(T); i++ {
-		TExpr[i] = sym.NewCommittedColumn(T[i])
+		TExpr[i] = expr.NewCommittedColumn(T[i])
 	}
 	SFolded := cs.Fold(SExpr, gammaExpr)
 	TFolded := cs.Fold(TExpr, gammaExpr)

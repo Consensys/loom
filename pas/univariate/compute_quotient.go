@@ -5,7 +5,7 @@ import (
 	"math/big"
 
 	"github.com/consensys/giop/pas/dag"
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/gnark-crypto/utils"
@@ -32,7 +32,7 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 	nameToIdx := make(map[string]int)
 	baseCopies := make(map[string][]koalabear.Element)
 	for _, n := range vanishingRelation.Nodes {
-		if n.Kind != dag.KindLeaf || n.Leaf.Type == sym.Const {
+		if n.Kind != dag.KindLeaf || n.Leaf.Type == expr.Const {
 			continue
 		}
 		l := n.Leaf

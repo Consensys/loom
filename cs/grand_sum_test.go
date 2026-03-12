@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	proveractions "github.com/consensys/giop/prover_actions"
 )
 
@@ -14,13 +14,13 @@ func TestGrandSumRelation(t *testing.T) {
 
 	trace := BuildRandomTrace(t, size)
 	system := NewSystem(size)
-	constraints := BuildGrandSumRelations(sym.NewCommittedColumn("M"), sym.NewCommittedColumn("E"), "GrandSum", size)
+	constraints := BuildGrandSumRelations(expr.NewCommittedColumn("M"), expr.NewCommittedColumn("E"), "GrandSum", size)
 	system.AssertZeros(constraints)
 	proof := proveractions.NewProof(size)
-	E := sym.NewCommittedColumn("E")
-	M := sym.NewCommittedColumn("M")
+	E := expr.NewCommittedColumn("E")
+	M := expr.NewCommittedColumn("M")
 	var mu sync.Mutex
-	err := proveractions.ComputeGrandSum(trace, &proof, &mu, []sym.Expr{M, E}, []string{"GrandSum"}, nil)
+	err := proveractions.ComputeGrandSum(trace, &proof, &mu, []expr.Expr{M, E}, []string{"GrandSum"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

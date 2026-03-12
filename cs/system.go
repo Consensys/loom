@@ -4,12 +4,12 @@ import (
 	"fmt"
 
 	"github.com/consensys/giop/constants"
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/giop/utils"
 )
 
-type Relation = sym.Expr
+type Relation = expr.Expr
 
 // System defines a list of constraints and a list of solver functions form a DAG, need to build extra columns appearing in the
 // different constraints (for instance a solver might tell how to compute a grand product column, grand sum column, etc).
@@ -31,7 +31,7 @@ func NewSystem(N int) System {
 }
 
 // RegisterProverAction adds a prover action to the underlying System
-func (system *System) RegisterProverAction(inputs []sym.Expr, outputs []string, ctx proveractions.Ctx) {
+func (system *System) RegisterProverAction(inputs []expr.Expr, outputs []string, ctx proveractions.Ctx) {
 
 	pa := proveractions.ProverAction{
 		Inputs:  inputs,

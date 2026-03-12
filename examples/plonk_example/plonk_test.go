@@ -5,7 +5,7 @@ import (
 
 	"github.com/consensys/giop/arguments"
 	"github.com/consensys/giop/cs"
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/prover"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/giop/verifier"
@@ -35,11 +35,11 @@ func getKnownColumns(n int) map[string]bool {
 
 func getIthPlonkRelation(n int) cs.Relation {
 
-	C := sym.NewCommittedColumn(ID_Ql).Mul(sym.NewCommittedColumn(ithInstance(ID_L, n))).
-		Add(sym.NewCommittedColumn(ID_Qr).Mul(sym.NewCommittedColumn(ithInstance(ID_R, n)))).
-		Add(sym.NewCommittedColumn(ID_Qm).Mul(sym.NewCommittedColumn(ithInstance(ID_L, n))).Mul(sym.NewCommittedColumn(ithInstance(ID_R, n)))).
-		Add(sym.NewCommittedColumn(ID_Qo).Mul(sym.NewCommittedColumn(ithInstance(ID_O, n)))).
-		Add(sym.NewCommittedColumn(ID_Qk))
+	C := expr.NewCommittedColumn(ID_Ql).Mul(expr.NewCommittedColumn(ithInstance(ID_L, n))).
+		Add(expr.NewCommittedColumn(ID_Qr).Mul(expr.NewCommittedColumn(ithInstance(ID_R, n)))).
+		Add(expr.NewCommittedColumn(ID_Qm).Mul(expr.NewCommittedColumn(ithInstance(ID_L, n))).Mul(expr.NewCommittedColumn(ithInstance(ID_R, n)))).
+		Add(expr.NewCommittedColumn(ID_Qo).Mul(expr.NewCommittedColumn(ithInstance(ID_O, n)))).
+		Add(expr.NewCommittedColumn(ID_Qk))
 
 	return C
 }

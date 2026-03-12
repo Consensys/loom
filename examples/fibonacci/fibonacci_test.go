@@ -7,7 +7,7 @@ import (
 
 	"github.com/consensys/giop/arguments"
 	"github.com/consensys/giop/cs"
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/prover"
 	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/giop/verifier"
@@ -29,9 +29,9 @@ func TestFibonacci(t *testing.T) {
 
 	// vanishing constraint A + B - C = 0
 	system := cs.NewSystem(N)
-	colA := sym.NewCommittedColumn("A")
-	colB := sym.NewCommittedColumn("B")
-	colC := sym.NewCommittedColumn("C")
+	colA := expr.NewCommittedColumn("A")
+	colB := expr.NewCommittedColumn("B")
+	colC := expr.NewCommittedColumn("C")
 	C1 := colA.Add(colB).Sub(colC)
 	system.AssertZero(C1)
 
@@ -41,8 +41,8 @@ func TestFibonacci(t *testing.T) {
 		filter[i].SetOne()
 	}
 	system.RegisterProverAction(nil, []string{"F1"}, proveractions.NewBuilderContext(filter))
-	F1 := sym.NewCommittedColumn("F1")
-	F2 := sym.NewShiftedColumn("F1", 1)
+	F1 := expr.NewCommittedColumn("F1")
+	F2 := expr.NewShiftedColumn("F1", 1)
 	arguments.ProjectionExpr(&system, colA, colB, F1, F2)
 	arguments.ProjectionExpr(&system, colB, colC, F1, F2)
 
@@ -50,8 +50,8 @@ func TestFibonacci(t *testing.T) {
 	system.RegisterithLagrangeColumn(0)
 	var zero, one koalabear.Element
 	one.SetOne()
-	system.AssertZero(cs.BuildLocalRelation(colA, sym.NewConst(zero), 0, N))
-	system.AssertZero(cs.BuildLocalRelation(colB, sym.NewConst(one), 0, N))
+	system.AssertZero(cs.BuildLocalRelation(colA, expr.NewConst(zero), 0, N))
+	system.AssertZero(cs.BuildLocalRelation(colB, expr.NewConst(one), 0, N))
 
 	cciop := cs.Compile(&system)
 

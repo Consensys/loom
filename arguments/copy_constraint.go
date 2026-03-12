@@ -2,7 +2,7 @@ package arguments
 
 import (
 	"github.com/consensys/giop/cs"
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 )
 
 // CopyPermutation IOP generating a proof that Wires and S(Wires) are identical,
@@ -30,12 +30,12 @@ func CopyPermutation(system *cs.System, wires []string, S []int64) error {
 	return PermutationMultiset(system, multiSet1, multiSet2)
 }
 
-func makeWiresAsExpr(wires [][]string) [][]sym.Expr {
-	res := make([][]sym.Expr, len(wires))
+func makeWiresAsExpr(wires [][]string) [][]expr.Expr {
+	res := make([][]expr.Expr, len(wires))
 	for i := 0; i < len(wires); i++ {
-		res[i] = make([]sym.Expr, len(wires[i]))
+		res[i] = make([]expr.Expr, len(wires[i]))
 		for j := 0; j < len(res[i]); j++ {
-			res[i][j] = sym.NewCommittedColumn(wires[i][j])
+			res[i][j] = expr.NewCommittedColumn(wires[i][j])
 		}
 	}
 	return res
@@ -59,15 +59,15 @@ func CopyPermtutationMultiSet(system *cs.System, wires [][]string, S []int64) er
 
 	// 2. build the multi set
 	wiresExpr := makeWiresAsExpr(wires)
-	multiSet1 := make([][]sym.Expr, len(wires))
-	multiSet2 := make([][]sym.Expr, len(wires))
+	multiSet1 := make([][]expr.Expr, len(wires))
+	multiSet2 := make([][]expr.Expr, len(wires))
 	for i := 0; i < len(wires); i++ {
-		multiSet1[i] = make([]sym.Expr, len(wires)+1)
-		multiSet2[i] = make([]sym.Expr, len(wires)+1)
+		multiSet1[i] = make([]expr.Expr, len(wires)+1)
+		multiSet2[i] = make([]expr.Expr, len(wires)+1)
 		copy(multiSet1[i], wiresExpr[i])
 		copy(multiSet2[i], wiresExpr[i])
-		multiSet1[i][len(wires)] = sym.NewCommittedColumn(allOutputs[i])
-		multiSet2[i][len(wires)] = sym.NewCommittedColumn(allOutputs[len(wires)+i])
+		multiSet1[i][len(wires)] = expr.NewCommittedColumn(allOutputs[i])
+		multiSet2[i][len(wires)] = expr.NewCommittedColumn(allOutputs[len(wires)+i])
 	}
 
 	return multiSetPermutation(system, multiSet1, multiSet2)

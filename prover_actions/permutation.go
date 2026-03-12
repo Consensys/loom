@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
@@ -88,7 +88,7 @@ func generatePermutation(support [][]koalabear.Element, S []int64) [][]koalabear
 // If the permutation spans n columns, outputs is of size 2n:
 // outputs[:n] -> ID of the permutation suppport (ID_0, ID_1, ..)
 // outputs[n:] -> ID of the permutation columns
-func ComputePermutationColumns(trace trace.Trace, proof *Proof, mu *sync.Mutex, _ []sym.Expr, outputs []string, ctx Ctx) error {
+func ComputePermutationColumns(trace trace.Trace, proof *Proof, mu *sync.Mutex, _ []expr.Expr, outputs []string, ctx Ctx) error {
 
 	// 1. get the context
 	permutationCtx, ok := ctx.(PermutationContext)

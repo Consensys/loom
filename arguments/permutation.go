@@ -5,7 +5,7 @@ import (
 
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/cs"
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/giop/utils"
 )
@@ -40,20 +40,20 @@ import (
 func Permutation(system *cs.System, ID1, ID2 []string) error {
 
 	// 1. sample gamma: register the prover action ComputeChallenge
-	E1 := make([]sym.Expr, len(ID1))
+	E1 := make([]expr.Expr, len(ID1))
 	for i := 0; i < len(ID1); i++ {
-		E1[i] = sym.NewCommittedColumn(ID1[i])
+		E1[i] = expr.NewCommittedColumn(ID1[i])
 	}
-	E2 := make([]sym.Expr, len(ID2))
+	E2 := make([]expr.Expr, len(ID2))
 	for i := 0; i < len(ID2); i++ {
-		E2[i] = sym.NewCommittedColumn(ID2[i])
+		E2[i] = expr.NewCommittedColumn(ID2[i])
 	}
 
 	return equalityUpToPermutationIOP(system, E1, E2)
 
 }
 
-func equalityUpToPermutationIOP(system *cs.System, E1, E2 []sym.Expr) error {
+func equalityUpToPermutationIOP(system *cs.System, E1, E2 []expr.Expr) error {
 
 	_IDGrandProduct, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
@@ -68,13 +68,13 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 []sym.Expr) error {
 	system.RegisterProverAction(append(E1, E2...), []string{gamma}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 1. sample gamma
-	E1MinusGamma := E1[0].Sub(sym.NewChallenge(gamma))
+	E1MinusGamma := E1[0].Sub(expr.NewChallenge(gamma))
 	for i := 1; i < len(E1); i++ {
-		E1MinusGamma = E1MinusGamma.Mul(E1[i].Sub(sym.NewChallenge(gamma)))
+		E1MinusGamma = E1MinusGamma.Mul(E1[i].Sub(expr.NewChallenge(gamma)))
 	}
-	E2MinusGamma := E2[0].Sub(sym.NewChallenge(gamma))
+	E2MinusGamma := E2[0].Sub(expr.NewChallenge(gamma))
 	for i := 1; i < len(E2); i++ {
-		E2MinusGamma = E2MinusGamma.Mul(E2[i].Sub(sym.NewChallenge(gamma)))
+		E2MinusGamma = E2MinusGamma.Mul(E2[i].Sub(expr.NewChallenge(gamma)))
 	}
 
 	// 2. register the grand product constraint (including the boundary constraint)
@@ -82,7 +82,7 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 []sym.Expr) error {
 	system.AssertZeros(gpRelation)
 
 	// 3. register the prover action for creating the grand product and grand product shifted
-	system.RegisterProverAction([]sym.Expr{E1MinusGamma, E2MinusGamma}, []string{IDGrandProduct}, proveractions.NewIDCtx(proveractions.GRAND_PRODUCT))
+	system.RegisterProverAction([]expr.Expr{E1MinusGamma, E2MinusGamma}, []string{IDGrandProduct}, proveractions.NewIDCtx(proveractions.GRAND_PRODUCT))
 
 	// 4. register the creation of the lagrange column
 	system.RegisterithLagrangeColumn(0)
@@ -134,32 +134,32 @@ func equalityUpToPermutationIOP(system *cs.System, E1, E2 []sym.Expr) error {
 func PermutationMultiset(system *cs.System, ID1, ID2 [][]string) error {
 
 	// 1. sample alpha: register the prover action ComputeChallenge, depending on all ids in ID1, ID2
-	E1 := make([][]sym.Expr, len(ID1))
+	E1 := make([][]expr.Expr, len(ID1))
 	for i := 0; i < len(E1); i++ {
-		E1[i] = make([]sym.Expr, len(ID1[i]))
+		E1[i] = make([]expr.Expr, len(ID1[i]))
 		for j := 0; j < len(ID1[i]); j++ {
-			E1[i][j] = sym.NewCommittedColumn(ID1[i][j])
+			E1[i][j] = expr.NewCommittedColumn(ID1[i][j])
 		}
 	}
-	E2 := make([][]sym.Expr, len(ID2))
+	E2 := make([][]expr.Expr, len(ID2))
 	for i := 0; i < len(E2); i++ {
-		E2[i] = make([]sym.Expr, len(ID2[i]))
+		E2[i] = make([]expr.Expr, len(ID2[i]))
 		for j := 0; j < len(ID2[i]); j++ {
-			E2[i][j] = sym.NewCommittedColumn(ID2[i][j])
+			E2[i][j] = expr.NewCommittedColumn(ID2[i][j])
 		}
 	}
 
 	return multiSetPermutation(system, E1, E2)
 }
 
-func multiSetPermutation(system *cs.System, E1, E2 [][]sym.Expr) error {
+func multiSetPermutation(system *cs.System, E1, E2 [][]expr.Expr) error {
 
 	// 1. derive alpha
 	alpha, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err
 	}
-	var deps []sym.Expr
+	var deps []expr.Expr
 	for i := 0; i < len(E1); i++ {
 		deps = append(deps, E1[i]...)
 	}
@@ -169,12 +169,12 @@ func multiSetPermutation(system *cs.System, E1, E2 [][]sym.Expr) error {
 	system.RegisterProverAction(deps, []string{alpha}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 2. fold ID1[i], ID2[i] for all i with alpha
-	alphaExpr := sym.NewChallenge(alpha)
-	F1 := make([]sym.Expr, len(E1))
+	alphaExpr := expr.NewChallenge(alpha)
+	F1 := make([]expr.Expr, len(E1))
 	for i := 0; i < len(E1); i++ {
 		F1[i] = cs.Fold(E1[i], alphaExpr)
 	}
-	F2 := make([]sym.Expr, len(E2))
+	F2 := make([]expr.Expr, len(E2))
 	for i := 0; i < len(E2); i++ {
 		F2[i] = cs.Fold(E2[i], alphaExpr)
 	}

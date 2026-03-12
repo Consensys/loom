@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
@@ -32,7 +32,7 @@ func (bc BuilderContext) GetID() PAIdentifier {
 }
 
 // _ReRegisterColumngisterColumn prover action for registering a public helper column, like a filter
-func RegisterColumn(trace trace.Trace, _ *Proof, mu *sync.Mutex, _ []sym.Expr, output []string, ctx Ctx) error {
+func RegisterColumn(trace trace.Trace, _ *Proof, mu *sync.Mutex, _ []expr.Expr, output []string, ctx Ctx) error {
 	mu.Lock()
 	defer mu.Unlock()
 	if len(output) != 1 {

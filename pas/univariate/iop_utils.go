@@ -4,21 +4,21 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
 // BuildPointwiseEvaluation evaluates E point-wise over Pi and returns the N results as a
 // freshly allocated slice. N is the size of the polynomials in Pi (all must
 // have the same size, except constants which have size 1).
-func BuildPointwiseEvaluation(Pi map[string]Polynomial, E sym.Expr, N int, mu *sync.Mutex) ([]koalabear.Element, error) {
+func BuildPointwiseEvaluation(Pi map[string]Polynomial, E expr.Expr, N int, mu *sync.Mutex) ([]koalabear.Element, error) {
 	dst := make([]koalabear.Element, N)
 	return dst, evalPointWiseInto(Pi, E, N, mu, dst)
 }
 
 // BuildMultiplicityPolynomial returns P such that:
 // P[i] = #{ j | S[j] = T[i] }
-func BuildMultiplicityPolynomial(Pi map[string]Polynomial, S, T sym.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
+func BuildMultiplicityPolynomial(Pi map[string]Polynomial, S, T expr.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
 
 	// evaluate S and T on P
 	_S := getBuf(N)
@@ -42,7 +42,7 @@ func BuildMultiplicityPolynomial(Pi map[string]Polynomial, S, T sym.Expr, N int,
 // BuildGrandSum returns R such that
 // R[i] = Σ_{j⩽i}M[j]/E[j]
 // The notation E[i] means the i-th entry of E evaluated on P (same for M).
-func BuildGrandSum(P map[string]Polynomial, E, M sym.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
+func BuildGrandSum(P map[string]Polynomial, E, M expr.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
 
 	// D stores the denominators 1/E(P); pooled because it is only needed until accumulateSums copies it.
 	D := getBuf(N)
@@ -74,7 +74,7 @@ func BuildGrandSum(P map[string]Polynomial, E, M sym.Expr, N int, mu *sync.Mutex
 // BuildGrandProduct returns R such that R[0]=1, R[i+1] = R[i] * E1(P[i]) / E2(P[i])
 // N = size of the polynomials in P
 // Polynomials in P must have the same basis, same layout
-func BuildGrandProduct(P map[string]Polynomial, E1, E2 sym.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
+func BuildGrandProduct(P map[string]Polynomial, E1, E2 expr.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
 
 	// Q0 and Q1 are intermediate buffers: pooled because they are fully consumed by divPointwise.
 	Q0 := getBuf(N)
@@ -118,7 +118,7 @@ func BuildGrandProduct(P map[string]Polynomial, E1, E2 sym.Expr, N int, mu *sync
 //	R[i] = F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1]
 //
 // encodes.
-func BuildFilteredAccPolynomial(P map[string]Polynomial, E, F, alpha sym.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
+func BuildFilteredAccPolynomial(P map[string]Polynomial, E, F, alpha expr.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
 
 	_E := getBuf(N)
 	_F := getBuf(N)
@@ -133,11 +133,11 @@ func BuildFilteredAccPolynomial(P map[string]Polynomial, E, F, alpha sym.Expr, N
 		return Polynomial{}, err
 	}
 	res := make(Polynomial, N)
-	if _, ok := alpha.(*sym.Leaf); !ok {
+	if _, ok := alpha.(*expr.Leaf); !ok {
 		return Polynomial{}, fmt.Errorf("alpha must be a leaf")
 	}
-	alphaExpr := alpha.(*sym.Leaf)
-	if alphaExpr.Type != sym.Challenge {
+	alphaExpr := alpha.(*expr.Leaf)
+	if alphaExpr.Type != expr.Challenge {
 		return Polynomial{}, fmt.Errorf("alpha must be a challenge")
 	}
 	_alpha := P[alpha.String()]

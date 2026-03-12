@@ -5,7 +5,7 @@ import (
 
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/cs"
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/prover"
 	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/giop/verifier"
@@ -26,10 +26,10 @@ func sanityCheck(proverRunTime *prover.Runtime, constraints []cs.Relation, N int
 func CheckFiatShamir(proverRunTime *prover.Runtime, verifierRunTime *verifier.Runtime, proof *proveractions.Proof, zeta koalabear.Element, t *testing.T) {
 
 	proverChallenges := proverRunTime.CompiledIOP.VanishingRelation.Leaves(
-		sym.NewConfig(sym.WithoutCommittedColumns(),
-			sym.WithoutComputableColumns(),
-			sym.WithoutShiftedColumns()))
-	proverChallenges = sym.RemoveDuplicates(proverChallenges)
+		expr.NewConfig(expr.WithoutCommittedColumns(),
+			expr.WithoutComputableColumns(),
+			expr.WithoutShiftedColumns()))
+	proverChallenges = expr.RemoveDuplicates(proverChallenges)
 	mapProverChallenges := make(map[string]koalabear.Element)
 	for _, c := range proverChallenges {
 		tc := proverRunTime.Trace[c]

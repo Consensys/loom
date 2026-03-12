@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
@@ -33,14 +33,14 @@ func putBuf(b []koalabear.Element) {
 
 // evalPointWiseInto is the core implementation: it evaluates E point-wise over
 // Pi and writes the N results into dst (which must have length N).
-func evalPointWiseInto(Pi map[string]Polynomial, E sym.Expr, N int, mu *sync.Mutex, dst []koalabear.Element) error {
+func evalPointWiseInto(Pi map[string]Polynomial, E expr.Expr, N int, mu *sync.Mutex, dst []koalabear.Element) error {
 	type varKey struct {
 		name  string
 		shift int
 	}
 	varToIdx := make(map[string]int)
-	allLeaves := E.LeavesFull(sym.NewConfig())
-	leaves := make([]*sym.Leaf, 0, len(allLeaves))
+	allLeaves := E.LeavesFull(expr.NewConfig())
+	leaves := make([]*expr.Leaf, 0, len(allLeaves))
 	for _, l := range allLeaves {
 		if idx, ok := varToIdx[l.Name]; ok {
 			l.Idx = idx

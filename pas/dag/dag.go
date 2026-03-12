@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
@@ -47,7 +47,7 @@ const (
 // so that the node is unique regardless of operand order in the source tree.
 type DAGNode struct {
 	Kind     NodeKind
-	Leaf     *sym.Leaf         // non-nil iff Kind == KindLeaf; stored as concrete type to avoid interface dispatch in hot eval path
+	Leaf     *expr.Leaf         // non-nil iff Kind == KindLeaf; stored as concrete type to avoid interface dispatch in hot eval path
 	Children []*DAGNode        // len 2 for Add/Sub/Mul; len 1 for Pow; len 0 for Leaf
 	Exp      uint32            // exponent, only meaningful when Kind == KindPow
 	Index    int               // position in DAG.Nodes; used by EvalWithCache / EvalWithCacheVars
@@ -70,7 +70,7 @@ type DAG struct {
 // ExprToDAG converts an Expr tree into a DAG by merging identical
 // sub-expressions into shared nodes. Commutativity is respected: (a+b) and
 // (b+a) produce the same node, as do (a*b) and (b*a). Sub is not commutative.
-func ExprToDAG(e sym.Expr) *DAG {
+func ExprToDAG(e expr.Expr) *DAG {
 	b := &dagBuilder{
 		cache:    make(map[string]*DAGNode),
 		varIndex: make(map[string]int),
@@ -110,15 +110,15 @@ func (b *dagBuilder) intern(key string, make func() *DAGNode) *DAGNode {
 	return n
 }
 
-func (b *dagBuilder) build(root sym.Expr) *DAGNode {
+func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 	// Iterative post-order traversal to avoid stack overflow on deep expression trees
 	// (e.g. a sum of thousands of constraints folded left-associatively).
 	type frame struct {
-		expr      sym.Expr
+		expr      expr.Expr
 		processed bool // true = children already pushed; time to intern this node
 	}
 
-	result := make(map[sym.Expr]*DAGNode) // expr pointer → built DAGNode
+	result := make(map[expr.Expr]*DAGNode) // expr pointer → built DAGNode
 	stack := make([]frame, 0, 64)
 	stack = append(stack, frame{root, false})
 
@@ -133,32 +133,32 @@ func (b *dagBuilder) build(root sym.Expr) *DAGNode {
 		}
 
 		switch v := e.(type) {
-		case *sym.Leaf:
+		case *expr.Leaf:
 			var prefix string
 			switch v.Type {
-			case sym.ShiftedColumn:
+			case expr.ShiftedColumn:
 				prefix = "shifted"
-			case sym.CommittedColumn:
+			case expr.CommittedColumn:
 				prefix = "col"
-			case sym.Challenge:
+			case expr.Challenge:
 				prefix = "chal"
-			case sym.ComputableColumn:
+			case expr.ComputableColumn:
 				prefix = "comp"
-			case sym.Const:
+			case expr.Const:
 				prefix = "const"
 			}
 			key := dagKey(prefix, v.String())
 			lv := v
 			result[e] = b.intern(key, func() *DAGNode {
 				n := &DAGNode{Kind: KindLeaf, Leaf: lv, VarIdx: b.assignVarIdx(lv.String())}
-				if lv.Type == sym.Const {
+				if lv.Type == expr.Const {
 					n.IsConst = true
 					n.ConstVal = lv.Value
 				}
 				return n
 			})
 
-		case *sym.Add:
+		case *expr.Add:
 			if !f.processed {
 				stack = append(stack, frame{e, true}, frame{v.Left, false}, frame{v.Right, false})
 			} else {
@@ -175,7 +175,7 @@ func (b *dagBuilder) build(root sym.Expr) *DAGNode {
 				})
 			}
 
-		case *sym.Sub:
+		case *expr.Sub:
 			if !f.processed {
 				stack = append(stack, frame{e, true}, frame{v.Left, false}, frame{v.Right, false})
 			} else {
@@ -187,7 +187,7 @@ func (b *dagBuilder) build(root sym.Expr) *DAGNode {
 				})
 			}
 
-		case *sym.Mul:
+		case *expr.Mul:
 			if !f.processed {
 				stack = append(stack, frame{e, true}, frame{v.Left, false}, frame{v.Right, false})
 			} else {
@@ -204,7 +204,7 @@ func (b *dagBuilder) build(root sym.Expr) *DAGNode {
 				})
 			}
 
-		case *sym.Pow:
+		case *expr.Pow:
 			if !f.processed {
 				stack = append(stack, frame{e, true}, frame{v.Base, false})
 			} else {
@@ -541,15 +541,15 @@ func dagNodeLabel(n *DAGNode) string {
 	switch n.Kind {
 	case KindLeaf:
 		switch n.Leaf.Type {
-		case sym.CommittedColumn:
+		case expr.CommittedColumn:
 			return "col:" + n.Leaf.Name
-		case sym.ShiftedColumn:
+		case expr.ShiftedColumn:
 			return "shifted:" + n.Leaf.String()
-		case sym.Challenge:
+		case expr.Challenge:
 			return "chal:" + n.Leaf.Name
-		case sym.ComputableColumn:
+		case expr.ComputableColumn:
 			return "comp:" + n.Leaf.Name
-		case sym.Const:
+		case expr.Const:
 			return "const:" + n.Leaf.Value.String()
 		}
 		return n.Leaf.String()
@@ -686,7 +686,7 @@ func evalDAGNodeSliceVars(n *DAGNode, cache []koalabear.Element, vars []koalabea
 // EvalOnIthEntry evaluates the DAG at row i of the polynomial slice _Pi.
 // Each leaf node's Leaf.Idx field selects which polynomial in _Pi to read from
 // (must be set by the caller, e.g. via evalPointWiseInto setup).
-// Row selection follows the same rules as sym.Expr.EvaluateOnIthEntry:
+// Row selection follows the same rules as expr.Expr.EvaluateOnIthEntry:
 //   - Const leaf              : returns the constant value
 //   - len(_Pi[leaf.Idx]) == 1 : constant polynomial, returns _Pi[leaf.Idx][0]
 //   - ShiftedColumn leaf      : returns _Pi[leaf.Idx][(i+N+leaf.Shift)%N]
@@ -808,7 +808,7 @@ func evalDAGNodeSlice(n *DAGNode, cache []koalabear.Element, vals map[string]koa
 // WithoutComputableColumns suppress the corresponding leaf kinds; Const leaves
 // are never included. Because the DAG deduplicates nodes, each
 // structurally-identical leaf appears at most once.
-func (d *DAG) Leaves(config sym.Config) []string {
+func (d *DAG) Leaves(config expr.Config) []string {
 	var leaves []string
 	for _, n := range d.Nodes {
 		if n.Kind == KindLeaf {
@@ -843,7 +843,7 @@ func dagNodeDegree(n *DAGNode, degrees map[*DAGNode]int) int {
 		return n.Leaf.Degree()
 
 	case KindAdd, KindSub:
-		deg := sym.NegInf
+		deg := expr.NegInf
 		for _, child := range n.Children {
 			deg = max(deg, degrees[child])
 		}

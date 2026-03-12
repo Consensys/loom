@@ -5,7 +5,7 @@ import (
 
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/cs"
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/giop/utils"
 )
@@ -29,7 +29,7 @@ import (
 //	| Compute filtered accumulators FA, FB via Horner on the selected entries:       |
 //	|   FA[0]   = F1[0] · A[0]                                                       |
 //	|   FA[i]   = F1[i]·(α·FA[i-1] + A[i]) + (1-F1[i])·FA[i-1]   for i > 0        |
-//	|   (FB defined symmetrically with B, F2)                                        |
+//	|   (FB defined exprmetrically with B, F2)                                        |
 //	|   So FA[N-1] = Σ_{F1[i]=1} A[i] · α^(m-1-rank(i))  (Horner of selected A)    |
 //	| Commit(FA, FB)        -----→  | [Com(FA), Com(FB)]                             | ROUND 3
 //	|-------------------------------–-------------------------------------------------|
@@ -37,15 +37,15 @@ import (
 //	| Records constraints:                                                            |
 //	|   C1: L_0·(FA - F1·A) = 0                (boundary for FA)                    |
 //	|   C2: (1-L_0)·(FA - F1·(α·FA_prev+A) - (1-F1)·FA_prev) = 0  (recurrence FA) |
-//	|   C3, C4: symmetric constraints for FB                                         |
+//	|   C3, C4: exprmetric constraints for FB                                         |
 //	|   C5: L_{N-1}·(FA - FB) = 0              (final accumulated values match)     |
 //	|-------------------------------–-------------------------------------------------|
 func Projection(system *cs.System, A, F1, B, F2 string) error {
 
-	Aexpr := sym.NewCommittedColumn(A)
-	Bexpr := sym.NewCommittedColumn(B)
-	F1expr := sym.NewCommittedColumn(F1)
-	F2expr := sym.NewCommittedColumn(F2)
+	Aexpr := expr.NewCommittedColumn(A)
+	Bexpr := expr.NewCommittedColumn(B)
+	F1expr := expr.NewCommittedColumn(F1)
+	F2expr := expr.NewCommittedColumn(F2)
 
 	return ProjectionExpr(system, Aexpr, Bexpr, F1expr, F2expr)
 }
@@ -81,7 +81,7 @@ func Projection(system *cs.System, A, F1, B, F2 string) error {
 //	| Compute filtered accumulators FÃ, FB̃ via Horner on the selected entries:       |
 //	|   FÃ[0]   = F1[0] · Ã[0]                                                       |
 //	|   FÃ[i]   = F1[i]·(α·FÃ[i-1] + Ã[i]) + (1-F1[i])·FÃ[i-1]   for i > 0       |
-//	|   (FB̃ defined symmetrically with B̃, F2)                                        |
+//	|   (FB̃ defined exprmetrically with B̃, F2)                                        |
 //	| Commit(FÃ, FB̃)       -----→  | [Com(FÃ), Com(FB̃)]                             | ROUND 5
 //	|-------------------------------–-------------------------------------------------|
 //	|       (done via FoldRelations + Finalize + Verify)                            |
@@ -97,34 +97,34 @@ func ProjectionMultiSet(system *cs.System, A []string, F1 string, B []string, F2
 	}
 
 	// 1. sample a challenge for folding
-	foldingDeps := make([]sym.Expr, len(A)+len(B))
+	foldingDeps := make([]expr.Expr, len(A)+len(B))
 	for i := 0; i < len(A); i++ {
-		foldingDeps[i] = sym.NewCommittedColumn(A[i])
+		foldingDeps[i] = expr.NewCommittedColumn(A[i])
 	}
 	for i := 0; i < len(B); i++ {
-		foldingDeps[i+len(A)] = sym.NewCommittedColumn(B[i])
+		foldingDeps[i+len(A)] = expr.NewCommittedColumn(B[i])
 	}
 	system.RegisterProverAction(foldingDeps, []string{gamma}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 2. fold A and B
-	gammaExpr := sym.NewChallenge(gamma)
-	AExpr := make([]sym.Expr, len(A))
-	BExpr := make([]sym.Expr, len(B))
+	gammaExpr := expr.NewChallenge(gamma)
+	AExpr := make([]expr.Expr, len(A))
+	BExpr := make([]expr.Expr, len(B))
 	for i := 0; i < len(A); i++ {
-		AExpr[i] = sym.NewCommittedColumn(A[i])
+		AExpr[i] = expr.NewCommittedColumn(A[i])
 	}
 	for i := 0; i < len(B); i++ {
-		BExpr[i] = sym.NewCommittedColumn(B[i])
+		BExpr[i] = expr.NewCommittedColumn(B[i])
 	}
 	AFolded := cs.Fold(AExpr, gammaExpr)
 	BFolded := cs.Fold(BExpr, gammaExpr)
 
 	// 3. call equalityFilteredColumns
-	return ProjectionExpr(system, AFolded, BFolded, sym.NewCommittedColumn(F1), sym.NewCommittedColumn(F2))
+	return ProjectionExpr(system, AFolded, BFolded, expr.NewCommittedColumn(F1), expr.NewCommittedColumn(F2))
 
 }
 
-func ProjectionExpr(system *cs.System, A, B, F1, F2 sym.Expr) error {
+func ProjectionExpr(system *cs.System, A, B, F1, F2 expr.Expr) error {
 
 	// 1. build filtered acc polynomials for A and B
 	_idAccFA, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
@@ -144,16 +144,16 @@ func ProjectionExpr(system *cs.System, A, B, F1, F2 sym.Expr) error {
 	if err != nil {
 		return err
 	}
-	alpha := sym.NewChallenge(_alpha)
-	// F1Expr := sym.NewCommittedColumn(F1)
-	// F2Expr := sym.NewCommittedColumn(F2)
-	depsAlpha := []sym.Expr{A, B, F1, F2}
+	alpha := expr.NewChallenge(_alpha)
+	// F1Expr := expr.NewCommittedColumn(F1)
+	// F2Expr := expr.NewCommittedColumn(F2)
+	depsAlpha := []expr.Expr{A, B, F1, F2}
 	system.RegisterProverAction(depsAlpha, []string{_alpha}, proveractions.NewIDCtx(proveractions.FIAT_SHAMIR))
 
 	// 3. create the filtered acc polynomials
-	inputsFA := []sym.Expr{A, F1, alpha}
+	inputsFA := []expr.Expr{A, F1, alpha}
 	system.RegisterProverAction(inputsFA, []string{idAccFA}, proveractions.NewIDCtx(proveractions.FITLERED_ACC_POLY))
-	inputsFB := []sym.Expr{B, F2, alpha}
+	inputsFB := []expr.Expr{B, F2, alpha}
 	system.RegisterProverAction(inputsFB, []string{idAccFB}, proveractions.NewIDCtx(proveractions.FITLERED_ACC_POLY))
 
 	// 4. register the constraints ensuring that the filtered acc polynomials
@@ -162,8 +162,8 @@ func ProjectionExpr(system *cs.System, A, B, F1, F2 sym.Expr) error {
 	system.AssertZeros(cs.BuildFilteredAccPolynomialRelation(B, F2, alpha, idAccFB, system.N))
 
 	// 5. ensure FA[N-1]=FB[N-1]: the last entry holds the full filtered accumulation
-	accFA := sym.NewCommittedColumn(idAccFA)
-	accFB := sym.NewCommittedColumn(idAccFB)
+	accFA := expr.NewCommittedColumn(idAccFA)
+	accFB := expr.NewCommittedColumn(idAccFB)
 	system.AssertZero(cs.BuildLocalRelation(accFA, accFB, system.N-1, system.N))
 
 	// 6. Register Lagrange columns needed by BuildFilteredAccPolynomialRelation (L_0) and step 5 (L_{N-1})

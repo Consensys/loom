@@ -3,7 +3,7 @@ package dag
 import (
 	"testing"
 
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
@@ -20,7 +20,7 @@ func u64Vals(pairs ...any) map[string]koalabear.Element {
 }
 
 // checkDAGEval asserts that ExprToDAG(expr).Eval(vals) == expr.Evaluate(vals).
-func checkDAGEval(t *testing.T, expr sym.Expr, vals map[string]koalabear.Element) {
+func checkDAGEval(t *testing.T, expr expr.Expr, vals map[string]koalabear.Element) {
 	t.Helper()
 	want := expr.Evaluate(vals)
 	got := ExprToDAG(expr).Eval(vals)
@@ -30,7 +30,7 @@ func checkDAGEval(t *testing.T, expr sym.Expr, vals map[string]koalabear.Element
 }
 
 // checkFlatDAGEval asserts that ExprToDAG(expr).Flatten().Eval(vals) == expr.Evaluate(vals).
-func checkFlatDAGEval(t *testing.T, expr sym.Expr, vals map[string]koalabear.Element) {
+func checkFlatDAGEval(t *testing.T, expr expr.Expr, vals map[string]koalabear.Element) {
 	t.Helper()
 	want := expr.Evaluate(vals)
 	got := ExprToDAG(expr).Flatten().Eval(vals)
@@ -45,29 +45,29 @@ func TestDAGEvalLeaves(t *testing.T) {
 	var c koalabear.Element
 	c.SetUint64(42)
 
-	checkDAGEval(t, sym.NewCommittedColumn("x"), vals)
-	checkDAGEval(t, sym.NewChallenge("alpha"), vals)
-	checkDAGEval(t, sym.NewComputableColumn("L0"), vals)
-	checkDAGEval(t, sym.NewConst(c), vals)
+	checkDAGEval(t, expr.NewCommittedColumn("x"), vals)
+	checkDAGEval(t, expr.NewChallenge("alpha"), vals)
+	checkDAGEval(t, expr.NewComputableColumn("L0"), vals)
+	checkDAGEval(t, expr.NewConst(c), vals)
 }
 
 // TestDAGEvalOperators checks each binary operator and Pow individually.
 func TestDAGEvalOperators(t *testing.T) {
 	vals := u64Vals("a", uint64(3), "b", uint64(5))
-	a := sym.NewCommittedColumn("a")
-	b := sym.NewCommittedColumn("b")
+	a := expr.NewCommittedColumn("a")
+	b := expr.NewCommittedColumn("b")
 
 	tests := []struct {
 		name string
-		expr sym.Expr
+		expr expr.Expr
 	}{
 		{"Add", a.Add(b)},
 		{"Sub", a.Sub(b)},
 		{"Mul", a.Mul(b)},
-		{"Pow0", &sym.Pow{Base: sym.NewCommittedColumn("a"), Exp: 0}},
-		{"Pow1", &sym.Pow{Base: sym.NewCommittedColumn("a"), Exp: 1}},
-		{"Pow2", &sym.Pow{Base: sym.NewCommittedColumn("a"), Exp: 2}},
-		{"Pow7", sym.NewCommittedColumn("a").Pow(7)}, // uses squareAndMultiply
+		{"Pow0", &expr.Pow{Base: expr.NewCommittedColumn("a"), Exp: 0}},
+		{"Pow1", &expr.Pow{Base: expr.NewCommittedColumn("a"), Exp: 1}},
+		{"Pow2", &expr.Pow{Base: expr.NewCommittedColumn("a"), Exp: 2}},
+		{"Pow7", expr.NewCommittedColumn("a").Pow(7)}, // uses squareAndMultiply
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,14 +84,14 @@ func TestDAGEvalSharedSubExpression(t *testing.T) {
 	vals := u64Vals("a", uint64(3), "b", uint64(5))
 
 	// Build two independent AST trees for (a+b), then multiply them.
-	sum1 := sym.NewCommittedColumn("a").Add(sym.NewCommittedColumn("b"))
-	sum2 := sym.NewCommittedColumn("a").Add(sym.NewCommittedColumn("b"))
+	sum1 := expr.NewCommittedColumn("a").Add(expr.NewCommittedColumn("b"))
+	sum2 := expr.NewCommittedColumn("a").Add(expr.NewCommittedColumn("b"))
 	expr := sum1.Mul(sum2)
 
 	dag := ExprToDAG(expr)
 
 	// The DAG should have exactly 4 nodes: col:a, col:b, add(a,b), mul.
-	// sym.Without deduplication we would have 7 (two copies of col:a, col:b, add).
+	// expr.Without deduplication we would have 7 (two copies of col:a, col:b, add).
 	if len(dag.Nodes) != 4 {
 		t.Errorf("expected 4 DAG nodes, got %d", len(dag.Nodes))
 	}
@@ -114,8 +114,8 @@ func TestDAGEvalCommutativity(t *testing.T) {
 	vals := u64Vals("a", uint64(3), "b", uint64(5))
 
 	// (a+b) - (b+a): in the field this is 0; in the DAG both Add nodes must be shared.
-	expr := sym.NewCommittedColumn("a").Add(sym.NewCommittedColumn("b")).
-		Sub(sym.NewCommittedColumn("b").Add(sym.NewCommittedColumn("a")))
+	expr := expr.NewCommittedColumn("a").Add(expr.NewCommittedColumn("b")).
+		Sub(expr.NewCommittedColumn("b").Add(expr.NewCommittedColumn("a")))
 
 	dag := ExprToDAG(expr)
 
@@ -134,14 +134,14 @@ func TestDAGEvalCommutativity(t *testing.T) {
 // nodes does not change the evaluated result.
 func TestDAGFlattenEvalChains(t *testing.T) {
 	vals := u64Vals("a", uint64(2), "b", uint64(3), "c", uint64(5), "d", uint64(7))
-	a := sym.NewCommittedColumn("a")
-	b := sym.NewCommittedColumn("b")
-	c := sym.NewCommittedColumn("c")
-	d := sym.NewCommittedColumn("d")
+	a := expr.NewCommittedColumn("a")
+	b := expr.NewCommittedColumn("b")
+	c := expr.NewCommittedColumn("c")
+	d := expr.NewCommittedColumn("d")
 
 	tests := []struct {
 		name string
-		expr sym.Expr
+		expr expr.Expr
 	}{
 		{"AddChain", a.Add(b).Add(c).Add(d)},         // ((a+b)+c)+d
 		{"MulChain", a.Mul(b).Mul(c).Mul(d)},         // ((a*b)*c)*d
@@ -161,40 +161,40 @@ func TestDAGLeaves(t *testing.T) {
 	var c koalabear.Element
 	c.SetUint64(7)
 
-	all := sym.NewConfig()
-	woCC := sym.NewConfig(sym.WithoutCommittedColumns())
-	woChal := sym.NewConfig(sym.WithoutChallenges())
-	woComp := sym.NewConfig(sym.WithoutComputableColumns())
+	all := expr.NewConfig()
+	woCC := expr.NewConfig(expr.WithoutCommittedColumns())
+	woChal := expr.NewConfig(expr.WithoutChallenges())
+	woComp := expr.NewConfig(expr.WithoutComputableColumns())
 
-	mixed := sym.NewCommittedColumn("x").
-		Mul(sym.NewChallenge("gamma")).
-		Add(sym.NewComputableColumn("L0")).
-		Sub(sym.NewConst(c))
+	mixed := expr.NewCommittedColumn("x").
+		Mul(expr.NewChallenge("gamma")).
+		Add(expr.NewComputableColumn("L0")).
+		Sub(expr.NewConst(c))
 
 	tests := []struct {
 		name   string
-		expr   sym.Expr
-		config sym.Config
+		expr   expr.Expr
+		config expr.Config
 		want   []string // expected, order-independent
 	}{
 		// Individual leaf kinds with default config
-		{"CommittedColumn/all", sym.NewCommittedColumn("x"), all, []string{"x"}},
-		{"Challenge/all", sym.NewChallenge("alpha"), all, []string{"alpha"}},
-		{"ComputableColumn/all", sym.NewComputableColumn("L0"), all, []string{"L0"}},
-		{"Const/all", sym.NewConst(c), all, []string{}}, // Const never included
+		{"CommittedColumn/all", expr.NewCommittedColumn("x"), all, []string{"x"}},
+		{"Challenge/all", expr.NewChallenge("alpha"), all, []string{"alpha"}},
+		{"ComputableColumn/all", expr.NewComputableColumn("L0"), all, []string{"L0"}},
+		{"Const/all", expr.NewConst(c), all, []string{}}, // Const never included
 
 		// Filtering individual leaf kinds
-		{"CommittedColumn/woCC", sym.NewCommittedColumn("x"), woCC, []string{}},
-		{"Challenge/woChal", sym.NewChallenge("alpha"), woChal, []string{}},
-		{"ComputableColumn/woComp", sym.NewComputableColumn("L0"), woComp, []string{}},
+		{"CommittedColumn/woCC", expr.NewCommittedColumn("x"), woCC, []string{}},
+		{"Challenge/woChal", expr.NewChallenge("alpha"), woChal, []string{}},
+		{"ComputableColumn/woComp", expr.NewComputableColumn("L0"), woComp, []string{}},
 
 		// DAG deduplication
 		{"SharedLeaf", // a+a → col:a once
-			sym.NewCommittedColumn("a").Add(sym.NewCommittedColumn("a")),
+			expr.NewCommittedColumn("a").Add(expr.NewCommittedColumn("a")),
 			all, []string{"a"}},
 		{"SharedSubExpr", // (a+b)*(a+b) → a and b once each
-			sym.NewCommittedColumn("a").Add(sym.NewCommittedColumn("b")).
-				Mul(sym.NewCommittedColumn("a").Add(sym.NewCommittedColumn("b"))),
+			expr.NewCommittedColumn("a").Add(expr.NewCommittedColumn("b")).
+				Mul(expr.NewCommittedColumn("a").Add(expr.NewCommittedColumn("b"))),
 			all, []string{"a", "b"}},
 
 		// Mixed leaf kinds with filtering
@@ -202,13 +202,13 @@ func TestDAGLeaves(t *testing.T) {
 		{"Mixed/woCC", mixed, woCC, []string{"gamma", "L0"}},
 		{"Mixed/woChal", mixed, woChal, []string{"x", "L0"}},
 		{"Mixed/woComp", mixed, woComp, []string{"x", "gamma"}},
-		{"Mixed/woCC+woChal", mixed, sym.NewConfig(sym.WithoutCommittedColumns(), sym.WithoutChallenges()), []string{"L0"}},
+		{"Mixed/woCC+woChal", mixed, expr.NewConfig(expr.WithoutCommittedColumns(), expr.WithoutChallenges()), []string{"L0"}},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := ExprToDAG(tc.expr).Leaves(tc.config)
-			sym.AssertSameSet(t, got, tc.want)
+			expr.AssertSameSet(t, got, tc.want)
 		})
 	}
 }
@@ -221,32 +221,32 @@ func TestDAGDegree(t *testing.T) {
 
 	tests := []struct {
 		name string
-		expr sym.Expr
+		expr expr.Expr
 		want int
 	}{
 		// Leaves
-		{"CommittedColumn", sym.NewCommittedColumn("x"), 1},
-		{"ComputableColumn", sym.NewComputableColumn("L0"), 1},
-		{"Challenge", sym.NewChallenge("alpha"), 0},   // Challenge is degree 0
-		{"ConstNonZero", sym.NewConst(one), 0},        // non-zero constant
-		{"ConstZero", sym.NewConst(zero), sym.NegInf}, // zero polynomial
+		{"CommittedColumn", expr.NewCommittedColumn("x"), 1},
+		{"ComputableColumn", expr.NewComputableColumn("L0"), 1},
+		{"Challenge", expr.NewChallenge("alpha"), 0},    // Challenge is degree 0
+		{"ConstNonZero", expr.NewConst(one), 0},         // non-zero constant
+		{"ConstZero", expr.NewConst(zero), expr.NegInf}, // zero polynomial
 
 		// Binary operators
-		{"Add(1,1)", sym.NewCommittedColumn("a").Add(sym.NewCommittedColumn("b")), 1},
-		{"Sub(1,0)", sym.NewCommittedColumn("a").Sub(sym.NewChallenge("g")), 1},
-		{"Mul(1,1)", sym.NewCommittedColumn("a").Mul(sym.NewCommittedColumn("b")), 2},
-		{"Mul(1,0)", sym.NewCommittedColumn("a").Mul(sym.NewChallenge("g")), 1},
-		{"Pow2", &sym.Pow{Base: sym.NewCommittedColumn("a"), Exp: 2}, 2},
-		{"Pow5", sym.NewCommittedColumn("a").Pow(5), 5},
-		{"Pow0", &sym.Pow{Base: sym.NewCommittedColumn("a"), Exp: 0}, 0},
+		{"Add(1,1)", expr.NewCommittedColumn("a").Add(expr.NewCommittedColumn("b")), 1},
+		{"Sub(1,0)", expr.NewCommittedColumn("a").Sub(expr.NewChallenge("g")), 1},
+		{"Mul(1,1)", expr.NewCommittedColumn("a").Mul(expr.NewCommittedColumn("b")), 2},
+		{"Mul(1,0)", expr.NewCommittedColumn("a").Mul(expr.NewChallenge("g")), 1},
+		{"Pow2", &expr.Pow{Base: expr.NewCommittedColumn("a"), Exp: 2}, 2},
+		{"Pow5", expr.NewCommittedColumn("a").Pow(5), 5},
+		{"Pow0", &expr.Pow{Base: expr.NewCommittedColumn("a"), Exp: 0}, 0},
 
 		// Challenge treated as degree-0 in a larger expression
-		{"AddChallenge", sym.NewCommittedColumn("a").Add(sym.NewChallenge("g")), 1},
-		{"MulChallenge", sym.NewCommittedColumn("a").Mul(sym.NewChallenge("g")).Mul(sym.NewCommittedColumn("b")), 2},
+		{"AddChallenge", expr.NewCommittedColumn("a").Add(expr.NewChallenge("g")), 1},
+		{"MulChallenge", expr.NewCommittedColumn("a").Mul(expr.NewChallenge("g")).Mul(expr.NewCommittedColumn("b")), 2},
 
 		// Flattened n-ary chains should have the same degree as the AST
-		{"AddChain", sym.NewCommittedColumn("a").Add(sym.NewCommittedColumn("b")).Add(sym.NewCommittedColumn("c")), 1},
-		{"MulChain", sym.NewCommittedColumn("a").Mul(sym.NewCommittedColumn("b")).Mul(sym.NewCommittedColumn("c")), 3},
+		{"AddChain", expr.NewCommittedColumn("a").Add(expr.NewCommittedColumn("b")).Add(expr.NewCommittedColumn("c")), 1},
+		{"MulChain", expr.NewCommittedColumn("a").Mul(expr.NewCommittedColumn("b")).Mul(expr.NewCommittedColumn("c")), 3},
 	}
 
 	for _, tc := range tests {
@@ -272,15 +272,15 @@ func TestDAGDegree(t *testing.T) {
 // TestDAGFactorize verifies that Factorize correctly applies
 // add(mul(x,y),mul(x,z)) → mul(x,add(y,z)) and preserves evaluation results.
 func TestDAGFactorize(t *testing.T) {
-	x := sym.NewCommittedColumn("x")
-	y := sym.NewCommittedColumn("y")
-	z := sym.NewCommittedColumn("z")
-	w := sym.NewCommittedColumn("w")
+	x := expr.NewCommittedColumn("x")
+	y := expr.NewCommittedColumn("y")
+	z := expr.NewCommittedColumn("z")
+	w := expr.NewCommittedColumn("w")
 	vals := u64Vals("x", uint64(2), "y", uint64(3), "z", uint64(5), "w", uint64(7))
 
 	cases := []struct {
 		name        string
-		expr        sym.Expr
+		expr        expr.Expr
 		wantMulSave int // expected reduction in Mul field operations at eval time
 	}{
 		{
@@ -365,9 +365,9 @@ func TestDAGFactorize(t *testing.T) {
 // setupPiSlice assigns Idx to every leaf in expr (deduplicating by name) and
 // returns _Pi where _Pi[leaf.Idx] is the polynomial for that leaf.
 // This mirrors the setup done inside evalPointWiseInto.
-func setupPiSlice(expr sym.Expr, pi map[string][]koalabear.Element) [][]koalabear.Element {
+func setupPiSlice(ex expr.Expr, pi map[string][]koalabear.Element) [][]koalabear.Element {
 	nameToIdx := make(map[string]int)
-	for _, l := range expr.LeavesFull(sym.NewConfig()) {
+	for _, l := range ex.LeavesFull(expr.NewConfig()) {
 		if _, ok := nameToIdx[l.Name]; !ok {
 			nameToIdx[l.Name] = len(nameToIdx)
 		}
@@ -395,7 +395,7 @@ func TestDAGEvalOnIthEntry(t *testing.T) {
 		P0 := makePoly(1, 2, 3, 4, 5, 6, 7, 8)
 		P1 := makePoly(10, 20, 30, 40, 50, 60, 70, 80)
 		pi := map[string][]koalabear.Element{"x0": P0, "x1": P1}
-		expr := sym.NewCommittedColumn("x0").Pow(2).Add(sym.NewCommittedColumn("x1"))
+		expr := expr.NewCommittedColumn("x0").Pow(2).Add(expr.NewCommittedColumn("x1"))
 		d := ExprToDAG(expr)
 		_Pi := setupPiSlice(expr, pi)
 
@@ -414,7 +414,7 @@ func TestDAGEvalOnIthEntry(t *testing.T) {
 		var gVal koalabear.Element
 		gVal.SetUint64(42)
 		pi := map[string][]koalabear.Element{"x0": P0, "gamma": {gVal}}
-		expr := sym.NewCommittedColumn("x0").Sub(sym.NewCommittedColumn("gamma"))
+		expr := expr.NewCommittedColumn("x0").Sub(expr.NewCommittedColumn("gamma"))
 		d := ExprToDAG(expr)
 		_Pi := setupPiSlice(expr, pi)
 
@@ -432,7 +432,7 @@ func TestDAGEvalOnIthEntry(t *testing.T) {
 		three.SetUint64(3)
 		P0 := makePoly(4, 5, 6, 7, 8, 9, 10, 11)
 		pi := map[string][]koalabear.Element{"x0": P0}
-		expr := sym.NewCommittedColumn("x0").Sub(sym.NewConst(three))
+		expr := expr.NewCommittedColumn("x0").Sub(expr.NewConst(three))
 		d := ExprToDAG(expr)
 		_Pi := setupPiSlice(expr, pi)
 
@@ -449,7 +449,7 @@ func TestDAGEvalOnIthEntry(t *testing.T) {
 		// E = x0(shift=1) - x0 → P0[(i+1)%N] - P0[i]
 		P0 := makePoly(1, 3, 2, 7, 5, 4, 6, 8)
 		pi := map[string][]koalabear.Element{"x0": P0}
-		expr := sym.NewShiftedColumn("x0", 1).Sub(sym.NewCommittedColumn("x0"))
+		expr := expr.NewShiftedColumn("x0", 1).Sub(expr.NewCommittedColumn("x0"))
 		d := ExprToDAG(expr)
 		_Pi := setupPiSlice(expr, pi)
 
@@ -470,9 +470,9 @@ func TestDAGEvalOnIthEntry(t *testing.T) {
 		Pd := makePoly(1, 1, 1, 1, 1, 1, 1, 1)
 		pi := map[string][]koalabear.Element{"a": Pa, "b": Pb, "c": Pc, "d": Pd}
 
-		ab1 := sym.NewCommittedColumn("a").Mul(sym.NewCommittedColumn("b"))
-		ab2 := sym.NewCommittedColumn("a").Mul(sym.NewCommittedColumn("b"))
-		expr := ab1.Add(sym.NewCommittedColumn("c")).Mul(ab2.Sub(sym.NewCommittedColumn("d")))
+		ab1 := expr.NewCommittedColumn("a").Mul(expr.NewCommittedColumn("b"))
+		ab2 := expr.NewCommittedColumn("a").Mul(expr.NewCommittedColumn("b"))
+		expr := ab1.Add(expr.NewCommittedColumn("c")).Mul(ab2.Sub(expr.NewCommittedColumn("d")))
 		d := ExprToDAG(expr)
 		_Pi := setupPiSlice(expr, pi)
 
@@ -495,14 +495,14 @@ func TestDAGEvalComplex(t *testing.T) {
 	vals := u64Vals("a", uint64(2), "b", uint64(3), "c", uint64(5), "d", uint64(7))
 
 	// Build (a*b + c) * (a*b - d) using two independent trees for a*b.
-	ab1 := sym.NewCommittedColumn("a").Mul(sym.NewCommittedColumn("b"))
-	ab2 := sym.NewCommittedColumn("a").Mul(sym.NewCommittedColumn("b"))
-	expr := ab1.Add(sym.NewCommittedColumn("c")).Mul(ab2.Sub(sym.NewCommittedColumn("d")))
+	ab1 := expr.NewCommittedColumn("a").Mul(expr.NewCommittedColumn("b"))
+	ab2 := expr.NewCommittedColumn("a").Mul(expr.NewCommittedColumn("b"))
+	expr := ab1.Add(expr.NewCommittedColumn("c")).Mul(ab2.Sub(expr.NewCommittedColumn("d")))
 
 	dag := ExprToDAG(expr)
 
 	// With sharing: col:a, col:b, mul(a,b), col:c, add, col:d, sub, mul(root) = 8 nodes.
-	// sym.Without sharing we would have 10 (two col:a, two col:b, two mul(a,b)).
+	// expr.Without sharing we would have 10 (two col:a, two col:b, two mul(a,b)).
 	if len(dag.Nodes) != 8 {
 		t.Errorf("expected 8 DAG nodes, got %d", len(dag.Nodes))
 	}

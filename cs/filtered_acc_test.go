@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/pas/univariate"
 	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/giop/trace"
@@ -39,9 +39,9 @@ func TestComputeFilteredAccPolynomial(t *testing.T) {
 
 	// 3. Compute R = BuildFilteredAccPolynomial(E, F, alpha) and store it in the trace.
 	var mu sync.Mutex
-	Eexpr := sym.NewCommittedColumn("E")
-	Fexpr := sym.NewCommittedColumn("F")
-	alphaExpr := sym.NewChallenge("alpha")
+	Eexpr := expr.NewCommittedColumn("E")
+	Fexpr := expr.NewCommittedColumn("F")
+	alphaExpr := expr.NewChallenge("alpha")
 
 	R, err := univariate.BuildFilteredAccPolynomial(T, Eexpr, Fexpr, alphaExpr, N, &mu)
 	if err != nil {
@@ -64,10 +64,10 @@ func TestComputeFilteredAccPolynomial(t *testing.T) {
 	//       enforces R[i] = F[i]·(alpha·R[i−1] + E[i]) + (1−F[i])·R[i−1]  for i > 0
 	//
 	// where R_prev = R(ω^{−1}·X), i.e. the column R shifted by −1.
-	Rexpr := sym.NewCommittedColumn("R")
-	RPrev := sym.NewShiftedColumn("R", -1)
-	L0 := sym.NewComputableColumn(proveractions.GetLagrangeID(0, N))
-	one := sym.NewConst(koalabear.One())
+	Rexpr := expr.NewCommittedColumn("R")
+	RPrev := expr.NewShiftedColumn("R", -1)
+	L0 := expr.NewComputableColumn(proveractions.GetLagrangeID(0, N))
+	one := expr.NewConst(koalabear.One())
 
 	C1 := L0.Mul(Rexpr.Sub(Fexpr.Mul(Eexpr)))
 	C2 := one.Sub(L0).Mul(

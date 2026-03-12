@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
@@ -22,8 +22,8 @@ func TestGrandProductRelation(t *testing.T) {
 
 	addChallengeInTrace(trace, challenge) // <- simulate SendMeAChallenge
 
-	E1 := sym.NewCommittedColumn("P0").Sub(sym.NewChallenge("gamma"))
-	E2 := sym.NewCommittedColumn("P1").Sub(sym.NewChallenge("gamma"))
+	E1 := expr.NewCommittedColumn("P0").Sub(expr.NewChallenge("gamma"))
+	E2 := expr.NewCommittedColumn("P1").Sub(expr.NewChallenge("gamma"))
 
 	var mu sync.Mutex
 	err := proveractions.ComputeLagrangeColumn(trace, nil, &mu, nil, []string{proveractions.GetLagrangeID(0, size)}, nil)
@@ -36,7 +36,7 @@ func TestGrandProductRelation(t *testing.T) {
 	GPRelation := BuildGrandProductRelation(E1, E2, "R", size)
 	system.AssertZeros(GPRelation)
 	proof := proveractions.NewProof(size)
-	proveractions.ComputeGrandProduct(trace, &proof, &mu, []sym.Expr{E1, E2}, []string{"R"}, nil)
+	proveractions.ComputeGrandProduct(trace, &proof, &mu, []expr.Expr{E1, E2}, []string{"R"}, nil)
 
 	// R[0] must equal 1
 	var one koalabear.Element

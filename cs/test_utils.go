@@ -7,7 +7,7 @@ import (
 
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/pas/dag"
-	"github.com/consensys/giop/pas/sym"
+	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/pas/univariate"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -105,7 +105,7 @@ func BruteForceChecker(T trace.Trace, constraints []Relation, N int) error {
 
 	for _, C := range constraints {
 
-		leaves := sym.RemoveDuplicates(C.Leaves(sym.NewConfig(sym.WithoutShiftedColumns())))
+		leaves := expr.RemoveDuplicates(C.Leaves(expr.NewConfig(expr.WithoutShiftedColumns())))
 
 		// validate all live columns are present before touching any row
 		for _, l := range leaves {
@@ -179,9 +179,9 @@ func QuotientChecker(T trace.Trace, constraints []Relation, N int) error {
 		hz := evalCanonical(hCoeffs, z)
 
 		// For each leaf, evaluate the trace polynomial at z (or w^shift*z for shifted columns)
-		leavesNormal := sym.RemoveDuplicates(C.Leaves(sym.NewConfig(sym.WithoutShiftedColumns())))
-		leavesShifted := sym.RemoveDuplicates(C.Leaves(sym.NewConfig(
-			sym.WithoutChallenges(), sym.WithoutCommittedColumns(), sym.WithoutComputableColumns())))
+		leavesNormal := expr.RemoveDuplicates(C.Leaves(expr.NewConfig(expr.WithoutShiftedColumns())))
+		leavesShifted := expr.RemoveDuplicates(C.Leaves(expr.NewConfig(
+			expr.WithoutChallenges(), expr.WithoutCommittedColumns(), expr.WithoutComputableColumns())))
 		vals := make(map[string]koalabear.Element, len(leavesNormal)+len(leavesShifted))
 		for _, l := range leavesNormal {
 			poly := T[l]

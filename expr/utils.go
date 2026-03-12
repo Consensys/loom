@@ -1,4 +1,4 @@
-package sym
+package expr
 
 // Fold returns \Sigma_{i} v^iC[i].
 // v can be any Expr (Var, Placeholder, etc.).
