@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/arguments"
-	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/prover"
 	derive "github.com/consensys/giop/derive"
@@ -28,7 +28,7 @@ func TestFibonacci(t *testing.T) {
 	// 3. A[0]=0, B[0]=1
 
 	// vanishing constraint A + B - C = 0
-	system := cs.NewBuilder(N)
+	system := constraint.NewBuilder(N)
 	colA := expr.Col("A")
 	colB := expr.Col("B")
 	colC := expr.Col("C")
@@ -50,8 +50,8 @@ func TestFibonacci(t *testing.T) {
 	system.RegisterithLagrangeColumn(0)
 	var zero, one koalabear.Element
 	one.SetOne()
-	system.AssertZero(cs.BuildLocalRelation(colA, expr.Const(zero), 0, N))
-	system.AssertZero(cs.BuildLocalRelation(colB, expr.Const(one), 0, N))
+	system.AssertZero(constraint.BuildLocalRelation(colA, expr.Const(zero), 0, N))
+	system.AssertZero(constraint.BuildLocalRelation(colB, expr.Const(one), 0, N))
 
 	cciop := system.Compile()
 

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/constants"
-	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/constraint"
 	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/prover"
@@ -12,12 +12,12 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
-func sanityCheck(proverRunTime *prover.Prover, constraints []cs.Relation, N int, t *testing.T) {
-	err := cs.BruteForceChecker(proverRunTime.Trace, constraints, N)
+func sanityCheck(proverRunTime *prover.Prover, constraints []constraint.Relation, N int, t *testing.T) {
+	err := constraint.BruteForceChecker(proverRunTime.Trace, constraints, N)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = cs.QuotientChecker(proverRunTime.Trace, constraints, N)
+	err = constraint.QuotientChecker(proverRunTime.Trace, constraints, N)
 	if err != nil {
 		t.Fatal(err)
 	}

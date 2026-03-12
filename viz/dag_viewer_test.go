@@ -5,13 +5,13 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/arguments"
-	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/prover"
 )
 
 func TestWriteDerivationPlanDagToHTML(t *testing.T) {
 	size := 16
-	system := cs.NewBuilder(size)
+	system := constraint.NewBuilder(size)
 	if err := arguments.PermutationMultiset(
 		&system,
 		[][]string{{"P0", "P1"}},
@@ -37,8 +37,8 @@ func TestWriteDerivationPlanDagToHTML(t *testing.T) {
 
 func TestWriteProofTranscriptRoundsDagToHTML_Permutation(t *testing.T) {
 	size := 16
-	trace := cs.BuildPermutationCircuit(t, size)
-	system := cs.NewBuilder(size)
+	trace := constraint.BuildPermutationCircuit(t, size)
+	system := constraint.NewBuilder(size)
 	arguments.Permutation(&system, []string{"P0"}, []string{"P1"})
 
 	cciop := system.Compile()
@@ -64,8 +64,8 @@ func TestWriteProofTranscriptRoundsDagToHTML_Permutation(t *testing.T) {
 
 func TestWriteProofTranscriptRoundsDagToHTML_Tuple(t *testing.T) {
 	size := 16
-	trace := cs.BuildPermutationTuple(t, size)
-	system := cs.NewBuilder(size)
+	trace := constraint.BuildPermutationTuple(t, size)
+	system := constraint.NewBuilder(size)
 	if err := arguments.PermutationMultiset(
 		&system,
 		[][]string{{"P0", "P1"}},

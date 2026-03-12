@@ -9,7 +9,7 @@ import (
 
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/crypto/dummycommitment"
-	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/dag"
 	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/expr"
@@ -24,7 +24,7 @@ type Verifier struct {
 }
 
 // NewRunTime creates the Verifier for the given compiled IOP.
-func NewRunTime(cciop cs.Program) Verifier {
+func NewRunTime(cciop constraint.Program) Verifier {
 	return Verifier{
 		Vars:              make(map[string]koalabear.Element),
 		VanishingRelation: cciop.VanishingRelation,

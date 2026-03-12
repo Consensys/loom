@@ -3,7 +3,7 @@ package arguments
 import (
 	"testing"
 
-	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/prover"
 	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/trace"
@@ -55,7 +55,7 @@ func TestLookup(t *testing.T) {
 	size := 16
 
 	trace := BuildLookupTrace(t, size)
-	system := cs.NewBuilder(size)
+	system := constraint.NewBuilder(size)
 
 	Lookup(&system, "S", "T")
 
@@ -121,7 +121,7 @@ func TestLookupTuple(t *testing.T) {
 	size := 16
 
 	tr := BuildLookupTupleTrace(t, size)
-	system := cs.NewBuilder(size)
+	system := constraint.NewBuilder(size)
 
 	LookupTuple(&system, []string{"S0", "S1"}, []string{"T0", "T1"})
 

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/constraint"
 	derive "github.com/consensys/giop/derive"
 )
 
@@ -40,7 +40,7 @@ func actionLabel(pa derive.DerivationStep) string {
 //   - Orange rounded rect : DerivationStep node (labelled by its output columns)
 //   - Dashed blue arrow   : column → action (input dependency)
 //   - Solid orange arrow  : action → column (produced output)
-func WriteDerivationPlanDagToHTML(cciop cs.Program, filename string) error {
+func WriteDerivationPlanDagToHTML(cciop constraint.Program, filename string) error {
 	actions := cciop.DerivationPlan
 
 	// ── 1. find which columns are produced by actions ────────────────────────

@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/consensys/giop/constants"
-	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/expr"
 	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/utils"
@@ -40,7 +40,7 @@ import (
 //	|   C3, C4: exprmetric constraints for FB                                         |
 //	|   C5: L_{N-1}·(FA - FB) = 0              (final accumulated values match)     |
 //	|-------------------------------–-------------------------------------------------|
-func Projection(system *cs.Builder, A, F1, B, F2 string) error {
+func Projection(system *constraint.Builder, A, F1, B, F2 string) error {
 
 	Aexpr := expr.Col(A)
 	Bexpr := expr.Col(B)
@@ -89,7 +89,7 @@ func Projection(system *cs.Builder, A, F1, B, F2 string) error {
 //	|   C1–C4: recurrence + boundary constraints for FÃ and FB̃                       |
 //	|   C5:    L_{N-1}·(FÃ - FB̃) = 0   (final accumulated values match)             |
 //	|-------------------------------–-------------------------------------------------|
-func ProjectionTuple(system *cs.Builder, A []string, F1 string, B []string, F2 string) error {
+func ProjectionTuple(system *constraint.Builder, A []string, F1 string, B []string, F2 string) error {
 
 	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
@@ -116,15 +116,15 @@ func ProjectionTuple(system *cs.Builder, A []string, F1 string, B []string, F2 s
 	for i := 0; i < len(B); i++ {
 		BExpr[i] = expr.Col(B[i])
 	}
-	AFolded := cs.Fold(AExpr, gammaExpr)
-	BFolded := cs.Fold(BExpr, gammaExpr)
+	AFolded := constraint.Fold(AExpr, gammaExpr)
+	BFolded := constraint.Fold(BExpr, gammaExpr)
 
 	// 3. call equalityFilteredColumns
 	return ProjectionExpr(system, AFolded, BFolded, expr.Col(F1), expr.Col(F2))
 
 }
 
-func ProjectionExpr(system *cs.Builder, A, B, F1, F2 expr.Expr) error {
+func ProjectionExpr(system *constraint.Builder, A, B, F1, F2 expr.Expr) error {
 
 	// 1. build filtered acc polynomials for A and B
 	_idAccFA, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
@@ -158,13 +158,13 @@ func ProjectionExpr(system *cs.Builder, A, B, F1, F2 expr.Expr) error {
 
 	// 4. register the constraints ensuring that the filtered acc polynomials
 	// FA and FB are correclty constructed
-	system.AssertAllZero(cs.BuildFilteredAccPolynomialRelation(A, F1, alpha, idAccFA, system.N))
-	system.AssertAllZero(cs.BuildFilteredAccPolynomialRelation(B, F2, alpha, idAccFB, system.N))
+	system.AssertAllZero(constraint.BuildFilteredAccPolynomialRelation(A, F1, alpha, idAccFA, system.N))
+	system.AssertAllZero(constraint.BuildFilteredAccPolynomialRelation(B, F2, alpha, idAccFB, system.N))
 
 	// 5. ensure FA[N-1]=FB[N-1]: the last entry holds the full filtered accumulation
 	accFA := expr.Col(idAccFA)
 	accFB := expr.Col(idAccFB)
-	system.AssertZero(cs.BuildLocalRelation(accFA, accFB, system.N-1, system.N))
+	system.AssertZero(constraint.BuildLocalRelation(accFA, accFB, system.N-1, system.N))
 
 	// 6. Register Lagrange columns needed by BuildFilteredAccPolynomialRelation (L_0) and step 5 (L_{N-1})
 	system.RegisterithLagrangeColumn(0)

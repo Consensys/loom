@@ -9,7 +9,7 @@ import (
 
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/crypto/dummycommitment"
-	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/constraint"
 	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/poly"
@@ -20,12 +20,12 @@ import (
 
 // Prover contains the data needed to run the Program to generate the proof.
 type Prover struct {
-	Program cs.Program
+	Program constraint.Program
 	Trace   trace.Trace
 	Mu      sync.Mutex
 }
 
-func NewProver(cciop cs.Program, trace trace.Trace) Prover {
+func NewProver(cciop constraint.Program, trace trace.Trace) Prover {
 	return Prover{
 		Program: cciop,
 		Trace:   trace,

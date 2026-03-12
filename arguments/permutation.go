@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/consensys/giop/constants"
-	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/expr"
 	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/utils"
@@ -37,7 +37,7 @@ import (
 //	|   C1: ∏_j(Q_j-γ)·Z_shifted - ∏_j(P_j-γ)·Z = 0 mod X^N-1                   |
 //	|   C2: (Z-1)·L_0 = 0  (enforces Z[0]=1)                                      |
 //	|-------------------------------–-----------------------------------------------|
-func Permutation(system *cs.Builder, ID1, ID2 []string) error {
+func Permutation(system *constraint.Builder, ID1, ID2 []string) error {
 
 	// 1. sample gamma: register the prover action ComputeChallenge
 	E1 := make([]expr.Expr, len(ID1))
@@ -53,7 +53,7 @@ func Permutation(system *cs.Builder, ID1, ID2 []string) error {
 
 }
 
-func equalityUpToPermutationIOP(system *cs.Builder, E1, E2 []expr.Expr) error {
+func equalityUpToPermutationIOP(system *constraint.Builder, E1, E2 []expr.Expr) error {
 
 	_IDGrandProduct, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
@@ -78,7 +78,7 @@ func equalityUpToPermutationIOP(system *cs.Builder, E1, E2 []expr.Expr) error {
 	}
 
 	// 2. register the grand product constraint (including the boundary constraint)
-	gpRelation := cs.BuildGrandProductRelation(E1MinusGamma, E2MinusGamma, IDGrandProduct, system.N)
+	gpRelation := constraint.BuildGrandProductRelation(E1MinusGamma, E2MinusGamma, IDGrandProduct, system.N)
 	system.AssertAllZero(gpRelation)
 
 	// 3. register the prover action for creating the grand product and grand product shifted
@@ -130,8 +130,8 @@ func equalityUpToPermutationIOP(system *cs.Builder, E1, E2 []expr.Expr) error {
 //	|   C2: (Z-1)·L_0 = 0  (enforces Z[0]=1)                                      |
 //	|-------------------------------–-----------------------------------------------|
 //
-// func PermutationMultiset(system *cs.Builder, ID1, ID2 [][]string, IDGrandProduct string, alpha, gamma string) error {
-func PermutationMultiset(system *cs.Builder, ID1, ID2 [][]string) error {
+// func PermutationMultiset(system *constraint.Builder, ID1, ID2 [][]string, IDGrandProduct string, alpha, gamma string) error {
+func PermutationMultiset(system *constraint.Builder, ID1, ID2 [][]string) error {
 
 	// 1. sample alpha: register the prover action ComputeChallenge, depending on all ids in ID1, ID2
 	E1 := make([][]expr.Expr, len(ID1))
@@ -152,7 +152,7 @@ func PermutationMultiset(system *cs.Builder, ID1, ID2 [][]string) error {
 	return multiSetPermutation(system, E1, E2)
 }
 
-func multiSetPermutation(system *cs.Builder, E1, E2 [][]expr.Expr) error {
+func multiSetPermutation(system *constraint.Builder, E1, E2 [][]expr.Expr) error {
 
 	// 1. derive alpha
 	alpha, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
@@ -172,11 +172,11 @@ func multiSetPermutation(system *cs.Builder, E1, E2 [][]expr.Expr) error {
 	alphaExpr := expr.NewChallenge(alpha)
 	F1 := make([]expr.Expr, len(E1))
 	for i := 0; i < len(E1); i++ {
-		F1[i] = cs.Fold(E1[i], alphaExpr)
+		F1[i] = constraint.Fold(E1[i], alphaExpr)
 	}
 	F2 := make([]expr.Expr, len(E2))
 	for i := 0; i < len(E2); i++ {
-		F2[i] = cs.Fold(E2[i], alphaExpr)
+		F2[i] = constraint.Fold(E2[i], alphaExpr)
 	}
 
 	// 3. equalityUpToPermutationIOP

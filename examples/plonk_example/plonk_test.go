@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/arguments"
-	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/prover"
 	"github.com/consensys/giop/trace"
@@ -33,7 +33,7 @@ func getKnownColumns(n int) map[string]bool {
 	return knowncolumns
 }
 
-func getIthPlonkRelation(n int) cs.Relation {
+func getIthPlonkRelation(n int) constraint.Relation {
 
 	C := expr.Col(ID_Ql).Mul(expr.Col(ithInstance(ID_L, n))).
 		Add(expr.Col(ID_Qr).Mul(expr.Col(ithInstance(ID_R, n)))).
@@ -83,7 +83,7 @@ func BenchmarkCompile(b *testing.B) {
 		fulltrace = mergeTrace(fulltrace, ithprivatepart)
 	}
 
-	system := cs.NewBuilder(N)
+	system := constraint.NewBuilder(N)
 
 	// This is the result of the constraint (lisp ?) file in a real life example. Here we know in advance the shape of the constraints
 	// QL*L + QR*R + QM*L*R + QO*O + QK = 0
@@ -115,7 +115,7 @@ func TestPlonk(t *testing.T) {
 		fulltrace = mergeTrace(fulltrace, ithprivatepart)
 	}
 
-	system := cs.NewBuilder(N)
+	system := constraint.NewBuilder(N)
 
 	// This is the result of the constraint (lisp ?) file in a real life example. Here we know in advance the shape of the constraints
 	// QL*L + QR*R + QM*L*R + QO*O + QK = 0
@@ -134,7 +134,7 @@ func TestPlonk(t *testing.T) {
 	// viewer.WriteDerivationPlanDagToHTML(cciop, "plonk_dag.html")
 
 	proverRunTime := prover.NewProver(cciop, fulltrace)
-	// proof := cs.NewProof(N)
+	// proof := constraint.NewProof(N)
 
 	// Step 1: Solve — compute all intermediate columns (beta, gamma, Z, Z_shifted, LAGRANGE_0)
 	knowncolumns := getKnownColumns(nbTraces)

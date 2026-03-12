@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/consensys/giop/constants"
-	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/expr"
 	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/utils"
@@ -47,7 +47,7 @@ import (
 //	|   C4: L_0·(GrandSumS·(S−γ) − 1) = 0  (GrandSumS[0] = 1/(S[0]−γ))          |
 //	|   C5: L_{N−1}·(GrandSumS − GrandSumT) = 0  (total sums equal)               |
 //	|-------------------------------–-----------------------------------------------|
-func Lookup(system *cs.Builder, S, T string) error {
+func Lookup(system *constraint.Builder, S, T string) error {
 
 	// 1. create the multiplicity polynomial
 	Texpr := expr.Col(T)
@@ -57,7 +57,7 @@ func Lookup(system *cs.Builder, S, T string) error {
 
 }
 
-func inclusionCheckIOP(system *cs.Builder, S, T expr.Expr) error {
+func inclusionCheckIOP(system *constraint.Builder, S, T expr.Expr) error {
 
 	_M, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
@@ -96,15 +96,15 @@ func inclusionCheckIOP(system *cs.Builder, S, T expr.Expr) error {
 	system.RegisterDerivationStep([]expr.Expr{Mexpr, TminusGamma}, []string{grandSumT}, derive.NewIDStepContext(derive.GRAND_SUM))
 
 	// 4. register the constraints ensuring the grand sums are correctly constructed
-	grandSumRelationsT := cs.BuildGrandSumRelations(Mexpr, TminusGamma, grandSumT, system.N)
-	grandSumRelationsS := cs.BuildGrandSumRelations(oneExpr, SminusGamma, grandSumS, system.N)
+	grandSumRelationsT := constraint.BuildGrandSumRelations(Mexpr, TminusGamma, grandSumT, system.N)
+	grandSumRelationsS := constraint.BuildGrandSumRelations(oneExpr, SminusGamma, grandSumS, system.N)
 	system.AssertAllZero(grandSumRelationsT)
 	system.AssertAllZero(grandSumRelationsS)
 
 	// 5. ensure that grandSumT[N-1] = grandSumS[N-1]
 	grandSumSExpr := expr.Col(grandSumS)
 	grandSumTExpr := expr.Col(grandSumT)
-	boundaryEquality := cs.BuildLocalRelation(grandSumSExpr, grandSumTExpr, system.N-1, system.N)
+	boundaryEquality := constraint.BuildLocalRelation(grandSumSExpr, grandSumTExpr, system.N-1, system.N)
 	system.AssertZero(boundaryEquality)
 
 	// 6. register the creation of the 2 lagrange columns 0 and N-1
@@ -164,7 +164,7 @@ func inclusionCheckIOP(system *cs.Builder, S, T expr.Expr) error {
 //	|   C4: L_0·(GrandSumS·(S_fold−γ) − 1) = 0                                     |
 //	|   C5: L_{N−1}·(GrandSumS − GrandSumT) = 0  (total sums equal)                |
 //	|----------------------------------–---------------------------------------------|
-func LookupTuple(system *cs.Builder, S, T []string) error {
+func LookupTuple(system *constraint.Builder, S, T []string) error {
 
 	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
@@ -191,8 +191,8 @@ func LookupTuple(system *cs.Builder, S, T []string) error {
 	for i := 0; i < len(T); i++ {
 		TExpr[i] = expr.Col(T[i])
 	}
-	SFolded := cs.Fold(SExpr, gammaExpr)
-	TFolded := cs.Fold(TExpr, gammaExpr)
+	SFolded := constraint.Fold(SExpr, gammaExpr)
+	TFolded := constraint.Fold(TExpr, gammaExpr)
 
 	// 3. calls the Lookup on the folded S and T
 	return inclusionCheckIOP(system, SFolded, TFolded)

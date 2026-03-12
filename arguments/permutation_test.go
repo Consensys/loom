@@ -6,7 +6,7 @@ import (
 	"runtime/pprof"
 	"testing"
 
-	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/poly"
 	"github.com/consensys/giop/prover"
 	derive "github.com/consensys/giop/derive"
@@ -19,8 +19,8 @@ func TestPermutation(t *testing.T) {
 
 	size := 16
 
-	trace := cs.BuildPermutationCircuit(t, size)
-	system := cs.NewBuilder(size)
+	trace := constraint.BuildPermutationCircuit(t, size)
+	system := constraint.NewBuilder(size)
 
 	Permutation(&system, []string{"P0"}, []string{"P1"})
 
@@ -87,8 +87,8 @@ func TestPermutationTuple(t *testing.T) {
 
 	size := 16
 
-	trace := cs.BuildPermutationTuple(t, size)
-	system := cs.NewBuilder(size)
+	trace := constraint.BuildPermutationTuple(t, size)
+	system := constraint.NewBuilder(size)
 
 	err := PermutationMultiset(&system, [][]string{{"P0", "P1"}}, [][]string{{"Q0", "Q1"}})
 	if err != nil {
@@ -181,7 +181,7 @@ func BenchmarkPermutation(b *testing.B) {
 		trace[fmt.Sprintf("P2_%d", i)] = p2[i]
 	}
 
-	system := cs.NewBuilder(size)
+	system := constraint.NewBuilder(size)
 
 	_ = Permutation(&system, s1, s2)
 

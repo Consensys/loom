@@ -105,18 +105,6 @@ func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1C
 	if err != nil {
 		return T, err
 	}
-	// T[ID_S1], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S1)
-	// if err != nil {
-	// 	return T, err
-	// }
-	// T[ID_S2], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S2)
-	// if err != nil {
-	// 	return T, err
-	// }
-	// T[ID_S3], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.S3)
-	// if err != nil {
-	// 	return T, err
-	// }
 
 	// Solution columns: L, R, O are already in Lagrange Normal form
 	lCoeffs := make([]koalabear.Element, len(plonkSolution.L))
@@ -135,33 +123,6 @@ func BuildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1C
 	oCoeffs := make([]koalabear.Element, len(plonkSolution.O))
 	copy(oCoeffs, plonkSolution.O)
 	T[ID_O] = oCoeffs
-
-	// size := len(plonkTrace.Ql.Coefficients())
-	// domain := fft.NewDomain(uint64(size))
-
-	// Build identity permutation columns ID1, ID2, ID3
-	// res := make([]koalabear.Element, 3*domain.Cardinality)
-	// res[0].SetOne()
-	// res[domain.Cardinality].Set(&domain.FrMultiplicativeGen)
-	// res[2*domain.Cardinality].Square(&domain.FrMultiplicativeGen)
-
-	// for i := uint64(1); i < domain.Cardinality; i++ {
-	// 	res[i].Mul(&res[i-1], &domain.Generator)
-	// 	res[domain.Cardinality+i].Mul(&res[domain.Cardinality+i-1], &domain.Generator)
-	// 	res[2*domain.Cardinality+i].Mul(&res[2*domain.Cardinality+i-1], &domain.Generator)
-	// }
-
-	// id1 := make([]koalabear.Element, domain.Cardinality)
-	// copy(id1, res[:domain.Cardinality])
-	// T[ID_ID1] = id1
-
-	// id2 := make([]koalabear.Element, domain.Cardinality)
-	// copy(id2, res[domain.Cardinality:2*domain.Cardinality])
-	// T[ID_ID2] = id2
-
-	// id3 := make([]koalabear.Element, domain.Cardinality)
-	// copy(id3, res[2*domain.Cardinality:])
-	// T[ID_ID3] = id3
 
 	return T, nil
 }
@@ -195,12 +156,6 @@ func GetPublicPart(t trace.Trace) trace.Trace {
 	res[ID_Qm] = t[ID_Qm]
 	res[ID_Qo] = t[ID_Qo]
 	res[ID_Qk] = t[ID_Qk]
-	// res[ID_S1] = t[ID_S1]
-	// res[ID_S2] = t[ID_S2]
-	// res[ID_S3] = t[ID_S3]
-	// res[ID_ID1] = t[ID_ID1]
-	// res[ID_ID2] = t[ID_ID2]
-	// res[ID_ID3] = t[ID_ID3]
 	return res
 }
 
@@ -233,7 +188,7 @@ func GetPlonkTrace() (trace.Trace, []int64, int, error) {
 	}
 	spr, ok := ccs.(*gnark_cs.SparseR1CS)
 	if !ok {
-		return nil, nil, 0, fmt.Errorf("cannot cast ccs to *gnark_cs.SparseR1CS")
+		return nil, nil, 0, fmt.Errorf("cannot cast ccs to *gnark_constraint.SparseR1CS")
 	}
 
 	nbPublic := ccs.GetNbPublicVariables()
@@ -249,7 +204,7 @@ func GetPlonkTrace() (trace.Trace, []int64, int, error) {
 	}
 	solution, ok := isolution.(*gnark_cs.SparseR1CSSolution)
 	if !ok {
-		return nil, nil, size, fmt.Errorf("cannot cast isolution to *gnark_cs.SparseR1CSSolution")
+		return nil, nil, size, fmt.Errorf("cannot cast isolution to *gnark_constraint.SparseR1CSSolution")
 	}
 
 	T, err := BuildTrace(publicTrace, solution, nbPublic)

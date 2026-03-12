@@ -3,7 +3,7 @@ package arguments
 import (
 	"testing"
 
-	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/poly"
 	"github.com/consensys/giop/prover"
 	derive "github.com/consensys/giop/derive"
@@ -52,7 +52,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 		"F2": f2Vals,
 	}
 
-	system := cs.NewBuilder(size)
+	system := constraint.NewBuilder(size)
 
 	err := ProjectionTuple(&system, []string{"A", "A2"}, "F1", []string{"B", "B2"}, "F2")
 	if err != nil {
@@ -151,7 +151,7 @@ func TestEqualityFilteredColumns(t *testing.T) {
 	}
 
 	// create a new system
-	system := cs.NewBuilder(size)
+	system := constraint.NewBuilder(size)
 
 	// call EqualityFilteredColumns
 	err := Projection(&system, "A", "F1", "B", "F2")

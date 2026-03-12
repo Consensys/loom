@@ -1,7 +1,7 @@
 package arguments
 
 import (
-	"github.com/consensys/giop/cs"
+	"github.com/consensys/giop/constraint"
 	"github.com/consensys/giop/expr"
 )
 
@@ -11,7 +11,7 @@ import (
 //
 // The name Wires comes from plonk, this constraint is here to ensure that a wiring
 // is correct.
-func CopyPermutation(system *cs.Builder, wires []string, S []int64) error {
+func CopyPermutation(system *constraint.Builder, wires []string, S []int64) error {
 
 	// 1. register the permutation
 	allOutputs, err := system.AddPermutationColumns(S)
@@ -49,7 +49,7 @@ func makeWiresAsExpr(wires [][]string) [][]expr.Expr {
 // ...
 // The name Wires comes from plonk, this constraint is here to ensure that a wiring
 // is correct.
-func CopyPermtutationTuple(system *cs.Builder, wires [][]string, S []int64) error {
+func CopyPermtutationTuple(system *constraint.Builder, wires [][]string, S []int64) error {
 
 	// 1. register the permutation
 	allOutputs, err := system.AddPermutationColumns(S)
