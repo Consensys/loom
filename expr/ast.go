@@ -31,7 +31,7 @@ type Leaf struct {
 type Config struct {
 	WoCommittedColumns bool
 	WoVirtualColumns   bool
-	WoRotatedColumns   bool
+	WoRotatedColumns          bool
 	WoChallenges       bool
 }
 
@@ -126,7 +126,7 @@ func Col(name string) *Leaf {
 	return &Leaf{Type: CommittedColumn, Name: name}
 }
 
-func RotatedCol(name string, shift int) *Leaf {
+func Rot(name string, shift int) *Leaf {
 	return &Leaf{Type: RotatedColumn, Shift: shift, Name: name}
 }
 

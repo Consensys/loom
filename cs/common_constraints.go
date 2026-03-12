@@ -12,7 +12,7 @@ import (
 func BuildGrandProductRelation(E1, E2 expr.Expr, GP string, N int) []Relation {
 
 	// 1. IDGrandProductShifted*E2-IDGrandProduct*E1=0
-	A := expr.RotatedCol(GP, 1).Mul(E2)
+	A := expr.Rot(GP, 1).Mul(E2)
 	B := expr.Col(GP).Mul(E1)
 	recurrenceRelation := A.Sub(B)
 
@@ -29,7 +29,7 @@ func BuildGrandSumRelations(M, E expr.Expr, grandSum string, N int) []Relation {
 	// 1. (1-Lagrange_0) * ( (IDGrandSum - IDGrandSum(w^1 X))*E - M)=0
 	lagrange := expr.VirtualCol(proveractions.GetLagrangeID(0, N))
 	p1 := expr.NewConst(koalabear.One()).Sub(lagrange)
-	diffGrandSum := expr.Col(grandSum).Sub(expr.RotatedCol(grandSum, -1))
+	diffGrandSum := expr.Col(grandSum).Sub(expr.Rot(grandSum, -1))
 	p2 := diffGrandSum.Mul(E).Sub(M)
 	recurrenceRelation := p1.Mul(p2)
 
@@ -66,7 +66,7 @@ func BuildFilteredAccPolynomialRelation(E, F, alpha expr.Expr, R string, N int) 
 
 	// 2. R[i] = F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1] for i>0
 	one := koalabear.One()
-	RShifted := expr.RotatedCol(R, -1)
+	RShifted := expr.Rot(R, -1)
 	path1 := F.Mul(alpha.Mul(RShifted).Add(E))
 	path2 := RShifted.Mul(expr.NewConst(one).Sub(F))
 	path1 = path1.Add(path2) //  F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1]

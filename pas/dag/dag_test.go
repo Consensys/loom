@@ -449,7 +449,7 @@ func TestDAGEvalOnIthEntry(t *testing.T) {
 		// E = x0(shift=1) - x0 → P0[(i+1)%N] - P0[i]
 		P0 := makePoly(1, 3, 2, 7, 5, 4, 6, 8)
 		pi := map[string][]koalabear.Element{"x0": P0}
-		expr := expr.RotatedCol("x0", 1).Sub(expr.Col("x0"))
+		expr := expr.Rot("x0", 1).Sub(expr.Col("x0"))
 		d := ExprToDAG(expr)
 		_Pi := setupPiSlice(expr, pi)
 

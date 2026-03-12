@@ -42,7 +42,7 @@ func TestFibonacci(t *testing.T) {
 	}
 	system.RegisterProverAction(nil, []string{"F1"}, proveractions.NewBuilderContext(filter))
 	F1 := expr.Col("F1")
-	F2 := expr.RotatedCol("F1", 1)
+	F2 := expr.Rot("F1", 1)
 	arguments.ProjectionExpr(&system, colA, colB, F1, F2)
 	arguments.ProjectionExpr(&system, colB, colC, F1, F2)
 
