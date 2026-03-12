@@ -2,7 +2,7 @@ package cs
 
 import (
 	"github.com/consensys/giop/expr"
-	proveractions "github.com/consensys/giop/prover_actions"
+	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
@@ -27,7 +27,7 @@ func BuildGrandProductRelation(E1, E2 expr.Expr, GP string, N int) []Relation {
 func BuildGrandSumRelations(M, E expr.Expr, grandSum string, N int) []Relation {
 
 	// 1. (1-Lagrange_0) * ( (IDGrandSum - IDGrandSum(w^1 X))*E - M)=0
-	lagrange := expr.Virtual(proveractions.GetLagrangeID(0, N))
+	lagrange := expr.Virtual(derive.GetLagrangeID(0, N))
 	p1 := expr.Const(koalabear.One()).Sub(lagrange)
 	diffGrandSum := expr.Col(grandSum).Sub(expr.Rot(grandSum, -1))
 	p2 := diffGrandSum.Mul(E).Sub(M)
@@ -44,7 +44,7 @@ func BuildGrandSumRelations(M, E expr.Expr, grandSum string, N int) []Relation {
 // BuildLocalRelation builds the constraints Lagrange_i(E-M) whose vanishing at X^n-1
 // is equivalent to E[i]=M[i]
 func BuildLocalRelation(E, M expr.Expr, i int, N int) Relation {
-	lagrangeID := proveractions.GetLagrangeID(i, N)
+	lagrangeID := derive.GetLagrangeID(i, N)
 	localRelation := expr.Virtual(lagrangeID).Mul(E.Sub(M))
 	return localRelation
 }
@@ -70,7 +70,7 @@ func BuildFilteredAccPolynomialRelation(E, F, alpha expr.Expr, R string, N int) 
 	path1 := F.Mul(alpha.Mul(RShifted).Add(E))
 	path2 := RShifted.Mul(expr.Const(one).Sub(F))
 	path1 = path1.Add(path2) //  F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1]
-	lagrange0 := expr.Virtual(proveractions.GetLagrangeID(0, N))
+	lagrange0 := expr.Virtual(derive.GetLagrangeID(0, N))
 	recurrenceRelation := expr.Col(R).Sub(path1).Mul(expr.Const(one).Sub(lagrange0)) // (R[i] - (F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1])) * (1 - lagrange0)
 
 	return []Relation{boundaryRelation, recurrenceRelation}

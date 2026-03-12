@@ -6,7 +6,7 @@ import (
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/expr"
-	proveractions "github.com/consensys/giop/prover_actions"
+	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/utils"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
@@ -81,19 +81,19 @@ func inclusionCheckIOP(system *cs.Builder, S, T expr.Expr) error {
 
 	// 1. create the multiplicity polynomial
 	Mexpr := expr.Col(M)
-	system.RegisterDerivationStep([]expr.Expr{S, T}, []string{M}, proveractions.NewIDStepContext(proveractions.MULTIPLICITY))
+	system.RegisterDerivationStep([]expr.Expr{S, T}, []string{M}, derive.NewIDStepContext(derive.MULTIPLICITY))
 
 	// 2. sample a challenge gamma, depending on M, S, and T
 	gammaDeps := []expr.Expr{S, T, Mexpr}
-	system.RegisterDerivationStep(gammaDeps, []string{gamma}, proveractions.NewIDStepContext(proveractions.FIAT_SHAMIR))
+	system.RegisterDerivationStep(gammaDeps, []string{gamma}, derive.NewIDStepContext(derive.FIAT_SHAMIR))
 
 	// 3. compute the grand sums grandSum1:=Σ_i M[i]/(T[i]-γ), grandSum2:=Σ_i 1/(S[i]-γ)
 	oneExpr := expr.Const(koalabear.One())
 	SminusGamma := S.Sub(expr.NewChallenge(gamma))
-	system.RegisterDerivationStep([]expr.Expr{oneExpr, SminusGamma}, []string{grandSumS}, proveractions.NewIDStepContext(proveractions.GRAND_SUM))
+	system.RegisterDerivationStep([]expr.Expr{oneExpr, SminusGamma}, []string{grandSumS}, derive.NewIDStepContext(derive.GRAND_SUM))
 
 	TminusGamma := T.Sub(expr.NewChallenge(gamma))
-	system.RegisterDerivationStep([]expr.Expr{Mexpr, TminusGamma}, []string{grandSumT}, proveractions.NewIDStepContext(proveractions.GRAND_SUM))
+	system.RegisterDerivationStep([]expr.Expr{Mexpr, TminusGamma}, []string{grandSumT}, derive.NewIDStepContext(derive.GRAND_SUM))
 
 	// 4. register the constraints ensuring the grand sums are correctly constructed
 	grandSumRelationsT := cs.BuildGrandSumRelations(Mexpr, TminusGamma, grandSumT, system.N)
@@ -179,7 +179,7 @@ func LookupTuple(system *cs.Builder, S, T []string) error {
 	for i := 0; i < len(T); i++ {
 		foldingDeps[i+len(S)] = expr.Col(T[i])
 	}
-	system.RegisterDerivationStep(foldingDeps, []string{gamma}, proveractions.NewIDStepContext(proveractions.FIAT_SHAMIR))
+	system.RegisterDerivationStep(foldingDeps, []string{gamma}, derive.NewIDStepContext(derive.FIAT_SHAMIR))
 
 	// 2. fold S and T
 	gammaExpr := expr.NewChallenge(gamma)

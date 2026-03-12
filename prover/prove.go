@@ -12,7 +12,7 @@ import (
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/univariate"
-	proveractions "github.com/consensys/giop/prover_actions"
+	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/trace"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -33,7 +33,7 @@ func NewRuntime(cciop cs.Program, trace trace.Trace) Runtime {
 }
 
 // Kahn's style scheduler for Functions (with parallel schedule)
-func (runtime *Runtime) Solve(knownColumns map[string]bool, proof *proveractions.Proof, nbWorker int) error {
+func (runtime *Runtime) Solve(knownColumns map[string]bool, proof *derive.Proof, nbWorker int) error {
 
 	funcs := runtime.Program.DerivationPlan
 	n := len(funcs)
@@ -43,7 +43,7 @@ func (runtime *Runtime) Solve(knownColumns map[string]bool, proof *proveractions
 
 	// Build dependency tracking
 	for i, f := range funcs {
-		leaves := proveractions.GetColumnsBaseId(f.Inputs)
+		leaves := derive.GetColumnsBaseId(f.Inputs)
 		for _, l := range leaves {
 			if !knownColumns[l] {
 				inDegree[i]++
@@ -114,7 +114,7 @@ func (runtime *Runtime) Solve(knownColumns map[string]bool, proof *proveractions
 
 // FinalChallenges returns the last challenges in the DAG whose nodes are
 // {inputs: rounds[i].DependenciesChallenges, output: rounds[i].ChallengeName}
-func FinalChallenges(rounds []proveractions.Round) []string {
+func FinalChallenges(rounds []derive.Round) []string {
 	usedAsInput := make(map[string]bool)
 	produced := make(map[string]bool)
 
@@ -138,7 +138,7 @@ func FinalChallenges(rounds []proveractions.Round) []string {
 
 // Fold all the constraints by sampling a random challenge, derived from the necessary data to ensure that this challenge
 // cannot have been derived derived prior to any of the prover<->interactions and commitments
-func (runtime *Runtime) DeriveFinalFoldingChallenge(proof *proveractions.Proof) error {
+func (runtime *Runtime) DeriveFinalFoldingChallenge(proof *derive.Proof) error {
 
 	// proof.VanishingRelation = runtime.Program.VanishingRelation
 
@@ -146,7 +146,7 @@ func (runtime *Runtime) DeriveFinalFoldingChallenge(proof *proveractions.Proof) 
 	// data to ensure it cannot have been derived prior to running all the previous IOPs and commitments
 
 	// 1. create the dependencies of the folding challenge to all the polynomials not committed
-	var round proveractions.Round
+	var round derive.Round
 	round.ChallengeName = constants.FINAL_FOLDING_CHALLENGE
 	leaves := runtime.Program.VanishingRelation.Leaves(expr.NewConfig(expr.WithoutChallenges(), expr.WithoutVirtualumns(), expr.WithoutRotatedColumns()))
 	round.DependenciesCommittedColumns = make([]string, 0, len(leaves))
@@ -203,13 +203,13 @@ func (runtime *Runtime) DeriveFinalFoldingChallenge(proof *proveractions.Proof) 
 	c.SetBytes(bc)
 
 	// 6. add the challenge as a constant column, since it might appear in other constraints
-	return proveractions.NewColumn(runtime.Trace, constants.FINAL_FOLDING_CHALLENGE, []koalabear.Element{c}, &runtime.Mu)
+	return derive.NewColumn(runtime.Trace, constants.FINAL_FOLDING_CHALLENGE, []koalabear.Element{c}, &runtime.Mu)
 }
 
 // ComputeQuotient computes H:=runtime.Program.Relation(runtime.Trace)/X^N-1 and commit to it, and
 //
 //	and store it in the trace, it is needed to be opened later
-func (runtime *Runtime) ComputeQuotient(proof *proveractions.Proof) error {
+func (runtime *Runtime) ComputeQuotient(proof *derive.Proof) error {
 
 	H, err := univariate.ComputeQuotient(runtime.Trace, runtime.Program.VanishingRelation, runtime.Program.N)
 	if err != nil {
@@ -232,10 +232,10 @@ func (runtime *Runtime) ComputeQuotient(proof *proveractions.Proof) error {
 }
 
 // DeriveOpeningChallenge register the final round for deriving the opening challenge, and compute it
-func (runtime *Runtime) DeriveOpeningChallenge(proof *proveractions.Proof) (koalabear.Element, error) {
+func (runtime *Runtime) DeriveOpeningChallenge(proof *derive.Proof) (koalabear.Element, error) {
 
 	// register the round in the proof
-	var round proveractions.Round
+	var round derive.Round
 	round.ChallengeName = constants.FINAL_EVALUATION_POINT
 	round.DependenciesCommittedColumns = []string{constants.FINAL_QUOTIENT}
 	round.DependenciesChallenges = []string{constants.FINAL_FOLDING_CHALLENGE}
@@ -279,7 +279,7 @@ func (runtime *Runtime) DeriveOpeningChallenge(proof *proveractions.Proof) (koal
 	zeta.SetBytes(bzeta)
 
 	// register zeta in the trace
-	err = proveractions.NewColumn(runtime.Trace, constants.FINAL_EVALUATION_POINT, []koalabear.Element{zeta}, &runtime.Mu)
+	err = derive.NewColumn(runtime.Trace, constants.FINAL_EVALUATION_POINT, []koalabear.Element{zeta}, &runtime.Mu)
 	if err != nil {
 		return koalabear.Element{}, err
 	}
@@ -287,7 +287,7 @@ func (runtime *Runtime) DeriveOpeningChallenge(proof *proveractions.Proof) (koal
 	return zeta, nil
 }
 
-func (runtime *Runtime) OpenCommitments(proof *proveractions.Proof, zeta koalabear.Element) error {
+func (runtime *Runtime) OpenCommitments(proof *derive.Proof, zeta koalabear.Element) error {
 
 	err := runtime.OpenNonShiftedCommitments(proof, zeta)
 	if err != nil {
@@ -298,7 +298,7 @@ func (runtime *Runtime) OpenCommitments(proof *proveractions.Proof, zeta koalabe
 }
 
 // OpenCommitments open all columns at zeta
-func (runtime *Runtime) OpenNonShiftedCommitments(proof *proveractions.Proof, zeta koalabear.Element) error {
+func (runtime *Runtime) OpenNonShiftedCommitments(proof *derive.Proof, zeta koalabear.Element) error {
 	var err error
 	for k, com := range proof.OpeningProofs {
 		poly, ok := runtime.Trace[k]
@@ -317,7 +317,7 @@ func (runtime *Runtime) OpenNonShiftedCommitments(proof *proveractions.Proof, ze
 }
 
 // OpenCommitments open all columns at zeta
-func (runtime *Runtime) OpenShiftedCommitments(proof *proveractions.Proof, zeta koalabear.Element) error {
+func (runtime *Runtime) OpenShiftedCommitments(proof *derive.Proof, zeta koalabear.Element) error {
 
 	// query the leaves corresponding to RotatedColumns
 	leavesShifted := runtime.Program.VanishingRelation.Leaves(
@@ -363,9 +363,9 @@ func (runtime *Runtime) OpenShiftedCommitments(proof *proveractions.Proof, zeta 
 	return nil
 }
 
-func (runtime *Runtime) Prove(knownColumns map[string]bool, nbWorkers int) (proveractions.Proof, error) {
+func (runtime *Runtime) Prove(knownColumns map[string]bool, nbWorkers int) (derive.Proof, error) {
 
-	proof := proveractions.NewProof(runtime.Program.N)
+	proof := derive.NewProof(runtime.Program.N)
 
 	// 1. Solve
 	err := runtime.Solve(knownColumns, &proof, nbWorkers)

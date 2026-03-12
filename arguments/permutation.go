@@ -6,7 +6,7 @@ import (
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/expr"
-	proveractions "github.com/consensys/giop/prover_actions"
+	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/utils"
 )
 
@@ -65,7 +65,7 @@ func equalityUpToPermutationIOP(system *cs.Builder, E1, E2 []expr.Expr) error {
 		return err
 	}
 
-	system.RegisterDerivationStep(append(E1, E2...), []string{gamma}, proveractions.NewIDStepContext(proveractions.FIAT_SHAMIR))
+	system.RegisterDerivationStep(append(E1, E2...), []string{gamma}, derive.NewIDStepContext(derive.FIAT_SHAMIR))
 
 	// 1. sample gamma
 	E1MinusGamma := E1[0].Sub(expr.NewChallenge(gamma))
@@ -82,7 +82,7 @@ func equalityUpToPermutationIOP(system *cs.Builder, E1, E2 []expr.Expr) error {
 	system.AssertAllZero(gpRelation)
 
 	// 3. register the prover action for creating the grand product and grand product shifted
-	system.RegisterDerivationStep([]expr.Expr{E1MinusGamma, E2MinusGamma}, []string{IDGrandProduct}, proveractions.NewIDStepContext(proveractions.GRAND_PRODUCT))
+	system.RegisterDerivationStep([]expr.Expr{E1MinusGamma, E2MinusGamma}, []string{IDGrandProduct}, derive.NewIDStepContext(derive.GRAND_PRODUCT))
 
 	// 4. register the creation of the lagrange column
 	system.RegisterithLagrangeColumn(0)
@@ -166,7 +166,7 @@ func multiSetPermutation(system *cs.Builder, E1, E2 [][]expr.Expr) error {
 	for i := 0; i < len(E1); i++ {
 		deps = append(deps, E2[i]...)
 	}
-	system.RegisterDerivationStep(deps, []string{alpha}, proveractions.NewIDStepContext(proveractions.FIAT_SHAMIR))
+	system.RegisterDerivationStep(deps, []string{alpha}, derive.NewIDStepContext(derive.FIAT_SHAMIR))
 
 	// 2. fold ID1[i], ID2[i] for all i with alpha
 	alphaExpr := expr.NewChallenge(alpha)

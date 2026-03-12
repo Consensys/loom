@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/consensys/giop/constants"
+	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/expr"
-	proveractions "github.com/consensys/giop/prover_actions"
 	"github.com/consensys/giop/utils"
 )
 
@@ -14,29 +14,29 @@ type Relation = expr.Expr
 // Builder defines a list of constraints and a list of solver functions form a DAG, need to build extra columns appearing in the
 // different constraints (for instance a solver might tell how to compute a grand product column, grand sum column, etc).
 type Builder struct {
-	Relations   Relations
-	DerivationPlan []proveractions.DerivationStep
-	Cache         map[string]int // cache storing already regisetered prover actions. The value is an entry in DerivationPlan
-	N             int
+	Relations      Relations
+	DerivationPlan []derive.DerivationStep
+	Cache          map[string]int // cache storing already regisetered prover actions. The value is an entry in DerivationPlan
+	N              int
 }
 
 // NewBuilder creates a new system, consisting of constraints vanishing on X^N-1
 func NewBuilder(N int) Builder {
 	return Builder{
-		Relations:   make(Relations, 0),
-		DerivationPlan: make(proveractions.DerivationPlan, 0),
-		Cache:         make(map[string]int),
-		N:             N,
+		Relations:      make(Relations, 0),
+		DerivationPlan: make(derive.DerivationPlan, 0),
+		Cache:          make(map[string]int),
+		N:              N,
 	}
 }
 
 // RegisterDerivationStep adds a prover action to the underlying Builder
-func (system *Builder) RegisterDerivationStep(inputs []expr.Expr, outputs []string, ctx proveractions.StepContext) {
+func (system *Builder) RegisterDerivationStep(inputs []expr.Expr, outputs []string, ctx derive.StepContext) {
 
-	pa := proveractions.DerivationStep{
-		Inputs:  inputs,
-		Outputs: outputs,
-		StepContext:     ctx,
+	pa := derive.DerivationStep{
+		Inputs:      inputs,
+		Outputs:     outputs,
+		StepContext: ctx,
 	}
 	system.DerivationPlan = append(system.DerivationPlan, pa)
 }
@@ -56,7 +56,7 @@ func (system *Builder) AssertAllZero(C []Relation) {
 // RegisterithLagrangeColumn syntactic sugar to add a prover action for creating the i-th lagrange column
 // by checking if the action is not already recorded in the cache
 func (system *Builder) RegisterithLagrangeColumn(i int) {
-	ctx := proveractions.NewLagrangeContext(i, system.N)
+	ctx := derive.NewLagrangeContext(i, system.N)
 	k := ctx.Key()
 	if _, ok := system.Cache[k]; ok {
 		return
@@ -66,7 +66,7 @@ func (system *Builder) RegisterithLagrangeColumn(i int) {
 	// 1. key depends only on ctx atm and not on ProverAciont
 	// 2. if the action already exists, we should return the output to reuse them and change the api
 	system.Cache[k] = len(system.DerivationPlan)
-	system.RegisterDerivationStep(nil, []string{proveractions.GetLagrangeID(i, system.N)}, proveractions.NewLagrangeContext(i, system.N))
+	system.RegisterDerivationStep(nil, []string{derive.GetLagrangeID(i, system.N)}, derive.NewLagrangeContext(i, system.N))
 }
 
 // RegisterPermutation syntactic sugar to add a prover action for registering the columns
@@ -76,7 +76,7 @@ func (system *Builder) RegisterithLagrangeColumn(i int) {
 // We check if the permutation is not already recorded in the trace
 func (system *Builder) RegisterPermutation(S []int64) ([]string, error) {
 
-	permutationContext := proveractions.NewPermutationContext(S)
+	permutationContext := derive.NewPermutationContext(S)
 
 	// if the permutation is already registered, we reuse it
 	k := permutationContext.Key()
@@ -97,7 +97,7 @@ func (system *Builder) RegisterPermutation(S []int64) ([]string, error) {
 		return nil, err
 	}
 	for i := 0; i < nbChunks; i++ {
-		IDid[i] = proveractions.GetPermutationSupportID(i)
+		IDid[i] = derive.GetPermutationSupportID(i)
 		SId[i] = fmt.Sprintf("%s_%d", pid, i)
 	}
 	allOutputs := append(IDid, SId...)

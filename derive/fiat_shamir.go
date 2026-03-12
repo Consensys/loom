@@ -1,4 +1,4 @@
-package proveractions
+package derive
 
 import (
 	"crypto/sha256"

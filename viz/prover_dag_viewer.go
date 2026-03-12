@@ -9,11 +9,11 @@ import (
 	"text/template"
 
 	"github.com/consensys/giop/cs"
-	proveractions "github.com/consensys/giop/prover_actions"
+	derive "github.com/consensys/giop/derive"
 )
 
 // actionLabel returns a display label for a DerivationStep from its StepContext.String().
-func actionLabel(pa proveractions.DerivationStep) string {
+func actionLabel(pa derive.DerivationStep) string {
 	if pa.StepContext != nil {
 		return pa.StepContext.String()
 	}
@@ -64,7 +64,7 @@ func WriteDerivationPlanDagToHTML(cciop cs.Program, filename string) error {
 		labelOf[id] = actionLabel(pa)
 
 		// edges from input columns → this action
-		for _, col := range proveractions.GetColumnsId(pa.Inputs) {
+		for _, col := range derive.GetColumnsId(pa.Inputs) {
 			if _, seen := kindOf[col]; !seen {
 				if producedBy[col] {
 					kindOf[col] = "computed"
@@ -97,7 +97,7 @@ func WriteDerivationPlanDagToHTML(cciop cs.Program, filename string) error {
 	for i, pa := range actions {
 		id := aID(i)
 		layer := 1
-		for _, col := range proveractions.GetColumnsId(pa.Inputs) {
+		for _, col := range derive.GetColumnsId(pa.Inputs) {
 			if l := layerOf[col] + 1; l > layer {
 				layer = l
 			}

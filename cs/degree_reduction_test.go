@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/consensys/giop/expr"
-	proveractions "github.com/consensys/giop/prover_actions"
+	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
@@ -55,7 +55,7 @@ func TestDegreeReduction(t *testing.T) {
 	//    When the same sub-expression (e.g. P0*P0) is extracted twice by Prune,
 	//    reduceDegree emits duplicate prover actions. The second execution returns
 	//    "already registered"; skip it silently since the column is already correct.
-	proof := proveractions.NewProof(N)
+	proof := derive.NewProof(N)
 	var mu sync.Mutex
 	for _, pa := range system.DerivationPlan {
 		if err := pa.Execute(T, &proof, &mu); err != nil {

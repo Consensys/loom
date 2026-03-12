@@ -4,7 +4,7 @@ import (
 	"github.com/consensys/giop/constants"
 	"github.com/consensys/giop/dag"
 	"github.com/consensys/giop/expr"
-	proveractions "github.com/consensys/giop/prover_actions"
+	derive "github.com/consensys/giop/derive"
 )
 
 // Fold returns Σ_i αⁱE[i]
@@ -20,7 +20,7 @@ func Fold(E []expr.Expr, alpha expr.Expr) expr.Expr {
 // Program DAG containing all tha proverSteps, and the final constraint that must vanish
 // on X^N-1
 type Program struct {
-	DerivationPlan     []proveractions.DerivationStep
+	DerivationPlan     []derive.DerivationStep
 	VanishingRelation dag.DAG
 	Cache             map[string]int // not serialised, used for building the IOP only, used to track already registered prover actions which have no inputs (lagrange, permutation)
 	N                 int

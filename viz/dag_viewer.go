@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/template"
 
-	proveractions "github.com/consensys/giop/prover_actions"
+	derive "github.com/consensys/giop/derive"
 )
 
 // Layout constants (pixels in the SVG coordinate space).
@@ -61,7 +61,7 @@ func dagShortLabel(id string) string {
 //   - Purple rounded rectangles : challenge nodes
 //   - Dashed blue arrows  : committed column → challenge
 //   - Solid purple arrows : challenge → challenge
-func WriteProofRoundsDagToHTML(rounds []proveractions.Round, filename string) error {
+func WriteProofRoundsDagToHTML(rounds []derive.Round, filename string) error {
 	// ── 1. collect unique nodes and edges ─────────────────────────────────────
 	kindOf := make(map[string]string) // id → "committed" | "challenge"
 	var edges []dagEdge

@@ -6,7 +6,7 @@ import (
 
 	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/univariate"
-	proveractions "github.com/consensys/giop/prover_actions"
+	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
@@ -50,7 +50,7 @@ func TestComputeFilteredAccPolynomial(t *testing.T) {
 	T["R"] = R
 
 	// Add the L_0 Lagrange column needed for the boundary constraint.
-	err = proveractions.ComputeLagrangeColumn(T, nil, &mu, nil, []string{proveractions.GetLagrangeID(0, N)}, nil)
+	err = derive.ComputeLagrangeColumn(T, nil, &mu, nil, []string{derive.GetLagrangeID(0, N)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestComputeFilteredAccPolynomial(t *testing.T) {
 	// where R_prev = R(ω^{−1}·X), i.e. the column R shifted by −1.
 	Rexpr := expr.Col("R")
 	RPrev := expr.Rot("R", -1)
-	L0 := expr.Virtual(proveractions.GetLagrangeID(0, N))
+	L0 := expr.Virtual(derive.GetLagrangeID(0, N))
 	one := expr.Const(koalabear.One())
 
 	C1 := L0.Mul(Rexpr.Sub(Fexpr.Mul(Eexpr)))

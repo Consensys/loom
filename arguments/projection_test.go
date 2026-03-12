@@ -6,7 +6,7 @@ import (
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/univariate"
 	"github.com/consensys/giop/prover"
-	proveractions "github.com/consensys/giop/prover_actions"
+	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/giop/verifier"
 	"github.com/consensys/giop/viz"
@@ -62,7 +62,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 	cciop := cs.Compile(&system)
 	proverRunTime := prover.NewRuntime(cciop, T)
 	knownColumns := map[string]bool{"A": true, "A2": true, "B": true, "B2": true, "F1": true, "F2": true}
-	proof := proveractions.NewProof(system.N)
+	proof := derive.NewProof(system.N)
 
 	viz.WriteDerivationPlanDagToHTML(cciop, "pa_projection_multi.html")
 
@@ -162,7 +162,7 @@ func TestEqualityFilteredColumns(t *testing.T) {
 	cciop := cs.Compile(&system)
 	proverRunTime := prover.NewRuntime(cciop, T)
 	knownColumns := map[string]bool{"A": true, "B": true, "F1": true, "F2": true}
-	proof := proveractions.NewProof(system.N)
+	proof := derive.NewProof(system.N)
 
 	// 1. Solve + sanity checks
 	err = proverRunTime.Solve(knownColumns, &proof, 1)

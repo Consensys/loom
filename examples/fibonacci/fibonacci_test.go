@@ -9,7 +9,7 @@ import (
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/expr"
 	"github.com/consensys/giop/prover"
-	proveractions "github.com/consensys/giop/prover_actions"
+	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/verifier"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
@@ -40,7 +40,7 @@ func TestFibonacci(t *testing.T) {
 	for i := 1; i < N; i++ {
 		filter[i].SetOne()
 	}
-	system.RegisterDerivationStep(nil, []string{"F1"}, proveractions.NewBuilderContext(filter))
+	system.RegisterDerivationStep(nil, []string{"F1"}, derive.NewBuilderContext(filter))
 	F1 := expr.Col("F1")
 	F2 := expr.Rot("F1", 1)
 	arguments.ProjectionExpr(&system, colA, colB, F1, F2)

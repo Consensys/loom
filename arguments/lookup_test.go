@@ -5,7 +5,7 @@ import (
 
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/prover"
-	proveractions "github.com/consensys/giop/prover_actions"
+	derive "github.com/consensys/giop/derive"
 	"github.com/consensys/giop/trace"
 	"github.com/consensys/giop/verifier"
 	"github.com/consensys/giop/viz"
@@ -64,7 +64,7 @@ func TestLookup(t *testing.T) {
 	proverRunTime := prover.NewRuntime(cciop, trace)
 
 	knowncolumns := map[string]bool{"T": true, "S": true}
-	proof := proveractions.NewProof(system.N)
+	proof := derive.NewProof(system.N)
 
 	// 1. Solve + sanity checks
 	err := proverRunTime.Solve(knowncolumns, &proof, 1)
@@ -130,7 +130,7 @@ func TestLookupTuple(t *testing.T) {
 	proverRunTime := prover.NewRuntime(cciop, tr)
 
 	knowncolumns := map[string]bool{"T0": true, "T1": true, "S0": true, "S1": true}
-	proof := proveractions.NewProof(system.N)
+	proof := derive.NewProof(system.N)
 
 	// 1. Solve + sanity checks
 	err := proverRunTime.Solve(knowncolumns, &proof, 1)

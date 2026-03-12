@@ -12,7 +12,7 @@ import (
 	"github.com/consensys/giop/cs"
 	"github.com/consensys/giop/dag"
 	"github.com/consensys/giop/expr"
-	proveractions "github.com/consensys/giop/prover_actions"
+	derive "github.com/consensys/giop/derive"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 )
@@ -32,7 +32,7 @@ func NewRunTime(cciop cs.Program) Runtime {
 }
 
 // DeriveChallenge derive the challenge of corresponding to proof.Rounds[i]
-func (runtime *Runtime) DeriveChallenge(proof *proveractions.Proof, i int) error {
+func (runtime *Runtime) DeriveChallenge(proof *derive.Proof, i int) error {
 
 	fs := fiatshamir.NewTranscript(sha256.New())
 
@@ -76,7 +76,7 @@ func (runtime *Runtime) DeriveChallenge(proof *proveractions.Proof, i int) error
 // *The nodes are proof.Rounds
 // * node input are DependenciesChallenges
 // * node output is ChallengeName
-func (runtime *Runtime) ComputeChallenges(proof *proveractions.Proof, nbWorkers int) error {
+func (runtime *Runtime) ComputeChallenges(proof *derive.Proof, nbWorkers int) error {
 
 	// nodes which do not depend on other challenges have inDegree 0 by construction, these are the nodes which do not
 	// depend on other challenges.
@@ -161,7 +161,7 @@ func (runtime *Runtime) EvaluateVirtualColumns() error {
 	ccLeaves = expr.RemoveDuplicates(ccLeaves)
 
 	for _, l := range ccLeaves {
-		cc, err := proveractions.GetComputationableColumn(l)
+		cc, err := derive.GetComputationableColumn(l)
 		if err != nil {
 			return err
 		}
@@ -172,7 +172,7 @@ func (runtime *Runtime) EvaluateVirtualColumns() error {
 }
 
 // FillClaimedValues fill runtime.Vars with the claimed values from the prover
-func (runtime *Runtime) FillClaimedValues(proof *proveractions.Proof) error {
+func (runtime *Runtime) FillClaimedValues(proof *derive.Proof) error {
 
 	for k, proof := range proof.OpeningProofs {
 
@@ -190,7 +190,7 @@ func (runtime *Runtime) FillClaimedValues(proof *proveractions.Proof) error {
 }
 
 // CheckRelation checks the final relation: proof.VanishingRelation(zeta)=H(zeta)(zeta^N-1)
-func (runtime *Runtime) CheckRelation(proof *proveractions.Proof) error {
+func (runtime *Runtime) CheckRelation(proof *derive.Proof) error {
 
 	zeta := runtime.Vars[constants.FINAL_EVALUATION_POINT]
 
@@ -214,7 +214,7 @@ func (runtime *Runtime) CheckRelation(proof *proveractions.Proof) error {
 	return nil
 }
 
-func (runtime *Runtime) VerifyOpeningProofs(proof *proveractions.Proof) error {
+func (runtime *Runtime) VerifyOpeningProofs(proof *derive.Proof) error {
 
 	w, err := koalabear.Generator(uint64(proof.N))
 	if err != nil {
@@ -249,7 +249,7 @@ func (runtime *Runtime) VerifyOpeningProofs(proof *proveractions.Proof) error {
 	return nil
 }
 
-func (runtime *Runtime) Verify(proof *proveractions.Proof, nbWorkers int) error {
+func (runtime *Runtime) Verify(proof *derive.Proof, nbWorkers int) error {
 
 	err := runtime.ComputeChallenges(proof, nbWorkers)
 	if err != nil {
