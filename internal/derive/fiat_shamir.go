@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/consensys/loom/internal/commitment"
-	"github.com/consensys/loom/expr"
-	"github.com/consensys/loom/trace"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/commitment"
+	"github.com/consensys/loom/trace"
 )
 
 // GetCommittedColumnsID returns the list of the names appearing in E
@@ -91,6 +91,7 @@ func l1DisjointUnionL2(l1, l2 []string) []string {
 
 // ComputeChallenge type of DerivationStep creates a challenge named GP[0] which is derived via FS
 // from the commitments of all the leaves appearing in E.
+// TODO StepContext should contain publicInfo: which column needs to be completed by the verifier, and at which index
 func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, GP []string, _ StepContext) error {
 	if len(GP) == 0 {
 		return fmt.Errorf("len(GP)=0, it must contain the name of the challenge")

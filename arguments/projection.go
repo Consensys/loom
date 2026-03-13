@@ -102,14 +102,6 @@ func ProjectionTuple(system *constraint.Builder, A []expr.Expr, F1 expr.Expr, B 
 
 	// 2. fold A and B
 	gammaExpr := expr.NewChallenge(gamma)
-	// AExpr := make([]expr.Expr, len(A))
-	// BExpr := make([]expr.Expr, len(B))
-	// for i := 0; i < len(A); i++ {
-	// 	AExpr[i] = expr.Col(A[i])
-	// }
-	// for i := 0; i < len(B); i++ {
-	// 	BExpr[i] = expr.Col(B[i])
-	// }
 	AFolded := constraint.Fold(A, gammaExpr)
 	BFolded := constraint.Fold(B, gammaExpr)
 

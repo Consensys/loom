@@ -92,9 +92,11 @@ type Expr interface {
 	Mul(Expr) Expr
 	Pow(uint32) Expr
 
+	// Leaves returns every non-Const Leaf in the expression tree, only by their names.
+	// the shifted columns have their own ID: baseName + "shifted_<shift>"
 	Leaves(config Config) []string
 
-	// LeavesFull returns every non-Const Leaf in the expression tree.
+	// LeavesFull returns every non-Const Leaf in the expression tree (the full structure).
 	LeavesFull(config Config) []*Leaf
 
 	// ReplaceLeafByExpression finds all occurence of leaf in the tree and replace it with e

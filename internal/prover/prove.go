@@ -7,15 +7,15 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/consensys/loom/internal/constants"
+	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
+	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/constraint"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/commitment"
+	"github.com/consensys/loom/internal/constants"
 	derive "github.com/consensys/loom/internal/derive"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/trace"
-	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
-	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
 // Prover contains the data needed to run the Program to generate the proof.
@@ -151,6 +151,9 @@ func (runtime *Prover) DeriveFinalFoldingChallenge(proof *derive.Proof) error {
 	leaves := runtime.Program.VanishingRelation.Leaves(expr.NewConfig(expr.WithoutChallenges(), expr.WithoutVirtualumns(), expr.WithoutRotatedColumns()))
 	round.DependenciesCommittedColumns = make([]string, 0, len(leaves))
 	for _, l := range leaves {
+		// TODO need a special map in runtime to track which commitments have been consumed by FS instead of
+		// testing if it appears in proof.OpeningProofs -> some columns (public) might be precommitted, but not used in FS
+		// and mistakenly discarded at this step
 		if _, ok := proof.OpeningProofs[l]; !ok { // <- the column whose ID is l is not committed, we add it to bindings
 			round.DependenciesCommittedColumns = append(round.DependenciesCommittedColumns, l)
 		}
