@@ -82,7 +82,7 @@ func BenchmarkCompile(b *testing.B) {
 		fulltrace = mergeTrace(fulltrace, ithprivatepart)
 	}
 
-	system := constraint.NewBuilder(N)
+	system := constraint.NewBuilder(N, nil)
 
 	// This is the result of the constraint (lisp ?) file in a real life example. Here we know in advance the shape of the constraints
 	// QL*L + QR*R + QM*L*R + QO*O + QK = 0
@@ -117,7 +117,7 @@ func TestPlonk(t *testing.T) {
 		fulltrace = mergeTrace(fulltrace, ithprivatepart)
 	}
 
-	system := constraint.NewBuilder(N)
+	system := constraint.NewBuilder(N, nil)
 
 	// This is the result of the constraint (lisp ?) file in a real life example. Here we know in advance the shape of the constraints
 	// QL*L + QR*R + QM*L*R + QO*O + QK = 0
@@ -136,12 +136,12 @@ func TestPlonk(t *testing.T) {
 
 	cciop := system.Compile()
 
-	proof, err := loom.Prove(cciop, fulltrace, 1)
+	proof, err := loom.Prove(cciop, fulltrace, nil, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = loom.Verify(cciop, &proof, 1)
+	err = loom.Verify(cciop, &proof, nil, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

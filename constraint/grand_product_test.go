@@ -32,7 +32,7 @@ func TestGrandProductRelation(t *testing.T) {
 	}
 
 	// add the constraint that the grand product is computed correctly to the system
-	system := NewBuilder(size)
+	system := NewBuilder(size, nil)
 	GPRelation := BuildGrandProductRelation(E1, E2, "R", size)
 	system.AssertAllZero(GPRelation)
 	proof := derive.NewProof(size)

@@ -20,16 +20,22 @@ import (
 
 // Prover contains the data needed to run the Program to generate the proof.
 type Prover struct {
-	Program constraint.Program
-	Trace   trace.Trace
-	Mu      sync.Mutex
+	Program      constraint.Program
+	Trace        trace.Trace
+	PublicInputs derive.PublicInputs
+	Mu           sync.Mutex
 }
 
-func NewProver(cciop constraint.Program, trace trace.Trace) Prover {
-	return Prover{
-		Program: cciop,
-		Trace:   trace,
+func NewProver(cciop constraint.Program, trace trace.Trace, publicInputs derive.PublicInputs) Prover {
+	res := Prover{
+		Program:      cciop,
+		Trace:        trace,
+		PublicInputs: publicInputs,
 	}
+	if res.PublicInputs == nil {
+		res.PublicInputs = make(derive.PublicInputs)
+	}
+	return res
 }
 
 // Kahn's style scheduler for Functions (with parallel schedule)
@@ -137,7 +143,8 @@ func FinalChallenges(rounds []derive.TranscriptRound) []string {
 }
 
 // Fold all the constraints by sampling a random challenge, derived from the necessary data to ensure that this challenge
-// cannot have been derived derived prior to any of the prover<->interactions and commitments
+// cannot have been derived derived prior to any of the prover<->interactions and commitments.
+// This step adds another transcriptRound to the proof
 func (runtime *Prover) DeriveFinalFoldingChallenge(proof *derive.Proof) error {
 
 	// proof.VanishingRelation = runtime.Program.VanishingRelation
@@ -176,7 +183,23 @@ func (runtime *Prover) DeriveFinalFoldingChallenge(proof *derive.Proof) error {
 		if !ok {
 			return fmt.Errorf("polynomial %s not found in the trace", id)
 		}
-		com, err := commitment.Commit(poly)
+		var com commitment.Digest
+		var err error
+		//If the column contains public inputs, we set the public inputs to zero
+		if publicInfo, ok := runtime.PublicInputs[id]; ok {
+			buf := make([]koalabear.Element, proof.N)
+			copy(buf, poly)
+			for _, idx := range publicInfo.Idx {
+				buf[idx].SetZero()
+			}
+			com, err = commitment.Commit(buf)
+		} else {
+			com, err = commitment.Commit(poly)
+		}
+		if err != nil {
+			return err
+		}
+		// com, err := commitment.Commit(poly)
 		err = fs.Bind(constants.FINAL_FOLDING_CHALLENGE, com.Marshal())
 		if err != nil {
 			return err
@@ -235,6 +258,7 @@ func (runtime *Prover) ComputeQuotient(proof *derive.Proof) error {
 }
 
 // DeriveOpeningChallenge register the final round for deriving the opening challenge, and compute it
+// This step adds andother TranscriptRound to the proof
 func (runtime *Prover) DeriveOpeningChallenge(proof *derive.Proof) (koalabear.Element, error) {
 
 	// register the round in the proof
@@ -366,12 +390,33 @@ func (runtime *Prover) OpenShiftedCommitments(proof *derive.Proof, zeta koalabea
 	return nil
 }
 
+// FillPublicValues fill the public values in the trace
+func (runtime *Prover) FillPublicValues() error {
+	for k, info := range runtime.PublicInputs {
+		p, ok := runtime.Trace[k]
+		if !ok {
+			return fmt.Errorf("%s not found in the trace", k)
+		}
+		for i, idx := range info.Idx {
+			p[idx].Set(&info.Vals[i])
+		}
+	}
+	return nil
+}
+
 func (runtime *Prover) Prove(knownColumns map[string]bool, nbWorkers int) (derive.Proof, error) {
 
 	proof := derive.NewProof(runtime.Program.N)
 
+	// 0. fill the provided public values
+	// TODO should this step be part of the prover or part of the tracer ?
+	err := runtime.FillPublicValues()
+	if err != nil {
+		return proof, err
+	}
+
 	// 1. Solve
-	err := runtime.Solve(knownColumns, &proof, nbWorkers)
+	err = runtime.Solve(knownColumns, &proof, nbWorkers)
 	if err != nil {
 		return proof, err
 	}

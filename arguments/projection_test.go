@@ -53,7 +53,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 		"F2": f2Vals,
 	}
 
-	system := constraint.NewBuilder(size)
+	system := constraint.NewBuilder(size, nil)
 
 	A := expr.Col("A")
 	A2 := expr.Col("A2")
@@ -67,7 +67,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 	}
 
 	cciop := system.Compile()
-	proverRunTime := prover.NewProver(cciop, T)
+	proverRunTime := prover.NewProver(cciop, T, nil)
 	knownColumns := map[string]bool{"A": true, "A2": true, "B": true, "B2": true, "F1": true, "F2": true}
 	proof := derive.NewProof(system.N)
 
@@ -103,7 +103,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	verifierRunTime := verifier.NewRunTime(cciop)
+	verifierRunTime := verifier.NewRunTime(cciop, nil)
 	err = verifierRunTime.ComputeChallenges(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +158,7 @@ func TestEqualityFilteredColumns(t *testing.T) {
 	}
 
 	// create a new system
-	system := constraint.NewBuilder(size)
+	system := constraint.NewBuilder(size, nil)
 
 	// call EqualityFilteredColumns
 	A := expr.Col("A")
@@ -171,7 +171,7 @@ func TestEqualityFilteredColumns(t *testing.T) {
 	}
 
 	cciop := system.Compile()
-	proverRunTime := prover.NewProver(cciop, T)
+	proverRunTime := prover.NewProver(cciop, T, nil)
 	knownColumns := map[string]bool{"A": true, "B": true, "F1": true, "F2": true}
 	proof := derive.NewProof(system.N)
 
@@ -211,7 +211,7 @@ func TestEqualityFilteredColumns(t *testing.T) {
 	}
 
 	// 5. Build verifier runtime and check Fiat-Shamir consistency
-	verifierRunTime := verifier.NewRunTime(cciop)
+	verifierRunTime := verifier.NewRunTime(cciop, nil)
 	err = verifierRunTime.ComputeChallenges(&proof, 1)
 	if err != nil {
 		t.Fatal(err)

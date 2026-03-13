@@ -21,13 +21,13 @@ func TestPermutation(t *testing.T) {
 	size := 16
 
 	trace := constraint.BuildPermutationCircuit(t, size)
-	system := constraint.NewBuilder(size)
+	system := constraint.NewBuilder(size, nil)
 
 	Permutation(&system, []expr.Expr{expr.Col("P0")}, []expr.Expr{expr.Col("P1")})
 
 	cciop := system.Compile()
 
-	proverRunTime := prover.NewProver(cciop, trace)
+	proverRunTime := prover.NewProver(cciop, trace, nil)
 
 	// begin proving
 	knowncolumns := map[string]bool{"P0": true, "P1": true}
@@ -70,7 +70,7 @@ func TestPermutation(t *testing.T) {
 	}
 
 	// 5. Build verifier verifierRunTime and derive the challenge + sanity check: are the verifier challenges in sync with the prover's
-	verifierRunTime := verifier.NewRunTime(cciop)
+	verifierRunTime := verifier.NewRunTime(cciop, nil)
 	err = verifierRunTime.ComputeChallenges(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestPermutationTuple(t *testing.T) {
 	size := 16
 
 	trace := constraint.BuildPermutationTuple(t, size)
-	system := constraint.NewBuilder(size)
+	system := constraint.NewBuilder(size, nil)
 
 	P0 := expr.Col("P0")
 	P1 := expr.Col("P1")
@@ -103,7 +103,7 @@ func TestPermutationTuple(t *testing.T) {
 	knowncolumns := map[string]bool{"P0": true, "P1": true, "Q0": true, "Q1": true}
 	cciop := system.Compile()
 
-	proverRunTime := prover.NewProver(cciop, trace)
+	proverRunTime := prover.NewProver(cciop, trace, nil)
 
 	proof := derive.NewProof(system.N)
 
@@ -143,7 +143,7 @@ func TestPermutationTuple(t *testing.T) {
 	}
 
 	// 5. Build verifier runtime and check Fiat-Shamir consistency
-	verifierRunTime := verifier.NewRunTime(cciop)
+	verifierRunTime := verifier.NewRunTime(cciop, nil)
 	err = verifierRunTime.ComputeChallenges(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +186,7 @@ func BenchmarkPermutation(b *testing.B) {
 		trace[fmt.Sprintf("P2_%d", i)] = p2[i]
 	}
 
-	system := constraint.NewBuilder(size)
+	system := constraint.NewBuilder(size, nil)
 
 	_ = Permutation(&system, s1, s2)
 
@@ -210,7 +210,7 @@ func BenchmarkPermutation(b *testing.B) {
 				_trace[fmt.Sprintf("P2_%d", i)] = trace[fmt.Sprintf("P2_%d", i)]
 			}
 
-			proverRunTime := prover.NewProver(cciop, _trace)
+			proverRunTime := prover.NewProver(cciop, _trace, nil)
 			proverRunTime.Prove(knowncolumns, 1)
 
 		}

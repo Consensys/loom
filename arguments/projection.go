@@ -106,11 +106,11 @@ func ProjectionTuple(system *constraint.Builder, A []expr.Expr, F1 expr.Expr, B 
 	BFolded := constraint.Fold(B, gammaExpr)
 
 	// 3. call equalityFilteredColumns
-	return Projection(system, AFolded, BFolded, F1, F2)
+	return Projection(system, AFolded, F1, BFolded, F2)
 
 }
 
-func Projection(system *constraint.Builder, A, B, F1, F2 expr.Expr) error {
+func Projection(system *constraint.Builder, A, F1, B, F2 expr.Expr) error {
 
 	// 1. build filtered acc polynomials for A and B
 	_idAccFA, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
@@ -142,8 +142,8 @@ func Projection(system *constraint.Builder, A, B, F1, F2 expr.Expr) error {
 
 	// 4. register the constraints ensuring that the filtered acc polynomials
 	// FA and FB are correclty constructed
-	system.AssertAllZero(constraint.BuildFilteredAccPolynomialRelation(A, F1, alpha, idAccFA, system.N))
-	system.AssertAllZero(constraint.BuildFilteredAccPolynomialRelation(B, F2, alpha, idAccFB, system.N))
+	system.AssertAllZero(constraint.BuildProjectionRelation(A, F1, alpha, idAccFA, system.N))
+	system.AssertAllZero(constraint.BuildProjectionRelation(B, F2, alpha, idAccFB, system.N))
 
 	// 5. ensure FA[N-1]=FB[N-1]: the last entry holds the full filtered accumulation
 	accFA := expr.Col(idAccFA)

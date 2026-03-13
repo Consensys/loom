@@ -15,6 +15,9 @@ const SUFFIX_SHIFT = "shift"
 const SIZE_RANDOM_STRING = 10 // size of the names randomly created for the intermediate columns issued with prover actions
 
 func GetShiftedName(name string, shift int) string {
+	if shift == 0 {
+		return name
+	}
 	return fmt.Sprintf("%s_%s_%d", name, SUFFIX_SHIFT, shift)
 }
 

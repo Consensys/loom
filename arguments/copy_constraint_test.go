@@ -37,7 +37,7 @@ func TestCopyPermutation(t *testing.T) {
 
 	T := trace.Trace{"P1": p1, "P2": p2}
 
-	system := constraint.NewBuilder(N)
+	system := constraint.NewBuilder(N, nil)
 	P1 := expr.Col("P1")
 	P2 := expr.Col("P2")
 	err := CopyPermutation(&system, []expr.Expr{P1, P2}, S)
@@ -47,7 +47,7 @@ func TestCopyPermutation(t *testing.T) {
 
 	// cciop := system.Compile()
 	cciop := system.Compile()
-	proverRunTime := prover.NewProver(cciop, T)
+	proverRunTime := prover.NewProver(cciop, T, nil)
 	knownColumns := map[string]bool{"P1": true, "P2": true}
 	proof := derive.NewProof(system.N)
 
@@ -87,7 +87,7 @@ func TestCopyPermutation(t *testing.T) {
 	}
 
 	// 5. Build verifier runtime and check Fiat-Shamir consistency
-	verifierRunTime := verifier.NewRunTime(cciop)
+	verifierRunTime := verifier.NewRunTime(cciop, nil)
 	err = verifierRunTime.ComputeChallenges(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestCopyPermutationTuple(t *testing.T) {
 
 	T := trace.Trace{"P1": p1, "P2": p2}
 
-	system := constraint.NewBuilder(N)
+	system := constraint.NewBuilder(N, nil)
 	// wires: two chunks, each with the column repeated twice: {P1,P1} and {P2,P2}
 	P1 := expr.Col("P1")
 	P2 := expr.Col("P2")
@@ -134,7 +134,7 @@ func TestCopyPermutationTuple(t *testing.T) {
 	}
 
 	cciop := system.Compile()
-	proverRunTime := prover.NewProver(cciop, T)
+	proverRunTime := prover.NewProver(cciop, T, nil)
 	knownColumns := map[string]bool{"P1": true, "P2": true}
 	proof := derive.NewProof(system.N)
 
@@ -174,7 +174,7 @@ func TestCopyPermutationTuple(t *testing.T) {
 	}
 
 	// 5. Build verifier runtime and check Fiat-Shamir consistency
-	verifierRunTime := verifier.NewRunTime(cciop)
+	verifierRunTime := verifier.NewRunTime(cciop, nil)
 	err = verifierRunTime.ComputeChallenges(&proof, 1)
 	if err != nil {
 		t.Fatal(err)

@@ -56,13 +56,13 @@ func TestLookup(t *testing.T) {
 	size := 16
 
 	trace := BuildLookupTrace(t, size)
-	system := constraint.NewBuilder(size)
+	system := constraint.NewBuilder(size, nil)
 
 	Lookup(&system, expr.Col("S"), expr.Col("T"))
 
 	cciop := system.Compile()
 
-	proverRunTime := prover.NewProver(cciop, trace)
+	proverRunTime := prover.NewProver(cciop, trace, nil)
 
 	knowncolumns := map[string]bool{"T": true, "S": true}
 	proof := derive.NewProof(system.N)
@@ -103,7 +103,7 @@ func TestLookup(t *testing.T) {
 	}
 
 	// 5. Build verifier runtime and derive challenges
-	verifierRunTime := verifier.NewRunTime(cciop)
+	verifierRunTime := verifier.NewRunTime(cciop, nil)
 	err = verifierRunTime.ComputeChallenges(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +122,7 @@ func TestLookupTuple(t *testing.T) {
 	size := 16
 
 	tr := BuildLookupTupleTrace(t, size)
-	system := constraint.NewBuilder(size)
+	system := constraint.NewBuilder(size, nil)
 
 	S0 := expr.Col("S0")
 	S1 := expr.Col("S1")
@@ -132,7 +132,7 @@ func TestLookupTuple(t *testing.T) {
 
 	cciop := system.Compile()
 
-	proverRunTime := prover.NewProver(cciop, tr)
+	proverRunTime := prover.NewProver(cciop, tr, nil)
 
 	knowncolumns := map[string]bool{"T0": true, "T1": true, "S0": true, "S1": true}
 	proof := derive.NewProof(system.N)
@@ -175,7 +175,7 @@ func TestLookupTuple(t *testing.T) {
 	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, "rounds.html")
 
 	// 5. Build verifier runtime and derive challenges
-	verifierRunTime := verifier.NewRunTime(cciop)
+	verifierRunTime := verifier.NewRunTime(cciop, nil)
 	err = verifierRunTime.ComputeChallenges(&proof, 1)
 	if err != nil {
 		t.Fatal(err)

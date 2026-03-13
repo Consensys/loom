@@ -30,13 +30,13 @@ func (ctx IOPStepContext) String() string {
 	case GRAND_SUM:
 		return "grand_sum"
 	case COMPUTE_COL:
-		return "comCol"
+		return "compute col"
 	case MULTIPLICITY:
 		return "multiplicity"
 	case FITLERED_ACC_POLY:
-		return "filtered acc poly"
+		return "filtered_acc_poly"
 	case FIAT_SHAMIR:
-		return "fiat shamir"
+		return "fiat_shamir"
 	}
 	return "not found"
 }

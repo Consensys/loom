@@ -7,28 +7,34 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/consensys/loom/internal/constants"
-	"github.com/consensys/loom/internal/commitment"
-	"github.com/consensys/loom/constraint"
-	"github.com/consensys/loom/internal/dag"
-	derive "github.com/consensys/loom/internal/derive"
-	"github.com/consensys/loom/expr"
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/constraint"
+	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/commitment"
+	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/internal/dag"
+	derive "github.com/consensys/loom/internal/derive"
 )
 
 // Verifier stores the variables to plug in the final relation to check.
 type Verifier struct {
 	Vars              map[string]koalabear.Element // values keyed by leaf name
 	VanishingRelation dag.DAG
+	PublicInputs      derive.PublicInputs
 }
 
 // NewRunTime creates the Verifier for the given compiled IOP.
-func NewRunTime(cciop constraint.Program) Verifier {
-	return Verifier{
+func NewRunTime(cciop constraint.Program, publicInputs derive.PublicInputs) Verifier {
+	res := Verifier{
 		Vars:              make(map[string]koalabear.Element),
 		VanishingRelation: cciop.VanishingRelation,
+		PublicInputs:      publicInputs,
 	}
+	if res.PublicInputs == nil {
+		res.PublicInputs = make(derive.PublicInputs)
+	}
+	return res
 }
 
 // DeriveChallenge derive the challenge of corresponding to proof.TranscriptRounds[i]
@@ -171,17 +177,60 @@ func (runtime *Verifier) EvaluateVirtualColumns() error {
 	return nil
 }
 
+// compute \Sigma_i Lagrange_{info.Idx[i]}(zeta*\omega^shift)*info.Vals[i]
+func (runtime *Verifier) computeMissingPart(info derive.PublicColumnInfo, shift, N int) (koalabear.Element, error) {
+
+	zeta := runtime.Vars[constants.FINAL_EVALUATION_POINT]
+
+	w, err := koalabear.Generator(uint64(N))
+	if err != nil {
+		return koalabear.Element{}, err
+	}
+	if shift != 0 {
+		wi := w.Exp(w, big.NewInt(int64(shift)))
+		zeta.Mul(&zeta, wi)
+	}
+
+	var invN koalabear.Element
+	invN.SetUint64(uint64(N)).Inverse(&invN)
+
+	var one, res koalabear.Element
+	var zetaN koalabear.Element
+	var num koalabear.Element
+	one.SetOne()
+	num.Sub(&zetaN, &one).Mul(&num, &invN) // (zeta^N-1)/N
+	zetaN.Exp(zeta, big.NewInt(int64(N)))
+	invOmegaiMinusOne := make([]koalabear.Element, len(info.Idx))
+	omegai := make([]koalabear.Element, len(info.Idx))
+	for k, idx := range info.Idx {
+		omegai[k] = *w.Exp(w, big.NewInt(int64(idx)))
+		invOmegaiMinusOne[k].Sub(&omegai[k], &one)
+	}
+	invOmegaiMinusOne = koalabear.BatchInvert(invOmegaiMinusOne)
+	var tmp koalabear.Element
+	for k := range info.Idx {
+		tmp.Mul(&num, &invOmegaiMinusOne[k]).Mul(&tmp, &omegai[k])
+		tmp.Mul(&tmp, &info.Vals[k])
+		res.Add(&res, &tmp)
+	}
+	return res, nil
+}
+
 // FillClaimedValues fill runtime.Vars with the claimed values from the prover
 func (runtime *Verifier) FillClaimedValues(proof *derive.Proof) error {
 
-	for k, proof := range proof.OpeningProofs {
-
-		for _, op := range proof.OpeningProof {
-			if op.Shift == 0 {
-				runtime.Vars[k] = op.ClaimedValue
-			} else {
-				name := constants.GetShiftedName(k, op.Shift)
-				runtime.Vars[name] = op.ClaimedValue
+	for k, _proof := range proof.OpeningProofs {
+		for _, op := range _proof.OpeningProof {
+			name := constants.GetShiftedName(k, op.Shift) // if shift=0, returns the bare name
+			runtime.Vars[name] = op.ClaimedValue
+			if publicInfo, ok := runtime.PublicInputs[k]; ok { // in that case, complete the opening with the polynomial interpolating the missing inputs
+				missingPart, err := runtime.computeMissingPart(publicInfo, op.Shift, proof.N)
+				if err != nil {
+					return err
+				}
+				var completedClaimedValue koalabear.Element
+				completedClaimedValue.Add(&op.ClaimedValue, &missingPart)
+				runtime.Vars[name] = completedClaimedValue
 			}
 		}
 	}

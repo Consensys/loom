@@ -12,6 +12,28 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
+// FiatShamirContext contains the public inputs, to know which value to cancel
+// when committing to a column containing public inputs
+type FiatShamirContext struct {
+	PublicInputs PublicInputs
+}
+
+func NewFiatShamirContext(publicInputs PublicInputs) FiatShamirContext {
+	return FiatShamirContext{PublicInputs: publicInputs}
+}
+
+func (fs FiatShamirContext) String() string {
+	return "fiat-shamir"
+}
+
+func (fs FiatShamirContext) GetID() StepKind {
+	return FIAT_SHAMIR
+}
+
+func (fs FiatShamirContext) Key() string {
+	return ""
+}
+
 // GetCommittedColumnsID returns the list of the names appearing in E
 func GetColumnsId(E []expr.Expr, opts ...expr.Option) []string {
 	var ids []string
@@ -92,11 +114,16 @@ func l1DisjointUnionL2(l1, l2 []string) []string {
 // ComputeChallenge type of DerivationStep creates a challenge named GP[0] which is derived via FS
 // from the commitments of all the leaves appearing in E.
 // TODO StepContext should contain publicInfo: which column needs to be completed by the verifier, and at which index
-func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, GP []string, _ StepContext) error {
+func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, GP []string, ctx StepContext) error {
 	if len(GP) == 0 {
 		return fmt.Errorf("len(GP)=0, it must contain the name of the challenge")
 	}
 	challengeName := GP[0]
+
+	fsContext, ok := ctx.(FiatShamirContext)
+	if !ok {
+		return fmt.Errorf("ctx should be of time FiatShamirContext")
+	}
 
 	// Steps 1-6 are protected by mu; use a closure so defer unlocks on all exit paths.
 	fs, err := func() (*fiatshamir.Transcript, error) {
@@ -152,12 +179,24 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.
 				continue
 			}
 
-			// if not, we commit, record the commitment, and bind it to challenge
+			// if not, we commit, record the commitment, and bind it to challenge.
 			poly, ok := trace[id]
 			if !ok {
 				return nil, fmt.Errorf("polynomial %s not found in the trace", id)
 			}
-			com, err := commitment.Commit(poly)
+			var com commitment.Digest
+			var err error
+			//If the column contains public inputs, we set the public inputs to zero
+			if publicInfo, ok := fsContext.PublicInputs[id]; ok {
+				buf := make([]koalabear.Element, proof.N)
+				copy(buf, poly)
+				for _, idx := range publicInfo.Idx {
+					buf[idx].SetZero()
+				}
+				com, err = commitment.Commit(buf)
+			} else {
+				com, err = commitment.Commit(poly)
+			}
 			if err != nil {
 				return nil, err
 			}

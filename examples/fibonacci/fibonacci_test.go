@@ -10,6 +10,8 @@ import (
 	"github.com/consensys/loom/arguments"
 	"github.com/consensys/loom/constraint"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/proof"
+	"github.com/consensys/loom/viz"
 )
 
 func TestFibonacci(t *testing.T) {
@@ -25,8 +27,15 @@ func TestFibonacci(t *testing.T) {
 	// -> it means [* fn+1 fn+2] at row i is correctly reported to [fn+1 fn+2 *] at row i+1
 	// 3. A[0]=0, B[0]=1
 
+	var a, b koalabear.Element
+	a.SetRandom()
+	b.SetRandom()
+	publicInputs := make(proof.PublicInputs)
+	publicInputs["A"] = proof.PublicColumnInfo{Idx: []int{0}, Vals: []koalabear.Element{koalabear.Element{}}}
+	publicInputs["B"] = proof.PublicColumnInfo{Idx: []int{0}, Vals: []koalabear.Element{koalabear.One()}}
+
 	// vanishing constraint A + B - C = 0
-	system := constraint.NewBuilder(N)
+	system := constraint.NewBuilder(N, publicInputs)
 	colA := expr.Col("A")
 	colB := expr.Col("B")
 	colC := expr.Col("C")
@@ -41,15 +50,15 @@ func TestFibonacci(t *testing.T) {
 	system.AddColumn("F1", filter)
 	F1 := expr.Col("F1")
 	F2 := expr.Rot("F1", 1)
-	arguments.Projection(&system, colA, colB, F1, F2)
-	arguments.Projection(&system, colB, colC, F1, F2)
+	arguments.Projection(&system, colA, F1, colB, F2)
+	arguments.Projection(&system, colB, F1, colC, F2)
 
 	// A[0]=0, B[0]=1
-	system.AddLagrangeColumn(0)
-	var zero, one koalabear.Element
-	one.SetOne()
-	system.AssertZero(constraint.BuildLocalRelation(colA, expr.Const(zero), 0, N))
-	system.AssertZero(constraint.BuildLocalRelation(colB, expr.Const(one), 0, N))
+	// system.AddLagrangeColumn(0)
+	// var zero, one koalabear.Element
+	// one.SetOne()
+	// system.AssertZero(constraint.BuildLocalRelation(colA, expr.Const(zero), 0, N))
+	// system.AssertZero(constraint.BuildLocalRelation(colB, expr.Const(one), 0, N))
 
 	cciop := system.Compile()
 
@@ -58,14 +67,17 @@ func TestFibonacci(t *testing.T) {
 	trace := GetFibonacciTrace(N, "A", "B", "C")
 	// viewer.WriteTraceToCSV("fibonacci.csv", trace, N)
 
-	proof, err := loom.Prove(cciop, trace, 1)
+	proof, err := loom.Prove(cciop, trace, publicInputs, 1)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(-1)
 	}
+	viz.WriteTraceToCSV("fibonacci.csv", trace, proof.N)
+	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, "transcript_rounds.html")
+	viz.WriteDerivationPlanDagToHTML(cciop, "derivation_plan.html")
 
 	// verifierRunTime := verifier.NewRunTime(cciop)
-	err = loom.Verify(cciop, &proof, 1)
+	err = loom.Verify(cciop, &proof, publicInputs, 1)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(-1)

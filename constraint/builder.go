@@ -8,6 +8,7 @@ import (
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/derive"
 	"github.com/consensys/loom/internal/utils"
+	"github.com/consensys/loom/proof"
 )
 
 type Relation = expr.Expr
@@ -18,17 +19,23 @@ type Builder struct {
 	Relations      Relations
 	DerivationPlan []derive.DerivationStep
 	Cache          map[string]int // cache storing already regisetered prover actions. The value is an entry in DerivationPlan
+	PublicInputs   proof.PublicInputs
 	N              int
 }
 
 // NewBuilder creates a new system, consisting of constraints vanishing on X^N-1
-func NewBuilder(N int) Builder {
-	return Builder{
+func NewBuilder(N int, publicInputs proof.PublicInputs) Builder {
+	res := Builder{
 		Relations:      make(Relations, 0),
 		DerivationPlan: make(derive.DerivationPlan, 0),
 		Cache:          make(map[string]int),
 		N:              N,
+		PublicInputs:   publicInputs,
 	}
+	if res.PublicInputs == nil {
+		res.PublicInputs = make(proof.PublicInputs)
+	}
+	return res
 }
 
 func (system *Builder) registerDerivationStep(inputs []expr.Expr, outputs []string, ctx derive.StepContext) {
@@ -42,7 +49,7 @@ func (system *Builder) registerDerivationStep(inputs []expr.Expr, outputs []stri
 // AddChallengeStep registers a Fiat-Shamir challenge derivation: the challenge named output
 // is bound to all columns in inputs.
 func (system *Builder) AddChallengeStep(inputs []expr.Expr, output string) {
-	system.registerDerivationStep(inputs, []string{output}, derive.NewIOPStepContext(derive.FIAT_SHAMIR))
+	system.registerDerivationStep(inputs, []string{output}, derive.NewFiatShamirContext(system.PublicInputs))
 }
 
 // AddGrandProductStep registers a grand product column derivation.

@@ -12,7 +12,7 @@ import (
 
 func TestWriteDerivationPlanDagToHTML(t *testing.T) {
 	size := 16
-	system := constraint.NewBuilder(size)
+	system := constraint.NewBuilder(size, nil)
 	if err := arguments.PermutationTuple(
 		&system,
 		[][]expr.Expr{{expr.Col("P0"), expr.Col("P1")}},
@@ -39,11 +39,11 @@ func TestWriteDerivationPlanDagToHTML(t *testing.T) {
 func TestWriteProofTranscriptRoundsDagToHTML_Permutation(t *testing.T) {
 	size := 16
 	trace := constraint.BuildPermutationCircuit(t, size)
-	system := constraint.NewBuilder(size)
+	system := constraint.NewBuilder(size, nil)
 	arguments.Permutation(&system, []expr.Expr{expr.Col("P0")}, []expr.Expr{expr.Col("P1")})
 
 	cciop := system.Compile()
-	rt := prover.NewProver(cciop, trace)
+	rt := prover.NewProver(cciop, trace, nil)
 	proof, err := rt.Prove(map[string]bool{"P0": true, "P1": true}, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func TestWriteProofTranscriptRoundsDagToHTML_Permutation(t *testing.T) {
 func TestWriteProofTranscriptRoundsDagToHTML_Tuple(t *testing.T) {
 	size := 16
 	trace := constraint.BuildPermutationTuple(t, size)
-	system := constraint.NewBuilder(size)
+	system := constraint.NewBuilder(size, nil)
 	P0 := expr.Col("P0")
 	P1 := expr.Col("P1")
 	Q0 := expr.Col("Q0")
@@ -80,7 +80,7 @@ func TestWriteProofTranscriptRoundsDagToHTML_Tuple(t *testing.T) {
 	}
 
 	cciop := system.Compile()
-	rt := prover.NewProver(cciop, trace)
+	rt := prover.NewProver(cciop, trace, nil)
 	proof, err := rt.Prove(map[string]bool{"P0": true, "P1": true, "Q0": true, "Q1": true}, 1)
 	if err != nil {
 		t.Fatal(err)

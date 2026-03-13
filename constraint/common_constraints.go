@@ -1,9 +1,9 @@
 package constraint
 
 import (
-	derive "github.com/consensys/loom/internal/derive"
-	"github.com/consensys/loom/expr"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/expr"
+	derive "github.com/consensys/loom/internal/derive"
 )
 
 // BuildGrandProductRelation
@@ -59,7 +59,7 @@ func BuildCorrectConstructionRelation(E expr.Expr, IdRes string) Relation {
 
 // * R[0] = F[0]*E[0]
 // * R[i] = F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1] for i>0
-func BuildFilteredAccPolynomialRelation(E, F, alpha expr.Expr, R string, N int) []Relation {
+func BuildProjectionRelation(E, F, alpha expr.Expr, R string, N int) []Relation {
 
 	// 1. R[0] = F[0]*E[0]
 	boundaryRelation := BuildLocalRelation(expr.Col(R), E.Mul(F), 0, N)

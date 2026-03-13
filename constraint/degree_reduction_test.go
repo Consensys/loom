@@ -27,7 +27,7 @@ func TestDegreeReduction(t *testing.T) {
 	}
 
 	// 2. Create a system with the single degree-4 constraint P0^4 - P1^4.
-	system := NewBuilder(N)
+	system := NewBuilder(N, nil)
 	p0 := expr.Col("P0")
 	p1 := expr.Col("P1")
 	system.AssertZero(p0.Pow(4).Sub(p1.Pow(4)))
