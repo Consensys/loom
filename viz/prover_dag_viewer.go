@@ -28,7 +28,7 @@ func actionLabel(pa derive.DerivationStep) string {
 }
 
 // WriteDerivationPlanDagToHTML writes a self-contained HTML file visualising the
-// DAG of DerivationPlan inside cciop.
+// DAG of DerivationPlan inside cp.
 //
 // Each DerivationStep is a node. Column IDs extracted from its Inputs that never
 // appear as any action's Output are "known" (initial) columns. Column IDs that
@@ -40,8 +40,8 @@ func actionLabel(pa derive.DerivationStep) string {
 //   - Orange rounded rect : DerivationStep node (labelled by its output columns)
 //   - Dashed blue arrow   : column → action (input dependency)
 //   - Solid orange arrow  : action → column (produced output)
-func WriteDerivationPlanDagToHTML(cciop constraint.Program, filename string) error {
-	actions := cciop.DerivationPlan
+func WriteDerivationPlanDagToHTML(cp constraint.Program, filename string) error {
+	actions := cp.DerivationPlan
 
 	// ── 1. find which columns are produced by actions ────────────────────────
 	producedBy := make(map[string]bool)

@@ -25,10 +25,10 @@ type Verifier struct {
 }
 
 // NewRunTime creates the Verifier for the given compiled IOP.
-func NewRunTime(cciop constraint.Program, publicInputs derive.PublicInputs) Verifier {
+func NewRunTime(cp constraint.Program, publicInputs derive.PublicInputs) Verifier {
 	res := Verifier{
 		Vars:              make(map[string]koalabear.Element),
-		VanishingRelation: cciop.VanishingRelation,
+		VanishingRelation: cp.VanishingRelation,
 		PublicInputs:      publicInputs,
 	}
 	if res.PublicInputs == nil {

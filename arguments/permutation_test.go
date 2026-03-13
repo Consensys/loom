@@ -25,9 +25,9 @@ func TestPermutation(t *testing.T) {
 
 	Permutation(&system, []expr.Expr{expr.Col("P0")}, []expr.Expr{expr.Col("P1")})
 
-	cciop := system.Compile()
+	cp := system.Compile()
 
-	proverRunTime := prover.NewProver(cciop, trace, nil)
+	proverRunTime := prover.NewProver(cp, trace, nil)
 
 	// begin proving
 	knowncolumns := map[string]bool{"P0": true, "P1": true}
@@ -70,7 +70,7 @@ func TestPermutation(t *testing.T) {
 	}
 
 	// 5. Build verifier verifierRunTime and derive the challenge + sanity check: are the verifier challenges in sync with the prover's
-	verifierRunTime := verifier.NewRunTime(cciop, nil)
+	verifierRunTime := verifier.NewRunTime(cp, nil)
 	err = verifierRunTime.ComputeChallenges(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -101,9 +101,9 @@ func TestPermutationTuple(t *testing.T) {
 	}
 
 	knowncolumns := map[string]bool{"P0": true, "P1": true, "Q0": true, "Q1": true}
-	cciop := system.Compile()
+	cp := system.Compile()
 
-	proverRunTime := prover.NewProver(cciop, trace, nil)
+	proverRunTime := prover.NewProver(cp, trace, nil)
 
 	proof := derive.NewProof(system.N)
 
@@ -143,7 +143,7 @@ func TestPermutationTuple(t *testing.T) {
 	}
 
 	// 5. Build verifier runtime and check Fiat-Shamir consistency
-	verifierRunTime := verifier.NewRunTime(cciop, nil)
+	verifierRunTime := verifier.NewRunTime(cp, nil)
 	err = verifierRunTime.ComputeChallenges(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ func BenchmarkPermutation(b *testing.B) {
 	for _, s := range s2 {
 		knowncolumns[s.String()] = true
 	}
-	cciop := system.Compile()
+	cp := system.Compile()
 
 	f, _ := os.Create("cpu.prof")
 	pprof.StartCPUProfile(f)
@@ -210,7 +210,7 @@ func BenchmarkPermutation(b *testing.B) {
 				_trace[fmt.Sprintf("P2_%d", i)] = trace[fmt.Sprintf("P2_%d", i)]
 			}
 
-			proverRunTime := prover.NewProver(cciop, _trace, nil)
+			proverRunTime := prover.NewProver(cp, _trace, nil)
 			proverRunTime.Prove(knowncolumns, 1)
 
 		}

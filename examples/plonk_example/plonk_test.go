@@ -134,14 +134,14 @@ func TestPlonk(t *testing.T) {
 		}
 	}
 
-	cciop := system.Compile()
+	cp := system.Compile()
 
-	proof, err := loom.Prove(cciop, fulltrace, nil, 1)
+	proof, err := loom.Prove(cp, fulltrace, nil, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = loom.Verify(cciop, &proof, nil, 1)
+	err = loom.Verify(cp, &proof, nil, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

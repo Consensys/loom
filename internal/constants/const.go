@@ -7,9 +7,9 @@ import (
 	"strings"
 )
 
-const FINAL_QUOTIENT = "github.com/consensys/loom@quotient"
-const FINAL_EVALUATION_POINT = "github.com/consensys/loom@zeta"
-const FINAL_FOLDING_CHALLENGE = "github.com/consensys/loom@alpha"
+const FINAL_QUOTIENT = "__quotient"
+const FINAL_EVALUATION_POINT = "__zeta"
+const FINAL_FOLDING_CHALLENGE = "__alpha"
 const SUFFIX_SHIFT_SPLIT = "_"
 const SUFFIX_SHIFT = "shift"
 const SIZE_RANDOM_STRING = 10 // size of the names randomly created for the intermediate columns issued with prover actions

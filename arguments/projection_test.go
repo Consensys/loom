@@ -66,12 +66,12 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cciop := system.Compile()
-	proverRunTime := prover.NewProver(cciop, T, nil)
+	cp := system.Compile()
+	proverRunTime := prover.NewProver(cp, T, nil)
 	knownColumns := map[string]bool{"A": true, "A2": true, "B": true, "B2": true, "F1": true, "F2": true}
 	proof := derive.NewProof(system.N)
 
-	viz.WriteDerivationPlanDagToHTML(cciop, "pa_projection_multi.html")
+	viz.WriteDerivationPlanDagToHTML(cp, "pa_projection_multi.html")
 
 	err = proverRunTime.Solve(knownColumns, &proof, 1)
 	if err != nil {
@@ -103,7 +103,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	verifierRunTime := verifier.NewRunTime(cciop, nil)
+	verifierRunTime := verifier.NewRunTime(cp, nil)
 	err = verifierRunTime.ComputeChallenges(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -170,8 +170,8 @@ func TestEqualityFilteredColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cciop := system.Compile()
-	proverRunTime := prover.NewProver(cciop, T, nil)
+	cp := system.Compile()
+	proverRunTime := prover.NewProver(cp, T, nil)
 	knownColumns := map[string]bool{"A": true, "B": true, "F1": true, "F2": true}
 	proof := derive.NewProof(system.N)
 
@@ -211,7 +211,7 @@ func TestEqualityFilteredColumns(t *testing.T) {
 	}
 
 	// 5. Build verifier runtime and check Fiat-Shamir consistency
-	verifierRunTime := verifier.NewRunTime(cciop, nil)
+	verifierRunTime := verifier.NewRunTime(cp, nil)
 	err = verifierRunTime.ComputeChallenges(&proof, 1)
 	if err != nil {
 		t.Fatal(err)

@@ -60,24 +60,24 @@ func TestFibonacci(t *testing.T) {
 	// system.AssertZero(constraint.BuildLocalRelation(colA, expr.Const(zero), 0, N))
 	// system.AssertZero(constraint.BuildLocalRelation(colB, expr.Const(one), 0, N))
 
-	cciop := system.Compile()
+	cp := system.Compile()
 
 	// Now that the system is compiled, fetch the trace and generate the proof
 
 	trace := GetFibonacciTrace(N, "A", "B", "C")
 	// viewer.WriteTraceToCSV("fibonacci.csv", trace, N)
 
-	proof, err := loom.Prove(cciop, trace, publicInputs, 1)
+	proof, err := loom.Prove(cp, trace, publicInputs, 1)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(-1)
 	}
 	viz.WriteTraceToCSV("fibonacci.csv", trace, proof.N)
 	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, "transcript_rounds.html")
-	viz.WriteDerivationPlanDagToHTML(cciop, "derivation_plan.html")
+	viz.WriteDerivationPlanDagToHTML(cp, "derivation_plan.html")
 
-	// verifierRunTime := verifier.NewRunTime(cciop)
-	err = loom.Verify(cciop, &proof, publicInputs, 1)
+	// verifierRunTime := verifier.NewRunTime(cp)
+	err = loom.Verify(cp, &proof, publicInputs, 1)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(-1)

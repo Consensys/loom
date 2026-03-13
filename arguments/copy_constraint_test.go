@@ -45,9 +45,9 @@ func TestCopyPermutation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// cciop := system.Compile()
-	cciop := system.Compile()
-	proverRunTime := prover.NewProver(cciop, T, nil)
+	// cp := system.Compile()
+	cp := system.Compile()
+	proverRunTime := prover.NewProver(cp, T, nil)
 	knownColumns := map[string]bool{"P1": true, "P2": true}
 	proof := derive.NewProof(system.N)
 
@@ -87,7 +87,7 @@ func TestCopyPermutation(t *testing.T) {
 	}
 
 	// 5. Build verifier runtime and check Fiat-Shamir consistency
-	verifierRunTime := verifier.NewRunTime(cciop, nil)
+	verifierRunTime := verifier.NewRunTime(cp, nil)
 	err = verifierRunTime.ComputeChallenges(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -133,8 +133,8 @@ func TestCopyPermutationTuple(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cciop := system.Compile()
-	proverRunTime := prover.NewProver(cciop, T, nil)
+	cp := system.Compile()
+	proverRunTime := prover.NewProver(cp, T, nil)
 	knownColumns := map[string]bool{"P1": true, "P2": true}
 	proof := derive.NewProof(system.N)
 
@@ -174,7 +174,7 @@ func TestCopyPermutationTuple(t *testing.T) {
 	}
 
 	// 5. Build verifier runtime and check Fiat-Shamir consistency
-	verifierRunTime := verifier.NewRunTime(cciop, nil)
+	verifierRunTime := verifier.NewRunTime(cp, nil)
 	err = verifierRunTime.ComputeChallenges(&proof, 1)
 	if err != nil {
 		t.Fatal(err)

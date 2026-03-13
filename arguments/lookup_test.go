@@ -60,9 +60,9 @@ func TestLookup(t *testing.T) {
 
 	Lookup(&system, expr.Col("S"), expr.Col("T"))
 
-	cciop := system.Compile()
+	cp := system.Compile()
 
-	proverRunTime := prover.NewProver(cciop, trace, nil)
+	proverRunTime := prover.NewProver(cp, trace, nil)
 
 	knowncolumns := map[string]bool{"T": true, "S": true}
 	proof := derive.NewProof(system.N)
@@ -103,7 +103,7 @@ func TestLookup(t *testing.T) {
 	}
 
 	// 5. Build verifier runtime and derive challenges
-	verifierRunTime := verifier.NewRunTime(cciop, nil)
+	verifierRunTime := verifier.NewRunTime(cp, nil)
 	err = verifierRunTime.ComputeChallenges(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -130,9 +130,9 @@ func TestLookupTuple(t *testing.T) {
 	T1 := expr.Col("T1")
 	LookupTuple(&system, []expr.Expr{S0, S1}, []expr.Expr{T0, T1})
 
-	cciop := system.Compile()
+	cp := system.Compile()
 
-	proverRunTime := prover.NewProver(cciop, tr, nil)
+	proverRunTime := prover.NewProver(cp, tr, nil)
 
 	knowncolumns := map[string]bool{"T0": true, "T1": true, "S0": true, "S1": true}
 	proof := derive.NewProof(system.N)
@@ -175,7 +175,7 @@ func TestLookupTuple(t *testing.T) {
 	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, "rounds.html")
 
 	// 5. Build verifier runtime and derive challenges
-	verifierRunTime := verifier.NewRunTime(cciop, nil)
+	verifierRunTime := verifier.NewRunTime(cp, nil)
 	err = verifierRunTime.ComputeChallenges(&proof, 1)
 	if err != nil {
 		t.Fatal(err)

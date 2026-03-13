@@ -26,9 +26,9 @@ type Prover struct {
 	Mu           sync.Mutex
 }
 
-func NewProver(cciop constraint.Program, trace trace.Trace, publicInputs derive.PublicInputs) Prover {
+func NewProver(cp constraint.Program, trace trace.Trace, publicInputs derive.PublicInputs) Prover {
 	res := Prover{
-		Program:      cciop,
+		Program:      cp,
 		Trace:        trace,
 		PublicInputs: publicInputs,
 	}

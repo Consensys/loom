@@ -20,10 +20,10 @@ func TestWriteDerivationPlanDagToHTML(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	cciop := system.Compile()
+	cp := system.Compile()
 
 	out := t.TempDir() + "/prover_dag.html"
-	if err := WriteDerivationPlanDagToHTML(cciop, out); err != nil {
+	if err := WriteDerivationPlanDagToHTML(cp, out); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(out)
@@ -42,8 +42,8 @@ func TestWriteProofTranscriptRoundsDagToHTML_Permutation(t *testing.T) {
 	system := constraint.NewBuilder(size, nil)
 	arguments.Permutation(&system, []expr.Expr{expr.Col("P0")}, []expr.Expr{expr.Col("P1")})
 
-	cciop := system.Compile()
-	rt := prover.NewProver(cciop, trace, nil)
+	cp := system.Compile()
+	rt := prover.NewProver(cp, trace, nil)
 	proof, err := rt.Prove(map[string]bool{"P0": true, "P1": true}, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -79,8 +79,8 @@ func TestWriteProofTranscriptRoundsDagToHTML_Tuple(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cciop := system.Compile()
-	rt := prover.NewProver(cciop, trace, nil)
+	cp := system.Compile()
+	rt := prover.NewProver(cp, trace, nil)
 	proof, err := rt.Prove(map[string]bool{"P0": true, "P1": true, "Q0": true, "Q1": true}, 1)
 	if err != nil {
 		t.Fatal(err)
