@@ -3,13 +3,14 @@ package arguments
 import (
 	"testing"
 
-	"github.com/consensys/loom/constraint"
-	"github.com/consensys/loom/internal/prover"
-	derive "github.com/consensys/loom/internal/derive"
-	"github.com/consensys/loom/trace"
-	"github.com/consensys/loom/internal/verifier"
-	"github.com/consensys/loom/viz"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/constraint"
+	"github.com/consensys/loom/expr"
+	derive "github.com/consensys/loom/internal/derive"
+	"github.com/consensys/loom/internal/prover"
+	"github.com/consensys/loom/internal/verifier"
+	"github.com/consensys/loom/trace"
+	"github.com/consensys/loom/viz"
 )
 
 // BuildLookupTrace creates a trace with two columns T and S such that:
@@ -57,7 +58,7 @@ func TestLookup(t *testing.T) {
 	trace := BuildLookupTrace(t, size)
 	system := constraint.NewBuilder(size)
 
-	Lookup(&system, "S", "T")
+	Lookup(&system, expr.Col("S"), expr.Col("T"))
 
 	cciop := system.Compile()
 
@@ -123,7 +124,11 @@ func TestLookupTuple(t *testing.T) {
 	tr := BuildLookupTupleTrace(t, size)
 	system := constraint.NewBuilder(size)
 
-	LookupTuple(&system, []string{"S0", "S1"}, []string{"T0", "T1"})
+	S0 := expr.Col("S0")
+	S1 := expr.Col("S1")
+	T0 := expr.Col("T0")
+	T1 := expr.Col("T1")
+	LookupTuple(&system, []expr.Expr{S0, S1}, []expr.Expr{T0, T1})
 
 	cciop := system.Compile()
 

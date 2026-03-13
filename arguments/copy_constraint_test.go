@@ -3,13 +3,14 @@ package arguments
 import (
 	"testing"
 
+	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/constraint"
+	"github.com/consensys/loom/expr"
 	derive "github.com/consensys/loom/internal/derive"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/internal/prover"
-	"github.com/consensys/loom/trace"
 	"github.com/consensys/loom/internal/verifier"
-	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/trace"
 )
 
 func TestCopyPermutation(t *testing.T) {
@@ -37,7 +38,9 @@ func TestCopyPermutation(t *testing.T) {
 	T := trace.Trace{"P1": p1, "P2": p2}
 
 	system := constraint.NewBuilder(N)
-	err := CopyPermutation(&system, []string{"P1", "P2"}, S)
+	P1 := expr.Col("P1")
+	P2 := expr.Col("P2")
+	err := CopyPermutation(&system, []expr.Expr{P1, P2}, S)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +126,9 @@ func TestCopyPermutationTuple(t *testing.T) {
 
 	system := constraint.NewBuilder(N)
 	// wires: two chunks, each with the column repeated twice: {P1,P1} and {P2,P2}
-	err := CopyPermtutationTuple(&system, [][]string{{"P1", "P1"}, {"P2", "P2"}}, S)
+	P1 := expr.Col("P1")
+	P2 := expr.Col("P2")
+	err := CopyPermtutationTuple(&system, [][]expr.Expr{{P1, P2}, {P1, P2}}, S)
 	if err != nil {
 		t.Fatal(err)
 	}

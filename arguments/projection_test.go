@@ -3,14 +3,15 @@ package arguments
 import (
 	"testing"
 
+	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/constraint"
+	"github.com/consensys/loom/expr"
+	derive "github.com/consensys/loom/internal/derive"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/internal/prover"
-	derive "github.com/consensys/loom/internal/derive"
-	"github.com/consensys/loom/trace"
 	"github.com/consensys/loom/internal/verifier"
+	"github.com/consensys/loom/trace"
 	"github.com/consensys/loom/viz"
-	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
 func TestEqualityFilteredMultiColumns(t *testing.T) {
@@ -54,7 +55,13 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 
 	system := constraint.NewBuilder(size)
 
-	err := ProjectionTuple(&system, []string{"A", "A2"}, "F1", []string{"B", "B2"}, "F2")
+	A := expr.Col("A")
+	A2 := expr.Col("A2")
+	B := expr.Col("B")
+	B2 := expr.Col("B2")
+	F1 := expr.Col("F1")
+	F2 := expr.Col("F2")
+	err := ProjectionTuple(&system, []expr.Expr{A, A2}, F1, []expr.Expr{B, B2}, F2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +161,11 @@ func TestEqualityFilteredColumns(t *testing.T) {
 	system := constraint.NewBuilder(size)
 
 	// call EqualityFilteredColumns
-	err := Projection(&system, "A", "F1", "B", "F2")
+	A := expr.Col("A")
+	B := expr.Col("B")
+	F1 := expr.Col("F1")
+	F2 := expr.Col("F2")
+	err := Projection(&system, A, F1, B, F2)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,11 +3,11 @@ package arguments
 import (
 	"fmt"
 
-	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/constraint"
 	"github.com/consensys/loom/expr"
-"github.com/consensys/loom/internal/utils"
-	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/internal/utils"
 )
 
 // Lookup proves that every value in S appears in T (S ⊆ T as multisets).
@@ -46,17 +46,7 @@ import (
 //	|   C4: L_0·(GrandSumS·(S−γ) − 1) = 0  (GrandSumS[0] = 1/(S[0]−γ))          |
 //	|   C5: L_{N−1}·(GrandSumS − GrandSumT) = 0  (total sums equal)               |
 //	|-------------------------------–-----------------------------------------------|
-func Lookup(system *constraint.Builder, S, T string) error {
-
-	// 1. create the multiplicity polynomial
-	Texpr := expr.Col(T)
-	Sexpr := expr.Col(S)
-
-	return inclusionCheckIOP(system, Sexpr, Texpr)
-
-}
-
-func inclusionCheckIOP(system *constraint.Builder, S, T expr.Expr) error {
+func Lookup(system *constraint.Builder, S, T expr.Expr) error {
 
 	_M, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
@@ -163,7 +153,7 @@ func inclusionCheckIOP(system *constraint.Builder, S, T expr.Expr) error {
 //	|   C4: L_0·(GrandSumS·(S_fold−γ) − 1) = 0                                     |
 //	|   C5: L_{N−1}·(GrandSumS − GrandSumT) = 0  (total sums equal)                |
 //	|----------------------------------–---------------------------------------------|
-func LookupTuple(system *constraint.Builder, S, T []string) error {
+func LookupTuple(system *constraint.Builder, S, T []expr.Expr) error {
 
 	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
@@ -171,29 +161,16 @@ func LookupTuple(system *constraint.Builder, S, T []string) error {
 	}
 
 	// 1. sample a challenge for folding
-	foldingDeps := make([]expr.Expr, len(S)+len(T))
-	for i := 0; i < len(S); i++ {
-		foldingDeps[i] = expr.Col(S[i])
-	}
-	for i := 0; i < len(T); i++ {
-		foldingDeps[i+len(S)] = expr.Col(T[i])
-	}
+	foldingDeps := make([]expr.Expr, 0, len(S)+len(T))
+	foldingDeps = append(S, T...)
 	system.AddChallengeStep(foldingDeps, gamma)
 
 	// 2. fold S and T
 	gammaExpr := expr.NewChallenge(gamma)
-	SExpr := make([]expr.Expr, len(S))
-	TExpr := make([]expr.Expr, len(T))
-	for i := 0; i < len(S); i++ {
-		SExpr[i] = expr.Col(S[i])
-	}
-	for i := 0; i < len(T); i++ {
-		TExpr[i] = expr.Col(T[i])
-	}
-	SFolded := constraint.Fold(SExpr, gammaExpr)
-	TFolded := constraint.Fold(TExpr, gammaExpr)
+	SFolded := constraint.Fold(S, gammaExpr)
+	TFolded := constraint.Fold(T, gammaExpr)
 
 	// 3. calls the Lookup on the folded S and T
-	return inclusionCheckIOP(system, SFolded, TFolded)
+	return Lookup(system, SFolded, TFolded)
 
 }

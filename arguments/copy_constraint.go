@@ -11,7 +11,7 @@ import (
 //
 // The name Wires comes from plonk, this constraint is here to ensure that a wiring
 // is correct.
-func CopyPermutation(system *constraint.Builder, wires []string, S []int64) error {
+func CopyPermutation(system *constraint.Builder, wires []expr.Expr, S []int64) error {
 
 	// 1. register the permutation
 	allOutputs, err := system.AddPermutationColumns(S)
@@ -20,25 +20,14 @@ func CopyPermutation(system *constraint.Builder, wires []string, S []int64) erro
 	}
 
 	// 2. call PermutationMultiset on {Wires, ID}, {Wires, Permuation}
-	multiSet1 := make([][]string, len(wires))
-	multiSet2 := make([][]string, len(wires))
+	multiSet1 := make([][]expr.Expr, len(wires))
+	multiSet2 := make([][]expr.Expr, len(wires))
 	for i := 0; i < len(wires); i++ {
-		multiSet1[i] = []string{wires[i], allOutputs[i]}
-		multiSet2[i] = []string{wires[i], allOutputs[len(wires)+i]}
+		multiSet1[i] = []expr.Expr{wires[i], expr.Col(allOutputs[i])}
+		multiSet2[i] = []expr.Expr{wires[i], expr.Col(allOutputs[len(wires)+i])}
 	}
 
 	return PermutationTuple(system, multiSet1, multiSet2)
-}
-
-func makeWiresAsExpr(wires [][]string) [][]expr.Expr {
-	res := make([][]expr.Expr, len(wires))
-	for i := 0; i < len(wires); i++ {
-		res[i] = make([]expr.Expr, len(wires[i]))
-		for j := 0; j < len(res[i]); j++ {
-			res[i][j] = expr.Col(wires[i][j])
-		}
-	}
-	return res
 }
 
 // CopyRelation IOP generating a proof that Wires and S(Wires) are identical,
@@ -49,7 +38,7 @@ func makeWiresAsExpr(wires [][]string) [][]expr.Expr {
 // ...
 // The name Wires comes from plonk, this constraint is here to ensure that a wiring
 // is correct.
-func CopyPermtutationTuple(system *constraint.Builder, wires [][]string, S []int64) error {
+func CopyPermtutationTuple(system *constraint.Builder, wires [][]expr.Expr, S []int64) error {
 
 	// 1. register the permutation
 	allOutputs, err := system.AddPermutationColumns(S)
@@ -58,17 +47,17 @@ func CopyPermtutationTuple(system *constraint.Builder, wires [][]string, S []int
 	}
 
 	// 2. build the multi set
-	wiresExpr := makeWiresAsExpr(wires)
+	// wiresExpr := makeWiresAsExpr(wires)
 	multiSet1 := make([][]expr.Expr, len(wires))
 	multiSet2 := make([][]expr.Expr, len(wires))
 	for i := 0; i < len(wires); i++ {
 		multiSet1[i] = make([]expr.Expr, len(wires)+1)
 		multiSet2[i] = make([]expr.Expr, len(wires)+1)
-		copy(multiSet1[i], wiresExpr[i])
-		copy(multiSet2[i], wiresExpr[i])
+		copy(multiSet1[i], wires[i])
+		copy(multiSet2[i], wires[i])
 		multiSet1[i][len(wires)] = expr.Col(allOutputs[i])
 		multiSet2[i][len(wires)] = expr.Col(allOutputs[len(wires)+i])
 	}
 
-	return permutationTuple(system, multiSet1, multiSet2)
+	return PermutationTuple(system, multiSet1, multiSet2)
 }

@@ -6,13 +6,14 @@ import (
 	"runtime/pprof"
 	"testing"
 
+	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/constraint"
+	"github.com/consensys/loom/expr"
 	derive "github.com/consensys/loom/internal/derive"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/internal/prover"
-	"github.com/consensys/loom/trace"
 	"github.com/consensys/loom/internal/verifier"
-	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/trace"
 )
 
 func TestPermutation(t *testing.T) {
@@ -22,7 +23,7 @@ func TestPermutation(t *testing.T) {
 	trace := constraint.BuildPermutationCircuit(t, size)
 	system := constraint.NewBuilder(size)
 
-	Permutation(&system, []string{"P0"}, []string{"P1"})
+	Permutation(&system, []expr.Expr{expr.Col("P0")}, []expr.Expr{expr.Col("P1")})
 
 	cciop := system.Compile()
 
@@ -90,7 +91,11 @@ func TestPermutationTuple(t *testing.T) {
 	trace := constraint.BuildPermutationTuple(t, size)
 	system := constraint.NewBuilder(size)
 
-	err := PermutationTuple(&system, [][]string{{"P0", "P1"}}, [][]string{{"Q0", "Q1"}})
+	P0 := expr.Col("P0")
+	P1 := expr.Col("P1")
+	Q0 := expr.Col("Q0")
+	Q1 := expr.Col("Q1")
+	err := PermutationTuple(&system, [][]expr.Expr{{P0, P1}}, [][]expr.Expr{{Q0, Q1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,11 +177,11 @@ func BenchmarkPermutation(b *testing.B) {
 	}
 
 	trace := make(trace.Trace)
-	s1 := make([]string, nbPolys)
-	s2 := make([]string, nbPolys)
+	s1 := make([]expr.Expr, nbPolys)
+	s2 := make([]expr.Expr, nbPolys)
 	for i := 0; i < nbPolys; i++ {
-		s1[i] = fmt.Sprintf("P1_%d", i)
-		s2[i] = fmt.Sprintf("P2_%d", i)
+		s1[i] = expr.Col(fmt.Sprintf("P1_%d", i))
+		s2[i] = expr.Col(fmt.Sprintf("P2_%d", i))
 		trace[fmt.Sprintf("P1_%d", i)] = p1[i]
 		trace[fmt.Sprintf("P2_%d", i)] = p2[i]
 	}
@@ -187,10 +192,10 @@ func BenchmarkPermutation(b *testing.B) {
 
 	knowncolumns := make(map[string]bool)
 	for _, s := range s1 {
-		knowncolumns[s] = true
+		knowncolumns[s.String()] = true
 	}
 	for _, s := range s2 {
-		knowncolumns[s] = true
+		knowncolumns[s.String()] = true
 	}
 	cciop := system.Compile()
 

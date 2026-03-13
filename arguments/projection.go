@@ -3,10 +3,10 @@ package arguments
 import (
 	"fmt"
 
-	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/constraint"
 	"github.com/consensys/loom/expr"
-"github.com/consensys/loom/internal/utils"
+	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/internal/utils"
 )
 
 // Projection proves that the ordered sequence of A-values selected by F1
@@ -39,15 +39,15 @@ import (
 //	|   C3, C4: exprmetric constraints for FB                                         |
 //	|   C5: L_{N-1}·(FA - FB) = 0              (final accumulated values match)     |
 //	|-------------------------------–-------------------------------------------------|
-func Projection(system *constraint.Builder, A, F1, B, F2 string) error {
+// func Projection(system *constraint.Builder, A, F1, B, F2 string) error {
 
-	Aexpr := expr.Col(A)
-	Bexpr := expr.Col(B)
-	F1expr := expr.Col(F1)
-	F2expr := expr.Col(F2)
+// 	Aexpr := expr.Col(A)
+// 	Bexpr := expr.Col(B)
+// 	F1expr := expr.Col(F1)
+// 	F2expr := expr.Col(F2)
 
-	return ProjectionExpr(system, Aexpr, Bexpr, F1expr, F2expr)
-}
+// 	return ProjectionExpr(system, Aexpr, Bexpr, F1expr, F2expr)
+// }
 
 // ProjectionTuple proves that the ordered sequence of row-tuples of A selected by F1
 // equals the ordered sequence of row-tuples of B selected by F2, where F1 and F2 are binary columns.
@@ -88,7 +88,7 @@ func Projection(system *constraint.Builder, A, F1, B, F2 string) error {
 //	|   C1–C4: recurrence + boundary constraints for FÃ and FB̃                       |
 //	|   C5:    L_{N-1}·(FÃ - FB̃) = 0   (final accumulated values match)             |
 //	|-------------------------------–-------------------------------------------------|
-func ProjectionTuple(system *constraint.Builder, A []string, F1 string, B []string, F2 string) error {
+func ProjectionTuple(system *constraint.Builder, A []expr.Expr, F1 expr.Expr, B []expr.Expr, F2 expr.Expr) error {
 
 	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
@@ -96,34 +96,29 @@ func ProjectionTuple(system *constraint.Builder, A []string, F1 string, B []stri
 	}
 
 	// 1. sample a challenge for folding
-	foldingDeps := make([]expr.Expr, len(A)+len(B))
-	for i := 0; i < len(A); i++ {
-		foldingDeps[i] = expr.Col(A[i])
-	}
-	for i := 0; i < len(B); i++ {
-		foldingDeps[i+len(A)] = expr.Col(B[i])
-	}
+	foldingDeps := make([]expr.Expr, 0, len(A)+len(B))
+	foldingDeps = append(A, B...)
 	system.AddChallengeStep(foldingDeps, gamma)
 
 	// 2. fold A and B
 	gammaExpr := expr.NewChallenge(gamma)
-	AExpr := make([]expr.Expr, len(A))
-	BExpr := make([]expr.Expr, len(B))
-	for i := 0; i < len(A); i++ {
-		AExpr[i] = expr.Col(A[i])
-	}
-	for i := 0; i < len(B); i++ {
-		BExpr[i] = expr.Col(B[i])
-	}
-	AFolded := constraint.Fold(AExpr, gammaExpr)
-	BFolded := constraint.Fold(BExpr, gammaExpr)
+	// AExpr := make([]expr.Expr, len(A))
+	// BExpr := make([]expr.Expr, len(B))
+	// for i := 0; i < len(A); i++ {
+	// 	AExpr[i] = expr.Col(A[i])
+	// }
+	// for i := 0; i < len(B); i++ {
+	// 	BExpr[i] = expr.Col(B[i])
+	// }
+	AFolded := constraint.Fold(A, gammaExpr)
+	BFolded := constraint.Fold(B, gammaExpr)
 
 	// 3. call equalityFilteredColumns
-	return ProjectionExpr(system, AFolded, BFolded, expr.Col(F1), expr.Col(F2))
+	return Projection(system, AFolded, BFolded, F1, F2)
 
 }
 
-func ProjectionExpr(system *constraint.Builder, A, B, F1, F2 expr.Expr) error {
+func Projection(system *constraint.Builder, A, B, F1, F2 expr.Expr) error {
 
 	// 1. build filtered acc polynomials for A and B
 	_idAccFA, err := utils.RandomString(constants.SIZE_RANDOM_STRING)

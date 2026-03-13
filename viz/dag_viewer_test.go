@@ -6,6 +6,7 @@ import (
 
 	"github.com/consensys/loom/arguments"
 	"github.com/consensys/loom/constraint"
+	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/prover"
 )
 
@@ -14,8 +15,8 @@ func TestWriteDerivationPlanDagToHTML(t *testing.T) {
 	system := constraint.NewBuilder(size)
 	if err := arguments.PermutationTuple(
 		&system,
-		[][]string{{"P0", "P1"}},
-		[][]string{{"Q0", "Q1"}},
+		[][]expr.Expr{{expr.Col("P0"), expr.Col("P1")}},
+		[][]expr.Expr{{expr.Col("Q0"), expr.Col("Q1")}},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +40,7 @@ func TestWriteProofTranscriptRoundsDagToHTML_Permutation(t *testing.T) {
 	size := 16
 	trace := constraint.BuildPermutationCircuit(t, size)
 	system := constraint.NewBuilder(size)
-	arguments.Permutation(&system, []string{"P0"}, []string{"P1"})
+	arguments.Permutation(&system, []expr.Expr{expr.Col("P0")}, []expr.Expr{expr.Col("P1")})
 
 	cciop := system.Compile()
 	rt := prover.NewProver(cciop, trace)
@@ -66,10 +67,14 @@ func TestWriteProofTranscriptRoundsDagToHTML_Tuple(t *testing.T) {
 	size := 16
 	trace := constraint.BuildPermutationTuple(t, size)
 	system := constraint.NewBuilder(size)
+	P0 := expr.Col("P0")
+	P1 := expr.Col("P1")
+	Q0 := expr.Col("Q0")
+	Q1 := expr.Col("Q1")
 	if err := arguments.PermutationTuple(
 		&system,
-		[][]string{{"P0", "P1"}},
-		[][]string{{"Q0", "Q1"}},
+		[][]expr.Expr{{P0, P1}},
+		[][]expr.Expr{{Q0, Q1}},
 	); err != nil {
 		t.Fatal(err)
 	}

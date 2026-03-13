@@ -5,11 +5,11 @@ import (
 	"os"
 	"testing"
 
+	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom"
 	"github.com/consensys/loom/arguments"
 	"github.com/consensys/loom/constraint"
 	"github.com/consensys/loom/expr"
-	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
 func TestFibonacci(t *testing.T) {
@@ -41,8 +41,8 @@ func TestFibonacci(t *testing.T) {
 	system.AddColumn("F1", filter)
 	F1 := expr.Col("F1")
 	F2 := expr.Rot("F1", 1)
-	arguments.ProjectionExpr(&system, colA, colB, F1, F2)
-	arguments.ProjectionExpr(&system, colB, colC, F1, F2)
+	arguments.Projection(&system, colA, colB, F1, F2)
+	arguments.Projection(&system, colB, colC, F1, F2)
 
 	// A[0]=0, B[0]=1
 	system.AddLagrangeColumn(0)
