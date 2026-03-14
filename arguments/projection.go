@@ -3,51 +3,33 @@ package arguments
 import (
 	"fmt"
 
+	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/constraint"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/constants"
+	derive "github.com/consensys/loom/internal/derive"
 	"github.com/consensys/loom/internal/utils"
 )
 
-// Projection proves that the ordered sequence of A-values selected by F1
-// equals the ordered sequence of B-values selected by F2, where F1 and F2 are binary columns.
-// I.e., if the selected indices are i_0 < i_1 < ... < i_{m-1} and j_0 < j_1 < ... < j_{m-1}, then
-// A[i_0] = B[j_0], A[i_1] = B[j_1], ..., A[i_{m-1}] = B[j_{m-1}].
-//
-// It models the following Σ-protocol (N = domain size):
-//
-//	|-------------------------------–-------------------------------------------------|
-//	| [prover]                      |              [verifier]                         |
-//	|-------------------------------–-------------------------------------------------|
-//	| Commit(A, F1, B, F2)  -----→  | [Com(A), Com(F1), Com(B), Com(F2)]             | ROUND 1
-//	|-------------------------------–-------------------------------------------------|
-//	|                               ←-----  Sample random α                          |
-//	|                               |       (α = Fiat-Shamir(Com(A),Com(F1),         |
-//	|                               |                        Com(B),Com(F2)))         | ROUND 2
-//	|-------------------------------–-------------------------------------------------|
-//	| Compute filtered accumulators FA, FB via Horner on the selected entries:       |
-//	|   FA[0]   = F1[0] · A[0]                                                       |
-//	|   FA[i]   = F1[i]·(α·FA[i-1] + A[i]) + (1-F1[i])·FA[i-1]   for i > 0        |
-//	|   (FB defined exprmetrically with B, F2)                                        |
-//	|   So FA[N-1] = Σ_{F1[i]=1} A[i] · α^(m-1-rank(i))  (Horner of selected A)    |
-//	| Commit(FA, FB)        -----→  | [Com(FA), Com(FB)]                             | ROUND 3
-//	|-------------------------------–-------------------------------------------------|
-//	|       (done via FoldRelations + Finalize + Verify)                            |
-//	| Records constraints:                                                            |
-//	|   C1: L_0·(FA - F1·A) = 0                (boundary for FA)                    |
-//	|   C2: (1-L_0)·(FA - F1·(α·FA_prev+A) - (1-F1)·FA_prev) = 0  (recurrence FA) |
-//	|   C3, C4: exprmetric constraints for FB                                         |
-//	|   C5: L_{N-1}·(FA - FB) = 0              (final accumulated values match)     |
-//	|-------------------------------–-------------------------------------------------|
-// func Projection(system *constraint.Builder, A, F1, B, F2 string) error {
+// * R[0] = F[0]*E[0]
+// * R[i] = F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1] for i>0
+func BuildProjectionRelation(E, F, alpha expr.Expr, R string, N int) []constraint.Relation {
 
-// 	Aexpr := expr.Col(A)
-// 	Bexpr := expr.Col(B)
-// 	F1expr := expr.Col(F1)
-// 	F2expr := expr.Col(F2)
+	// 1. R[0] = F[0]*E[0]
+	boundaryRelation := localRelation(expr.Col(R), E.Mul(F), 0, N)
 
-// 	return ProjectionExpr(system, Aexpr, Bexpr, F1expr, F2expr)
-// }
+	// 2. R[i] = F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1] for i>0
+	one := koalabear.One()
+	RShifted := expr.Rot(R, -1)
+	path1 := F.Mul(alpha.Mul(RShifted).Add(E))
+	path2 := RShifted.Mul(expr.Const(one).Sub(F))
+	path1 = path1.Add(path2) //  F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1]
+	lagrange0 := expr.Virtual(derive.GetLagrangeID(0, N))
+	recurrenceRelation := expr.Col(R).Sub(path1).Mul(expr.Const(one).Sub(lagrange0)) // (R[i] - (F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1])) * (1 - lagrange0)
+
+	return []constraint.Relation{boundaryRelation, recurrenceRelation}
+
+}
 
 // ProjectionTuple proves that the ordered sequence of row-tuples of A selected by F1
 // equals the ordered sequence of row-tuples of B selected by F2, where F1 and F2 are binary columns.
@@ -142,17 +124,16 @@ func Projection(system *constraint.Builder, A, F1, B, F2 expr.Expr) error {
 
 	// 4. register the constraints ensuring that the filtered acc polynomials
 	// FA and FB are correclty constructed
-	system.AssertAllZero(constraint.BuildProjectionRelation(A, F1, alpha, idAccFA, system.N))
-	system.AssertAllZero(constraint.BuildProjectionRelation(B, F2, alpha, idAccFB, system.N))
+	system.AssertAllZero(BuildProjectionRelation(A, F1, alpha, idAccFA, system.N))
+	system.AssertAllZero(BuildProjectionRelation(B, F2, alpha, idAccFB, system.N))
 
 	// 5. ensure FA[N-1]=FB[N-1]: the last entry holds the full filtered accumulation
 	accFA := expr.Col(idAccFA)
 	accFB := expr.Col(idAccFB)
-	system.AssertZero(constraint.BuildLocalRelation(accFA, accFB, system.N-1, system.N))
+	system.AssertEqualAt(accFA, accFB, system.N-1)
 
 	// 6. Register Lagrange columns needed by BuildFilteredAccPolynomialRelation (L_0) and step 5 (L_{N-1})
 	system.AddLagrangeColumn(0)
-	system.AddLagrangeColumn(system.N - 1)
 
 	return nil
 }

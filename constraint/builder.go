@@ -85,12 +85,30 @@ func (system *Builder) AddComputeColumnStep(input expr.Expr, output string) {
 // are algebraic expression, which evaluted on columns of a trace.Trace of size N mut vanish on X^N-1.
 type Relations = []Relation
 
+// AssertZero asserts that C vanishes on the domain
 func (system *Builder) AssertZero(C Relation) {
 	system.Relations = append(system.Relations, C)
 }
 
+// AssertAllZero asserts that all C's vanish on the domain
 func (system *Builder) AssertAllZero(C []Relation) {
 	system.Relations = append(system.Relations, C...)
+}
+
+// AssertEqualAt assert that at row i, E1 and E2 are equal
+func (system *Builder) AssertEqualAt(E1, E2 Relation, i int) {
+	lagrangeID := derive.GetLagrangeID(i, system.N)
+	localRelation := expr.Virtual(lagrangeID).Mul(E1.Sub(E2))
+	system.AssertZero(localRelation)
+	system.AddLagrangeColumn(i)
+}
+
+// AssertEqualAt assert that E1=E2 on the domain, except at row i
+func (system *Builder) AssertZeroExceptAt(E1, E2 Relation, i int) {
+	system.AddLagrangeColumn(i)
+	lagrangeID := derive.GetLagrangeID(i, system.N)
+	localRelation := expr.Virtual(lagrangeID).Sub(expr.Const(koalabear.One())).Mul(E1.Sub(E2))
+	system.AssertZero(localRelation)
 }
 
 func (system *Builder) AddColumn(name string, content []koalabear.Element) {
@@ -105,10 +123,6 @@ func (system *Builder) AddLagrangeColumn(i int) {
 	if _, ok := system.Cache[k]; ok {
 		return
 	}
-	// TODO this should be in RegisterDerivationStep.
-	// Pb:
-	// 1. key depends only on ctx atm and not on ProverAciont
-	// 2. if the action already exists, we should return the output to reuse them and change the api
 	system.Cache[k] = len(system.DerivationPlan)
 	system.registerDerivationStep(nil, []string{derive.GetLagrangeID(i, system.N)}, derive.NewLagrangeContext(i, system.N))
 }
@@ -149,4 +163,12 @@ func (system *Builder) AddPermutationColumns(S []int64) ([]string, error) {
 	system.registerDerivationStep(nil, allOutputs, permutationContext)
 
 	return allOutputs, nil
+}
+
+// BuildCorrectConstructionRelation adds a constraint idRes - E=0, to ensure that IdRes is correcly
+// constructed with E
+func BuildCorrectConstructionRelation(E expr.Expr, IdRes string) Relation {
+	res := expr.Col(IdRes)
+	E = E.Sub(res)
+	return E
 }

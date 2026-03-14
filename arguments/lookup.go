@@ -7,8 +7,29 @@ import (
 	"github.com/consensys/loom/constraint"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/constants"
+	derive "github.com/consensys/loom/internal/derive"
 	"github.com/consensys/loom/internal/utils"
 )
+
+// BuildGrandSumRelations :
+// 1. (1-Lagrange_0) * ( (IDGrandSum - IDGrandSum(w^1 X))*E - M)=0 -> ensures that IDGrandSum[i] = IDGrandSum[i-1]+M[i]/E[i]
+// 2. Lagrange_0*( IDGrandSum*E-M)=0 -> ensures IDGrandSum[0] = M[0]/E[0]
+func BuildGrandSumRelations(M, E expr.Expr, grandSum string, N int) []constraint.Relation {
+
+	// 1. (1-Lagrange_0) * ( (IDGrandSum - IDGrandSum(w^1 X))*E - M)=0
+	lagrange := expr.Virtual(derive.GetLagrangeID(0, N))
+	p1 := expr.Const(koalabear.One()).Sub(lagrange)
+	diffGrandSum := expr.Col(grandSum).Sub(expr.Rot(grandSum, -1))
+	p2 := diffGrandSum.Mul(E).Sub(M)
+	recurrenceRelation := p1.Mul(p2)
+
+	// 2. Lagrange_0*( IDGrandSum*E-M)=0
+	grandSumTimesE := expr.Col(grandSum).Mul(E)
+	localRelation := localRelation(grandSumTimesE, M, 0, N)
+
+	return []constraint.Relation{recurrenceRelation, localRelation}
+	// EnforceLocalRelationAndRegisterLagrangeColumn(system, grandSumTimesE, M, 0)
+}
 
 // Lookup proves that every value in S appears in T (S ⊆ T as multisets).
 // It implements the lookup argument of section 5.4.1 of https://eprint.iacr.org/2022/1633.pdf.
@@ -85,20 +106,18 @@ func Lookup(system *constraint.Builder, S, T expr.Expr) error {
 	system.AddGrandSumStep([]expr.Expr{Mexpr, TminusGamma}, grandSumT)
 
 	// 4. register the constraints ensuring the grand sums are correctly constructed
-	grandSumRelationsT := constraint.BuildGrandSumRelations(Mexpr, TminusGamma, grandSumT, system.N)
-	grandSumRelationsS := constraint.BuildGrandSumRelations(oneExpr, SminusGamma, grandSumS, system.N)
+	grandSumRelationsT := BuildGrandSumRelations(Mexpr, TminusGamma, grandSumT, system.N)
+	grandSumRelationsS := BuildGrandSumRelations(oneExpr, SminusGamma, grandSumS, system.N)
 	system.AssertAllZero(grandSumRelationsT)
 	system.AssertAllZero(grandSumRelationsS)
 
 	// 5. ensure that grandSumT[N-1] = grandSumS[N-1]
 	grandSumSExpr := expr.Col(grandSumS)
 	grandSumTExpr := expr.Col(grandSumT)
-	boundaryEquality := constraint.BuildLocalRelation(grandSumSExpr, grandSumTExpr, system.N-1, system.N)
-	system.AssertZero(boundaryEquality)
+	system.AssertEqualAt(grandSumSExpr, grandSumTExpr, system.N-1)
 
 	// 6. register the creation of the 2 lagrange columns 0 and N-1
 	system.AddLagrangeColumn(0)
-	system.AddLagrangeColumn(system.N - 1)
 
 	return nil
 }

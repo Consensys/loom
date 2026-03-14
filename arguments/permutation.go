@@ -3,11 +3,36 @@ package arguments
 import (
 	"fmt"
 
+	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/constraint"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/constants"
+	derive "github.com/consensys/loom/internal/derive"
 	"github.com/consensys/loom/internal/utils"
 )
+
+// localConstraint builds the constraints Lagrange_i(E-M) whose vanishing at X^n-1
+// is equivalent to E[i]=M[i]
+func localRelation(E, M expr.Expr, i int, N int) constraint.Relation {
+	lagrangeID := derive.GetLagrangeID(i, N)
+	localRelation := expr.Virtual(lagrangeID).Mul(E.Sub(M))
+	return localRelation
+}
+
+// BuildGrandProductRelation
+// 1. GP*E2-GP*E1=0
+// 2. GP_Shifted[0]=1
+func BuildGrandProductRelation(E1, E2 expr.Expr, GP string, N int) []constraint.Relation {
+
+	// 1. IDGrandProductShifted*E2-IDGrandProduct*E1=0
+	A := expr.Rot(GP, 1).Mul(E2)
+	B := expr.Col(GP).Mul(E1)
+	recurrenceRelation := A.Sub(B)
+
+	// 2. GP[0]=1
+	boundaryRelation := localRelation(expr.Col(GP), expr.Const(koalabear.One()), 0, N)
+	return []constraint.Relation{recurrenceRelation, boundaryRelation}
+}
 
 // EqualityUpToPermutation proves that the multiset { ID1[j][i] } equals { ID2[j][i] }, up to permutation.
 // For every i, j there is k, l such that ID1[i][j] = ID2[k][l].
@@ -61,7 +86,7 @@ func Permutation(system *constraint.Builder, E1, E2 []expr.Expr) error {
 	}
 
 	// 2. register the grand product constraint (including the boundary constraint)
-	gpRelation := constraint.BuildGrandProductRelation(E1MinusGamma, E2MinusGamma, IDGrandProduct, system.N)
+	gpRelation := BuildGrandProductRelation(E1MinusGamma, E2MinusGamma, IDGrandProduct, system.N)
 	system.AssertAllZero(gpRelation)
 
 	// 3. register the prover action for creating the grand product and grand product shifted
