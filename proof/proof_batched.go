@@ -12,6 +12,11 @@ type TranscriptRoundBatched struct {
 
 type ProofBatched struct {
 	TranscriptRounds []TranscriptRoundBatched
-	Batch            []commitment.Batch             // commitment to a batch of polynomials
-	OpeningProofs    []commitment.BatchOpeningProof // one batch opening proof per batch
+
+	// commitment to a batch of polynomials (TranscriptRoundBatched.DependencyBatch points to a Batch)
+	Batch []commitment.Batch
+
+	// one batch opening proof per batch. ClaimedValues, Shift follow the ordering of the list of poly in the batch
+	// That is ClaimedValues[i] are the claimed values shifted by shift[i], of the the i-th polynomial in the list when the list was committed.
+	OpeningProofs []commitment.BatchOpeningProof
 }
