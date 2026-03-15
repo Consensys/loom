@@ -8,6 +8,7 @@ import (
 	"github.com/consensys/loom/constraint"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/trace"
+	"github.com/consensys/loom/viz"
 )
 
 func getKnownColumns(n int) map[string]bool {
@@ -111,7 +112,7 @@ func TestPlonk(t *testing.T) {
 	}
 	fulltrace := GetPublicPart(basetrace)
 
-	nbTraces := 1
+	nbTraces := 3
 	for i := 0; i < nbTraces; i++ {
 		ithprivatepart := GetPrivatePartCopy(basetrace, i)
 		fulltrace = mergeTrace(fulltrace, ithprivatepart)
@@ -135,11 +136,14 @@ func TestPlonk(t *testing.T) {
 	}
 
 	cp := system.Compile()
+	viz.WriteDerivationPlanDagToHTML(cp, "plonk_dag.html")
 
 	proof, err := loom.Prove(cp, fulltrace, nil, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, "plonk_transcript_rounds.html")
 
 	err = loom.Verify(cp, &proof, nil, 1)
 	if err != nil {
