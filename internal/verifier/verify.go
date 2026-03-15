@@ -4,8 +4,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"math/big"
-	"sync"
-	"sync/atomic"
 
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -37,127 +35,49 @@ func NewRunTime(cp constraint.Program, publicInputs derive.PublicInputs) Verifie
 	return res
 }
 
-// DeriveChallenge derive the challenge of corresponding to proof.TranscriptRounds[i]
+// DeriveChallenge derives the challenge for proof.TranscriptRounds[i] by binding the
+// batch digest and all previously derived challenge values.
 func (runtime *Verifier) DeriveChallenge(proof *derive.Proof, i int) error {
 
-	fs := fiatshamir.NewTranscript(sha256.New())
+	round := proof.TranscriptRounds[i]
 
-	// create the challenge
-	err := fs.NewChallenge(proof.TranscriptRounds[i].ChallengeName)
-	if err != nil {
+	fs := fiatshamir.NewTranscript(sha256.New())
+	if err := fs.NewChallenge(round.ChallengeName); err != nil {
 		return err
 	}
-
-	// bind the challenge to its commitments dependencies
-	for _, l := range proof.TranscriptRounds[i].DependenciesCommittedColumns {
-		com, ok := proof.OpeningProofs[l]
+	if err := fs.Bind(round.ChallengeName, proof.Batch[round.DependencyBatch].Marshal()); err != nil {
+		return err
+	}
+	// Bind all previously derived challenge values (rounds 0..i-1).
+	for j := 0; j < i; j++ {
+		prevChallenge, ok := runtime.Vars[proof.TranscriptRounds[j].ChallengeName]
 		if !ok {
-			return fmt.Errorf("commitment %s not registered in the proof", l)
+			return fmt.Errorf("challenge %s not yet derived", proof.TranscriptRounds[j].ChallengeName)
 		}
-		fs.Bind(proof.TranscriptRounds[i].ChallengeName, com.Digest.Marshal())
+		if err := fs.Bind(round.ChallengeName, prevChallenge.Marshal()); err != nil {
+			return err
+		}
 	}
 
-	// bind the challenge to its other challenges dependencies
-	for _, l := range proof.TranscriptRounds[i].DependenciesChallenges {
-		challenge, ok := runtime.Vars[l]
-		if !ok {
-			return fmt.Errorf("challenge %s not registered in vars", l)
-		}
-		fs.Bind(proof.TranscriptRounds[i].ChallengeName, challenge.Marshal())
-	}
-
-	// compute the challenge and store it in runtime.Vars
-	bc, err := fs.ComputeChallenge(proof.TranscriptRounds[i].ChallengeName)
+	bc, err := fs.ComputeChallenge(round.ChallengeName)
 	if err != nil {
 		return err
 	}
 	var c koalabear.Element
 	c.SetBytes(bc)
-	runtime.Vars[proof.TranscriptRounds[i].ChallengeName] = c
-
+	runtime.Vars[round.ChallengeName] = c
 	return nil
 }
 
-// ComputeChallenges compute challenges using Kahn's style scheduler.
-// *The nodes are proof.TranscriptRounds
-// * node input are DependenciesChallenges
-// * node output is ChallengeName
+// ComputeChallenges replays the Fiat-Shamir transcript sequentially.
+// nbWorkers is accepted for API compatibility but the replay is always sequential.
 func (runtime *Verifier) ComputeChallenges(proof *derive.Proof, nbWorkers int) error {
-
-	// nodes which do not depend on other challenges have inDegree 0 by construction, these are the nodes which do not
-	// depend on other challenges.
-	known := make(map[string]bool)
-
-	nodes := proof.TranscriptRounds
-	n := len(nodes)
-
-	inDegree := make([]int32, n)
-	consumers := make(map[string][]int)
-
-	// Build dependency tracking
-	for i, node := range nodes {
-		for _, l := range node.DependenciesChallenges { // no need to check node.DependenciesCommittedColumns because they are by default set to true
-			if !known[l] {
-				inDegree[i]++
-			}
-			consumers[l] = append(consumers[l], i)
+	for i := range proof.TranscriptRounds {
+		if err := runtime.DeriveChallenge(proof, i); err != nil {
+			return err
 		}
 	}
-
-	readyQueue := make(chan int, n)
-	var wg sync.WaitGroup
-
-	// Count how many functions executed
-	var executed int32
-
-	// Worker logic
-	worker := func() {
-		for i := range readyQueue {
-			err := runtime.DeriveChallenge(proof, i)
-			if err != nil {
-				panic(err)
-			}
-
-			atomic.AddInt32(&executed, 1)
-
-			// Mark outputs known and release consumers
-			out := nodes[i].ChallengeName
-			known[nodes[i].ChallengeName] = true
-			for _, j := range consumers[out] {
-				if atomic.AddInt32(&inDegree[j], -1) == 0 {
-					wg.Add(1) // whenever we populate teh chan, we need to add one more task to the wait group
-					readyQueue <- j
-				}
-			}
-
-			wg.Done()
-		}
-	}
-
-	// Start workers
-	for i := 0; i < nbWorkers; i++ {
-		go worker()
-	}
-
-	// Seed initial ready functions
-	for i := range nodes {
-		if inDegree[i] == 0 {
-			wg.Add(1) // whenever we populate teh chan, we need to add one more task to the wait group
-			readyQueue <- i
-		}
-	}
-
-	// Wait until all scheduled work completes
-	wg.Wait()
-	close(readyQueue)
-
-	// Detect cycle / unsatisfied dependencies
-	if int(executed) != n {
-		return fmt.Errorf("cycle detected or missing initialization")
-	}
-
 	return nil
-
 }
 
 // EvaluateVirtualColumns evaluates the computable columns at zeta and stores the results in runtime.Vars.
@@ -195,59 +115,64 @@ func (runtime *Verifier) computeMissingPart(info derive.PublicColumnInfo, shift,
 	invN.SetUint64(uint64(N)).Inverse(&invN)
 
 	var one, res koalabear.Element
-	var zetaN koalabear.Element
-	var num koalabear.Element
+	var zetaN, num koalabear.Element
 	one.SetOne()
-	num.Sub(&zetaN, &one).Mul(&num, &invN) // (zeta^N-1)/N
 	zetaN.Exp(zeta, big.NewInt(int64(N)))
-	invOmegaiMinusOne := make([]koalabear.Element, len(info.Idx))
+	num.Sub(&zetaN, &one).Mul(&num, &invN) // (zeta^N-1)/N
+	invZetaMinusOmegai := make([]koalabear.Element, len(info.Idx))
 	omegai := make([]koalabear.Element, len(info.Idx))
 	for k, idx := range info.Idx {
 		omegai[k] = *w.Exp(w, big.NewInt(int64(idx)))
-		invOmegaiMinusOne[k].Sub(&omegai[k], &one)
+		invZetaMinusOmegai[k].Sub(&zeta, &omegai[k])
 	}
-	invOmegaiMinusOne = koalabear.BatchInvert(invOmegaiMinusOne)
+	invZetaMinusOmegai = koalabear.BatchInvert(invZetaMinusOmegai)
 	var tmp koalabear.Element
 	for k := range info.Idx {
-		tmp.Mul(&num, &invOmegaiMinusOne[k]).Mul(&tmp, &omegai[k])
+		tmp.Mul(&num, &invZetaMinusOmegai[k]).Mul(&tmp, &omegai[k])
 		tmp.Mul(&tmp, &info.Vals[k])
 		res.Add(&res, &tmp)
 	}
 	return res, nil
 }
 
-// FillClaimedValues fill runtime.Vars with the claimed values from the prover
+// FillClaimedValues fills runtime.Vars with the opening evaluations from the proof.
 func (runtime *Verifier) FillClaimedValues(proof *derive.Proof) error {
 
-	for k, _proof := range proof.OpeningProofs {
-		for _, op := range _proof.OpeningProof {
-			name := constants.GetShiftedName(k, op.Shift) // if shift=0, returns the bare name
-			runtime.Vars[name] = op.ClaimedValue
-			if publicInfo, ok := runtime.PublicInputs[k]; ok { // in that case, complete the opening with the polynomial interpolating the missing inputs
-				missingPart, err := runtime.computeMissingPart(publicInfo, op.Shift, proof.N)
-				if err != nil {
-					return err
+	for batchIdx, colNames := range proof.BatchColumns {
+		if batchIdx >= len(proof.OpeningProofs) {
+			break
+		}
+		op := proof.OpeningProofs[batchIdx]
+		for polyIdx, colName := range colNames {
+			if polyIdx >= len(op.Shift) {
+				continue
+			}
+			for shiftIdx, shift := range op.Shift[polyIdx] {
+				name := constants.GetShiftedName(colName, shift)
+				val := op.ClaimedValues[polyIdx][shiftIdx]
+				if publicInfo, ok := runtime.PublicInputs[colName]; ok {
+					missingPart, err := runtime.computeMissingPart(publicInfo, shift, proof.N)
+					if err != nil {
+						return err
+					}
+					val.Add(&val, &missingPart)
 				}
-				var completedClaimedValue koalabear.Element
-				completedClaimedValue.Add(&op.ClaimedValue, &missingPart)
-				runtime.Vars[name] = completedClaimedValue
+				runtime.Vars[name] = val
 			}
 		}
 	}
-
 	return nil
 }
 
-// CheckRelation checks the final relation: proof.VanishingRelation(zeta)=H(zeta)(zeta^N-1)
+// CheckRelation checks the final relation: VanishingRelation(zeta) = H(zeta) · (zeta^N - 1)
 func (runtime *Verifier) CheckRelation(proof *derive.Proof) error {
 
 	zeta := runtime.Vars[constants.FINAL_EVALUATION_POINT]
 
-	comh, ok := proof.OpeningProofs[constants.FINAL_QUOTIENT]
+	hzeta, ok := runtime.Vars[constants.FINAL_QUOTIENT]
 	if !ok {
-		return fmt.Errorf("%s does not appear in teh list of commitments", constants.FINAL_QUOTIENT)
+		return fmt.Errorf("%s not found in vars", constants.FINAL_QUOTIENT)
 	}
-	hzeta := comh.OpeningProof[0].ClaimedValue
 
 	var zetaNMinusOne koalabear.Element
 	one := koalabear.One()
@@ -263,36 +188,15 @@ func (runtime *Verifier) CheckRelation(proof *derive.Proof) error {
 	return nil
 }
 
+// VerifyOpeningProofs verifies each batch opening proof.
 func (runtime *Verifier) VerifyOpeningProofs(proof *derive.Proof) error {
-
-	w, err := koalabear.Generator(uint64(proof.N))
-	if err != nil {
-		return err
-	}
-
-	for _, openingProof := range proof.OpeningProofs {
-
-		for _, op := range openingProof.OpeningProof { // one opening proof per shifted opening
-			shift := op.Shift
-			if shift == 0 {
-				err := commitment.Verify(openingProof.Digest, op, runtime.Vars[constants.FINAL_EVALUATION_POINT])
-				if err != nil {
-					return err
-				}
-			} else {
-				zetaShifted := w
-				if shift < 0 {
-					zetaShifted.Inverse(&w)
-					shift = -shift
-				}
-				zetaShifted.Exp(zetaShifted, big.NewInt(int64(shift)))
-				z := runtime.Vars[constants.FINAL_EVALUATION_POINT]
-				zetaShifted.Mul(&zetaShifted, &z) // w^iζ
-				err := commitment.Verify(openingProof.Digest, op, zetaShifted)
-				if err != nil {
-					return err
-				}
-			}
+	zeta := runtime.Vars[constants.FINAL_EVALUATION_POINT]
+	for batchIdx, batch := range proof.Batch {
+		if batchIdx >= len(proof.OpeningProofs) {
+			break
+		}
+		if err := commitment.BatchVerify(batch, proof.OpeningProofs[batchIdx], zeta); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -300,27 +204,21 @@ func (runtime *Verifier) VerifyOpeningProofs(proof *derive.Proof) error {
 
 func (runtime *Verifier) Verify(proof *derive.Proof, nbWorkers int) error {
 
-	err := runtime.ComputeChallenges(proof, nbWorkers)
-	if err != nil {
+	if err := runtime.ComputeChallenges(proof, nbWorkers); err != nil {
 		return err
 	}
 
-	err = runtime.EvaluateVirtualColumns()
-	if err != nil {
+	if err := runtime.EvaluateVirtualColumns(); err != nil {
 		return err
 	}
 
-	err = runtime.FillClaimedValues(proof)
-	if err != nil {
+	if err := runtime.FillClaimedValues(proof); err != nil {
 		return err
 	}
 
-	err = runtime.CheckRelation(proof)
-	if err != nil {
+	if err := runtime.CheckRelation(proof); err != nil {
 		return err
 	}
 
-	err = runtime.VerifyOpeningProofs(proof)
-
-	return err
+	return runtime.VerifyOpeningProofs(proof)
 }

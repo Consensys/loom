@@ -23,6 +23,11 @@ type BatchOpeningProof struct {
 	Shift         [][]int
 }
 
+// BatchVerify verifies a batch opening proof (toy: always returns nil).
+func BatchVerify(digest Batch, proof BatchOpeningProof, zeta koalabear.Element) error {
+	return nil
+}
+
 func CommitBatch(list []poly.Polynomial) (Batch, error) {
 	var res koalabear.Element
 	for _, l := range list {

@@ -70,19 +70,22 @@ func WriteProofTranscriptRoundsDagToHTML(rounds []derive.TranscriptRound, filena
 	// deterministic and matches the proof's Fiat-Shamir sequence.
 	challengeOrd := make(map[string]int)
 
-	for _, r := range rounds {
+	for i, r := range rounds {
 		if _, seen := challengeOrd[r.ChallengeName]; !seen {
 			challengeOrd[r.ChallengeName] = len(challengeOrd)
 		}
 		kindOf[r.ChallengeName] = "challenge"
 
-		for _, col := range r.DependenciesCommittedColumns {
-			if _, seen := kindOf[col]; !seen {
-				kindOf[col] = "committed"
-			}
-			edges = append(edges, dagEdge{From: col, To: r.ChallengeName, Kind: "committed"})
+		// Each challenge depends on its batch commitment.
+		batchID := fmt.Sprintf("batch_%d", r.DependencyBatch)
+		if _, seen := kindOf[batchID]; !seen {
+			kindOf[batchID] = "committed"
 		}
-		for _, dep := range r.DependenciesChallenges {
+		edges = append(edges, dagEdge{From: batchID, To: r.ChallengeName, Kind: "committed"})
+
+		// Each challenge also depends on all previously derived challenges.
+		for j := 0; j < i; j++ {
+			dep := rounds[j].ChallengeName
 			if _, seen := kindOf[dep]; !seen {
 				kindOf[dep] = "challenge"
 				challengeOrd[dep] = len(challengeOrd)

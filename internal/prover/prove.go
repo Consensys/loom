@@ -3,7 +3,7 @@ package prover
 import (
 	"crypto/sha256"
 	"fmt"
-	"math/big"
+	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -59,7 +59,6 @@ func (runtime *Prover) Solve(knownColumns map[string]bool, proof *derive.Proof, 
 	}
 
 	readyQueue := make(chan int, n)
-	// var mu sync.Mutex
 	var wg sync.WaitGroup
 
 	// Count how many functions executed
@@ -83,7 +82,7 @@ func (runtime *Prover) Solve(knownColumns map[string]bool, proof *derive.Proof, 
 
 				for _, j := range consumers[out] {
 					if atomic.AddInt32(&inDegree[j], -1) == 0 {
-						wg.Add(1) // whenever we populate teh chan, we need to add one more task to the wait group
+						wg.Add(1)
 						readyQueue <- j
 					}
 				}
@@ -93,10 +92,10 @@ func (runtime *Prover) Solve(knownColumns map[string]bool, proof *derive.Proof, 
 		}
 	}
 
-	// Seed initial ready functions before starting workers to avoid racing on inDegree reads
+	// Seed initial ready functions before starting workers
 	for i := range funcs {
 		if inDegree[i] == 0 {
-			wg.Add(1) // whenever we populate teh chan, we need to add one more task to the wait group
+			wg.Add(1)
 			readyQueue <- i
 		}
 	}
@@ -118,186 +117,133 @@ func (runtime *Prover) Solve(knownColumns map[string]bool, proof *derive.Proof, 
 	return nil
 }
 
-// FinalChallenges returns the last challenges in the DAG whose nodes are
-// {inputs: rounds[i].DependenciesChallenges, output: rounds[i].ChallengeName}
-func FinalChallenges(rounds []derive.TranscriptRound) []string {
-	usedAsInput := make(map[string]bool)
-	produced := make(map[string]bool)
-
-	for _, f := range rounds {
-		for _, in := range f.DependenciesChallenges {
-			usedAsInput[in] = true
-		}
-		produced[f.ChallengeName] = true
-
-	}
-
-	finals := []string{}
-	for v := range produced {
-		if !usedAsInput[v] {
-			finals = append(finals, v)
-		}
-	}
-
-	return finals
-}
-
-// Fold all the constraints by sampling a random challenge, derived from the necessary data to ensure that this challenge
-// cannot have been derived derived prior to any of the prover<->interactions and commitments.
-// This step adds another transcriptRound to the proof
+// DeriveFinalFoldingChallenge commits all columns not yet committed, derives the
+// folding challenge, and stores it in the trace.
 func (runtime *Prover) DeriveFinalFoldingChallenge(proof *derive.Proof) error {
 
-	// proof.VanishingRelation = runtime.Program.VanishingRelation
+	// 1. Collect all committed-column leaves in the vanishing relation that have
+	//    not yet been included in any batch commitment.
+	leaves := runtime.Program.VanishingRelation.Leaves(
+		expr.NewConfig(expr.WithoutChallenges(), expr.WithoutVirtualumns(), expr.WithoutRotatedColumns()))
 
-	// generate the folding challenge whose name is constants.FINAL_FOLDING_CHALLENGE, and which must be be bound to all the necessary
-	// data to ensure it cannot have been derived prior to running all the previous IOPs and commitments
-
-	// 1. create the dependencies of the folding challenge to all the polynomials not committed
-	var round derive.TranscriptRound
-	round.ChallengeName = constants.FINAL_FOLDING_CHALLENGE
-	leaves := runtime.Program.VanishingRelation.Leaves(expr.NewConfig(expr.WithoutChallenges(), expr.WithoutVirtualumns(), expr.WithoutRotatedColumns()))
-	round.DependenciesCommittedColumns = make([]string, 0, len(leaves))
+	var polys []poly.Polynomial
+	var colNames []string
+	seen := make(map[string]bool)
 	for _, l := range leaves {
-		// TODO need a special map in runtime to track which commitments have been consumed by FS instead of
-		// testing if it appears in proof.OpeningProofs -> some columns (public) might be precommitted, but not used in FS
-		// and mistakenly discarded at this step
-		if _, ok := proof.OpeningProofs[l]; !ok { // <- the column whose ID is l is not committed, we add it to bindings
-			round.DependenciesCommittedColumns = append(round.DependenciesCommittedColumns, l)
+		if seen[l] || proof.IsColumnCommitted(l) {
+			continue
 		}
-	}
-
-	// 2. create the dependencies of the folding challenge to the challenges which are the outputs of the DAG whose inputs/outputs are challenges
-	round.DependenciesChallenges = FinalChallenges(proof.TranscriptRounds)
-	proof.TranscriptRounds = append(proof.TranscriptRounds, round)
-
-	// Now 1. and 2. guarantee the order: now we know that teh challenge cannot have been generated prior to committing to everything and prior to running every sub protocols
-
-	// 3. Commit to all the polynomials whose name matches round.DependenciesCommittedColumns. Record the commitments in the proof, and update FS along the way
-	fs := fiatshamir.NewTranscript(sha256.New())
-	err := fs.NewChallenge(constants.FINAL_FOLDING_CHALLENGE)
-	if err != nil {
-		return err
-	}
-	for _, id := range round.DependenciesCommittedColumns {
-		poly, ok := runtime.Trace[id]
+		seen[l] = true
+		p, ok := runtime.Trace[l]
 		if !ok {
-			return fmt.Errorf("polynomial %s not found in the trace", id)
+			return fmt.Errorf("polynomial %s not found in the trace", l)
 		}
-		var com commitment.Digest
-		var err error
-		//If the column contains public inputs, we set the public inputs to zero
-		if publicInfo, ok := runtime.PublicInputs[id]; ok {
+		if publicInfo, ok := runtime.PublicInputs[l]; ok {
 			buf := make([]koalabear.Element, proof.N)
-			copy(buf, poly)
+			copy(buf, p)
 			for _, idx := range publicInfo.Idx {
 				buf[idx].SetZero()
 			}
-			com, err = commitment.Commit(buf)
+			polys = append(polys, buf)
 		} else {
-			com, err = commitment.Commit(poly)
+			polys = append(polys, p)
 		}
-		if err != nil {
-			return err
-		}
-		// com, err := commitment.Commit(poly)
-		err = fs.Bind(constants.FINAL_FOLDING_CHALLENGE, com.Marshal())
-		if err != nil {
-			return err
-		}
-		proof.OpeningProofs[id] = commitment.PackedProof{Digest: com}
+		colNames = append(colNames, l)
 	}
 
-	// 4. Bind the challenge to the other challenges it depends on
-	for _, id := range round.DependenciesChallenges {
-		c, ok := runtime.Trace[id]
+	// 2. Batch-commit.
+	batch, err := commitment.CommitBatch(polys)
+	if err != nil {
+		return err
+	}
+	batchIdx := len(proof.Batch)
+	proof.Batch = append(proof.Batch, batch)
+	proof.BatchColumns = append(proof.BatchColumns, colNames)
+
+	// 3. Record the transcript round.
+	proof.TranscriptRounds = append(proof.TranscriptRounds, derive.TranscriptRound{
+		ChallengeName:   constants.FINAL_FOLDING_CHALLENGE,
+		DependencyBatch: batchIdx,
+	})
+
+	// 4. Build FS transcript: bind batch digest + all previously derived challenges.
+	fs := fiatshamir.NewTranscript(sha256.New())
+	if err := fs.NewChallenge(constants.FINAL_FOLDING_CHALLENGE); err != nil {
+		return err
+	}
+	if err := fs.Bind(constants.FINAL_FOLDING_CHALLENGE, batch.Marshal()); err != nil {
+		return err
+	}
+	for _, prevRound := range proof.TranscriptRounds[:len(proof.TranscriptRounds)-1] {
+		c, ok := runtime.Trace[prevRound.ChallengeName]
 		if !ok {
-			return fmt.Errorf("challenge %s not found in the trace", id)
+			return fmt.Errorf("challenge %s not found in the trace", prevRound.ChallengeName)
 		}
-		cVal := c[0]
-		err := fs.Bind(constants.FINAL_FOLDING_CHALLENGE, cVal.Marshal())
-		if err != nil {
+		if err := fs.Bind(constants.FINAL_FOLDING_CHALLENGE, c[0].Marshal()); err != nil {
 			return err
 		}
 	}
 
-	// 5. Derive the challenge
+	// 5. Derive challenge.
 	bc, err := fs.ComputeChallenge(constants.FINAL_FOLDING_CHALLENGE)
 	if err != nil {
 		return err
 	}
 	var c koalabear.Element
 	c.SetBytes(bc)
-
-	// 6. add the challenge as a constant column, since it might appear in other constraints
 	return derive.NewColumn(runtime.Trace, constants.FINAL_FOLDING_CHALLENGE, []koalabear.Element{c}, &runtime.Mu)
 }
 
-// ComputeQuotient computes H:=runtime.Program.Relation(runtime.Trace)/X^N-1 and commit to it, and
-//
-//	and store it in the trace, it is needed to be opened later
+// ComputeQuotient computes H := VanishingRelation / (X^N - 1), commits to it as a
+// 1-element batch, and stores it in the trace for later opening.
 func (runtime *Prover) ComputeQuotient(proof *derive.Proof) error {
 
 	H, err := poly.ComputeQuotient(runtime.Trace, runtime.Program.VanishingRelation, runtime.Program.N)
 	if err != nil {
 		return fmt.Errorf("ComputeQuotient: %w", err)
 	}
-
-	// Convert from coset-Lagrange to standard Lagrange so Open can evaluate it correctly
 	poly.CosetLagrangeToLagrangeNormal(H)
 
-	digest, err := commitment.Commit(H)
+	batch, err := commitment.CommitBatch([]poly.Polynomial{H})
 	if err != nil {
 		return err
 	}
-	proof.OpeningProofs[constants.FINAL_QUOTIENT] = commitment.PackedProof{Digest: digest}
+	proof.Batch = append(proof.Batch, batch)
+	proof.BatchColumns = append(proof.BatchColumns, []string{constants.FINAL_QUOTIENT})
 
-	// Store H in the trace so OpenCommitments can evaluate it at zeta later
 	runtime.Trace[constants.FINAL_QUOTIENT] = H
-
 	return nil
 }
 
-// DeriveOpeningChallenge register the final round for deriving the opening challenge, and compute it
-// This step adds andother TranscriptRound to the proof
+// DeriveOpeningChallenge derives zeta from the quotient batch commitment and all
+// previously derived challenge values.
 func (runtime *Prover) DeriveOpeningChallenge(proof *derive.Proof) (koalabear.Element, error) {
 
-	// register the round in the proof
-	var round derive.TranscriptRound
-	round.ChallengeName = constants.FINAL_EVALUATION_POINT
-	round.DependenciesCommittedColumns = []string{constants.FINAL_QUOTIENT}
-	round.DependenciesChallenges = []string{constants.FINAL_FOLDING_CHALLENGE}
-	proof.TranscriptRounds = append(proof.TranscriptRounds, round)
+	lastBatchIdx := len(proof.Batch) - 1
 
-	// derive the challenge, depending on :
-	// * proof.OpeningProofs[constants.FINAL_QUOTIENT].Digest
-	// * constants.FINAL_FOLDING_CHALLENGE
-	// it guarantess that FINAL_FOLDING_CHALLENGE is the last derived challenge, and depends on everything that happens
-	// before, since constants.FINAL_FOLDING_CHALLENGE depends on everything that happens before computing the quotient.
+	proof.TranscriptRounds = append(proof.TranscriptRounds, derive.TranscriptRound{
+		ChallengeName:   constants.FINAL_EVALUATION_POINT,
+		DependencyBatch: lastBatchIdx,
+	})
+
 	fs := fiatshamir.NewTranscript(sha256.New())
-	fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
-
-	// bind the quotient
-	if _, ok := proof.OpeningProofs[constants.FINAL_QUOTIENT]; !ok {
-		return koalabear.Element{}, fmt.Errorf("%s not found in the list of digests", constants.FINAL_QUOTIENT)
-	}
-	com := proof.OpeningProofs[constants.FINAL_QUOTIENT]
-	err := fs.Bind(constants.FINAL_EVALUATION_POINT, com.Digest.Marshal())
-	if err != nil {
+	if err := fs.NewChallenge(constants.FINAL_EVALUATION_POINT); err != nil {
 		return koalabear.Element{}, err
 	}
-
-	// bind the folding challenge
-	c, ok := runtime.Trace[constants.FINAL_FOLDING_CHALLENGE]
-	if !ok {
-		return koalabear.Element{}, fmt.Errorf("challenge %s not found in the trace", constants.FINAL_FOLDING_CHALLENGE)
-	}
-	cVal := c[0]
-	err = fs.Bind(constants.FINAL_EVALUATION_POINT, cVal.Marshal())
-	if err != nil {
+	if err := fs.Bind(constants.FINAL_EVALUATION_POINT, proof.Batch[lastBatchIdx].Marshal()); err != nil {
 		return koalabear.Element{}, err
 	}
+	// Bind all previously derived challenge values (all rounds except the current one).
+	for _, prevRound := range proof.TranscriptRounds[:len(proof.TranscriptRounds)-1] {
+		c, ok := runtime.Trace[prevRound.ChallengeName]
+		if !ok {
+			return koalabear.Element{}, fmt.Errorf("challenge %s not found in the trace", prevRound.ChallengeName)
+		}
+		if err := fs.Bind(constants.FINAL_EVALUATION_POINT, c[0].Marshal()); err != nil {
+			return koalabear.Element{}, err
+		}
+	}
 
-	// compute the challegne
 	bzeta, err := fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
 	if err != nil {
 		return koalabear.Element{}, err
@@ -305,92 +251,68 @@ func (runtime *Prover) DeriveOpeningChallenge(proof *derive.Proof) (koalabear.El
 	var zeta koalabear.Element
 	zeta.SetBytes(bzeta)
 
-	// register zeta in the trace
-	err = derive.NewColumn(runtime.Trace, constants.FINAL_EVALUATION_POINT, []koalabear.Element{zeta}, &runtime.Mu)
-	if err != nil {
+	if err := derive.NewColumn(runtime.Trace, constants.FINAL_EVALUATION_POINT, []koalabear.Element{zeta}, &runtime.Mu); err != nil {
 		return koalabear.Element{}, err
 	}
-
 	return zeta, nil
 }
 
+// OpenCommitments opens every batch at zeta (and at ω^shift · zeta for rotated columns).
 func (runtime *Prover) OpenCommitments(proof *derive.Proof, zeta koalabear.Element) error {
 
-	err := runtime.OpenNonShiftedCommitments(proof, zeta)
-	if err != nil {
-		return err
+	// Build a map: base column name → set of shifts needed (always includes 0).
+	shiftsNeeded := make(map[string]map[int]bool)
+	for _, cols := range proof.BatchColumns {
+		for _, col := range cols {
+			if _, ok := shiftsNeeded[col]; !ok {
+				shiftsNeeded[col] = map[int]bool{0: true}
+			}
+		}
+	}
+	// Add rotated shifts from VanishingRelation.
+	for _, leafFull := range runtime.Program.VanishingRelation.LeavesFull(expr.NewConfig(expr.OnlyRotatedColumns...)) {
+		if leafFull.Shift != 0 {
+			if _, ok := shiftsNeeded[leafFull.Name]; ok {
+				shiftsNeeded[leafFull.Name][leafFull.Shift] = true
+			}
+		}
 	}
 
-	return runtime.OpenShiftedCommitments(proof, zeta)
-}
-
-// OpenCommitments open all columns at zeta
-func (runtime *Prover) OpenNonShiftedCommitments(proof *derive.Proof, zeta koalabear.Element) error {
-	var err error
-	for k, com := range proof.OpeningProofs {
-		poly, ok := runtime.Trace[k]
-		if !ok {
-			return fmt.Errorf("column %s not found in the trace", k)
+	proof.OpeningProofs = make([]commitment.BatchOpeningProof, 0, len(proof.Batch))
+	for batchIdx, colNames := range proof.BatchColumns {
+		polys := make([]poly.Polynomial, len(colNames))
+		shifts := make([][]int, len(colNames))
+		for polyIdx, colName := range colNames {
+			p, ok := runtime.Trace[colName]
+			if !ok {
+				return fmt.Errorf("column %s not found in the trace", colName)
+			}
+			// Open the polynomial so the verifier receives the true evaluation
+			// needed to check the vanishing relation. Careful to zeroing the public inputs
+			if info, ok := runtime.PublicInputs[colName]; ok {
+				buf := make([]koalabear.Element, len(p))
+				copy(buf, p)
+				for _, idx := range info.Idx {
+					buf[idx].SetZero()
+				}
+				p = buf
+			}
+			polys[polyIdx] = p
+			for s := range shiftsNeeded[colName] {
+				shifts[polyIdx] = append(shifts[polyIdx], s)
+			}
+			sort.Ints(shifts[polyIdx])
 		}
-		com.OpeningProof = make([]commitment.OpeningProof, 1)
-		com.OpeningProof[0], err = commitment.Open(poly, zeta)
+		op, err := commitment.BatchOpen(proof.Batch[batchIdx], polys, zeta, shifts)
 		if err != nil {
 			return err
 		}
-		proof.OpeningProofs[k] = com
+		proof.OpeningProofs = append(proof.OpeningProofs, op)
 	}
-
 	return nil
 }
 
-// OpenCommitments open all columns at zeta
-func (runtime *Prover) OpenShiftedCommitments(proof *derive.Proof, zeta koalabear.Element) error {
-
-	// query the leaves corresponding to RotatedColumns
-	leavesShifted := runtime.Program.VanishingRelation.Leaves(
-		expr.NewConfig(expr.WithoutChallenges(), expr.WithoutVirtualumns(), expr.WithoutCommittedColumns()))
-	leavesShifted = expr.RemoveDuplicates(leavesShifted)
-
-	// open the RotatedColumns
-	w, err := koalabear.Generator(uint64(proof.N))
-	if err != nil {
-		return err
-	}
-	for _, l := range leavesShifted {
-		name, shift, err := constants.SplitShiftedName(l)
-		if err != nil {
-			return err
-		}
-		poly, ok := runtime.Trace[name]
-		if !ok {
-			return fmt.Errorf("column %s (shifted opening) not found in the trace", name)
-		}
-		com, ok := proof.OpeningProofs[name]
-		if !ok {
-			return fmt.Errorf("OpeningProofs %s (base of shifted opening) not found in the proof", name)
-		}
-		var zetaShifted koalabear.Element
-		zetaShifted.Set(&w)
-		absShift := shift
-		if absShift < 0 {
-			zetaShifted.Inverse(&zetaShifted)
-			absShift = -absShift
-		}
-		zetaShifted.Exp(zetaShifted, big.NewInt(int64(absShift)))
-		zetaShifted.Mul(&zeta, &zetaShifted) // w^shift·ζ
-		openingProof, err := commitment.Open(poly, zetaShifted)
-		if err != nil {
-			return err
-		}
-		openingProof.Shift = shift // preserve original signed shift
-		com.OpeningProof = append(com.OpeningProof, openingProof)
-		proof.OpeningProofs[name] = com
-	}
-
-	return nil
-}
-
-// FillPublicValues fill the public values in the trace
+// FillPublicValues fills the public values in the trace.
 func (runtime *Prover) FillPublicValues() error {
 	for k, info := range runtime.PublicInputs {
 		p, ok := runtime.Trace[k]
@@ -408,39 +330,27 @@ func (runtime *Prover) Prove(knownColumns map[string]bool, nbWorkers int) (deriv
 
 	proof := derive.NewProof(runtime.Program.N)
 
-	// 0. fill the provided public values
-	// TODO should this step be part of the prover or part of the tracer ?
-	err := runtime.FillPublicValues()
-	if err != nil {
+	if err := runtime.FillPublicValues(); err != nil {
 		return proof, err
 	}
 
-	// 1. Solve
-	err = runtime.Solve(knownColumns, &proof, nbWorkers)
-	if err != nil {
+	if err := runtime.Solve(knownColumns, &proof, nbWorkers); err != nil {
 		return proof, err
 	}
 
-	// 2. Derive folding challenge
-	err = runtime.DeriveFinalFoldingChallenge(&proof)
-	if err != nil {
+	if err := runtime.DeriveFinalFoldingChallenge(&proof); err != nil {
 		return proof, err
 	}
 
-	// 3. compute quotient, and store it in the trace
-	err = runtime.ComputeQuotient(&proof)
-	if err != nil {
+	if err := runtime.ComputeQuotient(&proof); err != nil {
 		return proof, err
 	}
 
-	// 4. derive opening challenge
 	zeta, err := runtime.DeriveOpeningChallenge(&proof)
 	if err != nil {
 		return proof, err
 	}
 
-	// 5. compute opening proof
 	err = runtime.OpenCommitments(&proof, zeta)
-
 	return proof, err
 }

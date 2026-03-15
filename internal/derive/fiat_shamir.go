@@ -9,6 +9,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/commitment"
+	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/trace"
 )
 
@@ -111,10 +112,12 @@ func l1DisjointUnionL2(l1, l2 []string) []string {
 	return res
 }
 
-// ComputeChallenge type of DerivationStep creates a challenge named GP[0] which is derived via FS
-// from the commitments of all the leaves appearing in E.
-// TODO StepContext should contain publicInfo: which column needs to be completed by the verifier, and at which index
-func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, GP []string, ctx StepContext) error {
+// ComputeChallenge derives a Fiat-Shamir challenge by batch-committing all new
+// committed columns that appear in E at this level.  Instead of committing each
+// column individually, all columns are committed together via CommitBatch, and the
+// resulting batch digest is bound to the FS transcript.  Previously derived
+// challenge values are also bound so that the ordering is enforced.
+func ComputeChallenge(tr trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.Expr, GP []string, ctx StepContext) error {
 	if len(GP) == 0 {
 		return fmt.Errorf("len(GP)=0, it must contain the name of the challenge")
 	}
@@ -122,23 +125,20 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.
 
 	fsContext, ok := ctx.(FiatShamirContext)
 	if !ok {
-		return fmt.Errorf("ctx should be of time FiatShamirContext")
+		return fmt.Errorf("ctx should be of type FiatShamirContext")
 	}
 
-	// Steps 1-6 are protected by mu; use a closure so defer unlocks on all exit paths.
+	// Steps 1-6 are protected by mu.
 	fs, err := func() (*fiatshamir.Transcript, error) {
 		mu.Lock()
 		defer mu.Unlock()
 
-		// 1. the challenge dependencies are CommittedColumns AND challenges, otherwise
-		// the prover<->verifier interactionit is oblivious of the FS order and gives security gaps. We don't take
-		// the Computationable columns, because they are recomputed by the verifier.
+		// 1. Collect committed-column and challenge-name dependencies.
 		dependenciesCommittedColumns := GetColumnsId(E, expr.OnlyCommittedColumns...)
 		dependenciesChallenges := GetColumnsId(E, expr.OnlyChallenges...)
 
-		// 2. find on which commitments depend dependenciesChallenges, and remove them from dependenciesCommittedColumns
-		// if they appear in it -> round.DependenciesChallenges already accout for them.
-		deps := make([]string, 0, len(dependenciesChallenges))
+		// 2. Remove columns already covered by a previously derived challenge.
+		deps := make([]string, 0)
 		for _, c := range dependenciesChallenges {
 			cacheDeps, ok := proof.GetChallengeDeps(c)
 			if !ok {
@@ -148,72 +148,64 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.
 		}
 		dependenciesCommittedColumns = l1MinusL2(dependenciesCommittedColumns, deps)
 
-		// 3. record the round
-		round := TranscriptRound{
-			ChallengeName:                challengeName,
-			DependenciesCommittedColumns: dependenciesCommittedColumns,
-			DependenciesChallenges:       dependenciesChallenges,
-		}
-		proof.TranscriptRounds = append(proof.TranscriptRounds, round)
-
-		// 4. add the current challenge to the cacheChallengeDependencies map
+		// 3. Prevent double-registration.
 		if _, ok := proof.GetChallengeDeps(challengeName); ok {
 			return nil, fmt.Errorf("challenge %s is already recorded", challengeName)
 		}
-		proof.SetChallengeDeps(challengeName, l1DisjointUnionL2(round.DependenciesCommittedColumns, deps))
 
-		// 5. Commit to all the polynomials whose name matches leaves. Record the commitments in the proof, and update FS along the way
+		// 4. Build the polynomial list for the batch commitment. Careful of zeroing
+		// the public inputs
+		polys := make([]poly.Polynomial, 0, len(dependenciesCommittedColumns))
+		colNames := make([]string, 0, len(dependenciesCommittedColumns))
+		for _, id := range dependenciesCommittedColumns {
+			p, ok := tr[id]
+			if !ok {
+				return nil, fmt.Errorf("polynomial %s not found in the trace", id)
+			}
+			if publicInfo, ok := fsContext.PublicInputs[id]; ok {
+				buf := make([]koalabear.Element, proof.N)
+				copy(buf, p)
+				for _, idx := range publicInfo.Idx {
+					buf[idx].SetZero()
+				}
+				polys = append(polys, buf)
+			} else {
+				polys = append(polys, p)
+			}
+			colNames = append(colNames, id)
+		}
+
+		// 5. Batch-commit and record the batch.
+		batch, err := commitment.CommitBatch(polys)
+		if err != nil {
+			return nil, err
+		}
+		batchIdx := len(proof.Batch)
+		proof.Batch = append(proof.Batch, batch)
+		proof.BatchColumns = append(proof.BatchColumns, colNames)
+
+		// 6. Record the transcript round and update the dependency cache.
+		proof.TranscriptRounds = append(proof.TranscriptRounds, TranscriptRound{
+			ChallengeName:   challengeName,
+			DependencyBatch: batchIdx,
+		})
+		proof.SetChallengeDeps(challengeName, l1DisjointUnionL2(dependenciesCommittedColumns, deps))
+
+		// 7. Build the FS transcript: bind the batch digest, then all previous challenges.
 		fs := fiatshamir.NewTranscript(sha256.New())
 		if err := fs.NewChallenge(challengeName); err != nil {
 			return nil, err
 		}
-		for _, id := range round.DependenciesCommittedColumns {
-
-			// if the commitment exists, we bind it to challenge
-			_, ok := proof.OpeningProofs[id]
-			if ok {
-				comPacked := proof.OpeningProofs[id]
-				if err := fs.Bind(challengeName, comPacked.Digest.Marshal()); err != nil {
-					return nil, err
-				}
-				continue
-			}
-
-			// if not, we commit, record the commitment, and bind it to challenge.
-			poly, ok := trace[id]
-			if !ok {
-				return nil, fmt.Errorf("polynomial %s not found in the trace", id)
-			}
-			var com commitment.Digest
-			var err error
-			//If the column contains public inputs, we set the public inputs to zero
-			if publicInfo, ok := fsContext.PublicInputs[id]; ok {
-				buf := make([]koalabear.Element, proof.N)
-				copy(buf, poly)
-				for _, idx := range publicInfo.Idx {
-					buf[idx].SetZero()
-				}
-				com, err = commitment.Commit(buf)
-			} else {
-				com, err = commitment.Commit(poly)
-			}
-			if err != nil {
-				return nil, err
-			}
-			if err := fs.Bind(challengeName, com.Marshal()); err != nil {
-				return nil, err
-			}
-			proof.OpeningProofs[id] = commitment.PackedProof{Digest: com}
+		if err := fs.Bind(challengeName, batch.Marshal()); err != nil {
+			return nil, err
 		}
-
-		// 6. Bind the challenge to the other challenges it depends on
-		for _, id := range round.DependenciesChallenges {
-			c, ok := trace[id]
+		// Bind all previously derived challenge values (all rounds except the current one).
+		for _, prevRound := range proof.TranscriptRounds[:len(proof.TranscriptRounds)-1] {
+			c, ok := tr[prevRound.ChallengeName]
 			if !ok {
-				return nil, fmt.Errorf("challenge %s not found in the trace", id)
+				return nil, fmt.Errorf("challenge %s not found in the trace", prevRound.ChallengeName)
 			}
-			cVal := c[0]
-			if err := fs.Bind(challengeName, cVal.Marshal()); err != nil {
+			if err := fs.Bind(challengeName, c[0].Marshal()); err != nil {
 				return nil, err
 			}
 		}
@@ -224,7 +216,7 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.
 		return err
 	}
 
-	// 7. Derive the challenge (no lock needed: fs is local, no shared state)
+	// 8. Derive the challenge (no lock needed: fs is local).
 	bc, err := fs.ComputeChallenge(challengeName)
 	if err != nil {
 		return err
@@ -232,7 +224,5 @@ func ComputeChallenge(trace trace.Trace, proof *Proof, mu *sync.Mutex, E []expr.
 	var c koalabear.Element
 	c.SetBytes(bc)
 
-	// 8. add the challenge as a constant column, since it might appear in other constraints
-	return NewColumn(trace, challengeName, []koalabear.Element{c}, mu)
-
+	return NewColumn(tr, challengeName, []koalabear.Element{c}, mu)
 }

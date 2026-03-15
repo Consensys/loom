@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/consensys/loom/expr"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/expr"
 )
 
 // fnvKey computes an FNV-64a hash of s and returns it as a 16-char hex string.
@@ -518,53 +518,6 @@ func absorbChildren(n *DAGNode, kind NodeKind, flat map[*DAGNode]*DAGNode) []*DA
 	return children
 }
 
-// dagRefCount returns the number of parent references for every node in the
-// subtree rooted at root (i.e. the in-degree in the DAG).
-func dagRefCount(root *DAGNode) map[*DAGNode]int {
-	counts := make(map[*DAGNode]int)
-	var dfs func(*DAGNode)
-	dfs = func(n *DAGNode) {
-		counts[n]++
-		if counts[n] == 1 { // recurse only on first visit to avoid exponential blowup
-			for _, child := range n.Children {
-				dfs(child)
-			}
-		}
-	}
-	dfs(root)
-	return counts
-}
-
-// dagNodeLabel returns a short, human-readable label for n (operator name or
-// leaf type + identifier).
-func dagNodeLabel(n *DAGNode) string {
-	switch n.Kind {
-	case KindLeaf:
-		switch n.Leaf.Type {
-		case expr.CommittedColumn:
-			return "col:" + n.Leaf.Name
-		case expr.RotatedColumn:
-			return "shifted:" + n.Leaf.String()
-		case expr.ChallengeColumn:
-			return "chal:" + n.Leaf.Name
-		case expr.VirtualColumn:
-			return "comp:" + n.Leaf.Name
-		case expr.ConstantColumn:
-			return "const:" + n.Leaf.Value.String()
-		}
-		return n.Leaf.String()
-	case KindAdd:
-		return "add"
-	case KindSub:
-		return "sub"
-	case KindMul:
-		return "mul"
-	case KindPow:
-		return fmt.Sprintf("^%d", n.Exp)
-	}
-	return "?"
-}
-
 // Eval evaluates the DAG at the given variable assignment. It processes nodes
 // in topological order (d.Nodes is children-before-parents), caching each
 // result so shared nodes are computed only once.
@@ -813,6 +766,20 @@ func (d *DAG) Leaves(config expr.Config) []string {
 	for _, n := range d.Nodes {
 		if n.Kind == KindLeaf {
 			leaves = append(leaves, n.Leaf.Leaves(config)...)
+		}
+	}
+	return leaves
+}
+
+// LeavesFull returns every unique non-Const leaf in the DAG that is not
+// excluded by config, as full *expr.Leaf structs. The filtering rules are
+// identical to those of Expr.LeavesFull. Because the DAG deduplicates nodes,
+// each structurally-identical leaf appears at most once.
+func (d *DAG) LeavesFull(config expr.Config) []*expr.Leaf {
+	var leaves []*expr.Leaf
+	for _, n := range d.Nodes {
+		if n.Kind == KindLeaf {
+			leaves = append(leaves, n.Leaf.LeavesFull(config)...)
 		}
 	}
 	return leaves

@@ -11,7 +11,6 @@ import (
 	"github.com/consensys/loom/constraint"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/proof"
-	"github.com/consensys/loom/viz"
 )
 
 func TestFibonacci(t *testing.T) {
@@ -72,9 +71,9 @@ func TestFibonacci(t *testing.T) {
 		fmt.Println(err)
 		os.Exit(-1)
 	}
-	viz.WriteTraceToCSV("fibonacci.csv", trace, proof.N)
-	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, "transcript_rounds.html")
-	viz.WriteDerivationPlanDagToHTML(cp, "derivation_plan.html")
+	// viz.WriteTraceToCSV("fibonacci.csv", trace, proof.N)
+	// viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, "transcript_rounds.html")
+	// viz.WriteDerivationPlanDagToHTML(cp, "derivation_plan.html")
 
 	// verifierRunTime := verifier.NewRunTime(cp)
 	err = loom.Verify(cp, &proof, publicInputs, 1)
