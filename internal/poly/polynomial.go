@@ -87,15 +87,13 @@ func divPointwise(P1, P2 Polynomial, N int) (Polynomial, error) {
 }
 
 func countMultiplicity(S, T Polynomial, N int) Polynomial {
+	freq := make(map[[1]uint32]uint64, N)
+	for j := 0; j < N; j++ {
+		freq[S[j].Bits()]++
+	}
 	res := make(Polynomial, N)
-	var one koalabear.Element
-	one.SetOne()
 	for i := 0; i < N; i++ {
-		for j := 0; j < N; j++ {
-			if T[i].Equal(&S[j]) {
-				res[i].Add(&res[i], &one)
-			}
-		}
+		res[i].SetUint64(freq[T[i].Bits()])
 	}
 	return res
 }
