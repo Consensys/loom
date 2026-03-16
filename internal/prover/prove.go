@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"sync"
-	"sync/atomic"
 
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -38,117 +37,113 @@ func NewProver(cp constraint.Program, trace trace.Trace, publicInputs derive.Pub
 	return res
 }
 
-// Kahn's style scheduler for Functions (with parallel schedule)
-func (runtime *Prover) Solve(knownColumns map[string]bool, proof *derive.Proof, nbWorker int) error {
+// Kahn's style scheduler for Functions (with parallel schedule).
+// If steps is non-nil it is used instead of Program.DerivationPlan.
+// func (runtime *Prover) DerivePlan(knownColumns map[string]bool, proof *derive.Proof, nbWorker int, steps ...[]derive.DerivationStep) error {
 
-	funcs := runtime.Program.DerivationPlan
-	n := len(funcs)
+// 	funcs := runtime.Program.DerivationPlan
+// 	if len(steps) > 0 {
+// 		funcs = steps[0]
+// 	}
+// 	n := len(funcs)
 
-	inDegree := make([]int32, n)
-	consumers := make(map[string][]int)
+// 	inDegree := make([]int32, n)
+// 	consumers := make(map[string][]int)
 
-	// Build dependency tracking
-	for i, f := range funcs {
-		leaves := derive.GetColumnsBaseId(f.Inputs)
-		for _, l := range leaves {
-			if !knownColumns[l] {
-				inDegree[i]++
-			}
-			consumers[l] = append(consumers[l], i)
-		}
-	}
+// 	// Build dependency tracking
+// 	for i, f := range funcs {
+// 		leaves := derive.GetColumnsBaseId(f.Inputs)
+// 		for _, l := range leaves {
+// 			if !knownColumns[l] {
+// 				inDegree[i]++
+// 			}
+// 			consumers[l] = append(consumers[l], i)
+// 		}
+// 	}
 
-	readyQueue := make(chan int, n)
-	var wg sync.WaitGroup
+// 	readyQueue := make(chan int, n)
+// 	var wg sync.WaitGroup
 
-	// Count how many functions executed
-	var executed int32
+// 	// Count how many functions executed
+// 	var executed int32
 
-	// Worker logic
-	worker := func() {
-		for i := range readyQueue {
-			err := funcs[i].Execute(runtime.Trace, proof, &runtime.Mu)
-			if err != nil {
-				panic(err)
-			}
+// 	// Worker logic
+// 	worker := func() {
+// 		for i := range readyQueue {
+// 			err := funcs[i].Execute(runtime.Trace, proof, &runtime.Mu)
+// 			if err != nil {
+// 				panic(err)
+// 			}
 
-			atomic.AddInt32(&executed, 1)
+// 			atomic.AddInt32(&executed, 1)
 
-			// Mark outputs known and release consumers
-			for _, out := range funcs[i].Outputs {
-				runtime.Mu.Lock()
-				knownColumns[out] = true
-				runtime.Mu.Unlock()
+// 			// Mark outputs known and release consumers
+// 			for _, out := range funcs[i].Outputs {
+// 				runtime.Mu.Lock()
+// 				knownColumns[out] = true
+// 				runtime.Mu.Unlock()
 
-				for _, j := range consumers[out] {
-					if atomic.AddInt32(&inDegree[j], -1) == 0 {
-						wg.Add(1)
-						readyQueue <- j
-					}
-				}
-			}
+// 				for _, j := range consumers[out] {
+// 					if atomic.AddInt32(&inDegree[j], -1) == 0 {
+// 						wg.Add(1)
+// 						readyQueue <- j
+// 					}
+// 				}
+// 			}
 
-			wg.Done()
-		}
-	}
+// 			wg.Done()
+// 		}
+// 	}
 
-	// Seed initial ready functions before starting workers
-	for i := range funcs {
-		if inDegree[i] == 0 {
-			wg.Add(1)
-			readyQueue <- i
-		}
-	}
+// 	// Seed initial ready functions before starting workers
+// 	for i := range funcs {
+// 		if inDegree[i] == 0 {
+// 			wg.Add(1)
+// 			readyQueue <- i
+// 		}
+// 	}
 
-	// Start workers
-	for i := 0; i < nbWorker; i++ {
-		go worker()
-	}
+// 	// Start workers
+// 	for i := 0; i < nbWorker; i++ {
+// 		go worker()
+// 	}
 
-	// Wait until all scheduled work completes
-	wg.Wait()
-	close(readyQueue)
+// 	// Wait until all scheduled work completes
+// 	wg.Wait()
+// 	close(readyQueue)
 
-	// Detect cycle / unsatisfied dependencies
-	if int(executed) != n {
-		return fmt.Errorf("cycle detected or missing initialization")
-	}
+// 	// Detect cycle / unsatisfied dependencies
+// 	if int(executed) != n {
+// 		return fmt.Errorf("cycle detected or missing initialization")
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
-// DeriveFinalFoldingChallenge commits all columns not yet committed, derives the
-// folding challenge, and stores it in the trace.
-func (runtime *Prover) DeriveFinalFoldingChallenge(proof *derive.Proof) error {
+// commitAndDeriveChallenge commits the polynomials listed in Program.Batches[batchIdx],
+// records the batch in proof, and derives a Fiat-Shamir challenge whose name is
+// challengeName.  The FS transcript binds the batch digest followed by all previously
+// derived challenge values, matching the verifier's replay order.
+func (runtime *Prover) commitAndDeriveChallenge(batchIdx int, proof *derive.Proof) error {
+	colNames := runtime.Program.Batches[batchIdx]
 
-	// 1. Collect all committed-column leaves in the vanishing relation that have
-	//    not yet been included in any batch commitment.
-	leaves := runtime.Program.VanishingRelation.Leaves(
-		expr.NewConfig(expr.WithoutChallenges(), expr.WithoutVirtualumns(), expr.WithoutRotatedColumns()))
-
-	var polys []poly.Polynomial
-	var colNames []string
-	seen := make(map[string]bool)
-	for _, l := range leaves {
-		if seen[l] || proof.IsColumnCommitted(l) {
-			continue
-		}
-		seen[l] = true
-		p, ok := runtime.Trace[l]
+	// 1. Build polynomial list, zeroing public-input positions before committing.
+	polys := make([]poly.Polynomial, len(colNames))
+	for i, name := range colNames {
+		p, ok := runtime.Trace[name]
 		if !ok {
-			return fmt.Errorf("polynomial %s not found in the trace", l)
+			return fmt.Errorf("polynomial %s not found in the trace", name)
 		}
-		if publicInfo, ok := runtime.PublicInputs[l]; ok {
+		if publicInfo, ok := runtime.PublicInputs[name]; ok {
 			buf := make([]koalabear.Element, proof.N)
 			copy(buf, p)
 			for _, idx := range publicInfo.Idx {
 				buf[idx].SetZero()
 			}
-			polys = append(polys, buf)
+			polys[i] = buf
 		} else {
-			polys = append(polys, p)
+			polys[i] = p
 		}
-		colNames = append(colNames, l)
 	}
 
 	// 2. Batch-commit.
@@ -156,42 +151,56 @@ func (runtime *Prover) DeriveFinalFoldingChallenge(proof *derive.Proof) error {
 	if err != nil {
 		return err
 	}
-	batchIdx := len(proof.Batch)
+	batchRecordIdx := len(proof.Batch)
 	proof.Batch = append(proof.Batch, batch)
 	proof.BatchColumns = append(proof.BatchColumns, colNames)
 
 	// 3. Record the transcript round.
+	challengeName := constants.CanonicalChallengeName(batchIdx)
 	proof.TranscriptRounds = append(proof.TranscriptRounds, derive.TranscriptRound{
-		ChallengeName:   constants.FINAL_FOLDING_CHALLENGE,
-		DependencyBatch: batchIdx,
+		ChallengeName:   challengeName,
+		DependencyBatch: batchRecordIdx,
 	})
 
 	// 4. Build FS transcript: bind batch digest + all previously derived challenges.
+	// Order matches the verifier's DeriveChallenge: batch first, then prev challenges in order.
 	fs := fiatshamir.NewTranscript(sha256.New())
-	if err := fs.NewChallenge(constants.FINAL_FOLDING_CHALLENGE); err != nil {
+	if err := fs.NewChallenge(challengeName); err != nil {
 		return err
 	}
-	if err := fs.Bind(constants.FINAL_FOLDING_CHALLENGE, batch.Marshal()); err != nil {
-		return err
-	}
-	for _, prevRound := range proof.TranscriptRounds[:len(proof.TranscriptRounds)-1] {
-		c, ok := runtime.Trace[prevRound.ChallengeName]
-		if !ok {
-			return fmt.Errorf("challenge %s not found in the trace", prevRound.ChallengeName)
+	if len(runtime.Program.Batches[batchIdx]) > 0 {
+		if err := fs.Bind(challengeName, batch.Marshal()); err != nil {
+			return err
 		}
-		if err := fs.Bind(constants.FINAL_FOLDING_CHALLENGE, c[0].Marshal()); err != nil {
+	}
+	if batchIdx > 0 {
+		prevChallengeName := constants.CanonicalChallengeName(batchIdx - 1)
+		prevChallenge, ok := runtime.Trace[prevChallengeName]
+		if !ok {
+			return fmt.Errorf("challenge %s not found in the trace", prevChallengeName)
+		}
+		if err := fs.Bind(challengeName, prevChallenge[0].Marshal()); err != nil {
 			return err
 		}
 	}
 
-	// 5. Derive challenge.
-	bc, err := fs.ComputeChallenge(constants.FINAL_FOLDING_CHALLENGE)
+	// 5. Derive and store challenge.
+	bc, err := fs.ComputeChallenge(challengeName)
 	if err != nil {
 		return err
 	}
 	var c koalabear.Element
 	c.SetBytes(bc)
-	return derive.NewColumn(runtime.Trace, constants.FINAL_FOLDING_CHALLENGE, []koalabear.Element{c}, &runtime.Mu)
+	return derive.NewColumn(runtime.Trace, challengeName, []koalabear.Element{c}, &runtime.Mu)
+}
+
+// DeriveFinalFoldingChallenge commits the columns in Program.Batches[last], derives
+// the folding challenge, and stores it in the trace.
+// It returns the committed column names.
+func (runtime *Prover) DeriveFinalFoldingChallenge(proof *derive.Proof) ([]string, error) {
+	lastBatchIdx := len(runtime.Program.Batches) - 1
+	colNames := runtime.Program.Batches[lastBatchIdx]
+	return colNames, runtime.commitAndDeriveChallenge(lastBatchIdx, proof)
 }
 
 // ComputeQuotient computes H := VanishingRelation / (X^N - 1), commits to it as a
@@ -230,14 +239,16 @@ func (runtime *Prover) DeriveOpeningChallenge(proof *derive.Proof) (koalabear.El
 	if err := fs.NewChallenge(constants.FINAL_EVALUATION_POINT); err != nil {
 		return koalabear.Element{}, err
 	}
+	// Bind quotient batch (always non-empty).
 	if err := fs.Bind(constants.FINAL_EVALUATION_POINT, proof.Batch[lastBatchIdx].Marshal()); err != nil {
 		return koalabear.Element{}, err
 	}
-	// Bind all previously derived challenge values (all rounds except the current one).
-	for _, prevRound := range proof.TranscriptRounds[:len(proof.TranscriptRounds)-1] {
-		c, ok := runtime.Trace[prevRound.ChallengeName]
+	// Bind only the immediately preceding challenge (the final folding challenge).
+	if nRounds := len(proof.TranscriptRounds); nRounds > 1 {
+		prevName := proof.TranscriptRounds[nRounds-2].ChallengeName
+		c, ok := runtime.Trace[prevName]
 		if !ok {
-			return koalabear.Element{}, fmt.Errorf("challenge %s not found in the trace", prevRound.ChallengeName)
+			return koalabear.Element{}, fmt.Errorf("challenge %s not found in the trace", prevName)
 		}
 		if err := fs.Bind(constants.FINAL_EVALUATION_POINT, c[0].Marshal()); err != nil {
 			return koalabear.Element{}, err
@@ -278,7 +289,7 @@ func (runtime *Prover) OpenCommitments(proof *derive.Proof, zeta koalabear.Eleme
 		}
 	}
 
-	proof.OpeningProofs = make([]commitment.BatchOpeningProof, 0, len(proof.Batch))
+	proof.OpeningProofs = make([]commitment.BatchProofOpening, 0, len(proof.Batch))
 	for batchIdx, colNames := range proof.BatchColumns {
 		polys := make([]poly.Polynomial, len(colNames))
 		shifts := make([][]int, len(colNames))
@@ -303,7 +314,7 @@ func (runtime *Prover) OpenCommitments(proof *derive.Proof, zeta koalabear.Eleme
 			}
 			sort.Ints(shifts[polyIdx])
 		}
-		op, err := commitment.BatchOpen(proof.Batch[batchIdx], polys, zeta, shifts)
+		op, err := commitment.OpenBatch(proof.Batch[batchIdx], polys, zeta, shifts)
 		if err != nil {
 			return err
 		}
@@ -326,6 +337,20 @@ func (runtime *Prover) FillPublicValues() error {
 	return nil
 }
 
+func (runtime *Prover) DerivePlan(knownColumns map[string]bool, proof *derive.Proof, nbWorker int) error {
+	for i, steps := range runtime.Program.DerivationPlanScheduled {
+		for _, step := range steps {
+			if err := step.Execute(runtime.Trace, proof, &runtime.Mu); err != nil {
+				return err
+			}
+		}
+		if err := runtime.commitAndDeriveChallenge(i, proof); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (runtime *Prover) Prove(knownColumns map[string]bool, nbWorkers int) (derive.Proof, error) {
 
 	proof := derive.NewProof(runtime.Program.N)
@@ -334,11 +359,7 @@ func (runtime *Prover) Prove(knownColumns map[string]bool, nbWorkers int) (deriv
 		return proof, err
 	}
 
-	if err := runtime.Solve(knownColumns, &proof, nbWorkers); err != nil {
-		return proof, err
-	}
-
-	if err := runtime.DeriveFinalFoldingChallenge(&proof); err != nil {
+	if err := runtime.DerivePlan(knownColumns, &proof, nbWorkers); err != nil {
 		return proof, err
 	}
 
@@ -351,6 +372,5 @@ func (runtime *Prover) Prove(knownColumns map[string]bool, nbWorkers int) (deriv
 		return proof, err
 	}
 
-	err = runtime.OpenCommitments(&proof, zeta)
-	return proof, err
+	return proof, runtime.OpenCommitments(&proof, zeta)
 }

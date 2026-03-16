@@ -33,7 +33,7 @@ func (lc LagrangeContext) String() string {
 	return GetLagrangeID(lc.i, lc.N)
 }
 
-func (lc LagrangeContext) GetID() StepKind {
+func (lc LagrangeContext) GetKind() StepKind {
 	return LAGRANGE
 }
 

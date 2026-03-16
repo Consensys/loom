@@ -50,7 +50,7 @@ func TestWriteProofTranscriptRoundsDagToHTML_Permutation(t *testing.T) {
 	}
 
 	out := t.TempDir() + "/dag_permutation.html"
-	if err := WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, out); err != nil {
+	if err := WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, proof.BatchColumns, out); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(out)
@@ -87,7 +87,7 @@ func TestWriteProofTranscriptRoundsDagToHTML_Tuple(t *testing.T) {
 	}
 
 	out := t.TempDir() + "/dag_multiset.html"
-	if err := WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, out); err != nil {
+	if err := WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, proof.BatchColumns, out); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(out)

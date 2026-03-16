@@ -51,15 +51,8 @@ func TestCopyPermutation(t *testing.T) {
 	knownColumns := map[string]bool{"P1": true, "P2": true}
 	proof := derive.NewProof(system.N)
 
-	// 1. Solve + sanity checks
-	err = proverRunTime.Solve(knownColumns, &proof, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sanityCheck(&proverRunTime, system.Relations, system.N, t)
-
-	// 2. DeriveFinalFoldingChallenge + sanity checks
-	err = proverRunTime.DeriveFinalFoldingChallenge(&proof)
+	// 1. DerivePlan + sanity checks
+	err = proverRunTime.DerivePlan(knownColumns, &proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,15 +131,8 @@ func TestCopyPermutationTuple(t *testing.T) {
 	knownColumns := map[string]bool{"P1": true, "P2": true}
 	proof := derive.NewProof(system.N)
 
-	// 1. Solve + sanity checks
-	err = proverRunTime.Solve(knownColumns, &proof, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sanityCheck(&proverRunTime, system.Relations, system.N, t)
-
-	// 2. DeriveFinalFoldingChallenge + sanity checks
-	err = proverRunTime.DeriveFinalFoldingChallenge(&proof)
+	// 1. DerivePlan + sanity checks
+	err = proverRunTime.DerivePlan(knownColumns, &proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

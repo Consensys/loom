@@ -11,28 +11,6 @@ import (
 	"github.com/consensys/loom/viz"
 )
 
-func getKnownColumns(n int) map[string]bool {
-
-	knowncolumns := make(map[string]bool)
-	knowncolumns[ID_Ql] = true
-	knowncolumns[ID_Qr] = true
-	knowncolumns[ID_Qm] = true
-	knowncolumns[ID_Qo] = true
-	knowncolumns[ID_Qk] = true
-	knowncolumns[ID_ID1] = true
-	knowncolumns[ID_ID2] = true
-	knowncolumns[ID_ID3] = true
-	knowncolumns[ID_S1] = true
-	knowncolumns[ID_S2] = true
-	knowncolumns[ID_S3] = true
-	for i := 0; i < n; i++ {
-		knowncolumns[ithInstance(ID_L, i)] = true
-		knowncolumns[ithInstance(ID_R, i)] = true
-		knowncolumns[ithInstance(ID_O, i)] = true
-	}
-	return knowncolumns
-}
-
 func getIthPlonkRelation(n int) constraint.Relation {
 
 	C := expr.Col(ID_Ql).Mul(expr.Col(ithInstance(ID_L, n))).
@@ -43,21 +21,6 @@ func getIthPlonkRelation(n int) constraint.Relation {
 
 	return C
 }
-
-// func getIthTuples(n int) (multiSetIds1 [][]string, multiSetIds2 [][]string) {
-// 	multiSetIds1 = [][]string{
-// 		[]string{ithInstance(ID_L, n), ID_ID1},
-// 		[]string{ithInstance(ID_R, n), ID_ID2},
-// 		[]string{ithInstance(ID_O, n), ID_ID3},
-// 	}
-
-// 	multiSetIds2 = [][]string{
-// 		[]string{ithInstance(ID_L, n), ID_S1},
-// 		[]string{ithInstance(ID_R, n), ID_S2},
-// 		[]string{ithInstance(ID_O, n), ID_S3},
-// 	}
-// 	return
-// }
 
 func mergeTrace(t1, t2 trace.Trace) trace.Trace {
 	res := make(trace.Trace, len(t1)+len(t2))
@@ -136,6 +99,7 @@ func TestPlonk(t *testing.T) {
 	}
 
 	cp := system.Compile()
+
 	viz.WriteDerivationPlanDagToHTML(cp, "plonk_dag.html")
 
 	proof, err := loom.Prove(cp, fulltrace, nil, 1)
@@ -143,7 +107,7 @@ func TestPlonk(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, "plonk_transcript_rounds.html")
+	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, proof.BatchColumns, "plonk_transcript_rounds.html")
 
 	err = loom.Verify(cp, &proof, nil, 1)
 	if err != nil {

@@ -14,7 +14,7 @@ type IOPStepContext struct {
 	Kind StepKind
 }
 
-func (ctx IOPStepContext) GetID() StepKind {
+func (ctx IOPStepContext) GetKind() StepKind {
 	return ctx.Kind
 }
 

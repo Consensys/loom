@@ -28,11 +28,15 @@ func actionLabel(pa derive.DerivationStep) string {
 }
 
 // WriteDerivationPlanDagToHTML writes a self-contained HTML file visualising the
-// DAG of DerivationPlan inside cp.
+// DAG of DerivationPlanScheduled inside cp.
 //
 // Each DerivationStep is a node. Column IDs extracted from its Inputs that never
 // appear as any action's Output are "known" (initial) columns. Column IDs that
 // appear as some action's Output are "computed" columns.
+//
+// Layers are read directly from DerivationPlanScheduled: actions in slot s are
+// placed at layer 2*s+1, their output columns at layer 2*s+2, and known input
+// columns at layer 0.
 //
 // Visual conventions:
 //   - Blue rectangles     : known (initial) input columns
@@ -41,74 +45,78 @@ func actionLabel(pa derive.DerivationStep) string {
 //   - Dashed blue arrow   : column → action (input dependency)
 //   - Solid orange arrow  : action → column (produced output)
 func WriteDerivationPlanDagToHTML(cp constraint.Program, filename string) error {
-	actions := cp.DerivationPlan
+	scheduled := cp.DerivationPlanScheduled
 
 	// ── 1. find which columns are produced by actions ────────────────────────
 	producedBy := make(map[string]bool)
-	for _, pa := range actions {
-		for _, out := range pa.Outputs {
-			producedBy[out] = true
+	for _, steps := range scheduled {
+		for _, pa := range steps {
+			for _, out := range pa.Outputs {
+				producedBy[out] = true
+			}
 		}
 	}
 
-	// ── 2. build nodes and edges ─────────────────────────────────────────────
-	kindOf := make(map[string]string)  // id → "known" | "computed" | "action"
-	labelOf := make(map[string]string) // id → display label
+	// ── 2. build nodes, edges, and layer assignments ──────────────────────────
+	// Layer scheme: known columns → 0; actions in slot s → 2*s+1; their outputs → 2*s+2.
+	kindOf  := make(map[string]string)  // id → "known" | "computed" | "action"
+	labelOf := make(map[string]string)  // id → display label
+	layerOf := make(map[string]int)     // id → layer index
 	var edges []dagEdge
 
-	aID := func(i int) string { return fmt.Sprintf("__action_%d", i) }
+	actionIdx := 0
+	batchIdx  := 0
+	for slot, steps := range scheduled {
+		for _, pa := range steps {
+			id := fmt.Sprintf("__action_%d", actionIdx)
+			actionIdx++
 
-	for i, pa := range actions {
-		id := aID(i)
-		kindOf[id] = "action"
-		labelOf[id] = actionLabel(pa)
+			kindOf[id]  = "action"
+			labelOf[id] = actionLabel(pa)
+			layerOf[id] = 2*slot + 1
 
-		// edges from input columns → this action
-		for _, col := range derive.GetColumnsId(pa.Inputs) {
-			if _, seen := kindOf[col]; !seen {
-				if producedBy[col] {
-					kindOf[col] = "computed"
-				} else {
-					kindOf[col] = "known"
+			// Determine the input column names for this action.
+			// For Fiat-Shamir steps the inputs are the new columns in Batches[i],
+			// not the full (unpruned) pa.Inputs list.
+			var inputCols []string
+			if pa.StepContext.GetKind() == derive.FIAT_SHAMIR && batchIdx < len(cp.Batches) {
+				inputCols = cp.Batches[batchIdx]
+				if batchIdx > 0 {
+					prev := fmt.Sprintf("loom@challenge_%d", batchIdx-1)
+					inputCols = append([]string{prev}, inputCols...)
 				}
-				labelOf[col] = dagShortLabel(col)
+				batchIdx++
+			} else {
+				inputCols = derive.GetColumnsId(pa.Inputs)
 			}
-			edges = append(edges, dagEdge{From: col, To: id, Kind: "to_action"})
-		}
 
-		// edges from this action → output columns
-		for _, out := range pa.Outputs {
-			if _, seen := kindOf[out]; !seen {
-				kindOf[out] = "computed"
-				labelOf[out] = dagShortLabel(out)
+			// edges from input columns → this action
+			for _, col := range inputCols {
+				if _, seen := kindOf[col]; !seen {
+					if producedBy[col] {
+						kindOf[col] = "computed"
+					} else {
+						kindOf[col]  = "known"
+						layerOf[col] = 0
+					}
+					labelOf[col] = dagShortLabel(col)
+				}
+				edges = append(edges, dagEdge{From: col, To: id, Kind: "to_action"})
 			}
-			edges = append(edges, dagEdge{From: id, To: out, Kind: "from_action"})
+
+			// edges from this action → output columns
+			for _, out := range pa.Outputs {
+				if _, seen := kindOf[out]; !seen {
+					kindOf[out]  = "computed"
+					labelOf[out] = dagShortLabel(out)
+				}
+				layerOf[out] = 2*slot + 2
+				edges = append(edges, dagEdge{From: id, To: out, Kind: "from_action"})
+			}
 		}
 	}
 
-	// ── 3. layer assignment ─────────────────────────────────────────────────
-	// DerivationPlan are already in topological order (from Kahn's compiler).
-	layerOf := make(map[string]int)
-	for id, k := range kindOf {
-		if k == "known" {
-			layerOf[id] = 0
-		}
-	}
-	for i, pa := range actions {
-		id := aID(i)
-		layer := 1
-		for _, col := range derive.GetColumnsId(pa.Inputs) {
-			if l := layerOf[col] + 1; l > layer {
-				layer = l
-			}
-		}
-		layerOf[id] = layer
-		for _, out := range pa.Outputs {
-			layerOf[out] = layer + 1
-		}
-	}
-
-	// ── 4. group by layer and sort within each layer ─────────────────────────
+	// ── 3. group by layer and sort within each layer ─────────────────────────
 	byLayer := make(map[int][]string)
 	maxLayer := 0
 	for id := range kindOf {

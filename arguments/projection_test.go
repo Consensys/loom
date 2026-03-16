@@ -73,13 +73,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 
 	viz.WriteDerivationPlanDagToHTML(cp, "pa_projection_multi.html")
 
-	err = proverRunTime.Solve(knownColumns, &proof, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sanityCheck(&proverRunTime, system.Relations, system.N, t)
-
-	err = proverRunTime.DeriveFinalFoldingChallenge(&proof)
+	err = proverRunTime.DerivePlan(knownColumns, &proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +104,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 	}
 	CheckFiatShamir(&proverRunTime, &verifierRunTime, &proof, zeta, t)
 
-	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, "projection_multi_rounds.html")
+	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, proof.BatchColumns, "projection_multi_rounds.html")
 
 	err = verifierRunTime.Verify(&proof, 1)
 	if err != nil {
@@ -175,15 +169,8 @@ func TestEqualityFilteredColumns(t *testing.T) {
 	knownColumns := map[string]bool{"A": true, "B": true, "F1": true, "F2": true}
 	proof := derive.NewProof(system.N)
 
-	// 1. Solve + sanity checks
-	err = proverRunTime.Solve(knownColumns, &proof, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sanityCheck(&proverRunTime, system.Relations, system.N, t)
-
-	// 2. DeriveFinalFoldingChallenge + sanity checks
-	err = proverRunTime.DeriveFinalFoldingChallenge(&proof)
+	// 1. DerivePlan + sanity checks
+	err = proverRunTime.DerivePlan(knownColumns, &proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

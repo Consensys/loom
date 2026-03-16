@@ -27,7 +27,7 @@ func (bc BuilderContext) Key() string {
 	return ""
 }
 
-func (bc BuilderContext) GetID() StepKind {
+func (bc BuilderContext) GetKind() StepKind {
 	return REGISTER_COL
 }
 

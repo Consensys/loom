@@ -36,7 +36,7 @@ func NewRunTime(cp constraint.Program, publicInputs derive.PublicInputs) Verifie
 }
 
 // DeriveChallenge derives the challenge for proof.TranscriptRounds[i] by binding the
-// batch digest and all previously derived challenge values.
+// batch digest (if the batch is non-empty) and the immediately preceding challenge.
 func (runtime *Verifier) DeriveChallenge(proof *derive.Proof, i int) error {
 
 	round := proof.TranscriptRounds[i]
@@ -45,14 +45,15 @@ func (runtime *Verifier) DeriveChallenge(proof *derive.Proof, i int) error {
 	if err := fs.NewChallenge(round.ChallengeName); err != nil {
 		return err
 	}
-	if err := fs.Bind(round.ChallengeName, proof.Batch[round.DependencyBatch].Marshal()); err != nil {
-		return err
+	if len(proof.BatchColumns[round.DependencyBatch]) > 0 {
+		if err := fs.Bind(round.ChallengeName, proof.Batch[round.DependencyBatch].Marshal()); err != nil {
+			return err
+		}
 	}
-	// Bind all previously derived challenge values (rounds 0..i-1).
-	for j := 0; j < i; j++ {
-		prevChallenge, ok := runtime.Vars[proof.TranscriptRounds[j].ChallengeName]
+	if i > 0 {
+		prevChallenge, ok := runtime.Vars[proof.TranscriptRounds[i-1].ChallengeName]
 		if !ok {
-			return fmt.Errorf("challenge %s not yet derived", proof.TranscriptRounds[j].ChallengeName)
+			return fmt.Errorf("challenge %s not yet derived", proof.TranscriptRounds[i-1].ChallengeName)
 		}
 		if err := fs.Bind(round.ChallengeName, prevChallenge.Marshal()); err != nil {
 			return err
@@ -195,7 +196,7 @@ func (runtime *Verifier) VerifyOpeningProofs(proof *derive.Proof) error {
 		if batchIdx >= len(proof.OpeningProofs) {
 			break
 		}
-		if err := commitment.BatchVerify(batch, proof.OpeningProofs[batchIdx], zeta); err != nil {
+		if err := commitment.VerifyBatch(batch, proof.OpeningProofs[batchIdx], zeta); err != nil {
 			return err
 		}
 	}

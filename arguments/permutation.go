@@ -148,7 +148,7 @@ func PermutationTuple(system *constraint.Builder, E1, E2 [][]expr.Expr) error {
 	for i := 0; i < len(E1); i++ {
 		deps = append(deps, E1[i]...)
 	}
-	for i := 0; i < len(E1); i++ {
+	for i := 0; i < len(E2); i++ {
 		deps = append(deps, E2[i]...)
 	}
 	system.AddChallengeStep(deps, alpha)

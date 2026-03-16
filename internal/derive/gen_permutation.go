@@ -33,7 +33,7 @@ func (pc PermutationContext) String() string {
 	return "gen_permutation"
 }
 
-func (pc PermutationContext) GetID() StepKind {
+func (pc PermutationContext) GetKind() StepKind {
 	return PERMUTATION_GEN
 }
 

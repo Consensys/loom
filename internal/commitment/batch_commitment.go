@@ -16,15 +16,15 @@ func (d *Batch) Marshal() []byte {
 	return d.D.Marshal()
 }
 
-// BatchOpeningProof
-type BatchOpeningProof struct {
+// BatchProofOpening
+type BatchProofOpening struct {
 	// ClaimedValues[i][j] contains the claimed evaluation of P[i] at ζ shifted by Shift[i][j]
 	ClaimedValues [][]koalabear.Element
 	Shift         [][]int
 }
 
-// BatchVerify verifies a batch opening proof (toy: always returns nil).
-func BatchVerify(digest Batch, proof BatchOpeningProof, zeta koalabear.Element) error {
+// VerifyBatch verifies a batch opening proof (toy: always returns nil).
+func VerifyBatch(digest Batch, proof BatchProofOpening, zeta koalabear.Element) error {
 	return nil
 }
 
@@ -36,13 +36,13 @@ func CommitBatch(list []poly.Polynomial) (Batch, error) {
 	return Batch{D: res}, nil
 }
 
-// BatchOpen batch open a subtrace at zeta. The polynomials in the trace
+// OpenBatch batch open a subtrace at zeta. The polynomials in the trace
 // are interpreted in Lagrange form.
 // the i-th claimed values list is structured as follows:
 // ClaimedValues[i][j] = claimed value of P[i] at zeta shifted by ω to the Shift[j]
-func BatchOpen(digest Batch, list []poly.Polynomial, zeta koalabear.Element, shift [][]int) (BatchOpeningProof, error) {
+func OpenBatch(digest Batch, list []poly.Polynomial, zeta koalabear.Element, shift [][]int) (BatchProofOpening, error) {
 
-	res := BatchOpeningProof{
+	res := BatchProofOpening{
 		ClaimedValues: make([][]koalabear.Element, len(list)),
 		Shift:         shift,
 	}

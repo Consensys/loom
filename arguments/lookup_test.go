@@ -67,15 +67,8 @@ func TestLookup(t *testing.T) {
 	knowncolumns := map[string]bool{"T": true, "S": true}
 	proof := derive.NewProof(system.N)
 
-	// 1. Solve + sanity checks
-	err := proverRunTime.Solve(knowncolumns, &proof, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sanityCheck(&proverRunTime, system.Relations, system.N, t)
-
-	// 2. DeriveFinalFoldingChallenge + sanity checks
-	err = proverRunTime.DeriveFinalFoldingChallenge(&proof)
+	// 1. DerivePlan + sanity checks
+	err := proverRunTime.DerivePlan(knowncolumns, &proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,15 +130,8 @@ func TestLookupTuple(t *testing.T) {
 	knowncolumns := map[string]bool{"T0": true, "T1": true, "S0": true, "S1": true}
 	proof := derive.NewProof(system.N)
 
-	// 1. Solve + sanity checks
-	err := proverRunTime.Solve(knowncolumns, &proof, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sanityCheck(&proverRunTime, system.Relations, system.N, t)
-
-	// 2. DeriveFinalFoldingChallenge + sanity checks
-	err = proverRunTime.DeriveFinalFoldingChallenge(&proof)
+	// 1. DerivePlan + sanity checks
+	err := proverRunTime.DerivePlan(knowncolumns, &proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +158,7 @@ func TestLookupTuple(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, "rounds.html")
+	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, proof.BatchColumns, "rounds.html")
 
 	// 5. Build verifier runtime and derive challenges
 	verifierRunTime := verifier.NewRunTime(cp, nil)

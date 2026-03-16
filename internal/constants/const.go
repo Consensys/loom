@@ -9,10 +9,15 @@ import (
 
 const FINAL_QUOTIENT = "__quotient"
 const FINAL_EVALUATION_POINT = "__zeta"
-const FINAL_FOLDING_CHALLENGE = "__alpha"
 const SUFFIX_SHIFT_SPLIT = "_"
 const SUFFIX_SHIFT = "shift"
 const SIZE_RANDOM_STRING = 10 // size of the names randomly created for the intermediate columns issued with prover actions
+
+// CanonicalChallengeName returns the shared challenge name for all Fiat-Shamir steps
+// at a given BFS level in the challenge-dependency DAG.
+func CanonicalChallengeName(level int) string {
+	return fmt.Sprintf("loom@challenge_%d", level)
+}
 
 func GetShiftedName(name string, shift int) string {
 	if shift == 0 {

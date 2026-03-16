@@ -25,37 +25,37 @@ type ProofBatched struct {
 	// OpeningProofs[k] is the batch opening proof for Batch[k].
 	// OpeningProofs[k].ClaimedValues[i][j] = evaluation of BatchColumns[k][i]
 	// at zeta shifted by OpeningProofs[k].Shift[i][j].
-	OpeningProofs []commitment.BatchOpeningProof
+	OpeningProofs []commitment.BatchProofOpening
 
 	// N is the size of the domain on which the constraints vanish.
 	N int
 
 	// Internal prover state — not transmitted to the verifier.
-	cacheChallengeDependencies map[string][]string
+	// cacheChallengeDependencies map[string][]string
 }
 
 func NewProofBatched(N int) ProofBatched {
 	return ProofBatched{
-		TranscriptRounds:           make([]TranscriptRoundBatched, 0),
-		Batch:                      make([]commitment.Batch, 0),
-		BatchColumns:               make([][]string, 0),
-		OpeningProofs:              make([]commitment.BatchOpeningProof, 0),
-		N:                          N,
-		cacheChallengeDependencies: make(map[string][]string),
+		TranscriptRounds: make([]TranscriptRoundBatched, 0),
+		Batch:            make([]commitment.Batch, 0),
+		BatchColumns:     make([][]string, 0),
+		OpeningProofs:    make([]commitment.BatchProofOpening, 0),
+		N:                N,
+		// cacheChallengeDependencies: make(map[string][]string),
 	}
 }
 
 // GetChallengeDeps returns the committed-column dependencies cached for the
 // given challenge name, and whether the entry exists.
-func (p *ProofBatched) GetChallengeDeps(name string) ([]string, bool) {
-	deps, ok := p.cacheChallengeDependencies[name]
-	return deps, ok
-}
+// func (p *ProofBatched) GetChallengeDeps(name string) ([]string, bool) {
+// 	deps, ok := p.cacheChallengeDependencies[name]
+// 	return deps, ok
+// }
 
-// SetChallengeDeps records the committed-column dependencies for a challenge.
-func (p *ProofBatched) SetChallengeDeps(name string, deps []string) {
-	p.cacheChallengeDependencies[name] = deps
-}
+// // SetChallengeDeps records the committed-column dependencies for a challenge.
+// func (p *ProofBatched) SetChallengeDeps(name string, deps []string) {
+// 	p.cacheChallengeDependencies[name] = deps
+// }
 
 // IsColumnCommitted reports whether the column with the given name has already
 // been included in a batch commitment.

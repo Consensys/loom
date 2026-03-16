@@ -3,8 +3,6 @@ package plonk_example
 import (
 	"fmt"
 
-	"github.com/consensys/loom/internal/poly"
-	"github.com/consensys/loom/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/gnark-crypto/field/koalabear/iop"
@@ -12,6 +10,8 @@ import (
 	gnark_cs "github.com/consensys/gnark/constraint/koalabear"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/scs"
+	"github.com/consensys/loom/internal/poly"
+	"github.com/consensys/loom/trace"
 )
 
 const (

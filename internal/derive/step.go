@@ -16,7 +16,7 @@ type Step = func(trace.Trace, *Proof, *sync.Mutex, []expr.Expr, []string, StepCo
 
 type StepContext interface {
 	String() string
-	GetID() StepKind
+	GetKind() StepKind
 	Key() string
 }
 
@@ -28,10 +28,10 @@ type DerivationStep struct {
 }
 
 func (pa DerivationStep) Execute(trace trace.Trace, proof *Proof, mu *sync.Mutex) error {
-	if _, ok := StepRegistry[pa.StepContext.GetID()]; !ok {
+	if _, ok := StepRegistry[pa.StepContext.GetKind()]; !ok {
 		return fmt.Errorf("prover action not found")
 	}
-	F := StepRegistry[pa.StepContext.GetID()]
+	F := StepRegistry[pa.StepContext.GetKind()]
 	return F(trace, proof, mu, pa.Inputs, pa.Outputs, pa.StepContext)
 }
 

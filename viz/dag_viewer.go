@@ -23,11 +23,12 @@ const (
 
 // dagNode carries the data the HTML renderer needs for a single node.
 type dagNode struct {
-	ID    string  `json:"id"`
-	Label string  `json:"label"` // shortened for display; full ID shown on hover
-	Kind  string  `json:"kind"`  // "committed" | "challenge"
-	X     float64 `json:"x"`     // centre x
-	Y     float64 `json:"y"`     // centre y
+	ID      string  `json:"id"`
+	Label   string  `json:"label"`   // shortened for display
+	Kind    string  `json:"kind"`    // "committed" | "challenge"
+	Tooltip string  `json:"tooltip"` // full text shown on hover
+	X       float64 `json:"x"`       // centre x
+	Y       float64 `json:"y"`       // centre y
 }
 
 // dagEdge carries the data the HTML renderer needs for a single directed edge.
@@ -49,22 +50,25 @@ func dagShortLabel(id string) string {
 	return strings.TrimPrefix(id, "github.com/consensys/loom@")
 }
 
-// WriteDagToHTML writes a self-contained HTML file that visualises the DAG
-// formed by rounds.
+// WriteProofTranscriptRoundsDagToHTML writes a self-contained HTML file that
+// visualises the Fiat-Shamir transcript DAG.
 //
 // Each TranscriptRound contributes one challenge node (output) that depends on:
-//   - DependenciesCommittedColumns  → committed-column leaf nodes (always known)
-//   - DependenciesChallenges        → other challenge nodes (Kahn's unknowns)
+//   - a single "batch_<i>" box for all polynomials in batchColumns[round.DependencyBatch]
+//   - all previously derived challenge nodes
 //
 // Visual conventions:
-//   - Blue rectangles : committed-column nodes
+//   - Blue rectangles : batch nodes (hover to see the column list)
 //   - Purple rounded rectangles : challenge nodes
-//   - Dashed blue arrows  : committed column → challenge
+//   - Dashed blue arrows  : batch → challenge
 //   - Solid purple arrows : challenge → challenge
-func WriteProofTranscriptRoundsDagToHTML(rounds []derive.TranscriptRound, filename string) error {
+func WriteProofTranscriptRoundsDagToHTML(rounds []derive.TranscriptRound, batchColumns [][]string, filename string) error {
 	// ── 1. collect unique nodes and edges ─────────────────────────────────────
-	kindOf := make(map[string]string) // id → "committed" | "challenge"
+	kindOf       := make(map[string]string) // id → "committed" | "challenge"
+	batchTooltip := make(map[string]string) // batch node id → newline-joined column list
 	var edges []dagEdge
+
+	batchID := func(i int) string { return fmt.Sprintf("batch_%d", i) }
 
 	// Track the order challenges appear in the rounds list so the layout is
 	// deterministic and matches the proof's Fiat-Shamir sequence.
@@ -76,12 +80,15 @@ func WriteProofTranscriptRoundsDagToHTML(rounds []derive.TranscriptRound, filena
 		}
 		kindOf[r.ChallengeName] = "challenge"
 
-		// Each challenge depends on its batch commitment.
-		batchID := fmt.Sprintf("batch_%d", r.DependencyBatch)
-		if _, seen := kindOf[batchID]; !seen {
-			kindOf[batchID] = "committed"
+		// Each challenge depends on a single box representing its whole batch.
+		if r.DependencyBatch < len(batchColumns) {
+			bid := batchID(r.DependencyBatch)
+			if _, seen := kindOf[bid]; !seen {
+				kindOf[bid] = "committed"
+				batchTooltip[bid] = strings.Join(batchColumns[r.DependencyBatch], "\n")
+			}
+			edges = append(edges, dagEdge{From: bid, To: r.ChallengeName, Kind: "committed"})
 		}
-		edges = append(edges, dagEdge{From: batchID, To: r.ChallengeName, Kind: "committed"})
 
 		// Each challenge also depends on all previously derived challenges.
 		for j := 0; j < i; j++ {
@@ -182,8 +189,12 @@ func WriteProofTranscriptRoundsDagToHTML(rounds []derive.TranscriptRound, filena
 	var nodes []dagNode
 	for id, k := range kindOf {
 		p := posOf[id]
+		tooltip := id
+		if t, ok := batchTooltip[id]; ok {
+			tooltip = t
+		}
 		nodes = append(nodes, dagNode{
-			ID: id, Label: dagShortLabel(id), Kind: k, X: p[0], Y: p[1],
+			ID: id, Label: dagShortLabel(id), Kind: k, Tooltip: tooltip, X: p[0], Y: p[1],
 		})
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
@@ -256,7 +267,7 @@ svg{width:100%;height:100%}
   background:#161b22;border:1px solid #30363d;
   color:#c9d1d9;font-size:.7rem;padding:5px 9px;
   border-radius:4px;pointer-events:none;
-  max-width:480px;word-break:break-all;z-index:99}
+  max-width:480px;word-break:break-all;white-space:pre;z-index:99}
 </style>
 </head>
 <body>
@@ -407,7 +418,7 @@ D.nodes.forEach(n => {
 
   // tooltip
   ng.addEventListener("mouseenter", ev => {
-    tip.textContent = n.id;
+    tip.textContent = n.tooltip || n.id;
     tip.style.display = "block";
     moveTip(ev);
   });
