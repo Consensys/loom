@@ -9,6 +9,7 @@ import (
 	"text/template"
 
 	"github.com/consensys/loom/constraint"
+	"github.com/consensys/loom/internal/constants"
 	derive "github.com/consensys/loom/internal/derive"
 )
 
@@ -56,42 +57,33 @@ func WriteDerivationPlanDagToHTML(cp constraint.Program, filename string) error 
 			}
 		}
 	}
+	// Challenge columns are produced by synthetic FS nodes, not known inputs.
+	for i := range scheduled {
+		producedBy[constants.CanonicalChallengeName(i)] = true
+	}
 
 	// ── 2. build nodes, edges, and layer assignments ──────────────────────────
-	// Layer scheme: known columns → 0; actions in slot s → 2*s+1; their outputs → 2*s+2.
-	kindOf  := make(map[string]string)  // id → "known" | "computed" | "action"
-	labelOf := make(map[string]string)  // id → display label
-	layerOf := make(map[string]int)     // id → layer index
+	// Layer scheme: known columns → 0;
+	//   slot i compute actions → 4*i+1; slot i compute outputs → 4*i+2;
+	//   FS node i → 4*i+3; challenge_i output → 4*i+4.
+	kindOf  := make(map[string]string) // id → "known" | "computed" | "action"
+	labelOf := make(map[string]string) // id → display label
+	layerOf := make(map[string]int)    // id → layer index
 	var edges []dagEdge
 
 	actionIdx := 0
-	batchIdx  := 0
 	for slot, steps := range scheduled {
+		// ── compute steps for this slot ──────────────────────────────────────
 		for _, pa := range steps {
 			id := fmt.Sprintf("__action_%d", actionIdx)
 			actionIdx++
 
 			kindOf[id]  = "action"
 			labelOf[id] = actionLabel(pa)
-			layerOf[id] = 2*slot + 1
-
-			// Determine the input column names for this action.
-			// For Fiat-Shamir steps the inputs are the new columns in Batches[i],
-			// not the full (unpruned) pa.Inputs list.
-			var inputCols []string
-			if pa.StepContext.GetKind() == derive.FIAT_SHAMIR && batchIdx < len(cp.Batches) {
-				inputCols = cp.Batches[batchIdx]
-				if batchIdx > 0 {
-					prev := fmt.Sprintf("loom@challenge_%d", batchIdx-1)
-					inputCols = append([]string{prev}, inputCols...)
-				}
-				batchIdx++
-			} else {
-				inputCols = derive.GetColumnsId(pa.Inputs)
-			}
+			layerOf[id] = 4*slot + 1
 
 			// edges from input columns → this action
-			for _, col := range inputCols {
+			for _, col := range derive.GetColumnsId(pa.Inputs) {
 				if _, seen := kindOf[col]; !seen {
 					if producedBy[col] {
 						kindOf[col] = "computed"
@@ -110,10 +102,45 @@ func WriteDerivationPlanDagToHTML(cp constraint.Program, filename string) error 
 					kindOf[out]  = "computed"
 					labelOf[out] = dagShortLabel(out)
 				}
-				layerOf[out] = 2*slot + 2
+				layerOf[out] = 4*slot + 2
 				edges = append(edges, dagEdge{From: id, To: out, Kind: "from_action"})
 			}
 		}
+
+		// ── synthetic fiat_shamir node for batch slot ─────────────────────────
+		fsID := fmt.Sprintf("__fs_action_%d", slot)
+		kindOf[fsID]  = "action"
+		labelOf[fsID] = "fiat_shamir"
+		layerOf[fsID] = 4*slot + 3
+
+		var fsInputs []string
+		if slot < len(cp.Batches) {
+			fsInputs = append(fsInputs, cp.Batches[slot]...)
+		}
+		if slot > 0 {
+			fsInputs = append(fsInputs, constants.CanonicalChallengeName(slot-1))
+		}
+		for _, col := range fsInputs {
+			if _, seen := kindOf[col]; !seen {
+				if producedBy[col] {
+					kindOf[col] = "computed"
+				} else {
+					kindOf[col]  = "known"
+					layerOf[col] = 0
+				}
+				labelOf[col] = dagShortLabel(col)
+			}
+			edges = append(edges, dagEdge{From: col, To: fsID, Kind: "to_action"})
+		}
+
+		// output: loom@challenge_slot
+		challengeOut := constants.CanonicalChallengeName(slot)
+		if _, seen := kindOf[challengeOut]; !seen {
+			kindOf[challengeOut]  = "computed"
+			labelOf[challengeOut] = dagShortLabel(challengeOut)
+		}
+		layerOf[challengeOut] = 4*slot + 4
+		edges = append(edges, dagEdge{From: fsID, To: challengeOut, Kind: "from_action"})
 	}
 
 	// ── 3. group by layer and sort within each layer ─────────────────────────

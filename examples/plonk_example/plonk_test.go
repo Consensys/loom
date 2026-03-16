@@ -101,13 +101,14 @@ func TestPlonk(t *testing.T) {
 	cp := system.Compile()
 
 	viz.WriteDerivationPlanDagToHTML(cp, "plonk_dag.html")
+	// viz.WriteProofTranscriptRoundsDagToHTML(cp, "plonk_dag.html")
 
 	proof, err := loom.Prove(cp, fulltrace, nil, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, proof.BatchColumns, "plonk_transcript_rounds.html")
+	viz.WriteProofTranscriptRoundsDagToHTML(&proof, "plonk_transcript_rounds.html")
 
 	err = loom.Verify(cp, &proof, nil, 1)
 	if err != nil {

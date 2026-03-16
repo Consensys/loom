@@ -20,6 +20,7 @@ type Verifier struct {
 	Vars              map[string]koalabear.Element // values keyed by leaf name
 	VanishingRelation dag.DAG
 	PublicInputs      derive.PublicInputs
+	Zeta              koalabear.Element
 }
 
 // NewRunTime creates the Verifier for the given compiled IOP.
@@ -37,36 +38,40 @@ func NewRunTime(cp constraint.Program, publicInputs derive.PublicInputs) Verifie
 
 // DeriveChallenge derives the challenge for proof.TranscriptRounds[i] by binding the
 // batch digest (if the batch is non-empty) and the immediately preceding challenge.
-func (runtime *Verifier) DeriveChallenge(proof *derive.Proof, i int) error {
+func (runtime *Verifier) DeriveChallenge(proof *derive.Proof, batchIdx int) error {
 
-	round := proof.TranscriptRounds[i]
+	challengeName := constants.CanonicalChallengeName(batchIdx)
 
 	fs := fiatshamir.NewTranscript(sha256.New())
-	if err := fs.NewChallenge(round.ChallengeName); err != nil {
+	if err := fs.NewChallenge(challengeName); err != nil {
 		return err
 	}
-	if len(proof.BatchColumns[round.DependencyBatch]) > 0 {
-		if err := fs.Bind(round.ChallengeName, proof.Batch[round.DependencyBatch].Marshal()); err != nil {
+	if len(proof.BatchColumns[batchIdx]) > 0 {
+		if err := fs.Bind(challengeName, proof.Batch[batchIdx].Marshal()); err != nil {
 			return err
 		}
 	}
-	if i > 0 {
-		prevChallenge, ok := runtime.Vars[proof.TranscriptRounds[i-1].ChallengeName]
+	if batchIdx > 0 {
+		prevChallengeName := constants.CanonicalChallengeName(batchIdx - 1)
+		prevChallenge, ok := runtime.Vars[prevChallengeName]
 		if !ok {
-			return fmt.Errorf("challenge %s not yet derived", proof.TranscriptRounds[i-1].ChallengeName)
+			return fmt.Errorf("challenge %s not found in the trace", prevChallengeName)
 		}
-		if err := fs.Bind(round.ChallengeName, prevChallenge.Marshal()); err != nil {
+		if err := fs.Bind(challengeName, prevChallenge.Marshal()); err != nil {
 			return err
 		}
 	}
 
-	bc, err := fs.ComputeChallenge(round.ChallengeName)
+	// 5. Derive and store challenge.
+	bc, err := fs.ComputeChallenge(challengeName)
 	if err != nil {
 		return err
 	}
 	var c koalabear.Element
 	c.SetBytes(bc)
-	runtime.Vars[round.ChallengeName] = c
+
+	runtime.Vars[challengeName] = c
+
 	return nil
 }
 
@@ -78,6 +83,7 @@ func (runtime *Verifier) ComputeChallenges(proof *derive.Proof, nbWorkers int) e
 			return err
 		}
 	}
+	runtime.Zeta = runtime.Vars[constants.CanonicalChallengeName(len(proof.TranscriptRounds)-1)]
 	return nil
 }
 
@@ -92,7 +98,8 @@ func (runtime *Verifier) EvaluateVirtualColumns() error {
 		if err != nil {
 			return err
 		}
-		runtime.Vars[l] = cc.F(runtime.Vars[constants.FINAL_EVALUATION_POINT])
+
+		runtime.Vars[l] = cc.F(runtime.Zeta)
 	}
 
 	return nil
@@ -101,7 +108,7 @@ func (runtime *Verifier) EvaluateVirtualColumns() error {
 // compute \Sigma_i Lagrange_{info.Idx[i]}(zeta*\omega^shift)*info.Vals[i]
 func (runtime *Verifier) computeMissingPart(info derive.PublicColumnInfo, shift, N int) (koalabear.Element, error) {
 
-	zeta := runtime.Vars[constants.FINAL_EVALUATION_POINT]
+	zeta := runtime.Zeta
 
 	w, err := koalabear.Generator(uint64(N))
 	if err != nil {
@@ -168,7 +175,7 @@ func (runtime *Verifier) FillClaimedValues(proof *derive.Proof) error {
 // CheckRelation checks the final relation: VanishingRelation(zeta) = H(zeta) · (zeta^N - 1)
 func (runtime *Verifier) CheckRelation(proof *derive.Proof) error {
 
-	zeta := runtime.Vars[constants.FINAL_EVALUATION_POINT]
+	zeta := runtime.Zeta
 
 	hzeta, ok := runtime.Vars[constants.FINAL_QUOTIENT]
 	if !ok {
@@ -191,7 +198,7 @@ func (runtime *Verifier) CheckRelation(proof *derive.Proof) error {
 
 // VerifyOpeningProofs verifies each batch opening proof.
 func (runtime *Verifier) VerifyOpeningProofs(proof *derive.Proof) error {
-	zeta := runtime.Vars[constants.FINAL_EVALUATION_POINT]
+	zeta := runtime.Zeta
 	for batchIdx, batch := range proof.Batch {
 		if batchIdx >= len(proof.OpeningProofs) {
 			break

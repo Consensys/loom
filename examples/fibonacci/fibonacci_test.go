@@ -73,7 +73,7 @@ func TestFibonacci(t *testing.T) {
 		os.Exit(-1)
 	}
 	viz.WriteTraceToCSV("fibonacci.csv", trace, proof.N)
-	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, proof.BatchColumns, "transcript_rounds.html")
+	viz.WriteProofTranscriptRoundsDagToHTML(&proof, "transcript_rounds.html")
 	viz.WriteDerivationPlanDagToHTML(cp, "derivation_plan.html")
 
 	// verifierRunTime := verifier.NewRunTime(cp)

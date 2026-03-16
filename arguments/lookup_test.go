@@ -158,7 +158,7 @@ func TestLookupTuple(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, proof.BatchColumns, "rounds.html")
+	viz.WriteProofTranscriptRoundsDagToHTML(&proof, "rounds.html")
 
 	// 5. Build verifier runtime and derive challenges
 	verifierRunTime := verifier.NewRunTime(cp, nil)

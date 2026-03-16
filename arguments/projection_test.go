@@ -104,7 +104,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 	}
 	CheckFiatShamir(&proverRunTime, &verifierRunTime, &proof, zeta, t)
 
-	viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, proof.BatchColumns, "projection_multi_rounds.html")
+	viz.WriteProofTranscriptRoundsDagToHTML(&proof, "projection_multi_rounds.html")
 
 	err = verifierRunTime.Verify(&proof, 1)
 	if err != nil {

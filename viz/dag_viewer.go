@@ -55,14 +55,16 @@ func dagShortLabel(id string) string {
 //
 // Each TranscriptRound contributes one challenge node (output) that depends on:
 //   - a single "batch_<i>" box for all polynomials in batchColumns[round.DependencyBatch]
-//   - all previously derived challenge nodes
+//   - the immediately preceding challenge (if any)
 //
 // Visual conventions:
 //   - Blue rectangles : batch nodes (hover to see the column list)
 //   - Purple rounded rectangles : challenge nodes
 //   - Dashed blue arrows  : batch → challenge
 //   - Solid purple arrows : challenge → challenge
-func WriteProofTranscriptRoundsDagToHTML(rounds []derive.TranscriptRound, batchColumns [][]string, filename string) error {
+func WriteProofTranscriptRoundsDagToHTML(proof *derive.Proof, filename string) error {
+	rounds := proof.TranscriptRounds
+	batchColumns := proof.BatchColumns
 	// ── 1. collect unique nodes and edges ─────────────────────────────────────
 	kindOf       := make(map[string]string) // id → "committed" | "challenge"
 	batchTooltip := make(map[string]string) // batch node id → newline-joined column list
@@ -81,7 +83,7 @@ func WriteProofTranscriptRoundsDagToHTML(rounds []derive.TranscriptRound, batchC
 		kindOf[r.ChallengeName] = "challenge"
 
 		// Each challenge depends on a single box representing its whole batch.
-		if r.DependencyBatch < len(batchColumns) {
+		if r.DependencyBatch < len(batchColumns) && len(batchColumns[r.DependencyBatch]) > 0 {
 			bid := batchID(r.DependencyBatch)
 			if _, seen := kindOf[bid]; !seen {
 				kindOf[bid] = "committed"
@@ -90,13 +92,9 @@ func WriteProofTranscriptRoundsDagToHTML(rounds []derive.TranscriptRound, batchC
 			edges = append(edges, dagEdge{From: bid, To: r.ChallengeName, Kind: "committed"})
 		}
 
-		// Each challenge also depends on all previously derived challenges.
-		for j := 0; j < i; j++ {
-			dep := rounds[j].ChallengeName
-			if _, seen := kindOf[dep]; !seen {
-				kindOf[dep] = "challenge"
-				challengeOrd[dep] = len(challengeOrd)
-			}
+		// Each challenge also depends on the immediately preceding challenge.
+		if i > 0 {
+			dep := rounds[i-1].ChallengeName
 			edges = append(edges, dagEdge{From: dep, To: r.ChallengeName, Kind: "challenge"})
 		}
 	}

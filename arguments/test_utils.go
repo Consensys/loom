@@ -41,7 +41,8 @@ func CheckFiatShamir(proverRunTime *prover.Prover, verifierRunTime *verifier.Ver
 		tc := proverRunTime.Trace[c]
 		mapProverChallenges[c] = tc[0]
 	}
-	mapProverChallenges[constants.FINAL_EVALUATION_POINT] = zeta // <- zeta is registered separately, it does not appear in proof.VanishingRelation
+	zetaName := proof.TranscriptRounds[len(proof.TranscriptRounds)-1].ChallengeName
+	mapProverChallenges[zetaName] = zeta // <- zeta is registered separately, it does not appear in proof.VanishingRelation
 
 	mapVerifierChallenges := make(map[string]koalabear.Element)
 	for _, r := range proof.TranscriptRounds {
