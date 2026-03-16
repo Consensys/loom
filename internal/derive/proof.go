@@ -5,9 +5,8 @@ import (
 )
 
 // Re-export proof types so callers within internal/ can use the short names.
-type Proof = proof.ProofBatched
-type TranscriptRound = proof.TranscriptRoundBatched
+type Proof = proof.Proof
 type PublicColumnInfo = proof.PublicColumnInfo
 type PublicInputs = proof.PublicInputs
 
-var NewProof = proof.NewProofBatched
+var NewProof = proof.NewProof

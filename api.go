@@ -8,7 +8,7 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-func Prove(cp constraint.Program, trace trace.Trace, publicInputs proof.PublicInputs, nbWorkers int) (proof.ProofBatched, error) {
+func Prove(cp constraint.Program, trace trace.Trace, publicInputs proof.PublicInputs, nbWorkers int) (proof.Proof, error) {
 
 	knownColumns := make(map[string]bool)
 	for k := range trace {
@@ -22,7 +22,7 @@ func Prove(cp constraint.Program, trace trace.Trace, publicInputs proof.PublicIn
 	return _prover.Prove(knownColumns, nbWorkers)
 }
 
-func Verify(cp constraint.Program, p *proof.ProofBatched, publicInputs proof.PublicInputs, nbWorkers int) error {
+func Verify(cp constraint.Program, p *proof.Proof, publicInputs proof.PublicInputs, nbWorkers int) error {
 	verifierRunTime := verifier.NewRunTime(cp, publicInputs)
 	return verifierRunTime.Verify(p, nbWorkers)
 }

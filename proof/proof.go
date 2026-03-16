@@ -2,17 +2,9 @@ package proof
 
 import "github.com/consensys/loom/internal/commitment"
 
-// TranscriptRoundBatched represents one Fiat-Shamir round in the batched model.
-// The challenge is derived from the batch commitment identified by DependencyBatch,
-// plus all previously derived challenge values.
-type TranscriptRoundBatched struct {
-	ChallengeName   string
-	DependencyBatch int // index into ProofBatched.Batch
-}
-
-// ProofBatched holds the output of the prover in the batched commitment model.
+// Proof holds the output of the prover in the batched commitment model.
 // Polynomials are committed stage by stage (one batch per challenge level).
-type ProofBatched struct {
+type Proof struct {
 
 	// Batch[k] is the batch commitment to all polynomials committed at stage k.
 	Batch []commitment.Batch
@@ -33,8 +25,8 @@ type ProofBatched struct {
 	// cacheChallengeDependencies map[string][]string
 }
 
-func NewProofBatched(N int) ProofBatched {
-	return ProofBatched{
+func NewProof(N int) Proof {
+	return Proof{
 		Batch:         make([]commitment.Batch, 0),
 		BatchColumns:  make([][]string, 0),
 		OpeningProofs: make([]commitment.BatchProofOpening, 0),
@@ -45,19 +37,19 @@ func NewProofBatched(N int) ProofBatched {
 
 // GetChallengeDeps returns the committed-column dependencies cached for the
 // given challenge name, and whether the entry exists.
-// func (p *ProofBatched) GetChallengeDeps(name string) ([]string, bool) {
+// func (p *Proof) GetChallengeDeps(name string) ([]string, bool) {
 // 	deps, ok := p.cacheChallengeDependencies[name]
 // 	return deps, ok
 // }
 
 // // SetChallengeDeps records the committed-column dependencies for a challenge.
-// func (p *ProofBatched) SetChallengeDeps(name string, deps []string) {
+// func (p *Proof) SetChallengeDeps(name string, deps []string) {
 // 	p.cacheChallengeDependencies[name] = deps
 // }
 
 // IsColumnCommitted reports whether the column with the given name has already
 // been included in a batch commitment.
-func (p *ProofBatched) IsColumnCommitted(name string) bool {
+func (p *Proof) IsColumnCommitted(name string) bool {
 	for _, cols := range p.BatchColumns {
 		for _, c := range cols {
 			if c == name {
