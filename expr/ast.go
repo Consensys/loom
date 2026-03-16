@@ -488,16 +488,80 @@ func (m *Mul) Prune(deg int) Expr { return pruneSearch(m, deg) }
 func (p *Pow) Prune(deg int) Expr { return pruneSearch(p, deg) }
 
 func (a *Add) ReplaceLeafByExpression(leaf string, e Expr) Expr {
-	return &Add{a.Left.ReplaceLeafByExpression(leaf, e), a.Right.ReplaceLeafByExpression(leaf, e)}
+	l := a.Left.ReplaceLeafByExpression(leaf, e)
+	r := a.Right.ReplaceLeafByExpression(leaf, e)
+	if l == a.Left && r == a.Right {
+		return a
+	}
+	return &Add{l, r}
 }
 func (s *Sub) ReplaceLeafByExpression(leaf string, e Expr) Expr {
-	return &Sub{s.Left.ReplaceLeafByExpression(leaf, e), s.Right.ReplaceLeafByExpression(leaf, e)}
+	l := s.Left.ReplaceLeafByExpression(leaf, e)
+	r := s.Right.ReplaceLeafByExpression(leaf, e)
+	if l == s.Left && r == s.Right {
+		return s
+	}
+	return &Sub{l, r}
 }
 func (m *Mul) ReplaceLeafByExpression(leaf string, e Expr) Expr {
-	return &Mul{m.Left.ReplaceLeafByExpression(leaf, e), m.Right.ReplaceLeafByExpression(leaf, e)}
+	l := m.Left.ReplaceLeafByExpression(leaf, e)
+	r := m.Right.ReplaceLeafByExpression(leaf, e)
+	if l == m.Left && r == m.Right {
+		return m
+	}
+	return &Mul{l, r}
 }
 func (p *Pow) ReplaceLeafByExpression(leaf string, e Expr) Expr {
-	return &Pow{p.Base.ReplaceLeafByExpression(leaf, e), p.Exp}
+	b := p.Base.ReplaceLeafByExpression(leaf, e)
+	if b == p.Base {
+		return p
+	}
+	return &Pow{b, p.Exp}
+}
+
+// ReplaceLeavesByMap replaces all leaves whose String() key is present in rename
+// in a single tree traversal. Interior nodes are reused (not allocated) when
+// neither child changes, which avoids the O(n_renames × tree_size) allocation
+// cost of calling ReplaceLeafByExpression once per rename entry.
+func ReplaceLeavesByMap(e Expr, rename map[string]Expr) Expr {
+	switch v := e.(type) {
+	case *Leaf:
+		if v.Type == ConstantColumn {
+			return v
+		}
+		if repl, ok := rename[v.String()]; ok {
+			return repl
+		}
+		return v
+	case *Add:
+		l := ReplaceLeavesByMap(v.Left, rename)
+		r := ReplaceLeavesByMap(v.Right, rename)
+		if l == v.Left && r == v.Right {
+			return v
+		}
+		return &Add{l, r}
+	case *Sub:
+		l := ReplaceLeavesByMap(v.Left, rename)
+		r := ReplaceLeavesByMap(v.Right, rename)
+		if l == v.Left && r == v.Right {
+			return v
+		}
+		return &Sub{l, r}
+	case *Mul:
+		l := ReplaceLeavesByMap(v.Left, rename)
+		r := ReplaceLeavesByMap(v.Right, rename)
+		if l == v.Left && r == v.Right {
+			return v
+		}
+		return &Mul{l, r}
+	case *Pow:
+		b := ReplaceLeavesByMap(v.Base, rename)
+		if b == v.Base {
+			return v
+		}
+		return &Pow{b, v.Exp}
+	}
+	return e
 }
 
 func (a *Add) Evaluate(vals map[string]koalabear.Element) koalabear.Element {

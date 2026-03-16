@@ -22,11 +22,9 @@ func Fold(E []expr.Expr, alpha expr.Expr) expr.Expr {
 // Program DAG containing all that proverSteps, and the final constraint that must vanish
 // on X^N-1
 type Program struct {
-	DerivationPlan          []derive.DerivationStep
 	DerivationPlanScheduled [][]derive.DerivationStep
 	Batches                 [][]string // Batches[i]-> names of columns on which loom@challenge_i depends
 	VanishingRelation       dag.DAG
-	Cache                   map[string]int // not serialised, used for building the IOP only, used to track already registered prover actions which have no inputs (lagrange, permutation)
 	N                       int
 }
 
@@ -106,12 +104,15 @@ func batchFiatShamir(plan []derive.DerivationStep, publicInputs derive.PublicInp
 		}
 	}
 
-	// applyRename rewrites all old challenge names in e to their canonical names.
+	// Build a rename map of Expr values once so that ReplaceLeavesByMap can
+	// rewrite all challenge names in a single tree traversal instead of one
+	// traversal per rename entry.
+	renameExprs := make(map[string]expr.Expr, len(rename))
+	for old, canonical := range rename {
+		renameExprs[old] = expr.NewChallenge(canonical)
+	}
 	applyRename := func(e expr.Expr) expr.Expr {
-		for old, canonical := range rename {
-			e = e.ReplaceLeafByExpression(old, expr.NewChallenge(canonical))
-		}
-		return e
+		return expr.ReplaceLeavesByMap(e, renameExprs)
 	}
 
 	// 3. Collect merged inputs per level (union of each level's FS-step inputs, renamed).
@@ -330,7 +331,6 @@ func (system *Builder) Compile(opts ...Option) Program {
 	CDag := dag.ExprToDAG(C)
 	CDag = CDag.Flatten()
 	return Program{
-		DerivationPlan:          plan,
 		DerivationPlanScheduled: scheduled,
 		Batches:                 batches,
 		VanishingRelation:       *CDag,
