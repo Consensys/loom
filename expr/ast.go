@@ -211,9 +211,14 @@ func (l *Leaf) ReplaceLeafByExpression(leaf string, e Expr) Expr {
 	if l.Type == ConstantColumn {
 		return l
 	}
-	if l.String() == leaf {
+	name := l.Name
+	if l.Type == RotatedColumn {
+		name = l.String() // only allocate when shift suffix is needed
+	}
+	if name == leaf {
 		return e
 	}
+
 	return l
 }
 
