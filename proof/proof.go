@@ -13,7 +13,6 @@ type TranscriptRoundBatched struct {
 // ProofBatched holds the output of the prover in the batched commitment model.
 // Polynomials are committed stage by stage (one batch per challenge level).
 type ProofBatched struct {
-	TranscriptRounds []TranscriptRoundBatched
 
 	// Batch[k] is the batch commitment to all polynomials committed at stage k.
 	Batch []commitment.Batch
@@ -36,11 +35,10 @@ type ProofBatched struct {
 
 func NewProofBatched(N int) ProofBatched {
 	return ProofBatched{
-		TranscriptRounds: make([]TranscriptRoundBatched, 0),
-		Batch:            make([]commitment.Batch, 0),
-		BatchColumns:     make([][]string, 0),
-		OpeningProofs:    make([]commitment.BatchProofOpening, 0),
-		N:                N,
+		Batch:         make([]commitment.Batch, 0),
+		BatchColumns:  make([][]string, 0),
+		OpeningProofs: make([]commitment.BatchProofOpening, 0),
+		N:             N,
 		// cacheChallengeDependencies: make(map[string][]string),
 	}
 }

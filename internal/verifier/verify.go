@@ -78,12 +78,12 @@ func (runtime *Verifier) DeriveChallenge(proof *derive.Proof, batchIdx int) erro
 // ComputeChallenges replays the Fiat-Shamir transcript sequentially.
 // nbWorkers is accepted for API compatibility but the replay is always sequential.
 func (runtime *Verifier) ComputeChallenges(proof *derive.Proof, nbWorkers int) error {
-	for i := range proof.TranscriptRounds {
+	for i := range proof.BatchColumns {
 		if err := runtime.DeriveChallenge(proof, i); err != nil {
 			return err
 		}
 	}
-	runtime.Zeta = runtime.Vars[constants.CanonicalChallengeName(len(proof.TranscriptRounds)-1)]
+	runtime.Zeta = runtime.Vars[constants.CanonicalChallengeName(len(proof.BatchColumns)-1)]
 	return nil
 }
 

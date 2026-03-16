@@ -31,23 +31,23 @@ func sanityCheck(proverRunTime *prover.Prover, constraints []constraint.Relation
 
 func CheckFiatShamir(proverRunTime *prover.Prover, verifierRunTime *verifier.Verifier, proof *derive.Proof, zeta koalabear.Element, t *testing.T) {
 
-	proverChallenges := proverRunTime.Program.VanishingRelation.Leaves(
-		expr.NewConfig(expr.WithoutCommittedColumns(),
-			expr.WithoutVirtualumns(),
-			expr.WithoutRotatedColumns()))
+	proverChallenges := proverRunTime.Program.VanishingRelation.Leaves(expr.NewConfig(expr.OnlyChallenges...))
 	proverChallenges = expr.RemoveDuplicates(proverChallenges)
 	mapProverChallenges := make(map[string]koalabear.Element)
 	for _, c := range proverChallenges {
 		tc := proverRunTime.Trace[c]
 		mapProverChallenges[c] = tc[0]
 	}
-	zetaName := proof.TranscriptRounds[len(proof.TranscriptRounds)-1].ChallengeName
+	// zetaName := proof.TranscriptRounds[len(proof.TranscriptRounds)-1].ChallengeName
+	zetaName := constants.CanonicalChallengeName(len(proof.BatchColumns) - 1)
 	mapProverChallenges[zetaName] = zeta // <- zeta is registered separately, it does not appear in proof.VanishingRelation
 
 	mapVerifierChallenges := make(map[string]koalabear.Element)
-	for _, r := range proof.TranscriptRounds {
-		mapVerifierChallenges[r.ChallengeName] = verifierRunTime.Vars[r.ChallengeName]
+	for i := 0; i < len(proof.BatchColumns); i++ { // zeta appears by construction in verifierRunTime.Vars (but it does not appear in the vanishing relation)
+		challengeName := constants.CanonicalChallengeName(i)
+		mapVerifierChallenges[challengeName] = verifierRunTime.Vars[challengeName]
 	}
+
 	if len(mapVerifierChallenges) != len(mapProverChallenges) {
 		t.Errorf("prover and verifier did not derive the same number of challenge: got %d and %d", len(mapProverChallenges), len(mapVerifierChallenges))
 	}

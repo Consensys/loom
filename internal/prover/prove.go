@@ -68,18 +68,11 @@ func (runtime *Prover) commitAndDeriveChallenge(batchIdx int, proof *derive.Proo
 	if err != nil {
 		return err
 	}
-	batchRecordIdx := len(proof.Batch)
 	proof.Batch = append(proof.Batch, batch)
 	proof.BatchColumns = append(proof.BatchColumns, colNames)
 
-	// 3. Record the transcript round.
+	// 3. Build FS transcript: bind batch digest + previously derived challenge.
 	challengeName := constants.CanonicalChallengeName(batchIdx)
-	proof.TranscriptRounds = append(proof.TranscriptRounds, derive.TranscriptRound{
-		ChallengeName:   challengeName,
-		DependencyBatch: batchRecordIdx,
-	})
-
-	// 4. Build FS transcript: bind batch digest + previously derived challenge.
 	// Order matches the verifier's DeriveChallenge: batch first, then prev challenge in order.
 	fs := fiatshamir.NewTranscript(sha256.New())
 	if err := fs.NewChallenge(challengeName); err != nil {
@@ -101,7 +94,7 @@ func (runtime *Prover) commitAndDeriveChallenge(batchIdx int, proof *derive.Proo
 		}
 	}
 
-	// 5. Derive and store challenge.
+	// 4. Derive and store challenge.
 	bc, err := fs.ComputeChallenge(challengeName)
 	if err != nil {
 		return err
@@ -148,11 +141,6 @@ func (runtime *Prover) DeriveOpeningChallenge(proof *derive.Proof) (koalabear.El
 	lastBatchIdx := len(proof.Batch) - 1
 
 	challengeName := constants.CanonicalChallengeName(len(proof.BatchColumns) - 1)
-
-	proof.TranscriptRounds = append(proof.TranscriptRounds, derive.TranscriptRound{
-		ChallengeName:   challengeName,
-		DependencyBatch: lastBatchIdx,
-	})
 
 	fs := fiatshamir.NewTranscript(sha256.New())
 	if err := fs.NewChallenge(challengeName); err != nil {

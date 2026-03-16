@@ -8,6 +8,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/consensys/loom/internal/constants"
 	derive "github.com/consensys/loom/internal/derive"
 )
 
@@ -63,82 +64,38 @@ func dagShortLabel(id string) string {
 //   - Dashed blue arrows  : batch → challenge
 //   - Solid purple arrows : challenge → challenge
 func WriteProofTranscriptRoundsDagToHTML(proof *derive.Proof, filename string) error {
-	rounds := proof.TranscriptRounds
 	batchColumns := proof.BatchColumns
+
 	// ── 1. collect unique nodes and edges ─────────────────────────────────────
+	// For each index i: BatchColumns[i] (if non-empty) + loom@challenge_{i-1} (if i>0)
+	// yields loom@challenge_i.
 	kindOf       := make(map[string]string) // id → "committed" | "challenge"
 	batchTooltip := make(map[string]string) // batch node id → newline-joined column list
+	layerOf      := make(map[string]int)
 	var edges []dagEdge
 
 	batchID := func(i int) string { return fmt.Sprintf("batch_%d", i) }
 
-	// Track the order challenges appear in the rounds list so the layout is
-	// deterministic and matches the proof's Fiat-Shamir sequence.
-	challengeOrd := make(map[string]int)
+	for i, cols := range batchColumns {
+		challengeName := constants.CanonicalChallengeName(i)
+		kindOf[challengeName] = "challenge"
+		layerOf[challengeName] = i + 1
 
-	for i, r := range rounds {
-		if _, seen := challengeOrd[r.ChallengeName]; !seen {
-			challengeOrd[r.ChallengeName] = len(challengeOrd)
-		}
-		kindOf[r.ChallengeName] = "challenge"
-
-		// Each challenge depends on a single box representing its whole batch.
-		if r.DependencyBatch < len(batchColumns) && len(batchColumns[r.DependencyBatch]) > 0 {
-			bid := batchID(r.DependencyBatch)
-			if _, seen := kindOf[bid]; !seen {
-				kindOf[bid] = "committed"
-				batchTooltip[bid] = strings.Join(batchColumns[r.DependencyBatch], "\n")
-			}
-			edges = append(edges, dagEdge{From: bid, To: r.ChallengeName, Kind: "committed"})
+		if len(cols) > 0 {
+			bid := batchID(i)
+			kindOf[bid] = "committed"
+			layerOf[bid] = 0
+			batchTooltip[bid] = strings.Join(cols, "\n")
+			edges = append(edges, dagEdge{From: bid, To: challengeName, Kind: "committed"})
 		}
 
-		// Each challenge also depends on the immediately preceding challenge.
 		if i > 0 {
-			dep := rounds[i-1].ChallengeName
-			edges = append(edges, dagEdge{From: dep, To: r.ChallengeName, Kind: "challenge"})
+			prev := constants.CanonicalChallengeName(i - 1)
+			edges = append(edges, dagEdge{From: prev, To: challengeName, Kind: "challenge"})
 		}
 	}
 
-	// ── 2. assign layers via iterative propagation ────────────────────────────
-	// Build a challenge-only predecessor map (committed columns are always layer 0).
-	predOf := make(map[string][]string)
-	for _, e := range edges {
-		if e.Kind == "challenge" {
-			predOf[e.To] = append(predOf[e.To], e.From)
-		}
-	}
-
-	layerOf := make(map[string]int)
-	for id, k := range kindOf {
-		if k == "committed" {
-			layerOf[id] = 0
-		} else {
-			layerOf[id] = 1 // will be corrected below
-		}
-	}
-	for {
-		changed := false
-		for id, k := range kindOf {
-			if k != "challenge" {
-				continue
-			}
-			want := 1
-			for _, p := range predOf[id] {
-				if l := layerOf[p] + 1; l > want {
-					want = l
-				}
-			}
-			if layerOf[id] != want {
-				layerOf[id] = want
-				changed = true
-			}
-		}
-		if !changed {
-			break
-		}
-	}
-
-	// ── 3. group by layer and sort within each layer ──────────────────────────
+	// ── 2. group by layer and sort within each layer ──────────────────────────
 	byLayer := make(map[int][]string)
 	maxLayer := 0
 	for id := range kindOf {
@@ -150,13 +107,12 @@ func WriteProofTranscriptRoundsDagToHTML(proof *derive.Proof, filename string) e
 	}
 	for l, ids := range byLayer {
 		sort.Slice(ids, func(i, j int) bool {
+			// committed columns first, then by id
 			ki, kj := kindOf[ids[i]], kindOf[ids[j]]
-			// Committed columns: alphabetical order.
-			if ki == "committed" && kj == "committed" {
-				return ids[i] < ids[j]
+			if ki != kj {
+				return ki == "committed"
 			}
-			// Challenges: proof order.
-			return challengeOrd[ids[i]] < challengeOrd[ids[j]]
+			return ids[i] < ids[j]
 		})
 		byLayer[l] = ids
 	}
