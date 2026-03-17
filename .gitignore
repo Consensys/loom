@@ -2,3 +2,4 @@ playground/
 *.html
 *.prof
 *.txt
+.DS_Store
