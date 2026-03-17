@@ -104,8 +104,9 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 
 		// at this stage, the polys are evaluated on bigDomain.FrMultiplicativeGen*<bigDomain.Generator^i>. We can compute the rho-ith
 		// component of the numerator
+		vals := vanishingRelation.EvalOnAllEntries(_Pi, N)
 		for j := 0; j < N; j++ {
-			numerator[rho*j+i] = vanishingRelation.EvalOnIthEntry(_Pi, j)
+			numerator[rho*j+i] = vals[j]
 		}
 
 		// FFTInv on piNonConst -> polys become canonical again, k-th coeff shifted by bigDomain.FrMultiplicativeGen^k*<bigDomain.Generator^ik>

@@ -700,6 +700,124 @@ func evalDAGNodeOnIthEntry(n *DAGNode, cache []koalabear.Element, _Pi [][]koalab
 	panic(fmt.Sprintf("EvalOnIthEntry: unknown NodeKind %d", n.Kind))
 }
 
+// EvalOnAllEntries evaluates the DAG pointwise for all N rows simultaneously
+// and returns a slice of length N. Equivalent to calling EvalOnIthEntry(Pi, j)
+// for j=0..N-1, but uses a single topological traversal with tight inner loops
+// instead of N separate traversals. Each non-leaf node is visited exactly once.
+//
+// Peak memory is bounded to O(max_live_nodes × N) by reference counting: a
+// node's buffer is returned to an internal pool as soon as all its parents have
+// consumed it.
+func (d *DAG) EvalOnAllEntries(Pi [][]koalabear.Element, N int) []koalabear.Element {
+	// Pre-compute how many parent nodes reference each child.
+	refCount := make([]int, len(d.Nodes))
+	for _, n := range d.Nodes {
+		for _, child := range n.Children {
+			refCount[child.Index]++
+		}
+	}
+
+	// Buffer pool: recycle N-length slices to limit peak allocation.
+	// (don't use sync.Pool -> no cross-call, cross-goroutine sharing in this function case)
+	var pool [][]koalabear.Element
+	alloc := func() []koalabear.Element {
+		if last := len(pool) - 1; last >= 0 {
+			b := pool[last]
+			pool = pool[:last]
+			return b
+		}
+		return make([]koalabear.Element, N)
+	}
+	release := func(b []koalabear.Element) { pool = append(pool, b) }
+
+	vectors := make([][]koalabear.Element, len(d.Nodes))
+
+	for _, n := range d.Nodes {
+		dst := alloc()
+
+		switch n.Kind {
+		case KindLeaf:
+			if n.IsConst {
+				for j := range N {
+					dst[j] = n.ConstVal
+				}
+			} else {
+				l := n.Leaf
+				p := Pi[l.Idx]
+				if len(p) == 1 {
+					for j := range N {
+						dst[j] = p[0]
+					}
+				} else if l.Type == expr.RotatedColumn {
+					for j := range N {
+						dst[j] = p[(j+N+l.Shift)%N]
+					}
+				} else {
+					copy(dst, p[:N])
+				}
+			}
+
+		case KindAdd:
+			copy(dst, vectors[n.Children[0].Index])
+			for _, child := range n.Children[1:] {
+				src := vectors[child.Index]
+				for j := range N {
+					dst[j].Add(&dst[j], &src[j])
+				}
+			}
+
+		case KindSub:
+			l, r := vectors[n.Children[0].Index], vectors[n.Children[1].Index]
+			for j := range N {
+				dst[j].Sub(&l[j], &r[j])
+			}
+
+		case KindMul:
+			copy(dst, vectors[n.Children[0].Index])
+			for _, child := range n.Children[1:] {
+				src := vectors[child.Index]
+				for j := range N {
+					dst[j].Mul(&dst[j], &src[j])
+				}
+			}
+
+		case KindPow:
+			base := vectors[n.Children[0].Index]
+			tmp := alloc()
+			copy(tmp, base)
+			for j := range N {
+				dst[j].SetOne()
+			}
+			exp := n.Exp
+			for exp > 0 {
+				if exp&1 == 1 {
+					for j := range N {
+						dst[j].Mul(&dst[j], &tmp[j])
+					}
+				}
+				for j := range N {
+					tmp[j].Mul(&tmp[j], &tmp[j])
+				}
+				exp >>= 1
+			}
+			release(tmp)
+		}
+
+		vectors[n.Index] = dst
+
+		// Release child buffers no longer needed by any future parent.
+		for _, child := range n.Children {
+			refCount[child.Index]--
+			if refCount[child.Index] == 0 && child != d.Root {
+				release(vectors[child.Index])
+				vectors[child.Index] = nil
+			}
+		}
+	}
+
+	return vectors[d.Root.Index]
+}
+
 // EvalWithCache evaluates the DAG using the caller-supplied cache slice instead
 // of allocating a new map on each call. cache must have length >= len(d.Nodes).
 // Reuse the same slice across repeated calls to avoid allocation overhead.
