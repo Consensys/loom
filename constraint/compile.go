@@ -12,9 +12,9 @@ import (
 // Fold returns Σ_i αⁱE[i]
 func Fold(E []expr.Expr, alpha expr.Expr) expr.Expr {
 	res := E[len(E)-1]
+
 	for i := len(E) - 2; i >= 0; i-- {
 		res = res.Mul(alpha).Add(E[i])
-		// res = res.Add(E[i].Mul(alpha.Pow(uint32(i))))
 	}
 	return res
 }

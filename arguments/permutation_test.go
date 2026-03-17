@@ -30,11 +30,10 @@ func TestPermutation(t *testing.T) {
 	proverRunTime := prover.NewProver(cp, trace, nil)
 
 	// begin proving
-	knowncolumns := map[string]bool{"P0": true, "P1": true}
 	proof := derive.NewProof(system.N)
 
 	// 1. DerivePlan + sanity checks
-	err := proverRunTime.DerivePlan(knowncolumns, &proof, 1)
+	err := proverRunTime.DerivePlan(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +91,6 @@ func TestPermutationTuple(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	knowncolumns := map[string]bool{"P0": true, "P1": true, "Q0": true, "Q1": true}
 	cp := system.Compile()
 
 	proverRunTime := prover.NewProver(cp, trace, nil)
@@ -100,7 +98,7 @@ func TestPermutationTuple(t *testing.T) {
 	proof := derive.NewProof(system.N)
 
 	// 1. DerivePlan + sanity checks
-	err = proverRunTime.DerivePlan(knowncolumns, &proof, 1)
+	err = proverRunTime.DerivePlan(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,13 +173,6 @@ func BenchmarkPermutation(b *testing.B) {
 
 	_ = Permutation(&system, s1, s2)
 
-	knowncolumns := make(map[string]bool)
-	for _, s := range s1 {
-		knowncolumns[s.String()] = true
-	}
-	for _, s := range s2 {
-		knowncolumns[s.String()] = true
-	}
 	cp := system.Compile()
 
 	f, _ := os.Create("cpu.prof")
@@ -196,7 +187,7 @@ func BenchmarkPermutation(b *testing.B) {
 			}
 
 			proverRunTime := prover.NewProver(cp, _trace, nil)
-			proverRunTime.Prove(knowncolumns, 1)
+			proverRunTime.Prove(1)
 
 		}
 	})

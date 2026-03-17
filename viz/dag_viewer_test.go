@@ -44,7 +44,7 @@ func TestWriteProofTranscriptRoundsDagToHTML_Permutation(t *testing.T) {
 
 	cp := system.Compile()
 	rt := prover.NewProver(cp, trace, nil)
-	proof, err := rt.Prove(map[string]bool{"P0": true, "P1": true}, 1)
+	proof, err := rt.Prove(1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestWriteProofTranscriptRoundsDagToHTML_Tuple(t *testing.T) {
 
 	cp := system.Compile()
 	rt := prover.NewProver(cp, trace, nil)
-	proof, err := rt.Prove(map[string]bool{"P0": true, "P1": true, "Q0": true, "Q1": true}, 1)
+	proof, err := rt.Prove(1)
 	if err != nil {
 		t.Fatal(err)
 	}

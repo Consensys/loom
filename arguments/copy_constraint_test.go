@@ -45,14 +45,12 @@ func TestCopyPermutation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// cp := system.Compile()
 	cp := system.Compile()
 	proverRunTime := prover.NewProver(cp, T, nil)
-	knownColumns := map[string]bool{"P1": true, "P2": true}
 	proof := derive.NewProof(system.N)
 
 	// 1. DerivePlan + sanity checks
-	err = proverRunTime.DerivePlan(knownColumns, &proof, 1)
+	err = proverRunTime.DerivePlan(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,11 +126,10 @@ func TestCopyPermutationTuple(t *testing.T) {
 
 	cp := system.Compile()
 	proverRunTime := prover.NewProver(cp, T, nil)
-	knownColumns := map[string]bool{"P1": true, "P2": true}
 	proof := derive.NewProof(system.N)
 
 	// 1. DerivePlan + sanity checks
-	err = proverRunTime.DerivePlan(knownColumns, &proof, 1)
+	err = proverRunTime.DerivePlan(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,16 +10,16 @@ import (
 
 func Prove(cp constraint.Program, trace trace.Trace, publicInputs proof.PublicInputs, nbWorkers int) (proof.Proof, error) {
 
-	knownColumns := make(map[string]bool)
-	for k := range trace {
-		if _, ok := knownColumns[k]; !ok {
-			knownColumns[k] = true
-		}
-	}
+	// knownColumns := make(map[string]bool)
+	// for k := range trace {
+	// 	if _, ok := knownColumns[k]; !ok {
+	// 		knownColumns[k] = true
+	// 	}
+	// }
 
 	_prover := prover.NewProver(cp, trace, publicInputs)
 
-	return _prover.Prove(knownColumns, nbWorkers)
+	return _prover.Prove(nbWorkers)
 }
 
 func Verify(cp constraint.Program, p *proof.Proof, publicInputs proof.PublicInputs, nbWorkers int) error {

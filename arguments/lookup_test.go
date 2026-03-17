@@ -64,11 +64,10 @@ func TestLookup(t *testing.T) {
 
 	proverRunTime := prover.NewProver(cp, trace, nil)
 
-	knowncolumns := map[string]bool{"T": true, "S": true}
 	proof := derive.NewProof(system.N)
 
 	// 1. DerivePlan + sanity checks
-	err := proverRunTime.DerivePlan(knowncolumns, &proof, 1)
+	err := proverRunTime.DerivePlan(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,11 +126,10 @@ func TestLookupTuple(t *testing.T) {
 
 	proverRunTime := prover.NewProver(cp, tr, nil)
 
-	knowncolumns := map[string]bool{"T0": true, "T1": true, "S0": true, "S1": true}
 	proof := derive.NewProof(system.N)
 
 	// 1. DerivePlan + sanity checks
-	err := proverRunTime.DerivePlan(knowncolumns, &proof, 1)
+	err := proverRunTime.DerivePlan(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

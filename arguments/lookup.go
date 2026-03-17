@@ -174,6 +174,10 @@ func Lookup(system *constraint.Builder, S, T expr.Expr) error {
 //	|----------------------------------–---------------------------------------------|
 func LookupTuple(system *constraint.Builder, S, T []expr.Expr) error {
 
+	if len(S) != len(T) {
+		return fmt.Errorf("LookupTuple requires equal-width tuples on both sides")
+	}
+
 	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
 	if err != nil {
 		return err

@@ -244,7 +244,8 @@ func (runtime *Prover) FillPublicValues() error {
 	return nil
 }
 
-func (runtime *Prover) DerivePlan(knownColumns map[string]bool, proof *derive.Proof, nbWorker int) error {
+func (runtime *Prover) DerivePlan(proof *derive.Proof, nbWorker int) error {
+
 	for i, steps := range runtime.Program.DerivationPlanScheduled {
 		for _, step := range steps {
 			if err := step.Execute(runtime.Trace, proof, &runtime.Mu); err != nil {
@@ -258,7 +259,7 @@ func (runtime *Prover) DerivePlan(knownColumns map[string]bool, proof *derive.Pr
 	return nil
 }
 
-func (runtime *Prover) Prove(knownColumns map[string]bool, nbWorkers int) (derive.Proof, error) {
+func (runtime *Prover) Prove(nbWorkers int) (derive.Proof, error) {
 
 	proof := derive.NewProof(runtime.Program.N)
 
@@ -266,7 +267,7 @@ func (runtime *Prover) Prove(knownColumns map[string]bool, nbWorkers int) (deriv
 		return proof, err
 	}
 
-	if err := runtime.DerivePlan(knownColumns, &proof, nbWorkers); err != nil {
+	if err := runtime.DerivePlan(&proof, nbWorkers); err != nil {
 		return proof, err
 	}
 

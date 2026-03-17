@@ -68,12 +68,11 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 
 	cp := system.Compile()
 	proverRunTime := prover.NewProver(cp, T, nil)
-	knownColumns := map[string]bool{"A": true, "A2": true, "B": true, "B2": true, "F1": true, "F2": true}
 	proof := derive.NewProof(system.N)
 
 	viz.WriteDerivationPlanDagToHTML(cp, "pa_projection_multi.html")
 
-	err = proverRunTime.DerivePlan(knownColumns, &proof, 1)
+	err = proverRunTime.DerivePlan(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,11 +165,10 @@ func TestEqualityFilteredColumns(t *testing.T) {
 
 	cp := system.Compile()
 	proverRunTime := prover.NewProver(cp, T, nil)
-	knownColumns := map[string]bool{"A": true, "B": true, "F1": true, "F2": true}
 	proof := derive.NewProof(system.N)
 
 	// 1. DerivePlan + sanity checks
-	err = proverRunTime.DerivePlan(knownColumns, &proof, 1)
+	err = proverRunTime.DerivePlan(&proof, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
