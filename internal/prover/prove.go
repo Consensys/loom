@@ -13,6 +13,7 @@ import (
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
 	derive "github.com/consensys/loom/internal/derive"
+	"github.com/consensys/loom/internal/parallel"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/trace"
 )
@@ -247,15 +248,19 @@ func (runtime *Prover) FillPublicValues() error {
 func (runtime *Prover) DerivePlan(proof *derive.Proof, nbWorker int) error {
 
 	for i, steps := range runtime.Program.DerivationPlanScheduled {
-		for _, step := range steps {
-			if err := step.Execute(runtime.Trace, proof, &runtime.Mu); err != nil {
-				return err
+		parallel.Execute(len(steps), func(start, end int) {
+			for j := start; j < end; j++ {
+				if err := steps[j].Execute(runtime.Trace, proof, &runtime.Mu); err != nil {
+					panic(err)
+				}
 			}
-		}
+		}, nbWorker)
+
 		if err := runtime.commitAndDeriveChallenge(i, proof); err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
