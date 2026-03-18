@@ -39,11 +39,11 @@ func CheckFiatShamir(proverRunTime *prover.Prover, verifierRunTime *verifier.Ver
 		mapProverChallenges[c] = tc[0]
 	}
 	// zetaName := proof.TranscriptRounds[len(proof.TranscriptRounds)-1].ChallengeName
-	zetaName := constants.CanonicalChallengeName(len(proof.BatchColumns) - 1)
+	zetaName := constants.CanonicalChallengeName(len(proof.Commitments) - 1)
 	mapProverChallenges[zetaName] = zeta // <- zeta is registered separately, it does not appear in proof.VanishingRelation
 
 	mapVerifierChallenges := make(map[string]koalabear.Element)
-	for i := 0; i < len(proof.BatchColumns); i++ { // zeta appears by construction in verifierRunTime.Vars (but it does not appear in the vanishing relation)
+	for i := 0; i < len(proof.Commitments); i++ { // zeta appears by construction in verifierRunTime.Vars (but it does not appear in the vanishing relation)
 		challengeName := constants.CanonicalChallengeName(i)
 		mapVerifierChallenges[challengeName] = verifierRunTime.Vars[challengeName]
 	}

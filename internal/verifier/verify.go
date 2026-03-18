@@ -46,8 +46,8 @@ func (runtime *Verifier) DeriveChallenge(proof *derive.Proof, batchIdx int) erro
 	if err := fs.NewChallenge(challengeName); err != nil {
 		return err
 	}
-	if len(proof.BatchColumns[batchIdx]) > 0 {
-		if err := fs.Bind(challengeName, proof.Batch[batchIdx].Marshal()); err != nil {
+	if len(proof.Commitments[batchIdx].Columns) > 0 {
+		if err := fs.Bind(challengeName, proof.Commitments[batchIdx].Digest.Marshal()); err != nil {
 			return err
 		}
 	}
@@ -78,12 +78,12 @@ func (runtime *Verifier) DeriveChallenge(proof *derive.Proof, batchIdx int) erro
 // ComputeChallenges replays the Fiat-Shamir transcript sequentially.
 // nbWorkers is accepted for API compatibility but the replay is always sequential.
 func (runtime *Verifier) ComputeChallenges(proof *derive.Proof, nbWorkers int) error {
-	for i := range proof.BatchColumns {
+	for i := range proof.Commitments {
 		if err := runtime.DeriveChallenge(proof, i); err != nil {
 			return err
 		}
 	}
-	runtime.Zeta = runtime.Vars[constants.CanonicalChallengeName(len(proof.BatchColumns)-1)]
+	runtime.Zeta = runtime.Vars[constants.CanonicalChallengeName(len(proof.Commitments)-1)]
 	return nil
 }
 
@@ -146,12 +146,12 @@ func (runtime *Verifier) computeMissingPart(info derive.PublicColumnInfo, shift,
 // FillClaimedValues fills runtime.Vars with the opening evaluations from the proof.
 func (runtime *Verifier) FillClaimedValues(proof *derive.Proof) error {
 
-	for batchIdx, colNames := range proof.BatchColumns {
+	for batchIdx, com := range proof.Commitments {
 		if batchIdx >= len(proof.OpeningProofs) {
 			break
 		}
 		op := proof.OpeningProofs[batchIdx]
-		for polyIdx, colName := range colNames {
+		for polyIdx, colName := range com.Columns {
 			if polyIdx >= len(op.Shift) {
 				continue
 			}
@@ -199,11 +199,11 @@ func (runtime *Verifier) CheckRelation(proof *derive.Proof) error {
 // VerifyOpeningProofs verifies each batch opening proof.
 func (runtime *Verifier) VerifyOpeningProofs(proof *derive.Proof) error {
 	zeta := runtime.Zeta
-	for batchIdx, batch := range proof.Batch {
+	for batchIdx, com := range proof.Commitments {
 		if batchIdx >= len(proof.OpeningProofs) {
 			break
 		}
-		if err := commitment.VerifyBatch(batch, proof.OpeningProofs[batchIdx], zeta); err != nil {
+		if err := commitment.Verify(com.Digest, proof.OpeningProofs[batchIdx], zeta); err != nil {
 			return err
 		}
 	}

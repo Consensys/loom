@@ -64,14 +64,18 @@ func dagShortLabel(id string) string {
 //   - Dashed blue arrows  : batch → challenge
 //   - Solid purple arrows : challenge → challenge
 func WriteProofTranscriptRoundsDagToHTML(proof *derive.Proof, filename string) error {
-	batchColumns := proof.BatchColumns
+
+	batchColumns := make([][]string, 0, len(proof.Commitments))
+	for _, c := range proof.Commitments {
+		batchColumns = append(batchColumns, c.Columns)
+	}
 
 	// ── 1. collect unique nodes and edges ─────────────────────────────────────
 	// For each index i: BatchColumns[i] (if non-empty) + loom@challenge_{i-1} (if i>0)
 	// yields loom@challenge_i.
-	kindOf       := make(map[string]string) // id → "committed" | "challenge"
+	kindOf := make(map[string]string)       // id → "committed" | "challenge"
 	batchTooltip := make(map[string]string) // batch node id → newline-joined column list
-	layerOf      := make(map[string]int)
+	layerOf := make(map[string]int)
 	var edges []dagEdge
 
 	batchID := func(i int) string { return fmt.Sprintf("batch_%d", i) }

@@ -65,12 +65,11 @@ func (runtime *Prover) commitAndDeriveChallenge(batchIdx int, proof *derive.Proo
 	}
 
 	// 2. Batch-commit.
-	batch, err := commitment.CommitBatch(polys)
+	batchDigest, err := commitment.Commit(polys)
 	if err != nil {
 		return err
 	}
-	proof.Batch = append(proof.Batch, batch)
-	proof.BatchColumns = append(proof.BatchColumns, colNames)
+	proof.Commitments = append(proof.Commitments, derive.NewCommitment(batchDigest, colNames))
 
 	// 3. Build FS transcript: bind batch digest + previously derived challenge.
 	challengeName := constants.CanonicalChallengeName(batchIdx)
@@ -80,7 +79,7 @@ func (runtime *Prover) commitAndDeriveChallenge(batchIdx int, proof *derive.Proo
 		return err
 	}
 	if len(runtime.Program.Batches[batchIdx]) > 0 {
-		if err := fs.Bind(challengeName, batch.Marshal()); err != nil {
+		if err := fs.Bind(challengeName, batchDigest.Marshal()); err != nil {
 			return err
 		}
 	}
@@ -124,12 +123,11 @@ func (runtime *Prover) ComputeQuotient(proof *derive.Proof) error {
 	}
 	poly.CosetLagrangeToLagrangeNormal(H)
 
-	batch, err := commitment.CommitBatch([]poly.Polynomial{H})
+	batch, err := commitment.Commit([]poly.Polynomial{H})
 	if err != nil {
 		return err
 	}
-	proof.Batch = append(proof.Batch, batch)
-	proof.BatchColumns = append(proof.BatchColumns, []string{constants.FINAL_QUOTIENT})
+	proof.Commitments = append(proof.Commitments, derive.NewCommitment(batch, []string{constants.FINAL_QUOTIENT}))
 
 	runtime.Trace[constants.FINAL_QUOTIENT] = H
 	return nil
@@ -139,20 +137,20 @@ func (runtime *Prover) ComputeQuotient(proof *derive.Proof) error {
 // previously derived challenge values.
 func (runtime *Prover) DeriveOpeningChallenge(proof *derive.Proof) (koalabear.Element, error) {
 
-	lastBatchIdx := len(proof.Batch) - 1
+	lastBatchIdx := len(proof.Commitments) - 1
 
-	challengeName := constants.CanonicalChallengeName(len(proof.BatchColumns) - 1)
+	challengeName := constants.CanonicalChallengeName(len(proof.Commitments) - 1)
 
 	fs := fiatshamir.NewTranscript(sha256.New())
 	if err := fs.NewChallenge(challengeName); err != nil {
 		return koalabear.Element{}, err
 	}
 	// Bind quotient batch (always non-empty).
-	if err := fs.Bind(challengeName, proof.Batch[lastBatchIdx].Marshal()); err != nil {
+	if err := fs.Bind(challengeName, proof.Commitments[lastBatchIdx].Digest.Marshal()); err != nil {
 		return koalabear.Element{}, err
 	}
 	// Bind only the immediately preceding challenge (the final folding challenge).
-	if nRounds := len(proof.BatchColumns) - 1; nRounds > 0 {
+	if nRounds := len(proof.Commitments) - 1; nRounds > 0 {
 		prevName := constants.CanonicalChallengeName(nRounds - 1)
 		c, ok := runtime.Trace[prevName]
 		if !ok {
@@ -181,8 +179,8 @@ func (runtime *Prover) OpenCommitments(proof *derive.Proof, zeta koalabear.Eleme
 
 	// Build a map: base column name → set of shifts needed (always includes 0).
 	shiftsNeeded := make(map[string]map[int]bool)
-	for _, cols := range proof.BatchColumns {
-		for _, col := range cols {
+	for _, com := range proof.Commitments {
+		for _, col := range com.Columns {
 			if _, ok := shiftsNeeded[col]; !ok {
 				shiftsNeeded[col] = map[int]bool{0: true}
 			}
@@ -197,11 +195,11 @@ func (runtime *Prover) OpenCommitments(proof *derive.Proof, zeta koalabear.Eleme
 		}
 	}
 
-	proof.OpeningProofs = make([]commitment.BatchProofOpening, 0, len(proof.Batch))
-	for batchIdx, colNames := range proof.BatchColumns {
-		polys := make([]poly.Polynomial, len(colNames))
-		shifts := make([][]int, len(colNames))
-		for polyIdx, colName := range colNames {
+	proof.OpeningProofs = make([]commitment.Opening, 0, len(proof.Commitments))
+	for _, com := range proof.Commitments {
+		polys := make([]poly.Polynomial, len(com.Columns))
+		shifts := make([][]int, len(com.Columns))
+		for polyIdx, colName := range com.Columns {
 			p, ok := runtime.Trace[colName]
 			if !ok {
 				return fmt.Errorf("column %s not found in the trace", colName)
@@ -222,7 +220,7 @@ func (runtime *Prover) OpenCommitments(proof *derive.Proof, zeta koalabear.Eleme
 			}
 			sort.Ints(shifts[polyIdx])
 		}
-		op, err := commitment.OpenBatch(proof.Batch[batchIdx], polys, zeta, shifts)
+		op, err := commitment.Open(com.Digest, polys, zeta, shifts)
 		if err != nil {
 			return err
 		}

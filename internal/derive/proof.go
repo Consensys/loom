@@ -8,5 +8,8 @@ import (
 type Proof = proof.Proof
 type PublicColumnInfo = proof.PublicColumnInfo
 type PublicInputs = proof.PublicInputs
+type Commitment = proof.Commitment
 
 var NewProof = proof.NewProof
+
+var NewCommitment = proof.NewCommitment
