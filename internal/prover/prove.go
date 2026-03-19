@@ -23,6 +23,7 @@ type Prover struct {
 	Program      constraint.Program
 	Trace        trace.Trace
 	PublicInputs derive.PublicInputs
+	FiatShamir   *fiatshamir.Transcript
 	Mu           sync.Mutex
 }
 
@@ -31,6 +32,7 @@ func NewProver(cp constraint.Program, trace trace.Trace, publicInputs derive.Pub
 		Program:      cp,
 		Trace:        trace,
 		PublicInputs: publicInputs,
+		FiatShamir:   fiatshamir.NewTranscript(sha256.New()),
 	}
 	if res.PublicInputs == nil {
 		res.PublicInputs = make(derive.PublicInputs)
@@ -38,10 +40,8 @@ func NewProver(cp constraint.Program, trace trace.Trace, publicInputs derive.Pub
 	return res
 }
 
-// commitAndDeriveChallenge commits the polynomials listed in Program.Batches[batchIdx],
-// records the batch in proof, and derives a Fiat-Shamir challenge whose name is
-// challengeName.  The FS transcript binds the batch digest followed by all previously
-// derived challenge values, matching the verifier's replay order.
+// Commit commits the polynomials listed in Program.Batches[batchIdx],
+// records the batch in proof
 func (runtime *Prover) commitAndDeriveChallenge(batchIdx int, proof *derive.Proof) error {
 	colNames := runtime.Program.Batches[batchIdx]
 
@@ -74,12 +74,9 @@ func (runtime *Prover) commitAndDeriveChallenge(batchIdx int, proof *derive.Proo
 	// 3. Build FS transcript: bind batch digest + previously derived challenge.
 	challengeName := constants.CanonicalChallengeName(batchIdx)
 	// Order matches the verifier's DeriveChallenge: batch first, then prev challenge in order.
-	fs := fiatshamir.NewTranscript(sha256.New())
-	if err := fs.NewChallenge(challengeName); err != nil {
-		return err
-	}
+	// fs := fiatshamir.NewTranscript(sha256.New())
 	if len(runtime.Program.Batches[batchIdx]) > 0 {
-		if err := fs.Bind(challengeName, batchDigest.Marshal()); err != nil {
+		if err := runtime.FiatShamir.Bind(challengeName, proof.Commitments[batchIdx].Digest.Marshal()); err != nil {
 			return err
 		}
 	}
@@ -89,13 +86,13 @@ func (runtime *Prover) commitAndDeriveChallenge(batchIdx int, proof *derive.Proo
 		if !ok {
 			return fmt.Errorf("challenge %s not found in the trace", prevChallengeName)
 		}
-		if err := fs.Bind(challengeName, prevChallenge[0].Marshal()); err != nil {
+		if err := runtime.FiatShamir.Bind(challengeName, prevChallenge[0].Marshal()); err != nil {
 			return err
 		}
 	}
 
 	// 4. Derive and store challenge.
-	bc, err := fs.ComputeChallenge(challengeName)
+	bc, err := runtime.FiatShamir.ComputeChallenge(challengeName)
 	if err != nil {
 		return err
 	}
@@ -141,12 +138,11 @@ func (runtime *Prover) DeriveOpeningChallenge(proof *derive.Proof) (koalabear.El
 
 	challengeName := constants.CanonicalChallengeName(len(proof.Commitments) - 1)
 
-	fs := fiatshamir.NewTranscript(sha256.New())
-	if err := fs.NewChallenge(challengeName); err != nil {
+	if err := runtime.FiatShamir.NewChallenge(challengeName); err != nil {
 		return koalabear.Element{}, err
 	}
 	// Bind quotient batch (always non-empty).
-	if err := fs.Bind(challengeName, proof.Commitments[lastBatchIdx].Digest.Marshal()); err != nil {
+	if err := runtime.FiatShamir.Bind(challengeName, proof.Commitments[lastBatchIdx].Digest.Marshal()); err != nil {
 		return koalabear.Element{}, err
 	}
 	// Bind only the immediately preceding challenge (the final folding challenge).
@@ -156,12 +152,12 @@ func (runtime *Prover) DeriveOpeningChallenge(proof *derive.Proof) (koalabear.El
 		if !ok {
 			return koalabear.Element{}, fmt.Errorf("challenge %s not found in the trace", prevName)
 		}
-		if err := fs.Bind(challengeName, c[0].Marshal()); err != nil {
+		if err := runtime.FiatShamir.Bind(challengeName, c[0].Marshal()); err != nil {
 			return koalabear.Element{}, err
 		}
 	}
 
-	bzeta, err := fs.ComputeChallenge(challengeName)
+	bzeta, err := runtime.FiatShamir.ComputeChallenge(challengeName)
 	if err != nil {
 		return koalabear.Element{}, err
 	}
@@ -174,11 +170,48 @@ func (runtime *Prover) DeriveOpeningChallenge(proof *derive.Proof) (koalabear.El
 	return zeta, nil
 }
 
+func (runtime *Prover) openCommitment(com derive.Commitment, shiftsNeeded map[string]map[int]bool, zeta koalabear.Element) (commitment.Opening, error) {
+
+	polys := make([]poly.Polynomial, len(com.Columns))
+	shifts := make([][]int, len(com.Columns))
+	for polyIdx, colName := range com.Columns {
+		p, ok := runtime.Trace[colName]
+		if !ok {
+			return commitment.Opening{}, fmt.Errorf("column %s not found in the trace", colName)
+		}
+		// Open the polynomial so the verifier receives the true evaluation
+		// needed to check the vanishing relation. Careful to zeroing the public inputs
+		if info, ok := runtime.PublicInputs[colName]; ok {
+			buf := make([]koalabear.Element, len(p))
+			copy(buf, p)
+			for _, idx := range info.Idx {
+				buf[idx].SetZero()
+			}
+			p = buf
+		}
+		polys[polyIdx] = p
+		for s := range shiftsNeeded[colName] {
+			shifts[polyIdx] = append(shifts[polyIdx], s)
+		}
+		sort.Ints(shifts[polyIdx])
+	}
+	op, err := commitment.Open(com.Digest, polys, zeta, shifts)
+	if err != nil {
+		return commitment.Opening{}, err
+	}
+	return op, nil
+}
+
 // OpenCommitments opens every batch at zeta (and at ω^shift · zeta for rotated columns).
 func (runtime *Prover) OpenCommitments(proof *derive.Proof, zeta koalabear.Element) error {
 
 	// Build a map: base column name → set of shifts needed (always includes 0).
 	shiftsNeeded := make(map[string]map[int]bool)
+	for _, col := range runtime.Program.PublicColumnsCommitment.Columns {
+		if _, ok := shiftsNeeded[col]; !ok {
+			shiftsNeeded[col] = map[int]bool{0: true}
+		}
+	}
 	for _, com := range proof.Commitments {
 		for _, col := range com.Columns {
 			if _, ok := shiftsNeeded[col]; !ok {
@@ -195,32 +228,14 @@ func (runtime *Prover) OpenCommitments(proof *derive.Proof, zeta koalabear.Eleme
 		}
 	}
 
+	var err error
+	proof.OpeningProofPublicColumns, err = runtime.openCommitment(runtime.Program.PublicColumnsCommitment, shiftsNeeded, zeta)
+	if err != nil {
+		return err
+	}
 	proof.OpeningProofs = make([]commitment.Opening, 0, len(proof.Commitments))
 	for _, com := range proof.Commitments {
-		polys := make([]poly.Polynomial, len(com.Columns))
-		shifts := make([][]int, len(com.Columns))
-		for polyIdx, colName := range com.Columns {
-			p, ok := runtime.Trace[colName]
-			if !ok {
-				return fmt.Errorf("column %s not found in the trace", colName)
-			}
-			// Open the polynomial so the verifier receives the true evaluation
-			// needed to check the vanishing relation. Careful to zeroing the public inputs
-			if info, ok := runtime.PublicInputs[colName]; ok {
-				buf := make([]koalabear.Element, len(p))
-				copy(buf, p)
-				for _, idx := range info.Idx {
-					buf[idx].SetZero()
-				}
-				p = buf
-			}
-			polys[polyIdx] = p
-			for s := range shiftsNeeded[colName] {
-				shifts[polyIdx] = append(shifts[polyIdx], s)
-			}
-			sort.Ints(shifts[polyIdx])
-		}
-		op, err := commitment.Open(com.Digest, polys, zeta, shifts)
+		op, err := runtime.openCommitment(com, shiftsNeeded, zeta)
 		if err != nil {
 			return err
 		}
@@ -245,6 +260,20 @@ func (runtime *Prover) FillPublicValues() error {
 
 func (runtime *Prover) DerivePlan(proof *derive.Proof, nbWorker int) error {
 
+	// 1. bind the first challenge to the public columns
+	challengeName := constants.CanonicalChallengeName(0)
+	err := runtime.FiatShamir.NewChallenge(challengeName)
+	if err != nil {
+		return err
+	}
+	if len(runtime.Program.PublicColumnsCommitment.Columns) > 0 {
+		err = runtime.FiatShamir.Bind(challengeName, runtime.Program.PublicColumnsCommitment.Digest.Marshal())
+		if err != nil {
+			return err
+		}
+	}
+
+	// 2. derive the plan
 	for i, steps := range runtime.Program.DerivationPlanScheduled {
 		parallel.Execute(len(steps), func(start, end int) {
 			for j := start; j < end; j++ {
@@ -253,7 +282,10 @@ func (runtime *Prover) DerivePlan(proof *derive.Proof, nbWorker int) error {
 				}
 			}
 		}, nbWorker)
-
+		if i > 0 {
+			challengeName = constants.CanonicalChallengeName(i)
+			runtime.FiatShamir.NewChallenge(challengeName)
+		}
 		if err := runtime.commitAndDeriveChallenge(i, proof); err != nil {
 			return err
 		}

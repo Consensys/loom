@@ -60,13 +60,18 @@ func TestFibonacci(t *testing.T) {
 	// system.AssertZero(constraint.BuildLocalRelation(colA, expr.Const(zero), 0, N))
 	// system.AssertZero(constraint.BuildLocalRelation(colB, expr.Const(one), 0, N))
 
-	cp := system.Compile()
+	cp := system.Compile(nil)
 
 	// Now that the system is compiled, fetch the trace and generate the proof
 
 	trace := GetFibonacciTrace(N, "A", "B", "C")
 	// viewer.WriteTraceToCSV("fibonacci.csv", trace, N)
 
+	err := loom.Setup(cp, trace)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(-1)
+	}
 	proof, err := loom.Prove(cp, trace, publicInputs, 1)
 	if err != nil {
 		fmt.Println(err)

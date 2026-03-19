@@ -60,7 +60,7 @@ func TestLookup(t *testing.T) {
 
 	Lookup(&system, expr.Col("S"), expr.Col("T"))
 
-	cp := system.Compile()
+	cp := system.Compile(nil)
 
 	proverRunTime := prover.NewProver(cp, trace, nil)
 
@@ -122,7 +122,7 @@ func TestLookupTuple(t *testing.T) {
 	T1 := expr.Col("T1")
 	LookupTuple(&system, []expr.Expr{S0, S1}, []expr.Expr{T0, T1})
 
-	cp := system.Compile()
+	cp := system.Compile(nil)
 
 	proverRunTime := prover.NewProver(cp, tr, nil)
 

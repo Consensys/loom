@@ -11,6 +11,9 @@ type Commitment struct {
 // Polynomials are committed stage by stage (one batch per challenge level).
 type Proof struct {
 
+	// opening of public columns
+	OpeningProofPublicColumns commitment.Opening
+
 	// Commitments[k] contains the commitments of the columns whose name appear in Columns, in that order
 	Commitments []Commitment
 

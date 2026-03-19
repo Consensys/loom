@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom"
 	"github.com/consensys/loom/constraint"
 	"github.com/consensys/loom/expr"
 	derive "github.com/consensys/loom/internal/derive"
@@ -25,7 +26,7 @@ func TestPermutation(t *testing.T) {
 
 	Permutation(&system, []expr.Expr{expr.Col("P0")}, []expr.Expr{expr.Col("P1")})
 
-	cp := system.Compile()
+	cp := system.Compile(nil)
 
 	proverRunTime := prover.NewProver(cp, trace, nil)
 
@@ -91,7 +92,7 @@ func TestPermutationTuple(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cp := system.Compile()
+	cp := system.Compile(nil)
 
 	proverRunTime := prover.NewProver(cp, trace, nil)
 
@@ -173,7 +174,7 @@ func BenchmarkPermutation(b *testing.B) {
 
 	_ = Permutation(&system, s1, s2)
 
-	cp := system.Compile()
+	cp := system.Compile(nil)
 
 	f, _ := os.Create("cpu.prof")
 	pprof.StartCPUProfile(f)
@@ -181,6 +182,7 @@ func BenchmarkPermutation(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 
 			_trace := make(map[string]poly.Polynomial)
+			loom.Setup(cp, nil)
 			for i := 0; i < nbPolys; i++ {
 				_trace[fmt.Sprintf("P1_%d", i)] = trace[fmt.Sprintf("P1_%d", i)]
 				_trace[fmt.Sprintf("P2_%d", i)] = trace[fmt.Sprintf("P2_%d", i)]

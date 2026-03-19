@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/consensys/loom"
 	"github.com/consensys/loom/arguments"
 	"github.com/consensys/loom/constraint"
 	"github.com/consensys/loom/expr"
@@ -20,7 +21,7 @@ func TestWriteDerivationPlanDagToHTML(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	cp := system.Compile()
+	cp := system.Compile(nil)
 
 	out := t.TempDir() + "/prover_dag.html"
 	if err := WriteDerivationPlanDagToHTML(cp, out); err != nil {
@@ -42,8 +43,12 @@ func TestWriteProofTranscriptRoundsDagToHTML_Permutation(t *testing.T) {
 	system := constraint.NewBuilder(size, nil)
 	arguments.Permutation(&system, []expr.Expr{expr.Col("P0")}, []expr.Expr{expr.Col("P1")})
 
-	cp := system.Compile()
+	cp := system.Compile(nil)
 	rt := prover.NewProver(cp, trace, nil)
+	err := loom.Setup(cp, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	proof, err := rt.Prove(1)
 	if err != nil {
 		t.Fatal(err)
@@ -79,8 +84,12 @@ func TestWriteProofTranscriptRoundsDagToHTML_Tuple(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cp := system.Compile()
+	cp := system.Compile(nil)
 	rt := prover.NewProver(cp, trace, nil)
+	err := loom.Setup(cp, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	proof, err := rt.Prove(1)
 	if err != nil {
 		t.Fatal(err)

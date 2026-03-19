@@ -61,7 +61,7 @@ func BenchmarkCompile(b *testing.B) {
 	}
 
 	for i := 0; i < b.N; i++ {
-		system.Compile()
+		system.Compile(nil)
 	}
 
 }
@@ -98,10 +98,12 @@ func TestPlonk(t *testing.T) {
 		}
 	}
 
-	cp := system.Compile()
+	cp := system.Compile(nil)
 
 	viz.WriteDerivationPlanDagToHTML(cp, "plonk_dag.html")
 	// viz.WriteProofTranscriptRoundsDagToHTML(cp, "plonk_dag.html")
+
+	err = loom.Setup(cp, nil)
 
 	proof, err := loom.Prove(cp, fulltrace, nil, 1)
 	if err != nil {

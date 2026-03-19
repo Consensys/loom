@@ -66,7 +66,7 @@ func TestEqualityFilteredMultiColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cp := system.Compile()
+	cp := system.Compile(nil)
 	proverRunTime := prover.NewProver(cp, T, nil)
 	proof := derive.NewProof(system.N)
 
@@ -163,7 +163,7 @@ func TestEqualityFilteredColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cp := system.Compile()
+	cp := system.Compile(nil)
 	proverRunTime := prover.NewProver(cp, T, nil)
 	proof := derive.NewProof(system.N)
 

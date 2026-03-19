@@ -13,22 +13,27 @@ import (
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/dag"
 	derive "github.com/consensys/loom/internal/derive"
+	"github.com/consensys/loom/proof"
 )
 
 // Verifier stores the variables to plug in the final relation to check.
 type Verifier struct {
-	Vars              map[string]koalabear.Element // values keyed by leaf name
-	VanishingRelation dag.DAG
-	PublicInputs      derive.PublicInputs
-	Zeta              koalabear.Element
+	Vars                    map[string]koalabear.Element // values keyed by leaf name
+	VanishingRelation       dag.DAG
+	PublicInputs            derive.PublicInputs
+	PublicColumnsCommitment proof.Commitment
+	FiatShamir              *fiatshamir.Transcript
+	Zeta                    koalabear.Element
 }
 
 // NewRunTime creates the Verifier for the given compiled IOP.
 func NewRunTime(cp constraint.Program, publicInputs derive.PublicInputs) Verifier {
 	res := Verifier{
-		Vars:              make(map[string]koalabear.Element),
-		VanishingRelation: cp.VanishingRelation,
-		PublicInputs:      publicInputs,
+		Vars:                    make(map[string]koalabear.Element),
+		VanishingRelation:       cp.VanishingRelation,
+		PublicInputs:            publicInputs,
+		PublicColumnsCommitment: cp.PublicColumnsCommitment,
+		FiatShamir:              fiatshamir.NewTranscript(sha256.New()),
 	}
 	if res.PublicInputs == nil {
 		res.PublicInputs = make(derive.PublicInputs)
@@ -41,13 +46,8 @@ func NewRunTime(cp constraint.Program, publicInputs derive.PublicInputs) Verifie
 func (runtime *Verifier) DeriveChallenge(proof *derive.Proof, batchIdx int) error {
 
 	challengeName := constants.CanonicalChallengeName(batchIdx)
-
-	fs := fiatshamir.NewTranscript(sha256.New())
-	if err := fs.NewChallenge(challengeName); err != nil {
-		return err
-	}
 	if len(proof.Commitments[batchIdx].Columns) > 0 {
-		if err := fs.Bind(challengeName, proof.Commitments[batchIdx].Digest.Marshal()); err != nil {
+		if err := runtime.FiatShamir.Bind(challengeName, proof.Commitments[batchIdx].Digest.Marshal()); err != nil {
 			return err
 		}
 	}
@@ -57,13 +57,13 @@ func (runtime *Verifier) DeriveChallenge(proof *derive.Proof, batchIdx int) erro
 		if !ok {
 			return fmt.Errorf("challenge %s not found in the trace", prevChallengeName)
 		}
-		if err := fs.Bind(challengeName, prevChallenge.Marshal()); err != nil {
+		if err := runtime.FiatShamir.Bind(challengeName, prevChallenge.Marshal()); err != nil {
 			return err
 		}
 	}
 
 	// 5. Derive and store challenge.
-	bc, err := fs.ComputeChallenge(challengeName)
+	bc, err := runtime.FiatShamir.ComputeChallenge(challengeName)
 	if err != nil {
 		return err
 	}
@@ -77,8 +77,33 @@ func (runtime *Verifier) DeriveChallenge(proof *derive.Proof, batchIdx int) erro
 
 // ComputeChallenges replays the Fiat-Shamir transcript sequentially.
 // nbWorkers is accepted for API compatibility but the replay is always sequential.
+// It resets the FS transcript and Vars each time so it is safe to call multiple times.
 func (runtime *Verifier) ComputeChallenges(proof *derive.Proof, nbWorkers int) error {
+
+	// Reset state so this function is idempotent (e.g. when called explicitly for
+	// sanity-checking and then again via Verify on the same runtime).
+	runtime.FiatShamir = fiatshamir.NewTranscript(sha256.New())
+	runtime.Vars = make(map[string]koalabear.Element)
+
+	// 1. bind public columns
+	challengeName := constants.CanonicalChallengeName(0)
+	err := runtime.FiatShamir.NewChallenge(challengeName)
+	if err != nil {
+		return err
+	}
+	if len(runtime.PublicColumnsCommitment.Columns) > 0 {
+		err = runtime.FiatShamir.Bind(challengeName, runtime.PublicColumnsCommitment.Digest.Marshal())
+		if err != nil {
+			return err
+		}
+	}
+
+	// 2. derive the challenges
 	for i := range proof.Commitments {
+		if i > 0 {
+			challengeName = constants.CanonicalChallengeName(i)
+			runtime.FiatShamir.NewChallenge(challengeName)
+		}
 		if err := runtime.DeriveChallenge(proof, i); err != nil {
 			return err
 		}

@@ -7,6 +7,7 @@ import (
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/dag"
 	derive "github.com/consensys/loom/internal/derive"
+	"github.com/consensys/loom/proof"
 )
 
 // Fold returns Σ_i αⁱE[i]
@@ -23,6 +24,7 @@ func Fold(E []expr.Expr, alpha expr.Expr) expr.Expr {
 // on X^N-1
 type Program struct {
 	DerivationPlanScheduled [][]derive.DerivationStep
+	PublicColumnsCommitment proof.Commitment
 	Batches                 [][]string // Batches[i]-> names of columns on which loom@challenge_i depends
 	VanishingRelation       dag.DAG
 	N                       int
@@ -245,9 +247,14 @@ func (system *Builder) ScheduleDerivationPlan(plan []derive.DerivationStep) [][]
 // BuildBatches populates Program.Batches from the FS steps in plan: for each canonical
 // FS level k it records the base names of committed columns that are new at that level
 // (i.e. not already covered by levels 0..k-1).
-func (system *Builder) BuildBatches(plan []derive.DerivationStep) ([][]string, map[string]bool) {
+func (system *Builder) BuildBatches(publicColumns []string, plan []derive.DerivationStep) ([][]string, map[string]bool) {
 	cumColDeps := map[string]bool{}
 	var batches [][]string
+
+	// there is already a batch corresponding to the public columns, defined during the setup
+	for _, n := range publicColumns {
+		cumColDeps[n] = true
+	}
 
 	for _, step := range plan {
 		if step.StepContext.GetKind() != derive.FIAT_SHAMIR {
@@ -282,7 +289,7 @@ func (system *Builder) BuildBatches(plan []derive.DerivationStep) ([][]string, m
 	return batches, cumColDeps
 }
 
-func (system *Builder) Compile(opts ...Option) Program {
+func (system *Builder) Compile(publicColumns []string, opts ...Option) Program {
 
 	var config Config
 	for _, opt := range opts {
@@ -312,7 +319,7 @@ func (system *Builder) Compile(opts ...Option) Program {
 	scheduled := system.ScheduleDerivationPlan(plan)
 
 	// 4. Build batches from the FS steps in plan (intermediate challenges).
-	batches, cumColDeps := system.BuildBatches(plan)
+	batches, cumColDeps := system.BuildBatches(publicColumns, plan)
 
 	// 5. Build the final folding-challenge batch: every committed column appearing in the
 	// relations that has not yet been covered by a previous FS step.
@@ -330,8 +337,10 @@ func (system *Builder) Compile(opts ...Option) Program {
 	C := Fold(system.Relations, expr.NewChallenge(challengeName))
 	CDag := dag.ExprToDAG(C)
 	CDag = CDag.Flatten()
+	publicColumnsCommitment := proof.Commitment{Columns: publicColumns}
 	return Program{
 		DerivationPlanScheduled: scheduled,
+		PublicColumnsCommitment: publicColumnsCommitment,
 		Batches:                 batches,
 		VanishingRelation:       *CDag,
 		N:                       system.N,

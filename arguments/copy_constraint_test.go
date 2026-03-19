@@ -45,7 +45,7 @@ func TestCopyPermutation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cp := system.Compile()
+	cp := system.Compile(nil)
 	proverRunTime := prover.NewProver(cp, T, nil)
 	proof := derive.NewProof(system.N)
 
@@ -124,7 +124,7 @@ func TestCopyPermutationTuple(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cp := system.Compile()
+	cp := system.Compile(nil)
 	proverRunTime := prover.NewProver(cp, T, nil)
 	proof := derive.NewProof(system.N)
 
