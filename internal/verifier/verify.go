@@ -171,6 +171,26 @@ func (runtime *Verifier) computeMissingPart(info derive.PublicColumnInfo, shift,
 // FillClaimedValues fills runtime.Vars with the opening evaluations from the proof.
 func (runtime *Verifier) FillClaimedValues(proof *derive.Proof) error {
 
+	// public columns
+	for polyIdx, colName := range runtime.PublicColumnsCommitment.Columns {
+		if polyIdx >= len(proof.OpeningProofPublicColumns.Shift) {
+			continue
+		}
+		for shiftIdx, shift := range proof.OpeningProofPublicColumns.Shift[polyIdx] {
+			name := constants.GetShiftedName(colName, shift)
+			val := proof.OpeningProofPublicColumns.ClaimedValues[polyIdx][shiftIdx]
+			if publicInfo, ok := runtime.PublicInputs[colName]; ok {
+				missingPart, err := runtime.computeMissingPart(publicInfo, shift, proof.N)
+				if err != nil {
+					return err
+				}
+				val.Add(&val, &missingPart)
+			}
+			runtime.Vars[name] = val
+		}
+	}
+
+	// private columns
 	for batchIdx, com := range proof.Commitments {
 		if batchIdx >= len(proof.OpeningProofs) {
 			break

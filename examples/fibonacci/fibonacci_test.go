@@ -67,7 +67,7 @@ func TestFibonacci(t *testing.T) {
 	trace := GetFibonacciTrace(N, "A", "B", "C")
 	// viewer.WriteTraceToCSV("fibonacci.csv", trace, N)
 
-	err := loom.Setup(cp, trace)
+	err := loom.Setup(&cp, trace)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(-1)

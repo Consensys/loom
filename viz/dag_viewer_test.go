@@ -45,7 +45,7 @@ func TestWriteProofTranscriptRoundsDagToHTML_Permutation(t *testing.T) {
 
 	cp := system.Compile(nil)
 	rt := prover.NewProver(cp, trace, nil)
-	err := loom.Setup(cp, nil)
+	err := loom.Setup(&cp, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestWriteProofTranscriptRoundsDagToHTML_Tuple(t *testing.T) {
 
 	cp := system.Compile(nil)
 	rt := prover.NewProver(cp, trace, nil)
-	err := loom.Setup(cp, nil)
+	err := loom.Setup(&cp, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

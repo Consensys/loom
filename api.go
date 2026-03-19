@@ -13,7 +13,7 @@ import (
 )
 
 // Setup commits to all columns in publicColumns
-func Setup(cp constraint.Program, trace trace.Trace) error {
+func Setup(cp *constraint.Program, trace trace.Trace) error {
 
 	polyToCommit := make([][]koalabear.Element, len(cp.PublicColumnsCommitment.Columns))
 	var ok bool

@@ -98,12 +98,14 @@ func TestPlonk(t *testing.T) {
 		}
 	}
 
-	cp := system.Compile(nil)
+	publicColumns := []string{ID_Ql, ID_Qr, ID_Qm, ID_Qo, ID_Qk}
+
+	cp := system.Compile(publicColumns)
 
 	viz.WriteDerivationPlanDagToHTML(cp, "plonk_dag.html")
 	// viz.WriteProofTranscriptRoundsDagToHTML(cp, "plonk_dag.html")
 
-	err = loom.Setup(cp, nil)
+	err = loom.Setup(&cp, fulltrace)
 
 	proof, err := loom.Prove(cp, fulltrace, nil, 1)
 	if err != nil {

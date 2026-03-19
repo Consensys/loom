@@ -182,7 +182,7 @@ func BenchmarkPermutation(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 
 			_trace := make(map[string]poly.Polynomial)
-			loom.Setup(cp, nil)
+			loom.Setup(&cp, nil)
 			for i := 0; i < nbPolys; i++ {
 				_trace[fmt.Sprintf("P1_%d", i)] = trace[fmt.Sprintf("P1_%d", i)]
 				_trace[fmt.Sprintf("P2_%d", i)] = trace[fmt.Sprintf("P2_%d", i)]
