@@ -4,10 +4,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/expr"
 	derive "github.com/consensys/loom/internal/derive"
 	"github.com/consensys/loom/trace"
-	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
 func TestDegreeReduction(t *testing.T) {

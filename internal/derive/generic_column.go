@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/trace"
-	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
 // BuildContext context for build a custom column (something public,

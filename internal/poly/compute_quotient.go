@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/consensys/loom/expr"
-	"github.com/consensys/loom/internal/dag"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/gnark-crypto/utils"
+	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/dag"
 )
 
 // ComputeQuotient computes E(PI)/X^N-1

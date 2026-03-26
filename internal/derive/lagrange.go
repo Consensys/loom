@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/trace"
-	"github.com/consensys/gnark-crypto/field/koalabear"
 )
 
 // Lagrange standard identifier across systems for Lagrange polynomial, suffixed by an integer to specify which Lagrange polynomial
@@ -49,7 +49,7 @@ func (lc LagrangeContext) Key() string {
 type VirtualColumn struct {
 	id  string                                    // ID of the computable column
 	F   func(koalabear.Element) koalabear.Element // function F encoding the column (e.g. ω^i/N (z^N-1)/(1-ω^i) for Lagrange_i_N)
-	Gen func() poly.Polynomial              // generate the column -> it is the evaluation of F on the domain of size N
+	Gen func() poly.Polynomial                    // generate the column -> it is the evaluation of F on the domain of size N
 }
 
 // GetLagrangeID ensures the lagrange name is the same accross protocols

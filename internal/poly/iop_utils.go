@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/consensys/loom/expr"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/expr"
 )
 
 // BuildPointwiseEvaluation evaluates E point-wise over Pi and returns the N results as a

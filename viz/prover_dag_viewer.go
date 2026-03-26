@@ -66,7 +66,7 @@ func WriteDerivationPlanDagToHTML(cp constraint.Program, filename string) error 
 	// Layer scheme: known columns → 0;
 	//   slot i compute actions → 4*i+1; slot i compute outputs → 4*i+2;
 	//   FS node i → 4*i+3; challenge_i output → 4*i+4.
-	kindOf  := make(map[string]string) // id → "known" | "computed" | "action"
+	kindOf := make(map[string]string)  // id → "known" | "computed" | "action"
 	labelOf := make(map[string]string) // id → display label
 	layerOf := make(map[string]int)    // id → layer index
 	var edges []dagEdge
@@ -78,7 +78,7 @@ func WriteDerivationPlanDagToHTML(cp constraint.Program, filename string) error 
 			id := fmt.Sprintf("__action_%d", actionIdx)
 			actionIdx++
 
-			kindOf[id]  = "action"
+			kindOf[id] = "action"
 			labelOf[id] = actionLabel(pa)
 			layerOf[id] = 4*slot + 1
 
@@ -88,7 +88,7 @@ func WriteDerivationPlanDagToHTML(cp constraint.Program, filename string) error 
 					if producedBy[col] {
 						kindOf[col] = "computed"
 					} else {
-						kindOf[col]  = "known"
+						kindOf[col] = "known"
 						layerOf[col] = 0
 					}
 					labelOf[col] = dagShortLabel(col)
@@ -99,7 +99,7 @@ func WriteDerivationPlanDagToHTML(cp constraint.Program, filename string) error 
 			// edges from this action → output columns
 			for _, out := range pa.Outputs {
 				if _, seen := kindOf[out]; !seen {
-					kindOf[out]  = "computed"
+					kindOf[out] = "computed"
 					labelOf[out] = dagShortLabel(out)
 				}
 				layerOf[out] = 4*slot + 2
@@ -109,7 +109,7 @@ func WriteDerivationPlanDagToHTML(cp constraint.Program, filename string) error 
 
 		// ── synthetic fiat_shamir node for batch slot ─────────────────────────
 		fsID := fmt.Sprintf("__fs_action_%d", slot)
-		kindOf[fsID]  = "action"
+		kindOf[fsID] = "action"
 		labelOf[fsID] = "fiat_shamir"
 		layerOf[fsID] = 4*slot + 3
 
@@ -125,7 +125,7 @@ func WriteDerivationPlanDagToHTML(cp constraint.Program, filename string) error 
 				if producedBy[col] {
 					kindOf[col] = "computed"
 				} else {
-					kindOf[col]  = "known"
+					kindOf[col] = "known"
 					layerOf[col] = 0
 				}
 				labelOf[col] = dagShortLabel(col)
@@ -136,7 +136,7 @@ func WriteDerivationPlanDagToHTML(cp constraint.Program, filename string) error 
 		// output: loom@challenge_slot
 		challengeOut := constants.CanonicalChallengeName(slot)
 		if _, seen := kindOf[challengeOut]; !seen {
-			kindOf[challengeOut]  = "computed"
+			kindOf[challengeOut] = "computed"
 			labelOf[challengeOut] = dagShortLabel(challengeOut)
 		}
 		layerOf[challengeOut] = 4*slot + 4

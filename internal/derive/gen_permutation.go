@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/consensys/loom/expr"
-	"github.com/consensys/loom/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
+	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/trace"
 )
 
 // PERMUTATION_SUPPORT prefix for the columns containing the support of a permutation

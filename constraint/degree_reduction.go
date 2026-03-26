@@ -1,8 +1,8 @@
 package constraint
 
 import (
-	"github.com/consensys/loom/internal/dag"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/dag"
 )
 
 // reduceDegree Computes a set of constraints equivalent to constraint, but of dergee <= targetDegree.

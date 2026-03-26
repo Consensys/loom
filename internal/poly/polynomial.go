@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/consensys/loom/expr"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/expr"
 )
 
 // Polynomial is a wrapper around EPolynomial that includes additional metadata such as shift.

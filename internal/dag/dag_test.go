@@ -3,8 +3,8 @@ package dag
 import (
 	"testing"
 
-	"github.com/consensys/loom/expr"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/expr"
 )
 
 // u64Vals builds a vals map from alternating (name, uint64) pairs.
@@ -227,7 +227,7 @@ func TestDAGDegree(t *testing.T) {
 		// Leaves
 		{"CommittedColumn", expr.Col("x"), 1},
 		{"VirtualColumn", expr.Virtual("L0"), 1},
-		{"Challenge", expr.NewChallenge("alpha"), 0},    // Challenge is degree 0
+		{"Challenge", expr.NewChallenge("alpha"), 0}, // Challenge is degree 0
 		{"ConstNonZero", expr.Const(one), 0},         // non-zero constant
 		{"ConstZero", expr.Const(zero), expr.NegInf}, // zero polynomial
 

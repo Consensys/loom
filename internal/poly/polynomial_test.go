@@ -4,10 +4,10 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/consensys/loom/internal/dag"
-	"github.com/consensys/loom/expr"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
+	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/dag"
 )
 
 // makeLagrangePoly builds a Polynomial from uint64 evaluations.

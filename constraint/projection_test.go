@@ -4,11 +4,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/consensys/loom/expr"
-	"github.com/consensys/loom/internal/poly"
-	derive "github.com/consensys/loom/internal/derive"
-	"github.com/consensys/loom/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/expr"
+	derive "github.com/consensys/loom/internal/derive"
+	"github.com/consensys/loom/internal/poly"
+	"github.com/consensys/loom/trace"
 )
 
 func TestComputeFilteredAccPolynomial(t *testing.T) {

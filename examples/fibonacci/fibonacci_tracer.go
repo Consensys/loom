@@ -1,8 +1,8 @@
 package fibonacci
 
 import (
-	"github.com/consensys/loom/trace"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/trace"
 )
 
 // GetFibonacciTrace generates a trace containing 3 columns P1, P2, P3
