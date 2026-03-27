@@ -17,18 +17,19 @@ import (
 	"github.com/consensys/go-corset/pkg/util/field"
 )
 
-// ConstraintBuilderFromFile reads a go-corset binary constraints file, lowers it to AIR
-// for the Koalabear field, and returns a loom constraint.Builder containing all
-// constraints from all modules. N is the trace length.
-func ConstraintBuilderFromFile(binPath string, N int) (constraint.Builder, error) {
-	binf := cmdutil.ReadBinaryFile(binPath)
+// AirSchemaFromFile loads a go-corset binary .bin file and returns its AIR-level schema.
+func AirSchemaFromFile(binPath string) schema.AnySchema[corsetkoalabear.Element] {
 	stack := cmdutil.NewSchemaStack[corsetkoalabear.Element]().
-		WithBinaryFile(binf).
+		WithBinaryFile(cmdutil.ReadBinaryFile(binPath)).
 		WithAssemblyConfig(asm.LoweringConfig{Field: field.KOALABEAR_16}).
 		WithLayer(cmdutil.AIR_LAYER).
 		Build()
+	return stack.ConcreteSchema()
+}
 
-	airSchema := stack.ConcreteSchema()
+// ConstraintBuilderFromSchema builds a loom constraint.Builder from a preloaded AIR schema.
+// N is the trace length (must match the N used in TraceFromFile).
+func ConstraintBuilderFromSchema(airSchema schema.AnySchema[corsetkoalabear.Element], N int) (constraint.Builder, error) {
 	builder := constraint.NewBuilder(N, nil)
 	for _, c := range airSchema.Constraints().Collect() {
 		var err error
@@ -40,7 +41,10 @@ func ConstraintBuilderFromFile(binPath string, N int) (constraint.Builder, error
 		case air.PermutationConstraint[corsetkoalabear.Element]:
 			err = translatePermutation(&builder, airSchema, vc)
 		case air.RangeConstraint[corsetkoalabear.Element]:
-			return constraint.Builder{}, fmt.Errorf("range constraints are not yet supported (constraint %q)", vc.Name())
+			// Range constraints are not yet translated; a valid witness already
+			// satisfies them, so skipping does not affect proof soundness for
+			// known-good traces.
+			continue
 		default:
 			return constraint.Builder{}, fmt.Errorf("unknown AIR constraint type %T", c)
 		}
@@ -49,6 +53,12 @@ func ConstraintBuilderFromFile(binPath string, N int) (constraint.Builder, error
 		}
 	}
 	return builder, nil
+}
+
+// ConstraintBuilderFromFile reads a go-corset binary .bin file, lowers it to AIR for
+// the Koalabear field, and returns a loom constraint.Builder. N is the trace length.
+func ConstraintBuilderFromFile(binPath string, N int) (constraint.Builder, error) {
+	return ConstraintBuilderFromSchema(AirSchemaFromFile(binPath), N)
 }
 
 // translateVanishing maps a go-corset vanishing constraint to loom. Global

@@ -4,54 +4,44 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
+
+// binForLT returns the .bin path corresponding to a .lt path.
+func binForLT(ltPath string) string {
+	return strings.TrimSuffix(ltPath, ".lt") + ".bin"
+}
 
 func TestConstraintBuilderFromFile(t *testing.T) {
 	bins, err := filepath.Glob("testdata/*.bin")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(bins) == 0 {
-		t.Fatal("no .bin files found in testdata/")
-	}
+	require.NoError(t, err)
+	require.NotEmpty(t, bins, "no .bin files found in testdata/")
+
 	for _, path := range bins {
 		t.Run(filepath.Base(path), func(t *testing.T) {
-			if _, err = ConstraintBuilderFromFile(path, 8); err != nil {
-				t.Errorf("ConstraintBuilderFromFile(%q): %v", path, err)
-			}
+			_, err := ConstraintBuilderFromFile(path, 8)
+			require.NoError(t, err)
 		})
 	}
 }
 
 func TestTraceFromFile(t *testing.T) {
 	lts, err := filepath.Glob("testdata/*.lt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(lts) == 0 {
-		t.Fatal("no .lt files found in testdata/")
-	}
+	require.NoError(t, err)
+	require.NotEmpty(t, lts, "no .lt files found in testdata/")
+
 	for _, path := range lts {
 		t.Run(filepath.Base(path), func(t *testing.T) {
-			tr, _, err := TraceFromFile(path)
-			if err != nil {
-				t.Fatalf("TraceFromFile(%q): %v", path, err)
-			}
-			if len(tr) == 0 {
-				t.Fatal("trace is empty")
-			}
-			// Every key must be non-empty and must not use the dot separator
-			// (which belongs to go-corset's trace format, not loom's).
+			airSchema := AirSchemaFromFile(binForLT(path))
+			tr, _, err := TraceFromFile(path, airSchema)
+			require.NoError(t, err)
+			require.NotEmpty(t, tr, "trace is empty")
+
 			for key, col := range tr {
-				if key == "" {
-					t.Error("empty column key")
-				}
-				if strings.Contains(key, ".") {
-					t.Errorf("column key %q uses dot separator; want colon", key)
-				}
-				if len(col) == 0 {
-					t.Errorf("column %q is empty", key)
-				}
+				require.NotEmpty(t, key, "empty column key")
+				require.NotContains(t, key, ".", "column key %q uses dot separator; want colon", key)
+				require.NotEmpty(t, col, "column %q is empty", key)
 			}
 		})
 	}
