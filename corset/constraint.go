@@ -17,10 +17,10 @@ import (
 	"github.com/consensys/go-corset/pkg/util/field"
 )
 
-// BuildFromCorsetBin reads a go-corset binary constraints file, lowers it to AIR
+// ConstraintBuilderFromFile reads a go-corset binary constraints file, lowers it to AIR
 // for the Koalabear field, and returns a loom constraint.Builder containing all
 // constraints from all modules. N is the trace length.
-func BuildFromCorsetBin(binPath string, N int) (constraint.Builder, error) {
+func ConstraintBuilderFromFile(binPath string, N int) (constraint.Builder, error) {
 	binf := cmdutil.ReadBinaryFile(binPath)
 	stack := cmdutil.NewSchemaStack[corsetkoalabear.Element]().
 		WithBinaryFile(binf).
