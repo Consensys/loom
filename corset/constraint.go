@@ -4,27 +4,30 @@ import (
 	"fmt"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/go-corset/pkg/asm"
+	"github.com/consensys/go-corset/pkg/ir/air"
+	"github.com/consensys/go-corset/pkg/ir/mir"
+	"github.com/consensys/go-corset/pkg/schema"
+	"github.com/consensys/go-corset/pkg/util/field"
+	corsetkoalabear "github.com/consensys/go-corset/pkg/util/field/koalabear"
 	"github.com/consensys/loom/arguments"
 	"github.com/consensys/loom/constraint"
 	"github.com/consensys/loom/expr"
 
-	"github.com/consensys/go-corset/pkg/ir/air"
-	"github.com/consensys/go-corset/pkg/schema"
-	corsetkoalabear "github.com/consensys/go-corset/pkg/util/field/koalabear"
-
-	"github.com/consensys/go-corset/pkg/asm"
 	cmdutil "github.com/consensys/go-corset/pkg/cmd/corset/util"
-	"github.com/consensys/go-corset/pkg/util/field"
 )
 
-// AirSchemaFromFile loads a go-corset binary .bin file and returns its AIR-level schema.
-func AirSchemaFromFile(binPath string) schema.AnySchema[corsetkoalabear.Element] {
+// airSchemaFromFile loads a go-corset binary .bin file and returns the built
+// AIR-level schema stack. Both the AIR schema and the register mapping (needed
+// for trace expansion) are accessible from the returned stack.
+func airSchemaFromFile(binPath string) *cmdutil.SchemaStack[corsetkoalabear.Element] {
 	stack := cmdutil.NewSchemaStack[corsetkoalabear.Element]().
 		WithBinaryFile(cmdutil.ReadBinaryFile(binPath)).
 		WithAssemblyConfig(asm.LoweringConfig{Field: field.KOALABEAR_16}).
+		WithOptimisationConfig(mir.DEFAULT_OPTIMISATION_LEVEL).
 		WithLayer(cmdutil.AIR_LAYER).
 		Build()
-	return stack.ConcreteSchema()
+	return &stack
 }
 
 // ConstraintBuilderFromSchema builds a loom constraint.Builder from a preloaded AIR schema.
@@ -41,9 +44,8 @@ func ConstraintBuilderFromSchema(airSchema schema.AnySchema[corsetkoalabear.Elem
 		case air.PermutationConstraint[corsetkoalabear.Element]:
 			err = translatePermutation(&builder, airSchema, vc)
 		case air.RangeConstraint[corsetkoalabear.Element]:
-			// Range constraints are not yet translated; a valid witness already
-			// satisfies them, so skipping does not affect proof soundness for
-			// known-good traces.
+			// Range constraints are enforced by the lookup cascade into type
+			// table modules; skipping them here does not affect proof soundness.
 			continue
 		default:
 			return constraint.Builder{}, fmt.Errorf("unknown AIR constraint type %T", c)
@@ -58,7 +60,7 @@ func ConstraintBuilderFromSchema(airSchema schema.AnySchema[corsetkoalabear.Elem
 // ConstraintBuilderFromFile reads a go-corset binary .bin file, lowers it to AIR for
 // the Koalabear field, and returns a loom constraint.Builder. N is the trace length.
 func ConstraintBuilderFromFile(binPath string, N int) (constraint.Builder, error) {
-	return ConstraintBuilderFromSchema(AirSchemaFromFile(binPath), N)
+	return ConstraintBuilderFromSchema(airSchemaFromFile(binPath).ConcreteSchema(), N)
 }
 
 // translateVanishing maps a go-corset vanishing constraint to loom. Global
