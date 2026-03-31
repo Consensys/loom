@@ -1,172 +1,87 @@
 package arguments
 
 import (
-	"fmt"
-
-	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/loom/constraint"
+	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
-	"github.com/consensys/loom/internal/constants"
-	derive "github.com/consensys/loom/internal/derive"
-	"github.com/consensys/loom/internal/utils"
 )
 
-// localConstraint builds the constraints Lagrange_i(E-M) whose vanishing at X^n-1
-// is equivalent to E[i]=M[i]
-func localRelation(E, M expr.Expr, i int, N int) constraint.Relation {
-	lagrangeID := derive.GetLagrangeID(i, N)
-	localRelation := expr.Virtual(lagrangeID).Mul(E.Sub(M))
-	return localRelation
-}
+func PermutationWithinModule(builder *board.Builder, module string, A, B []expr.Expr) error {
 
-// BuildGrandProductRelation
-// 1. GP*E2-GP*E1=0
-// 2. GP_Shifted[0]=1
-func BuildGrandProductRelation(E1, E2 expr.Expr, GP string, N int) []constraint.Relation {
-
-	// 1. IDGrandProductShifted*E2-IDGrandProduct*E1=0
-	A := expr.Rot(GP, 1).Mul(E2)
-	B := expr.Col(GP).Mul(E1)
-	recurrenceRelation := A.Sub(B)
-
-	// 2. GP[0]=1
-	boundaryRelation := localRelation(expr.Col(GP), expr.Const(koalabear.One()), 0, N)
-	return []constraint.Relation{recurrenceRelation, boundaryRelation}
-}
-
-// EqualityUpToPermutation proves that the multiset { ID1[j][i] } equals { ID2[j][i] }, up to permutation.
-// For every i, j there is k, l such that ID1[i][j] = ID2[k][l].
-//
-// It models the following Σ systemocol (N = domain size, P_j := ID1[j], Q_j := ID2[j]):
-//
-//	|-------------------------------–-----------------------------------------------|
-//	| [prover]                      |              [verifier]                       |
-//	|-------------------------------–-----------------------------------------------|
-//	| Commit(P_0,..,P_k,            |                                               |
-//	|        Q_0,..,Q_l)    -----→  | [Com(P_0),..,Com(P_k),Com(Q_0),..,Com(Q_l)] | ROUND 1
-//	|-------------------------------–-----------------------------------------------|
-//	|                               ←-----  Sample random γ (challengeName)         |
-//	|                               |       (γ = Fiat-Shamir(Com(P_j), Com(Q_j)))   | ROUND 2
-//	|-------------------------------–-----------------------------------------------|
-//	| Compute Z s.t.                |                                               |
-//	|   Z[0]   = 1                  |                                               |
-//	|   Z[i+1] = Z[i] ·            |                                               |
-//	|     ∏_j(P_j[i] - γ)          |                                               |
-//	|    ─────────────────          |                                               |
-//	|     ∏_j(Q_j[i] - γ)          |                                               |
-//	| Commit(Z, Z_shifted)  -----→  | [Com(Z), Com(Z_shifted)]                     | ROUND 3
-//	|-------------------------------–-----------------------------------------------|
-//	|       (done via FoldRelations + Finalize + Verify)                          |
-//	| Records two constraints:                                                      |
-//	|   C1: ∏_j(Q_j-γ)·Z_shifted - ∏_j(P_j-γ)·Z = 0 mod X^N-1                   |
-//	|   C2: (Z-1)·L_0 = 0  (enforces Z[0]=1)                                      |
-//	|-------------------------------–-----------------------------------------------|
-func Permutation(system *constraint.Builder, E1, E2 []expr.Expr) error {
-
-	_IDGrandProduct, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
+	// 1. sample challenge
+	_gamma, err := RandomString(10)
 	if err != nil {
 		return err
 	}
-	IDGrandProduct := fmt.Sprintf("GP_%s", _IDGrandProduct)
-	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
+	inputA := make([]board.Input, len(A))
+	inputB := make([]board.Input, len(B))
+	for i, a := range A {
+		inputA[i] = board.Input{Module: module, In: a}
+	}
+	for i, b := range B {
+		inputB[i] = board.Input{Module: module, In: b}
+	}
+	fsInputs := append(inputA, inputB...)
+	builder.AddFiatShamirStep(fsInputs, _gamma)
+
+	// 2. register permutation
+	gamma := expr.Col(_gamma)
+	AminusGamma := make([]expr.Expr, len(A))
+	BminusGamma := make([]expr.Expr, len(B))
+	for i, a := range A {
+		AminusGamma[i] = a.Sub(gamma)
+	}
+	for i, b := range B {
+		BminusGamma[i] = b.Sub(gamma)
+	}
+	_gp, err := RandomString(10)
 	if err != nil {
 		return err
 	}
-
-	system.AddChallengeStep(append(E1, E2...), gamma)
-
-	// 1. sample gamma
-	E1MinusGamma := E1[0].Sub(expr.NewChallenge(gamma))
-	for i := 1; i < len(E1); i++ {
-		E1MinusGamma = E1MinusGamma.Mul(E1[i].Sub(expr.NewChallenge(gamma)))
+	Amul := AminusGamma[0]
+	Bmul := BminusGamma[0]
+	for i := 1; i < len(AminusGamma); i++ {
+		Amul = Amul.Mul(AminusGamma[i])
 	}
-	E2MinusGamma := E2[0].Sub(expr.NewChallenge(gamma))
-	for i := 1; i < len(E2); i++ {
-		E2MinusGamma = E2MinusGamma.Mul(E2[i].Sub(expr.NewChallenge(gamma)))
+	for i := 1; i < len(BminusGamma); i++ {
+		Bmul = Bmul.Mul(BminusGamma[i])
 	}
-
-	// 2. register the grand product constraint (including the boundary constraint)
-	gpRelation := BuildGrandProductRelation(E1MinusGamma, E2MinusGamma, IDGrandProduct, system.N)
-	system.AssertAllZero(gpRelation)
-
-	// 3. register the prover action for creating the grand product and grand product shifted
-	system.AddGrandProductStep([]expr.Expr{E1MinusGamma, E2MinusGamma}, IDGrandProduct)
-
-	// 4. register the creation of the lagrange column
-	system.AddLagrangeColumn(0)
+	builder.AddGrandProductStep(module, Amul, Bmul, _gp)
 
 	return nil
 }
 
-// TupleEqualityUpToPermutation proves that the multiset of tuples { (ID1[i][0][j], ID1[i][1][j], ..) }
-// equals the multiset of tuples { (ID2[i][0][j], ID2[i][1][j], ..) }.
-// It means that for each i, j there is k, l such that (ID1[i][0][j], ID1[i][1][j], ..) = (ID2[k][0][l], ID2[k][1][l], ..)
-//
-// Tuples are first compressed into scalars with α, then EqualityUpToPermutation is applied on the scalars.
-//
-// It models the following Σ systemocol (N = domain size, P_s := ID1[s], Q_s := ID2[s]):
-//
-//	|-------------------------------–-----------------------------------------------|
-//	| [prover]                      |              [verifier]                       |
-//	|-------------------------------–-----------------------------------------------|
-//	| Commit(P_s[0],..,P_s[d],      |                                               |
-//	|        Q_s[0],..,Q_s[d])      |                                               |
-//	|   for all subsets s   -----→  | [Com(P_s[k]), Com(Q_s[k])]  ∀ s, k           | ROUND 1
-//	|-------------------------------–-----------------------------------------------|
-//	|                               ←-----  Sample random α (alpha)                 |
-//	|                               |       (α = Fiat-Shamir(Com(P_s[k]),Com(Q_s[k])))| ROUND 2
-//	|-------------------------------–-----------------------------------------------|
-//	| Fold each subset into a scalar column:                                        |
-//	|   F1_s[i] = Σ_k α^k · P_s[i][k]                                             |
-//	|   F2_s[i] = Σ_k α^k · Q_s[i][k]                                             |
-//	| (reduces tuple equality to scalar equality)                                   |
-//	|-------------------------------–-----------------------------------------------|
-//	|                               ←-----  Sample random γ (gamma)                 |
-//	|                               |       (γ = Fiat-Shamir(Com(P_s[k]),Com(Q_s[k])))| ROUND 3
-//	|-------------------------------–-----------------------------------------------|
-//	| Compute Z s.t.                |                                               |
-//	|   Z[0]   = 1                  |                                               |
-//	|   Z[i+1] = Z[i] ·            |                                               |
-//	|     ∏_s(F1_s[i] - γ)         |                                               |
-//	|    ─────────────────          |                                               |
-//	|     ∏_s(F2_s[i] - γ)         |                                               |
-//	| Commit(Z, Z_shifted)  -----→  | [Com(Z), Com(Z_shifted)]                     | ROUND 4
-//	|-------------------------------–-----------------------------------------------|
-//	|       (done via FoldRelations + Finalize + Verify)                          |
-//	| Records two constraints:                                                      |
-//	|   C1: ∏_s(F2_s-γ)·Z_shifted - ∏_s(F1_s-γ)·Z = 0 mod X^N-1                 |
-//	|   C2: (Z-1)·L_0 = 0  (enforces Z[0]=1)                                      |
-//	|-------------------------------–-----------------------------------------------|
-func PermutationTuple(system *constraint.Builder, E1, E2 [][]expr.Expr) error {
+func PermutationTupleWithinModule(builder *board.Builder, module string, A, B [][]expr.Expr) error {
 
-	// 1. derive alpha
-	alpha, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
+	// 1. sample folding challenge
+	_gamma, err := RandomString(10)
 	if err != nil {
 		return err
 	}
-	var deps []expr.Expr
-	for i := 0; i < len(E1); i++ {
-		deps = append(deps, E1[i]...)
+	tableWidth := len(A[0])
+	inputA := make([]board.Input, len(A)*tableWidth)
+	inputB := make([]board.Input, len(B)*tableWidth)
+	for i, a := range A {
+		for j := 0; j < tableWidth; j++ {
+			inputA[i*tableWidth+j] = board.Input{Module: module, In: a[j]}
+		}
 	}
-	for i := 0; i < len(E2); i++ {
-		deps = append(deps, E2[i]...)
+	for i, b := range B {
+		for j := 0; j < tableWidth; j++ {
+			inputB[i*tableWidth+j] = board.Input{Module: module, In: b[j]}
+		}
 	}
-	system.AddChallengeStep(deps, alpha)
+	fsInputs := append(inputA, inputB...)
+	builder.AddFiatShamirStep(fsInputs, _gamma)
 
-	// 2. fold ID1[i], ID2[i] for all i with alpha
-	alphaExpr := expr.NewChallenge(alpha)
-	F1 := make([]expr.Expr, len(E1))
-	for i := 0; i < len(E1); i++ {
-		F1[i] = constraint.Fold(E1[i], alphaExpr)
+	// 2. fold relations
+	gamma := expr.NewChallenge(_gamma)
+	foldedA := make([]expr.Expr, len(A))
+	foldedB := make([]expr.Expr, len(B))
+	for i := 0; i < len(A); i++ { // A and B must be of the same size
+		foldedA[i] = expr.Fold(gamma, A[i])
+		foldedB[i] = expr.Fold(gamma, B[i])
 	}
-	F2 := make([]expr.Expr, len(E2))
-	for i := 0; i < len(E2); i++ {
-		F2[i] = constraint.Fold(E2[i], alphaExpr)
-	}
 
-	// 3. permutation
-	Permutation(system, F1, F2)
-
-	return nil
-
+	// 3. call 1 dimensional permutation
+	return PermutationWithinModule(builder, module, foldedA, foldedB)
 }

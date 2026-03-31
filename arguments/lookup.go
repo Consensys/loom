@@ -4,196 +4,110 @@ import (
 	"fmt"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/loom/constraint"
+	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
-	"github.com/consensys/loom/internal/constants"
-	derive "github.com/consensys/loom/internal/derive"
-	"github.com/consensys/loom/internal/utils"
 )
 
-// BuildGrandSumRelations :
-// 1. (1-Lagrange_0) * ( (IDGrandSum - IDGrandSum(w^1 X))*E - M)=0 -> ensures that IDGrandSum[i] = IDGrandSum[i-1]+M[i]/E[i]
-// 2. Lagrange_0*( IDGrandSum*E-M)=0 -> ensures IDGrandSum[0] = M[0]/E[0]
-func BuildGrandSumRelations(M, E expr.Expr, grandSum string, N int) []constraint.Relation {
-
-	// 1. (1-Lagrange_0) * ( (IDGrandSum - IDGrandSum(w^1 X))*E - M)=0
-	lagrange := expr.Virtual(derive.GetLagrangeID(0, N))
-	p1 := expr.Const(koalabear.One()).Sub(lagrange)
-	diffGrandSum := expr.Col(grandSum).Sub(expr.Rot(grandSum, -1))
-	p2 := diffGrandSum.Mul(E).Sub(M)
-	recurrenceRelation := p1.Mul(p2)
-
-	// 2. Lagrange_0*( IDGrandSum*E-M)=0
-	grandSumTimesE := expr.Col(grandSum).Mul(E)
-	localRelation := localRelation(grandSumTimesE, M, 0, N)
-
-	return []constraint.Relation{recurrenceRelation, localRelation}
-	// EnforceLocalRelationAndRegisterLagrangeColumn(system, grandSumTimesE, M, 0)
+type LookupConfig struct {
+	Selector board.Input
 }
 
-// Lookup proves that every value in S appears in T (S ⊆ T as multisets).
-// It implements the lookup argument of section 5.4.1 of https://eprint.iacr.org/2022/1633.pdf.
-//
-// The core identity checked is:
-//
-//	Σ_i M[i]/(T[i]−γ) = Σ_j 1/(S[j]−γ)
-//
-// where M[i] = #{j | S[j]=T[i]} is the multiplicity of T[i] in S. This identity holds iff
-// every element of S appears in T with the correct count.
-//
-//	|-------------------------------–-----------------------------------------------|
-//	| [prover]                      |              [verifier]                       |
-//	|-------------------------------–-----------------------------------------------|
-//	| Commit(S, T)          -----→  | [Com(S), Com(T)]                             | ROUND 1
-//	|-------------------------------–-----------------------------------------------|
-//	| Compute M s.t.                |                                               |
-//	|   M[i] = #{j | S[j]=T[i]}    |                                               |
-//	| Commit(M)             -----→  | [Com(M)]                                     | ROUND 2
-//	|-------------------------------–-----------------------------------------------|
-//	|                               ←-----  Sample random γ (gamma)                |
-//	|                               |   (γ = Fiat-Shamir(Com(S),Com(T),Com(M)))    |
-//	|-------------------------------–-----------------------------------------------|
-//	| Compute running sums:         |                                               |
-//	|   GrandSumT[i] = Σ_{j≤i} M[j]/(T[j]−γ)                                     |
-//	|   GrandSumS[i] = Σ_{j≤i} 1/(S[j]−γ)                                        |
-//	| Commit(GrandSumT, GrandSumS)  |                                               |
-//	|                       -----→  | [Com(GrandSumT), Com(GrandSumS)]             | ROUND 3
-//	|-------------------------------–-----------------------------------------------|
-//	|       (done via FoldRelations + Finalize + Verify)                          |
-//	| Records five constraints:                                                     |
-//	|   C1: (1−L_0)·((GrandSumT−GrandSumT_{ω^{−1}X})·(T−γ) − M) = 0             |
-//	|   C2: L_0·(GrandSumT·(T−γ) − M) = 0  (GrandSumT[0] = M[0]/(T[0]−γ))       |
-//	|   C3: (1−L_0)·((GrandSumS−GrandSumS_{ω^{−1}X})·(S−γ) − 1) = 0             |
-//	|   C4: L_0·(GrandSumS·(S−γ) − 1) = 0  (GrandSumS[0] = 1/(S[0]−γ))          |
-//	|   C5: L_{N−1}·(GrandSumS − GrandSumT) = 0  (total sums equal)               |
-//	|-------------------------------–-----------------------------------------------|
-func Lookup(system *constraint.Builder, S, T expr.Expr) error {
+type LookupOption func(lc *LookupConfig) error
 
-	_M, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
+func WithSelector(input board.Input) LookupOption {
+	return func(lc *LookupConfig) error {
+		lc.Selector = input
+		return nil
+	}
+}
+
+// Lookup arguments that S ⊂ T
+func Lookup(builder *board.Builder, S, T board.Input, opts ...LookupOption) error {
+
+	var config LookupConfig
+	for _, opt := range opts {
+		err := opt(&config)
+		if err != nil {
+			return err
+		}
+	}
+
+	// 1. compute multiplicity
+	multiplicity, err := RandomString(10)
 	if err != nil {
 		return err
 	}
-	M := fmt.Sprintf("Mult_%s", _M)
-	_grandSumS, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
+	multiplicity = fmt.Sprintf("Mult_%s", multiplicity)
+	builder.AddCountMultiplicityStep(S.In, T.In, config.Selector.In, multiplicity)
+
+	// 2. sample challenge
+	fsInputs := []board.Input{S, T}
+	fsInputs = append(fsInputs, board.Input{Module: T.Module, In: expr.Col(multiplicity)})
+	_gamma, err := RandomString(10)
 	if err != nil {
 		return err
 	}
-	grandSumS := fmt.Sprintf("GSum_S_%s", _grandSumS)
-	_grandSumT, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
+	builder.AddFiatShamirStep(fsInputs, _gamma)
+
+	// 3. register lookup for both parties
+	gamma := expr.NewChallenge(_gamma)
+	prefixLogup := "logup"
+	_logupT, err := RandomString(10)
 	if err != nil {
 		return err
 	}
-	grandSumT := fmt.Sprintf("GSum_T_%s", _grandSumT)
-	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
+	_logupS, err := RandomString(10)
 	if err != nil {
 		return err
 	}
+	_logupT = fmt.Sprintf("%s_%s", prefixLogup, _logupT)
+	_logupS = fmt.Sprintf("%s_%s", prefixLogup, _logupS)
+	{
+		tMinusGamma := T.In.Sub(gamma)
+		builder.AddLogupStep(T.Module, tMinusGamma, expr.Col(multiplicity), _logupT)
+	}
+	{
+		sMinusGamma := S.In.Sub(gamma)
+		builder.AddLogupStep(S.Module, sMinusGamma, expr.Const(koalabear.One()), _logupS)
+	}
 
-	// 1. create the multiplicity polynomial
-	Mexpr := expr.Col(M)
-	system.AddMultiplicityStep([]expr.Expr{S, T}, M)
-
-	// 2. sample a challenge gamma, depending on M, S, and T
-	gammaDeps := []expr.Expr{S, T, Mexpr}
-	system.AddChallengeStep(gammaDeps, gamma)
-
-	// 3. compute the grand sums grandSum1:=Σ_i M[i]/(T[i]-γ), grandSum2:=Σ_i 1/(S[i]-γ)
-	oneExpr := expr.Const(koalabear.One())
-	SminusGamma := S.Sub(expr.NewChallenge(gamma))
-	system.AddGrandSumStep([]expr.Expr{oneExpr, SminusGamma}, grandSumS)
-
-	TminusGamma := T.Sub(expr.NewChallenge(gamma))
-	system.AddGrandSumStep([]expr.Expr{Mexpr, TminusGamma}, grandSumT)
-
-	// 4. register the constraints ensuring the grand sums are correctly constructed
-	grandSumRelationsT := BuildGrandSumRelations(Mexpr, TminusGamma, grandSumT, system.N)
-	grandSumRelationsS := BuildGrandSumRelations(oneExpr, SminusGamma, grandSumS, system.N)
-	system.AssertAllZero(grandSumRelationsT)
-	system.AssertAllZero(grandSumRelationsS)
-
-	// 5. ensure that grandSumT[N-1] = grandSumS[N-1]
-	grandSumSExpr := expr.Col(grandSumS)
-	grandSumTExpr := expr.Col(grandSumT)
-	system.AssertEqualAt(grandSumSExpr, grandSumTExpr, system.N-1)
-
-	// 6. register the creation of the 2 lagrange columns 0 and N-1
-	system.AddLagrangeColumn(0)
+	// 4. if the inputs come from the same module, build the vanishing relation
+	AddLookupConstraint(builder, S.Module, T.Module, []string{_logupS}, []string{_logupT})
 
 	return nil
 }
 
-// LookupTuple proves that every row-tuple (S[0][i], …, S[k−1][i])
-// appears in the multiset of row-tuples {(T[0][j], …, T[m−1][j])}.
-//
-// Tuples are compressed into scalars via a Fiat-Shamir folding challenge α:
-//
-//	S_fold[i] = Σ_{0≤j<k} α^j · S[j][i]
-//	T_fold[i] = Σ_{0≤j<m} α^j · T[j][i]
-//
-// By Schwartz-Zippel, tuple inclusion holds iff (with overwhelming probability
-// over α) {S_fold[i]} ⊆ {T_fold[i]}. This scalar inclusion is then checked via
-// Lookup using the core identity:
-//
-//	Σ_i M[i]/(T_fold[i]−γ) = Σ_j 1/(S_fold[j]−γ)
-//
-// where M[i] = #{j | S_fold[j] = T_fold[i]} is the multiplicity of T_fold[i] in S_fold.
-//
-//	|----------------------------------–---------------------------------------------|
-//	| [prover]                         |              [verifier]                     |
-//	|----------------------------------–---------------------------------------------|
-//	| Commit(S[0],…,S[k−1],            |                                             |
-//	|        T[0],…,T[m−1])    -----→  | [Com(S[0]),…,Com(S[k−1]),                   | ROUND 1
-//	|                                  |  Com(T[0]),…,Com(T[m−1])]                   |
-//	|----------------------------------–---------------------------------------------|
-//	|                                  ←-----  Sample random α (folding)             |
-//	|                                  |  (α = Fiat-Shamir(Com(S[·]), Com(T[·])))    |
-//	|----------------------------------–---------------------------------------------|
-//	| Compute:                         |                                             |
-//	|   S_fold = Σ_j α^j · S[j]       |                                             |
-//	|   T_fold = Σ_j α^j · T[j]       |                                             |
-//	|   M[i] = #{j | S_fold[j]=T_fold[i]} |                                         |
-//	| Commit(M)                 -----→ | [Com(M)]                                    | ROUND 2
-//	|----------------------------------–---------------------------------------------|
-//	|                                  ←-----  Sample random γ (gamma)               |
-//	|                                  |  (γ = Fiat-Shamir(Com(S[·]), Com(T[·]),     |
-//	|                                  |                   Com(M)))                  |
-//	|----------------------------------–---------------------------------------------|
-//	| Compute running sums:            |                                             |
-//	|   GrandSumT[i] = Σ_{j≤i} M[j]/(T_fold[j]−γ)                                  |
-//	|   GrandSumS[i] = Σ_{j≤i} 1/(S_fold[j]−γ)                                     |
-//	| Commit(GrandSumT, GrandSumS)     |                                             |
-//	|                          -----→  | [Com(GrandSumT), Com(GrandSumS)]            | ROUND 3
-//	|----------------------------------–---------------------------------------------|
-//	|       (done via FoldRelations + Finalize + Verify)                           |
-//	| Records five constraints:        |                                             |
-//	|   C1: (1−L_0)·((GrandSumT−GrandSumT_{ω^{−1}X})·(T_fold−γ) − M) = 0          |
-//	|   C2: L_0·(GrandSumT·(T_fold−γ) − M) = 0                                     |
-//	|   C3: (1−L_0)·((GrandSumS−GrandSumS_{ω^{−1}X})·(S_fold−γ) − 1) = 0          |
-//	|   C4: L_0·(GrandSumS·(S_fold−γ) − 1) = 0                                     |
-//	|   C5: L_{N−1}·(GrandSumS − GrandSumT) = 0  (total sums equal)                |
-//	|----------------------------------–---------------------------------------------|
-func LookupTuple(system *constraint.Builder, S, T []expr.Expr) error {
+// Lookup arguments that S ⊂ T where S and T are tables
+func LookupTuple(builder *board.Builder, S, T []board.Input) error {
 
 	if len(S) != len(T) {
-		return fmt.Errorf("LookupTuple requires equal-width tuples on both sides")
+		return fmt.Errorf("[LookupTuple] S and T must have equal size, got %d and %d", len(S), len(T))
 	}
 
-	gamma, err := utils.RandomString(constants.SIZE_RANDOM_STRING)
+	// 1. sample a challenge
+	_alpha, err := RandomString(10)
 	if err != nil {
 		return err
 	}
+	builder.AddFiatShamirStep(append(S, T...), _alpha)
 
-	// 1. sample a challenge for folding
-	foldingDeps := make([]expr.Expr, 0, len(S)+len(T))
-	foldingDeps = append(S, T...)
-	system.AddChallengeStep(foldingDeps, gamma)
+	// 2. fold the inputs
+	exprS := make([]expr.Expr, len(S))
+	exprT := make([]expr.Expr, len(T))
+	for i := 0; i < len(S); i++ {
+		exprS[i] = S[i].In
+		exprT[i] = T[i].In
+	}
+	alpha := expr.NewChallenge(_alpha)
+	foldedS := expr.Fold(alpha, exprS)
+	foldedT := expr.Fold(alpha, exprT)
 
-	// 2. fold S and T
-	gammaExpr := expr.NewChallenge(gamma)
-	SFolded := constraint.Fold(S, gammaExpr)
-	TFolded := constraint.Fold(T, gammaExpr)
+	// 3. call 1 single column lookup
+	moduleS := S[0].Module
+	moduleT := T[0].Module
+	inputS := board.Input{Module: moduleS, In: foldedS}
+	inputT := board.Input{Module: moduleT, In: foldedT}
+	Lookup(builder, inputS, inputT)
 
-	// 3. calls the Lookup on the folded S and T
-	return Lookup(system, SFolded, TFolded)
-
+	return nil
 }

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/consensys/loom/expr"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/expr"
 )
 
 // BuildPointwiseEvaluation evaluates E point-wise over Pi and returns the N results as a
@@ -16,33 +16,67 @@ func BuildPointwiseEvaluation(Pi map[string]Polynomial, E expr.Expr, N int, mu *
 	return dst, evalPointWiseInto(Pi, E, N, mu, dst)
 }
 
+type MultiplicityConfig struct {
+	Selector expr.Expr
+}
+
+type MultiplicityOption func(mc *MultiplicityConfig) error
+
+func WithSelector(selector expr.Expr) MultiplicityOption {
+	return func(mc *MultiplicityConfig) error {
+		mc.Selector = selector
+		return nil
+	}
+}
+
 // BuildMultiplicityPolynomial returns P such that:
-// P[i] = #{ j | S[j] = T[i] }
-func BuildMultiplicityPolynomial(Pi map[string]Polynomial, S, T expr.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
+// P[i] = #{ j | S[j] = T[i] and Sel[j]!=0 if Sel!=nil }
+func BuildMultiplicityPolynomial(Pi map[string]Polynomial, S, T, Sel expr.Expr, mu *sync.Mutex) (Polynomial, error) {
 
 	// evaluate S and T on P
-	_S := getBuf(N)
-	_T := getBuf(N)
-	if err := evalPointWiseInto(Pi, S, N, mu, _S); err != nil {
+	sLeaves := S.LeavesFull(expr.NewConfig(expr.WithoutChallenges()))
+	tLeaves := T.LeavesFull(expr.NewConfig(expr.WithoutChallenges()))
+	_s := Pi[sLeaves[0].Name]
+	_t := Pi[tLeaves[0].Name]
+	ns := len(_s)
+	nt := len(_t)
+	_S := getBuf(ns)
+	_T := getBuf(nt)
+	if err := evalPointWiseInto(Pi, S, ns, mu, _S); err != nil {
 		putBuf(_S)
 		return Polynomial{}, err
 	}
-	if err := evalPointWiseInto(Pi, T, N, mu, _T); err != nil {
+	if err := evalPointWiseInto(Pi, T, nt, mu, _T); err != nil {
 		putBuf(_S)
 		return Polynomial{}, err
 	}
 
-	res := countMultiplicity(_S, _T, N)
-	putBuf(_S)
-	putBuf(_T)
-	return res, nil
-
+	if Sel != nil {
+		selLeaves := Sel.LeavesFull(expr.NewConfig(expr.WithoutChallenges()))
+		_sl := Pi[selLeaves[0].Name]
+		nsl := len(_sl)
+		_SEL := getBuf(nsl)
+		if err := evalPointWiseInto(Pi, S, ns, mu, _SEL); err != nil {
+			putBuf(_SEL)
+			return Polynomial{}, err
+		}
+		res := countMultiplicityWithSelector(_S, _T, _SEL)
+		putBuf(_S)
+		putBuf(_T)
+		putBuf(_SEL)
+		return res, nil
+	} else {
+		res := countMultiplicity(_S, _T)
+		putBuf(_S)
+		putBuf(_T)
+		return res, nil
+	}
 }
 
 // BuildGrandSum returns R such that
 // R[i] = Σ_{j⩽i}M[j]/E[j]
 // The notation E[i] means the i-th entry of E evaluated on P (same for M).
-func BuildGrandSum(P map[string]Polynomial, E, M expr.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
+func BuildLogup(P map[string]Polynomial, E, M expr.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
 
 	// D stores the denominators 1/E(P); pooled because it is only needed until accumulateSums copies it.
 	D := getBuf(N)
@@ -118,45 +152,45 @@ func BuildGrandProduct(P map[string]Polynomial, E1, E2 expr.Expr, N int, mu *syn
 //	R[i] = F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1]
 //
 // encodes.
-func BuildFilteredAccPolynomial(P map[string]Polynomial, E, F, alpha expr.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
+// func BuildFilteredAccPolynomial(P map[string]Polynomial, E, F, alpha expr.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
 
-	_E := getBuf(N)
-	_F := getBuf(N)
-	if err := evalPointWiseInto(P, E, N, mu, _E); err != nil {
-		putBuf(_E)
-		putBuf(_F)
-		return Polynomial{}, err
-	}
-	if err := evalPointWiseInto(P, F, N, mu, _F); err != nil {
-		putBuf(_E)
-		putBuf(_F)
-		return Polynomial{}, err
-	}
-	res := make(Polynomial, N)
-	if _, ok := alpha.(*expr.Leaf); !ok {
-		return Polynomial{}, fmt.Errorf("alpha must be a leaf")
-	}
-	alphaExpr := alpha.(*expr.Leaf)
-	if alphaExpr.Type != expr.ChallengeColumn {
-		return Polynomial{}, fmt.Errorf("alpha must be a challenge")
-	}
-	_alpha := P[alpha.String()]
-	a := _alpha[0]
+// 	_E := getBuf(N)
+// 	_F := getBuf(N)
+// 	if err := evalPointWiseInto(P, E, N, mu, _E); err != nil {
+// 		putBuf(_E)
+// 		putBuf(_F)
+// 		return Polynomial{}, err
+// 	}
+// 	if err := evalPointWiseInto(P, F, N, mu, _F); err != nil {
+// 		putBuf(_E)
+// 		putBuf(_F)
+// 		return Polynomial{}, err
+// 	}
+// 	res := make(Polynomial, N)
+// 	if _, ok := alpha.(*expr.Leaf); !ok {
+// 		return Polynomial{}, fmt.Errorf("alpha must be a leaf")
+// 	}
+// 	alphaExpr := alpha.(*expr.Leaf)
+// 	if alphaExpr.Type != expr.ChallengeColumn {
+// 		return Polynomial{}, fmt.Errorf("alpha must be a challenge")
+// 	}
+// 	_alpha := P[alpha.String()]
+// 	a := _alpha[0]
 
-	// R[0] = F[0]*E[0]
-	res[0].Mul(&_E[0], &_F[0])
+// 	// R[0] = F[0]*E[0]
+// 	res[0].Mul(&_E[0], &_F[0])
 
-	// R[i] = F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1]
-	var path1, path2, one koalabear.Element
-	one = koalabear.One()
-	for i := 1; i < N; i++ {
-		path1.Sub(&one, &_F[i]).Mul(&path1, &res[i-1])                   // (1-F[i])R[i-1]
-		path2.Mul(&a, &res[i-1]).Add(&path2, &_E[i]).Mul(&path2, &_F[i]) // F[i]*(α*R[i-1]+E[i])
-		res[i].Add(&path1, &path2)
-	}
+// 	// R[i] = F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1]
+// 	var path1, path2, one koalabear.Element
+// 	one = koalabear.One()
+// 	for i := 1; i < N; i++ {
+// 		path1.Sub(&one, &_F[i]).Mul(&path1, &res[i-1])                   // (1-F[i])R[i-1]
+// 		path2.Mul(&a, &res[i-1]).Add(&path2, &_E[i]).Mul(&path2, &_F[i]) // F[i]*(α*R[i-1]+E[i])
+// 		res[i].Add(&path1, &path2)
+// 	}
 
-	putBuf(_E)
-	putBuf(_F)
+// 	putBuf(_E)
+// 	putBuf(_F)
 
-	return res, nil
-}
+// 	return res, nil
+// }

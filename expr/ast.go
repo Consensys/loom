@@ -14,7 +14,7 @@ type LeafType int
 const (
 	CommittedColumn LeafType = iota
 	RotatedColumn
-	VirtualColumn
+	LagrangeColumn
 	ChallengeColumn
 	ConstantColumn
 )
@@ -30,7 +30,7 @@ type Leaf struct {
 // Config useful for querying the leaves
 type Config struct {
 	WoCommittedColumns bool
-	WoVirtualumns      bool
+	WoLagrangeumns     bool
 	WoRotatedColumns   bool
 	WoChallenges       bool
 }
@@ -51,10 +51,10 @@ func WithoutCommittedColumns() Option {
 	}
 }
 
-// Leaves() doesnt return the VirtualColumns
-func WithoutVirtualumns() Option {
+// Leaves() doesnt return the LagrangeColumns
+func WithoutLagrangeColumns() Option {
 	return func(c *Config) {
-		c.WoVirtualumns = true
+		c.WoLagrangeumns = true
 	}
 }
 
@@ -73,13 +73,13 @@ func NewConfig(opts ...Option) Config {
 	return res
 }
 
-var OnlyChallenges = []Option{WithoutVirtualumns(), WithoutCommittedColumns(), WithoutRotatedColumns()}
-var OnlyCommittedColumns = []Option{WithoutVirtualumns(), WithoutChallenges(), WithoutRotatedColumns()}
-var OnlyRotatedColumns = []Option{WithoutVirtualumns(), WithoutChallenges(), WithoutCommittedColumns()}
+var OnlyChallenges = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns()}
+var OnlyCommittedColumns = []Option{WithoutLagrangeColumns(), WithoutChallenges(), WithoutRotatedColumns()}
+var OnlyRotatedColumns = []Option{WithoutLagrangeColumns(), WithoutChallenges(), WithoutCommittedColumns()}
 
 // The LeafType encodes the status of a column at the protocol level:
 //   - CommittedColumn: the prover commits to this column
-//   - VirtualColumn: recomputable by the verifier (e.g. Lagrange basis columns)
+//   - LagrangeColumn: recomputable by the verifier (e.g. Lagrange basis columns)
 //   - Challenge: a Fiat-Shamir challenge (degree 0)
 //   - RotatedColumn: a column evaluated at a shifted point P(ω^shift·X)
 //   - Const: a constant field element (degree 0)
@@ -132,8 +132,8 @@ func Rot(name string, shift int) *Leaf {
 	return &Leaf{Type: RotatedColumn, Shift: shift, Name: name}
 }
 
-func Virtual(name string) *Leaf {
-	return &Leaf{Type: VirtualColumn, Name: name}
+func Lagrange(name string) *Leaf {
+	return &Leaf{Type: LagrangeColumn, Name: name}
 }
 
 func NewChallenge(name string) *Leaf {
@@ -164,7 +164,7 @@ func (l *Leaf) Degree() int {
 		return 0
 	case ChallengeColumn:
 		return 0
-	default: // CommittedColumn, RotatedColumn, VirtualColumn
+	default: // CommittedColumn, RotatedColumn, LagrangeColumn
 		return 1
 	}
 }
@@ -191,8 +191,8 @@ func (l *Leaf) Leaves(config Config) []string {
 			return []string{}
 		}
 		return []string{l.String()}
-	case VirtualColumn:
-		if config.WoVirtualumns {
+	case LagrangeColumn:
+		if config.WoLagrangeumns {
 			return []string{}
 		}
 		return []string{l.Name}
@@ -463,8 +463,8 @@ func (l *Leaf) LeavesFull(config Config) []*Leaf {
 		if config.WoRotatedColumns {
 			return nil
 		}
-	case VirtualColumn:
-		if config.WoVirtualumns {
+	case LagrangeColumn:
+		if config.WoLagrangeumns {
 			return nil
 		}
 	case ChallengeColumn:

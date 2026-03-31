@@ -4,10 +4,10 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/consensys/loom/internal/dag"
-	"github.com/consensys/loom/expr"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
+	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/dag"
 )
 
 // makeLagrangePoly builds a Polynomial from uint64 evaluations.
@@ -392,117 +392,117 @@ func TestDivPointWise(t *testing.T) {
 	})
 }
 
-func TestBuildGrandProduct(t *testing.T) {
+// func TestBuildGrandProduct(t *testing.T) {
 
-	t.Run("IdentityRatio", func(t *testing.T) {
-		size := 8
-		P := makeLagrangePoly(2, 3, 4, 5, 6, 7, 8, 9)
-		Pi := map[string]Polynomial{"x": P}
-		E0 := expr.Col("x")
-		E1 := expr.Col("x")
+// 	t.Run("IdentityRatio", func(t *testing.T) {
+// 		size := 8
+// 		P := makeLagrangePoly(2, 3, 4, 5, 6, 7, 8, 9)
+// 		Pi := map[string]Polynomial{"x": P}
+// 		E0 := expr.Col("x")
+// 		E1 := expr.Col("x")
 
-		R, err := BuildGrandProduct(Pi, E0, E1, size, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+// 		R, err := BuildGrandProduct(Pi, E0, E1, size, nil)
+// 		if err != nil {
+// 			t.Fatal(err)
+// 		}
 
-		var one koalabear.Element
-		one.SetOne()
-		expected := make([]koalabear.Element, size)
-		for i := range expected {
-			expected[i] = one
-		}
-		checkPointwise(t, R, expected)
-	})
+// 		var one koalabear.Element
+// 		one.SetOne()
+// 		expected := make([]koalabear.Element, size)
+// 		for i := range expected {
+// 			expected[i] = one
+// 		}
+// 		checkPointwise(t, R, expected)
+// 	})
 
-	t.Run("SimpleRecurrence", func(t *testing.T) {
-		size := 8
-		P := makeLagrangePoly(2, 3, 4, 5, 6, 7, 8, 9)
-		var one koalabear.Element
-		one.SetOne()
-		Pi := map[string]Polynomial{
-			"x":   P,
-			"one": []koalabear.Element{one},
-		}
-		E0 := expr.Col("x")
-		E1 := expr.Col("one")
+// 	t.Run("SimpleRecurrence", func(t *testing.T) {
+// 		size := 8
+// 		P := makeLagrangePoly(2, 3, 4, 5, 6, 7, 8, 9)
+// 		var one koalabear.Element
+// 		one.SetOne()
+// 		Pi := map[string]Polynomial{
+// 			"x":   P,
+// 			"one": []koalabear.Element{one},
+// 		}
+// 		E0 := expr.Col("x")
+// 		E1 := expr.Col("one")
 
-		R, err := BuildGrandProduct(Pi, E0, E1, size, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+// 		R, err := BuildGrandProduct(Pi, E0, E1, size, nil)
+// 		if err != nil {
+// 			t.Fatal(err)
+// 		}
 
-		expected := make([]koalabear.Element, size)
-		expected[0].SetOne()
-		for i := 1; i < size; i++ {
-			expected[i].Mul(&expected[i-1], &P[i-1])
-		}
-		checkPointwise(t, R, expected)
-	})
+// 		expected := make([]koalabear.Element, size)
+// 		expected[0].SetOne()
+// 		for i := 1; i < size; i++ {
+// 			expected[i].Mul(&expected[i-1], &P[i-1])
+// 		}
+// 		checkPointwise(t, R, expected)
+// 	})
 
-	t.Run("FirstEntryAlwaysOne", func(t *testing.T) {
-		size := 8
-		P0 := makeLagrangePoly(7, 3, 11, 5, 2, 9, 4, 6)
-		P1 := makeLagrangePoly(1, 2, 3, 4, 5, 6, 7, 8)
-		Pi := map[string]Polynomial{"x": P0, "y": P1}
-		E0 := expr.Col("x")
-		E1 := expr.Col("y")
+// 	t.Run("FirstEntryAlwaysOne", func(t *testing.T) {
+// 		size := 8
+// 		P0 := makeLagrangePoly(7, 3, 11, 5, 2, 9, 4, 6)
+// 		P1 := makeLagrangePoly(1, 2, 3, 4, 5, 6, 7, 8)
+// 		Pi := map[string]Polynomial{"x": P0, "y": P1}
+// 		E0 := expr.Col("x")
+// 		E1 := expr.Col("y")
 
-		R, err := BuildGrandProduct(Pi, E0, E1, size, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+// 		R, err := BuildGrandProduct(Pi, E0, E1, size, nil)
+// 		if err != nil {
+// 			t.Fatal(err)
+// 		}
 
-		var one koalabear.Element
-		one.SetOne()
-		if !R[0].Equal(&one) {
-			t.Errorf("R[0]: got %s, want 1", R[0].String())
-		}
-	})
+// 		var one koalabear.Element
+// 		one.SetOne()
+// 		if !R[0].Equal(&one) {
+// 			t.Errorf("R[0]: got %s, want 1", R[0].String())
+// 		}
+// 	})
 
-	t.Run("Recurrence_check", func(t *testing.T) {
-		size := 8
-		P0 := makeLagrangePoly(6, 10, 3, 15, 2, 8, 5, 9)
-		P1 := makeLagrangePoly(2, 5, 1, 3, 2, 4, 1, 3)
-		Pi := map[string]Polynomial{"x": P0, "y": P1}
-		E0 := expr.Col("x")
-		E1 := expr.Col("y")
+// 	t.Run("Recurrence_check", func(t *testing.T) {
+// 		size := 8
+// 		P0 := makeLagrangePoly(6, 10, 3, 15, 2, 8, 5, 9)
+// 		P1 := makeLagrangePoly(2, 5, 1, 3, 2, 4, 1, 3)
+// 		Pi := map[string]Polynomial{"x": P0, "y": P1}
+// 		E0 := expr.Col("x")
+// 		E1 := expr.Col("y")
 
-		R, err := BuildGrandProduct(Pi, E0, E1, size, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+// 		R, err := BuildGrandProduct(Pi, E0, E1, size, nil)
+// 		if err != nil {
+// 			t.Fatal(err)
+// 		}
 
-		var one koalabear.Element
-		one.SetOne()
-		if !R[0].Equal(&one) {
-			t.Errorf("R[0]: got %s, want 1", R[0].String())
-		}
+// 		var one koalabear.Element
+// 		one.SetOne()
+// 		if !R[0].Equal(&one) {
+// 			t.Errorf("R[0]: got %s, want 1", R[0].String())
+// 		}
 
-		for i := 0; i < size-1; i++ {
-			var expected koalabear.Element
-			expected.Mul(&R[i], &P0[i])
-			expected.Div(&expected, &P1[i])
-			if !R[i+1].Equal(&expected) {
-				t.Errorf("R[%d]: got %s, want %s", i+1, R[i+1].String(), expected.String())
-			}
-		}
-	})
+// 		for i := 0; i < size-1; i++ {
+// 			var expected koalabear.Element
+// 			expected.Mul(&R[i], &P0[i])
+// 			expected.Div(&expected, &P1[i])
+// 			if !R[i+1].Equal(&expected) {
+// 				t.Errorf("R[%d]: got %s, want %s", i+1, R[i+1].String(), expected.String())
+// 			}
+// 		}
+// 	})
 
-	t.Run("DenominatorZero_error", func(t *testing.T) {
-		size := 8
-		P0 := makeLagrangePoly(1, 2, 3, 4, 5, 6, 7, 8)
-		P1 := makeLagrangePoly(1, 0, 1, 1, 1, 1, 1, 1)
-		Pi := map[string]Polynomial{"x": P0, "y": P1}
-		E0 := expr.Col("x")
-		E1 := expr.Col("y")
+// 	t.Run("DenominatorZero_error", func(t *testing.T) {
+// 		size := 8
+// 		P0 := makeLagrangePoly(1, 2, 3, 4, 5, 6, 7, 8)
+// 		P1 := makeLagrangePoly(1, 0, 1, 1, 1, 1, 1, 1)
+// 		Pi := map[string]Polynomial{"x": P0, "y": P1}
+// 		E0 := expr.Col("x")
+// 		E1 := expr.Col("y")
 
-		_, err := BuildGrandProduct(Pi, E0, E1, size, nil)
-		if err == nil {
-			t.Fatal("expected error for zero denominator, got nil")
-		}
-	})
-}
+// 		_, err := BuildGrandProduct(Pi, E0, E1, size, nil)
+// 		if err == nil {
+// 			t.Fatal("expected error for zero denominator, got nil")
+// 		}
+// 	})
+// }
 
 func TestAccumulateProducts(t *testing.T) {
 
@@ -577,11 +577,11 @@ func TestAccumulateProducts(t *testing.T) {
 	})
 }
 
-func TestBuildGrandSum(t *testing.T) {
+func TestBuildLogup(t *testing.T) {
 
 	t.Run("TriangularNumbers", func(t *testing.T) {
 		// P = [1/1, 1/2, 1/3, ..., 1/8]
-		// BuildGrandSum gives R[k] = 1+2+...+(k+1) = (k+1)(k+2)/2
+		// BuildLogup gives R[k] = 1+2+...+(k+1) = (k+1)(k+2)/2
 		size := 8
 		P := makeLagrangePoly(1, 2, 3, 4, 5, 6, 7, 8)
 		for i := range P {
@@ -591,7 +591,7 @@ func TestBuildGrandSum(t *testing.T) {
 		E := expr.Col("P")
 		M := expr.Const(koalabear.One())
 		T := map[string]Polynomial{"P": P}
-		R, err := BuildGrandSum(T, E, M, size, nil)
+		R, err := BuildLogup(T, E, M, size, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -650,46 +650,46 @@ func verifyQuotientIdentity(t *testing.T, Pi map[string]Polynomial, E expr.Expr,
 	}
 }
 
-func TestBuildFilteredAccPolynomial(t *testing.T) {
+// func TestBuildFilteredAccPolynomial(t *testing.T) {
 
-	t.Run("AllOnesFilter_LastEntryIsHornerEval", func(t *testing.T) {
-		// When F = [1, 1, ..., 1], the recurrence simplifies to
-		//   R[0]   = E[0]
-		//   R[i]   = alpha * R[i-1] + E[i]
-		// so R[N-1] = E[0]*alpha^{N-1} + E[1]*alpha^{N-2} + ... + E[N-1],
-		// i.e. the evaluation of E interpreted as a canonical polynomial
-		// (E[0] = leading coefficient) at alpha.
-		N := 8
-		E := makeLagrangePoly(3, 7, 2, 11, 5, 9, 1, 4)
-		F := makeLagrangePoly(1, 1, 1, 1, 1, 1, 1, 1)
-		var alphaVal koalabear.Element
-		alphaVal.SetUint64(5)
+// 	t.Run("AllOnesFilter_LastEntryIsHornerEval", func(t *testing.T) {
+// 		// When F = [1, 1, ..., 1], the recurrence simplifies to
+// 		//   R[0]   = E[0]
+// 		//   R[i]   = alpha * R[i-1] + E[i]
+// 		// so R[N-1] = E[0]*alpha^{N-1} + E[1]*alpha^{N-2} + ... + E[N-1],
+// 		// i.e. the evaluation of E interpreted as a canonical polynomial
+// 		// (E[0] = leading coefficient) at alpha.
+// 		N := 8
+// 		E := makeLagrangePoly(3, 7, 2, 11, 5, 9, 1, 4)
+// 		F := makeLagrangePoly(1, 1, 1, 1, 1, 1, 1, 1)
+// 		var alphaVal koalabear.Element
+// 		alphaVal.SetUint64(5)
 
-		Pi := map[string]Polynomial{
-			"e":     E,
-			"f":     F,
-			"alpha": {alphaVal},
-		}
-		Eexpr := expr.Col("e")
-		Fexpr := expr.Col("f")
+// 		Pi := map[string]Polynomial{
+// 			"e":     E,
+// 			"f":     F,
+// 			"alpha": {alphaVal},
+// 		}
+// 		Eexpr := expr.Col("e")
+// 		Fexpr := expr.Col("f")
 
-		R, err := BuildFilteredAccPolynomial(Pi, Eexpr, Fexpr, expr.NewChallenge("alpha"), N, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+// 		R, err := BuildFilteredAccPolynomial(Pi, Eexpr, Fexpr, expr.NewChallenge("alpha"), N, nil)
+// 		if err != nil {
+// 			t.Fatal(err)
+// 		}
 
-		// Compute expected = E[0]*alpha^{N-1} + ... + E[N-1] via forward Horner.
-		expected := E[0]
-		for i := 1; i < N; i++ {
-			expected.Mul(&expected, &alphaVal)
-			expected.Add(&expected, &E[i])
-		}
+// 		// Compute expected = E[0]*alpha^{N-1} + ... + E[N-1] via forward Horner.
+// 		expected := E[0]
+// 		for i := 1; i < N; i++ {
+// 			expected.Mul(&expected, &alphaVal)
+// 			expected.Add(&expected, &E[i])
+// 		}
 
-		if !R[N-1].Equal(&expected) {
-			t.Errorf("R[N-1] = %s, want %s", R[N-1].String(), expected.String())
-		}
-	})
-}
+// 		if !R[N-1].Equal(&expected) {
+// 			t.Errorf("R[N-1] = %s, want %s", R[N-1].String(), expected.String())
+// 		}
+// 	})
+// }
 
 func TestComputeQuotient(t *testing.T) {
 

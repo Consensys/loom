@@ -13,6 +13,10 @@ const SUFFIX_SHIFT_SPLIT = "_"
 const SUFFIX_SHIFT = "shift"
 const SIZE_RANDOM_STRING = 10 // size of the names randomly created for the intermediate columns issued with prover actions
 
+func LagrangeName(i, N int) string {
+	return fmt.Sprintf("Lagrange_%d_%d", i, N)
+}
+
 // CanonicalChallengeName returns the shared challenge name for all Fiat-Shamir steps
 // at a given BFS level in the challenge-dependency DAG.
 func CanonicalChallengeName(level int) string {
