@@ -23,7 +23,7 @@ import (
 func airSchemaFromFile(binPath string) *cmdutil.SchemaStack[corsetkoalabear.Element] {
 	stack := cmdutil.NewSchemaStack[corsetkoalabear.Element]().
 		WithBinaryFile(cmdutil.ReadBinaryFile(binPath)).
-		WithAssemblyConfig(asm.LoweringConfig{Field: field.KOALABEAR_16}).
+		WithAssemblyConfig(asm.LoweringConfig{Field: field.KOALABEAR_16, Vectorize: true}).
 		WithOptimisationConfig(mir.DEFAULT_OPTIMISATION_LEVEL).
 		WithLayer(cmdutil.AIR_LAYER).
 		Build()
