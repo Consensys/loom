@@ -24,7 +24,7 @@ func RandomString(n int) (string, error) {
 	return string(result), nil
 }
 
-func AddLookupConstraint(builder *board.Builder, moduleS, moduleT string, _logupS, _logupT []string) {
+func AddLogupEqualityCheck(builder *board.Builder, moduleS, moduleT string, _logupS, _logupT []string) {
 
 	logupS := make([]board.Logup, len(_logupS))
 	logupT := make([]board.Logup, len(_logupT))

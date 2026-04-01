@@ -1,6 +1,9 @@
 package proof
 
-import "github.com/consensys/loom/internal/commitment"
+import (
+	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/internal/commitment"
+)
 
 type Commitment struct {
 	Digest  commitment.Digest
@@ -9,6 +12,7 @@ type Commitment struct {
 
 type Proof struct {
 	CrossModulesLogupBus []CrossModulesLogupBus
+	openingValues        []map[string]koalabear.Element
 }
 
 // // Proof holds the output of the prover in the batched commitment model.

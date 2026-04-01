@@ -1,10 +1,53 @@
 package arguments
 
 import (
+	"fmt"
+
+	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 )
 
+// PermutationCrossModules we use the lookup in this case, so that each module has its own logup
+func PermutationCrossModules(builder *board.Builder, A, B board.Input) error {
+
+	// 1. sample challenge
+	_gamma, err := RandomString(10)
+	if err != nil {
+		return err
+	}
+	fsInputs := []board.Input{A, B}
+	builder.AddFiatShamirStep(fsInputs, _gamma)
+
+	// 2. register lookup for both parties
+	gamma := expr.NewChallenge(_gamma)
+	prefixLogup := "logup"
+	_logupA, err := RandomString(10)
+	if err != nil {
+		return err
+	}
+	_logupB, err := RandomString(10)
+	if err != nil {
+		return err
+	}
+	_logupA = fmt.Sprintf("%s_%s", prefixLogup, _logupA)
+	_logupB = fmt.Sprintf("%s_%s", prefixLogup, _logupB)
+	{
+		aMinusGamma := A.In.Sub(gamma)
+		builder.AddLogupStep(A.Module, aMinusGamma, expr.Const(koalabear.One()), _logupA)
+	}
+	{
+		bMinusGamma := B.In.Sub(gamma)
+		builder.AddLogupStep(B.Module, bMinusGamma, expr.Const(koalabear.One()), _logupB)
+	}
+
+	// 3. if the inputs come from the same module, build the vanishing relation
+	AddLogupEqualityCheck(builder, A.Module, B.Module, []string{_logupA}, []string{_logupB})
+
+	return nil
+}
+
+// PermutationWithinModule we use the grand product argument in that case, it saves a column (1 grand product instead of 2 logups+bus)
 func PermutationWithinModule(builder *board.Builder, module string, A, B []expr.Expr) error {
 
 	// 1. sample challenge

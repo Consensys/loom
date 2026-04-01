@@ -72,7 +72,7 @@ func Lookup(builder *board.Builder, S, T board.Input, opts ...LookupOption) erro
 	}
 
 	// 4. if the inputs come from the same module, build the vanishing relation
-	AddLookupConstraint(builder, S.Module, T.Module, []string{_logupS}, []string{_logupT})
+	AddLogupEqualityCheck(builder, S.Module, T.Module, []string{_logupS}, []string{_logupT})
 
 	return nil
 }

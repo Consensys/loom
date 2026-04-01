@@ -113,7 +113,7 @@ func Prove(t trace.Trace, program board.Program, opts ...Option) proof.Proof {
 		_ = trace.RegisterColumn(t, challengeName, challengeCol)
 	}
 
-	// fill the buses
+	// 3. fill the buses
 	for i, crossModulesLogupBus := range res.CrossModulesLogupBus {
 		for j := 0; j < len(crossModulesLogupBus.Positive); j++ {
 			m := program.Modules[crossModulesLogupBus.Positive[j].Module]
@@ -128,6 +128,11 @@ func Prove(t trace.Trace, program board.Program, opts ...Option) proof.Proof {
 			res.CrossModulesLogupBus[i].Negative[j].Value.Set(&c[n-1])
 		}
 	}
+
+	// 4. Compute the quotients
+	// for _, m := range program.Modules {
+
+	// }
 
 	return res
 }
