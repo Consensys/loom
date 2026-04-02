@@ -1,0 +1,8 @@
+fn diamond_a(x u16, y u16) -> (res u2) {
+  var xn, yn u1
+  xn = x==0 ? 0 : 1
+  yn = y==0 ? 0 : 1
+  ;;
+  res = (2*yn) + xn
+  return
+}

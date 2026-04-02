@@ -4,31 +4,13 @@ import (
 	"fmt"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/go-corset/pkg/asm"
 	"github.com/consensys/go-corset/pkg/ir/air"
-	"github.com/consensys/go-corset/pkg/ir/mir"
 	"github.com/consensys/go-corset/pkg/schema"
-	"github.com/consensys/go-corset/pkg/util/field"
 	corsetkoalabear "github.com/consensys/go-corset/pkg/util/field/koalabear"
 	"github.com/consensys/loom/arguments"
 	"github.com/consensys/loom/constraint"
 	"github.com/consensys/loom/expr"
-
-	cmdutil "github.com/consensys/go-corset/pkg/cmd/corset/util"
 )
-
-// airSchemaFromFile loads a go-corset binary .bin file and returns the built
-// AIR-level schema stack. Both the AIR schema and the register mapping (needed
-// for trace expansion) are accessible from the returned stack.
-func airSchemaFromFile(binPath string) *cmdutil.SchemaStack[corsetkoalabear.Element] {
-	stack := cmdutil.NewSchemaStack[corsetkoalabear.Element]().
-		WithBinaryFile(cmdutil.ReadBinaryFile(binPath)).
-		WithAssemblyConfig(asm.LoweringConfig{Field: field.KOALABEAR_16, Vectorize: true}).
-		WithOptimisationConfig(mir.DEFAULT_OPTIMISATION_LEVEL).
-		WithLayer(cmdutil.AIR_LAYER).
-		Build()
-	return &stack
-}
 
 // ConstraintBuilderFromSchema builds a loom constraint.Builder from a preloaded AIR schema.
 // N is the trace length (must match the N used in TraceFromFile).
@@ -44,9 +26,7 @@ func ConstraintBuilderFromSchema(airSchema schema.AnySchema[corsetkoalabear.Elem
 		case air.PermutationConstraint[corsetkoalabear.Element]:
 			err = translatePermutation(&builder, airSchema, vc)
 		case air.RangeConstraint[corsetkoalabear.Element]:
-			// Range constraints are enforced by the lookup cascade into type
-			// table modules; skipping them here does not affect proof soundness.
-			continue
+			err = translateRangeConstraint(&builder, airSchema, vc)
 		default:
 			return constraint.Builder{}, fmt.Errorf("unknown AIR constraint type %T", c)
 		}
@@ -55,12 +35,6 @@ func ConstraintBuilderFromSchema(airSchema schema.AnySchema[corsetkoalabear.Elem
 		}
 	}
 	return builder, nil
-}
-
-// ConstraintBuilderFromFile reads a go-corset binary .bin file, lowers it to AIR for
-// the Koalabear field, and returns a loom constraint.Builder. N is the trace length.
-func ConstraintBuilderFromFile(binPath string, N int) (constraint.Builder, error) {
-	return ConstraintBuilderFromSchema(airSchemaFromFile(binPath).ConcreteSchema(), N)
 }
 
 // translateVanishing maps a go-corset vanishing constraint to loom. Global
@@ -152,6 +126,44 @@ func translatePermutation(
 	// Wrap as a single tuple so PermutationTuple checks the full row-vector.
 	if err := arguments.PermutationTuple(builder, [][]expr.Expr{sources}, [][]expr.Expr{targets}); err != nil {
 		return fmt.Errorf("permutation %q: %w", inner.Handle, err)
+	}
+	return nil
+}
+
+// TypeTableColName returns the synthetic column name for a type table of the
+// given bitwidth, e.g. "__type_u8". This must match between constraint and trace
+// generation.
+func TypeTableColName(bitwidth uint) string {
+	return fmt.Sprintf("__type_u%d", bitwidth)
+}
+
+// AddTypeTableLookup registers a lookup argument constraining sourceCol to lie
+// in [0, 2^bitwidth). The target column is the synthetic type-table column
+// "__type_u{bitwidth}", which must be present in the trace.
+func AddTypeTableLookup(builder *constraint.Builder, sourceCol string, bitwidth uint) error {
+	S := []expr.Expr{expr.Col(sourceCol)}
+	T := []expr.Expr{expr.Col(TypeTableColName(bitwidth))}
+	return arguments.LookupTuple(builder, S, T)
+}
+
+// translateRangeConstraint converts an AIR range constraint into one or more
+// lookup arguments against synthetic type-table columns.
+func translateRangeConstraint(
+	builder *constraint.Builder,
+	airSchema schema.AnySchema[corsetkoalabear.Element],
+	rc air.RangeConstraint[corsetkoalabear.Element],
+) error {
+	inner := rc.Unwrap()
+	for i, source := range inner.Sources {
+		bw := inner.Bitwidths[i]
+		mod := airSchema.Module(inner.Context)
+		name := mod.Register(source.Register()).QualifiedName(mod)
+		if source.RelativeShift() != 0 {
+			return fmt.Errorf("range constraint %q: shifted source not supported", inner.Handle)
+		}
+		if err := AddTypeTableLookup(builder, name, bw); err != nil {
+			return fmt.Errorf("range constraint %q (u%d): %w", inner.Handle, bw, err)
+		}
 	}
 	return nil
 }

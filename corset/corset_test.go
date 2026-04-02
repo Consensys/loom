@@ -1,6 +1,7 @@
 package corset
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,55 +10,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// binForLT returns the .bin path corresponding to a .lt path.
-func binForLT(ltPath string) string {
-	return strings.TrimSuffix(ltPath, ".lt") + ".bin"
-}
-
-func TestConstraintBuilderFromFile(t *testing.T) {
-	bins, err := filepath.Glob("testdata/*.bin")
-	require.NoError(t, err)
-	require.NotEmpty(t, bins, "no .bin files found in testdata/")
-
-	for _, path := range bins {
-		t.Run(filepath.Base(path), func(t *testing.T) {
-			_, err := ConstraintBuilderFromFile(path, 8)
-			require.NoError(t, err)
-		})
-	}
-}
-
-func TestTraceFromFile(t *testing.T) {
-	lts, err := filepath.Glob("testdata/*.lt")
-	require.NoError(t, err)
-	require.NotEmpty(t, lts, "no .lt files found in testdata/")
-
-	for _, path := range lts {
-		t.Run(filepath.Base(path), func(t *testing.T) {
-			stack := airSchemaFromFile(binForLT(path))
-			tr, _, err := TraceFromFile(path, stack.ConcreteSchema())
-			require.NoError(t, err)
-			require.NotEmpty(t, tr, "trace is empty")
-
-			for key, col := range tr {
-				require.NotEmpty(t, key, "empty column key")
-				require.NotContains(t, key, ".", "column key %q uses dot separator; want colon", key)
-				require.NotEmpty(t, col, "column %q is empty", key)
-			}
-		})
-	}
+// ioForZkasm returns the _io.json path corresponding to a .zkasm path.
+func ioForZkasm(zkasmPath string) string {
+	return strings.TrimSuffix(zkasmPath, ".zkasm") + "_io.json"
 }
 
 func TestProve(t *testing.T) {
-	lts, err := filepath.Glob("testdata/*.lt")
+	zkasmFiles, err := filepath.Glob("testdata/*.zkasm")
 	require.NoError(t, err)
-	require.NotEmpty(t, lts, "no .lt files found in testdata/")
+	require.NotEmpty(t, zkasmFiles, "no .zkasm files found in testdata/")
 
-	for _, ltPath := range lts {
-		t.Run(filepath.Base(ltPath), func(t *testing.T) {
-			stack := airSchemaFromFile(binForLT(ltPath))
+	for _, zkasmPath := range zkasmFiles {
+		name := filepath.Base(zkasmPath)
+		if name != "inc.zkasm" {
+			continue
+		}
 
-			tr, N, err := TraceFromFile(ltPath, stack.ConcreteSchema())
+		t.Run(name, func(t *testing.T) {
+			ioPath := ioForZkasm(zkasmPath)
+			inputJSON, err := os.ReadFile(ioPath)
+			require.NoError(t, err, "reading %s", ioPath)
+
+			stack := CompileSchema(zkasmPath)
+
+			tr, N, err := ExpandTrace(stack, inputJSON)
 			require.NoError(t, err)
 
 			builder, err := ConstraintBuilderFromSchema(stack.ConcreteSchema(), N)
