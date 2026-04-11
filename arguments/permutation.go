@@ -16,7 +16,7 @@ func PermutationCrossModules(builder *board.Builder, A, B board.Input) error {
 	if err != nil {
 		return err
 	}
-	fsInputs := []board.Input{A, B}
+	fsInputs := []expr.Expr{A.In, B.In}
 	builder.AddFiatShamirStep(fsInputs, _gamma)
 
 	// 2. register lookup for both parties
@@ -63,7 +63,8 @@ func PermutationWithinModule(builder *board.Builder, module string, A, B []expr.
 	for i, b := range B {
 		inputB[i] = board.Input{Module: module, In: b}
 	}
-	fsInputs := append(inputA, inputB...)
+	// fsInputs := append(inputA, inputB...)
+	fsInputs := append(A, B...)
 	builder.AddFiatShamirStep(fsInputs, _gamma)
 
 	// 2. register permutation
@@ -101,17 +102,13 @@ func PermutationTupleWithinModule(builder *board.Builder, module string, A, B []
 		return err
 	}
 	tableWidth := len(A[0])
-	inputA := make([]board.Input, len(A)*tableWidth)
-	inputB := make([]board.Input, len(B)*tableWidth)
+	inputA := make([]expr.Expr, len(A)*tableWidth)
+	inputB := make([]expr.Expr, len(B)*tableWidth)
 	for i, a := range A {
-		for j := 0; j < tableWidth; j++ {
-			inputA[i*tableWidth+j] = board.Input{Module: module, In: a[j]}
-		}
+		copy(inputA[i*tableWidth:], a)
 	}
 	for i, b := range B {
-		for j := 0; j < tableWidth; j++ {
-			inputB[i*tableWidth+j] = board.Input{Module: module, In: b[j]}
-		}
+		copy(inputB[i*tableWidth:], b)
 	}
 	fsInputs := append(inputA, inputB...)
 	builder.AddFiatShamirStep(fsInputs, _gamma)

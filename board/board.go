@@ -4,8 +4,6 @@ import (
 	"fmt"
 
 	"github.com/consensys/loom/expr"
-	"github.com/consensys/loom/internal/constants"
-	"github.com/consensys/loom/internal/dag"
 	"github.com/consensys/loom/proof"
 )
 
@@ -31,17 +29,17 @@ func NewrossModulesLogupBusTuple(positive, negative []LogupInfo) LogupBus {
 }
 
 type Builder struct {
-	Modules    map[string]*Module
-	FiatShamir []FiatShamirStep
-	LogupBus   []LogupBus
-	Steps      []ProverStep
+	Modules map[string]*Module
+	// FiatShamir []FiatShamirStep
+	LogupBus []LogupBus
+	Steps    []ProverStep
 }
 
 func NewBuilder() Builder {
 	var res Builder
 	res.Modules = make(map[string]*Module)
 	// res.CountMultiplicity = make([]CountMultiplicityStep, 0)
-	res.FiatShamir = make([]FiatShamirStep, 0)
+	// res.FiatShamir = make([]FiatShamirStep, 0)
 	// res.GrandProduct = make([]GrandProductStep, 0)
 	// res.Logup = make([]LogUpStep, 0)
 	res.Steps = make([]ProverStep, 0)
@@ -92,14 +90,25 @@ type FiatShamirStep struct {
 	Output string
 }
 
-func (b *Builder) AddFiatShamirStep(inputs []Input, output string) {
-	b.FiatShamir = append(
-		b.FiatShamir,
-		FiatShamirStep{
-			Inputs: inputs,
-			Output: output,
-		},
-	)
+// func (b *Builder) AddFiatShamirStep(inputs []Input, output string) {
+// 	b.FiatShamir = append(
+// 		b.FiatShamir,
+// 		FiatShamirStep{
+// 			Inputs: inputs,
+// 			Output: output,
+// 		},
+// 	)
+// }
+
+func (b *Builder) AddFiatShamirStep(E []expr.Expr, out string) {
+	ctx := FSCtx{}
+	pvStep := ProverStep{
+		Ctx:  ctx,
+		Ins:  E,
+		Out:  out,
+		Step: FSStep,
+	}
+	b.Steps = append(b.Steps, pvStep)
 }
 
 func (b *Builder) addPickValueConstraint(module string, E expr.Expr, output string, pos int) {
@@ -123,7 +132,7 @@ func (b *Builder) AddPickValueStep(module string, E expr.Expr, out string, pos i
 
 // S ⊂ T, the ouptut is in T's module
 func (b *Builder) AddCountMultiplicityStep(S, T expr.Expr, output string) {
-	cmStep := NewProverStep([]expr.Expr{S, T}, output, CountMultiplicityStep)
+	cmStep := NewProverStep([]expr.Expr{S, T}, output, CountMultiplicityStep, CMCtx{})
 	b.Steps = append(b.Steps, cmStep)
 }
 
@@ -143,7 +152,7 @@ func (b *Builder) addLogupConstraint(module string, E, M expr.Expr, output strin
 // AddLogupStep register the action of computing the column interpolating the running sum
 // \Sigma_j<=i M[i]/E[i]
 func (b *Builder) AddLogupStep(module string, E, M expr.Expr, output string) {
-	logupStep := NewProverStep([]expr.Expr{E, M}, output, LogUpStep)
+	logupStep := NewProverStep([]expr.Expr{E, M}, output, LogUpStep, LogUpCtx{})
 	b.Steps = append(b.Steps, logupStep)
 	b.addLogupConstraint(module, E, M, output)
 }
@@ -157,7 +166,7 @@ func (b *Builder) addGrandProductConstraint(module string, N, D expr.Expr, outpu
 }
 
 func (b *Builder) AddGrandProductStep(module string, N, D expr.Expr, output string) {
-	gpStep := NewProverStep([]expr.Expr{N, D}, output, GrandProductStep)
+	gpStep := NewProverStep([]expr.Expr{N, D}, output, GrandProductStep, GPCtx{})
 	b.Steps = append(b.Steps, gpStep)
 	b.addGrandProductConstraint(module, N, D, output)
 }
@@ -165,11 +174,7 @@ func (b *Builder) AddGrandProductStep(module string, N, D expr.Expr, output stri
 // map module -> input (by name, not expr.Expr)
 type RoundInputs = map[string][]string
 
-// Program the double slice [][] means that the steps are scheduled:
-// [0][] -> contains all steps that can be executed before FS
-// [1][] -> contains all steps that can be executed after the first FS round
-// [2][] -> contains all steps that can be executed after the second FS round
-// etc
+// Program the double slice [][] means that the steps are scheduled
 type Program struct {
 	Modules    map[string]CompiledModule
 	FiatShamir []RoundInputs
@@ -179,27 +184,23 @@ type Program struct {
 
 func Compile(b *Builder) (Program, error) {
 
-	var res Program
-
-	// --- Step 1: Compute the level of every FiatShamirStep. ---
-	// Level = max(level of challenge deps in inputs) + 1, or 0 if no challenge deps.
+	// --- Step 1: Compute the level of every ProverStep. ---
+	// Level = max(level of deps in inputs) + 1, or 0 if no deps.
 	// Iterate to a fixed point so the result is correct regardless of registration order.
 
-	challengeLevel := map[string]int{} // old challenge name → its level
-	stepLevel := make([]int, len(b.FiatShamir))
-	for i := range b.FiatShamir {
+	stepLevel := make([]int, len(b.Steps))
+	for i := range b.Steps {
 		stepLevel[i] = -1
 	}
-
-	onlyChallenges := expr.NewConfig(expr.OnlyChallenges...)
-
+	varLevel := map[string]int{}
+	config := expr.NewConfig()
 	for {
 		changed := false
-		for i, fs := range b.FiatShamir {
+		for i, step := range b.Steps {
 			level := 0
-			for _, inp := range fs.Inputs {
-				for _, name := range inp.In.Leaves(onlyChallenges) {
-					if l, ok := challengeLevel[name]; ok && l+1 > level {
+			for _, inp := range step.Ins {
+				for _, leaf := range inp.LeavesFull(config) {
+					if l, ok := varLevel[leaf.Name]; ok && l+1 > level {
 						level = l + 1
 					}
 				}
@@ -208,159 +209,219 @@ func Compile(b *Builder) (Program, error) {
 				stepLevel[i] = level
 				changed = true
 			}
-			challengeLevel[fs.Output] = level
+			varLevel[step.Out] = level
 		}
 		if !changed {
 			break
 		}
 	}
 
-	// --- Step 2: Build rename map (old challenge name → canonical "loom@challenge_k"). ---
-
-	fsByLevel := map[int][]int{}
-	for i := range b.FiatShamir {
-		fsByLevel[stepLevel[i]] = append(fsByLevel[stepLevel[i]], i)
-	}
-
-	maxLevel := -1
-	for level := range fsByLevel {
-		if level > maxLevel {
-			maxLevel = level
+	maxStepLevel := 0
+	stepsByLevel := map[int][]int{}
+	for i := 0; i < len(b.Steps); i++ {
+		if stepLevel[i] > maxStepLevel {
+			maxStepLevel = stepLevel[i]
 		}
+		stepsByLevel[stepLevel[i]] = append(stepsByLevel[stepLevel[i]], i)
 	}
 
-	rename := map[string]string{}
-	for level, indices := range fsByLevel {
-		canonical := constants.CanonicalChallengeName(level)
-		for _, idx := range indices {
-			rename[b.FiatShamir[idx].Output] = canonical
+	var res Program
+	res.Steps = make([][]ProverStep, maxStepLevel+1)
+	for k, idx := range stepsByLevel {
+		stepk := make([]ProverStep, 0)
+		for _, s := range idx {
+			stepk = append(stepk, b.Steps[s])
 		}
+		res.Steps[k] = stepk
 	}
-
-	renameExprs := make(map[string]expr.Expr, len(rename))
-	for old, canonical := range rename {
-		renameExprs[old] = expr.Challenge(canonical)
-	}
-	applyRename := func(e expr.Expr) expr.Expr {
-		return expr.ReplaceLeavesByMap(e, renameExprs)
-	}
-
-	// committedOrRotated: keep CommittedColumn and RotatedColumn leaves, drop everything else.
-	// ConstantColumn is always excluded by LeavesFull; this config drops Lagrange and Challenge.
-	// leaf.Name is the bare base column name for both CommittedColumn and RotatedColumn.
-	committedOrRotated := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges())
-
-	// Merge FiatShamirStep per level → RoundInputs (module → deduplicated bare column names).
-	if maxLevel >= 0 {
-		res.FiatShamir = make([]RoundInputs, maxLevel+1)
-		for level := 0; level <= maxLevel; level++ {
-			round := make(RoundInputs)
-			seen := map[string]bool{}
-			for _, idx := range fsByLevel[level] {
-				for _, inp := range b.FiatShamir[idx].Inputs {
-					for _, leaf := range applyRename(inp.In).LeavesFull(committedOrRotated) {
-						if !seen[leaf.Name] {
-							seen[leaf.Name] = true
-							round[inp.Module] = append(round[inp.Module], leaf.Name)
-						}
-					}
-				}
-			}
-			res.FiatShamir[level] = round
-		}
-	}
-
-	// maxCanonicalChallengeLevel returns the highest k in any "loom@challenge_k" leaf of e, or -1.
-	maxCanonicalChallengeLevel := func(e expr.Expr) int {
-		max := -1
-		for _, name := range e.Leaves(onlyChallenges) {
-			var level int
-			if _, err := fmt.Sscanf(name, "loom@challenge_%d", &level); err == nil && level > max {
-				max = level
-			}
-		}
-		return max
-	}
-
-	nSlots := maxLevel + 2
-	if nSlots < 1 {
-		nSlots = 1
-	}
-
-	// --- Step 3: Group Steps by level. ---
-
-	res.Steps = make([][]ProverStep, nSlots)
-	for _, s := range b.Steps {
-		level := -1
-		for k, e := range s.Ins {
-			if e == nil {
-				continue
-			}
-			s.Ins[k] = applyRename(e)
-			if l := maxCanonicalChallengeLevel(s.Ins[k]); l > level {
-				level = l
-			}
-		}
-		slot := level + 1
-		res.Steps[slot] = append(res.Steps[slot], s)
-	}
-
-	// --- Step 4: Append the folding-challenge round to res.FiatShamir.
-	// Its inputs are committed/rotated columns from module relations (after rename)
-	// not already covered by any previous round.
-
-	prevCovered := map[string]bool{}
-	for _, round := range res.FiatShamir {
-		for _, cols := range round {
-			for _, name := range cols {
-				prevCovered[name] = true
-			}
-		}
-	}
-
-	foldingRound := make(RoundInputs)
-	seenNew := map[string]bool{}
-	for modName, module := range b.Modules {
-		for _, rel := range module.Relations {
-			for _, leaf := range applyRename(rel).LeavesFull(committedOrRotated) {
-				if !prevCovered[leaf.Name] && !seenNew[leaf.Name] {
-					seenNew[leaf.Name] = true
-					foldingRound[modName] = append(foldingRound[modName], leaf.Name)
-				}
-			}
-		}
-	}
-
-	foldingChallengeName := constants.CanonicalChallengeName(len(res.FiatShamir))
-	res.FiatShamir = append(res.FiatShamir, foldingRound)
-
-	// --- Step 5: fold each module's relations with the folding challenge and convert to a DAG.
-
-	foldingChallenge := expr.Challenge(foldingChallengeName)
-	res.Modules = make(map[string]CompiledModule, len(b.Modules))
-	for modName, module := range b.Modules {
-		rels := make([]expr.Expr, len(module.Relations))
-		for i, rel := range module.Relations {
-			rels[i] = applyRename(rel)
-		}
-		var folded expr.Expr
-		switch len(rels) {
-		case 0:
-			continue
-		case 1:
-			folded = rels[0]
-		default:
-			folded = expr.Fold(foldingChallenge, rels)
-		}
-		d := dag.ExprToDAG(folded).Flatten()
-		res.Modules[modName] = CompiledModule{
-			VanishingRelation: *d,
-			GenCol:            module.GenCol,
-			N:                 module.N,
-		}
-	}
-
-	res.LogupBus = b.LogupBus
 
 	return res, nil
 }
+
+// func Compile(b *Builder) (Program, error) {
+
+// 	var res Program
+
+// 	// --- Step 1: Compute the level of every FiatShamirStep. ---
+// 	// Level = max(level of challenge deps in inputs) + 1, or 0 if no challenge deps.
+// 	// Iterate to a fixed point so the result is correct regardless of registration order.
+
+// 	challengeLevel := map[string]int{} // old challenge name → its level
+// 	stepLevel := make([]int, len(b.FiatShamir))
+// 	for i := range b.FiatShamir {
+// 		stepLevel[i] = -1
+// 	}
+
+// 	onlyChallenges := expr.NewConfig(expr.OnlyChallenges...)
+
+// 	for {
+// 		changed := false
+// 		for i, fs := range b.FiatShamir {
+// 			level := 0
+// 			for _, inp := range fs.Inputs {
+// 				for _, name := range inp.In.Leaves(onlyChallenges) {
+// 					if l, ok := challengeLevel[name]; ok && l+1 > level {
+// 						level = l + 1
+// 					}
+// 				}
+// 			}
+// 			if stepLevel[i] != level {
+// 				stepLevel[i] = level
+// 				changed = true
+// 			}
+// 			challengeLevel[fs.Output] = level
+// 		}
+// 		if !changed {
+// 			break
+// 		}
+// 	}
+
+// 	// --- Step 2: Build rename map (old challenge name → canonical "loom@challenge_k"). ---
+
+// 	fsByLevel := map[int][]int{}
+// 	for i := range b.FiatShamir {
+// 		fsByLevel[stepLevel[i]] = append(fsByLevel[stepLevel[i]], i)
+// 	}
+
+// 	maxLevel := -1
+// 	for level := range fsByLevel {
+// 		if level > maxLevel {
+// 			maxLevel = level
+// 		}
+// 	}
+
+// 	rename := map[string]string{}
+// 	for level, indices := range fsByLevel {
+// 		canonical := constants.CanonicalChallengeName(level)
+// 		for _, idx := range indices {
+// 			rename[b.FiatShamir[idx].Output] = canonical
+// 		}
+// 	}
+
+// 	renameExprs := make(map[string]expr.Expr, len(rename))
+// 	for old, canonical := range rename {
+// 		renameExprs[old] = expr.Challenge(canonical)
+// 	}
+// 	applyRename := func(e expr.Expr) expr.Expr {
+// 		return expr.ReplaceLeavesByMap(e, renameExprs)
+// 	}
+
+// 	// committedOrRotated: keep CommittedColumn and RotatedColumn leaves, drop everything else.
+// 	// ConstantColumn is always excluded by LeavesFull; this config drops Lagrange and Challenge.
+// 	// leaf.Name is the bare base column name for both CommittedColumn and RotatedColumn.
+// 	committedOrRotated := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges())
+
+// 	// Merge FiatShamirStep per level → RoundInputs (module → deduplicated bare column names).
+// 	if maxLevel >= 0 {
+// 		res.FiatShamir = make([]RoundInputs, maxLevel+1)
+// 		for level := 0; level <= maxLevel; level++ {
+// 			round := make(RoundInputs)
+// 			seen := map[string]bool{}
+// 			for _, idx := range fsByLevel[level] {
+// 				for _, inp := range b.FiatShamir[idx].Inputs {
+// 					for _, leaf := range applyRename(inp.In).LeavesFull(committedOrRotated) {
+// 						if !seen[leaf.Name] {
+// 							seen[leaf.Name] = true
+// 							round[inp.Module] = append(round[inp.Module], leaf.Name)
+// 						}
+// 					}
+// 				}
+// 			}
+// 			res.FiatShamir[level] = round
+// 		}
+// 	}
+
+// 	// maxCanonicalChallengeLevel returns the highest k in any "loom@challenge_k" leaf of e, or -1.
+// 	maxCanonicalChallengeLevel := func(e expr.Expr) int {
+// 		max := -1
+// 		for _, name := range e.Leaves(onlyChallenges) {
+// 			var level int
+// 			if _, err := fmt.Sscanf(name, "loom@challenge_%d", &level); err == nil && level > max {
+// 				max = level
+// 			}
+// 		}
+// 		return max
+// 	}
+
+// 	nSlots := maxLevel + 2
+// 	if nSlots < 1 {
+// 		nSlots = 1
+// 	}
+
+// 	// --- Step 3: Group Steps by level. ---
+
+// 	res.Steps = make([][]ProverStep, nSlots)
+// 	for _, s := range b.Steps {
+// 		level := -1
+// 		for k, e := range s.Ins {
+// 			if e == nil {
+// 				continue
+// 			}
+// 			s.Ins[k] = applyRename(e)
+// 			if l := maxCanonicalChallengeLevel(s.Ins[k]); l > level {
+// 				level = l
+// 			}
+// 		}
+// 		slot := level + 1
+// 		res.Steps[slot] = append(res.Steps[slot], s)
+// 	}
+
+// 	// --- Step 4: Append the folding-challenge round to res.FiatShamir.
+// 	// Its inputs are committed/rotated columns from module relations (after rename)
+// 	// not already covered by any previous round.
+
+// 	prevCovered := map[string]bool{}
+// 	for _, round := range res.FiatShamir {
+// 		for _, cols := range round {
+// 			for _, name := range cols {
+// 				prevCovered[name] = true
+// 			}
+// 		}
+// 	}
+
+// 	foldingRound := make(RoundInputs)
+// 	seenNew := map[string]bool{}
+// 	for modName, module := range b.Modules {
+// 		for _, rel := range module.Relations {
+// 			for _, leaf := range applyRename(rel).LeavesFull(committedOrRotated) {
+// 				if !prevCovered[leaf.Name] && !seenNew[leaf.Name] {
+// 					seenNew[leaf.Name] = true
+// 					foldingRound[modName] = append(foldingRound[modName], leaf.Name)
+// 				}
+// 			}
+// 		}
+// 	}
+
+// 	foldingChallengeName := constants.CanonicalChallengeName(len(res.FiatShamir))
+// 	res.FiatShamir = append(res.FiatShamir, foldingRound)
+
+// 	// --- Step 5: fold each module's relations with the folding challenge and convert to a DAG.
+
+// 	foldingChallenge := expr.Challenge(foldingChallengeName)
+// 	res.Modules = make(map[string]CompiledModule, len(b.Modules))
+// 	for modName, module := range b.Modules {
+// 		rels := make([]expr.Expr, len(module.Relations))
+// 		for i, rel := range module.Relations {
+// 			rels[i] = applyRename(rel)
+// 		}
+// 		var folded expr.Expr
+// 		switch len(rels) {
+// 		case 0:
+// 			continue
+// 		case 1:
+// 			folded = rels[0]
+// 		default:
+// 			folded = expr.Fold(foldingChallenge, rels)
+// 		}
+// 		d := dag.ExprToDAG(folded).Flatten()
+// 		res.Modules[modName] = CompiledModule{
+// 			VanishingRelation: *d,
+// 			GenCol:            module.GenCol,
+// 			N:                 module.N,
+// 		}
+// 	}
+
+// 	res.LogupBus = b.LogupBus
+
+// 	return res, nil
+// }

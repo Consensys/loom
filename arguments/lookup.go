@@ -22,16 +22,31 @@ func WithSelector(input board.Input) LookupOption {
 	}
 }
 
-// Lookup arguments that S ⊂ T
-func Lookup(builder *board.Builder, S, T board.Input, opts ...LookupOption) error {
+type RawLogupCtx struct{}
 
-	var config LookupConfig
-	for _, opt := range opts {
-		err := opt(&config)
-		if err != nil {
-			return err
-		}
+func RawLogup(builder *board.Builder, S board.Input) error {
+
+	fsInputs := []expr.Expr{S.In}
+	_gamma, err := RandomString(10)
+	if err != nil {
+		return err
 	}
+	builder.AddFiatShamirStep(fsInputs, _gamma)
+
+	gamma := expr.Challenge(_gamma)
+	_logupS, err := RandomString(10)
+	if err != nil {
+		return err
+	}
+	_logupS = fmt.Sprintf("%s_%s", constants.LOGUP, _logupS)
+	sMinusGamma := S.In.Sub(gamma)
+	builder.AddLogupStep(S.Module, sMinusGamma, expr.Const(koalabear.One()), _logupS)
+
+	return nil
+}
+
+// Lookup arguments that S ⊂ T
+func Lookup(builder *board.Builder, S, T board.Input) error {
 
 	// 1. compute multiplicity
 	multiplicity, err := RandomString(10)
@@ -42,8 +57,8 @@ func Lookup(builder *board.Builder, S, T board.Input, opts ...LookupOption) erro
 	builder.AddCountMultiplicityStep(S.In, T.In, multiplicity)
 
 	// 2. sample challenge
-	fsInputs := []board.Input{S, T}
-	fsInputs = append(fsInputs, board.Input{Module: T.Module, In: expr.Col(multiplicity)})
+	fsInputs := []expr.Expr{S.In, T.In}
+	fsInputs = append(fsInputs, expr.Col(multiplicity))
 	_gamma, err := RandomString(10)
 	if err != nil {
 		return err
@@ -89,7 +104,14 @@ func LookupTuple(builder *board.Builder, S, T []board.Input) error {
 	if err != nil {
 		return err
 	}
-	builder.AddFiatShamirStep(append(S, T...), _alpha)
+	fsInputs := []expr.Expr{}
+	for _, s := range S {
+		fsInputs = append(fsInputs, s.In)
+	}
+	for _, t := range T {
+		fsInputs = append(fsInputs, t.In)
+	}
+	builder.AddFiatShamirStep(fsInputs, _alpha)
 
 	// 2. fold the inputs
 	exprS := make([]expr.Expr, len(S))

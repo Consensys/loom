@@ -26,12 +26,19 @@ func (ps *ProverStep) Execute(trace trace.Trace, proof *proof.Proof, prog *Progr
 	return step(ps.Ins, ps.Out, trace, proof, prog, mu, ctx)
 }
 
-func NewProverStep(ins []expr.Expr, out string, step Step) ProverStep {
+func NewProverStep(ins []expr.Expr, out string, step Step, ctx StepContext) ProverStep {
 	return ProverStep{
 		Ins:  ins,
 		Out:  out,
 		Step: step,
+		Ctx:  ctx,
 	}
+}
+
+type FSCtx struct{}
+
+func FSStep(ins []expr.Expr, out string, t trace.Trace, _ *proof.Proof, _ *Program, mu *sync.Mutex, ctx StepContext) error {
+	return nil
 }
 
 type PickValueCtx struct {
@@ -58,6 +65,8 @@ func PickValueStep(ins []expr.Expr, out string, t trace.Trace, _ *proof.Proof, _
 	return nil
 }
 
+type CMCtx struct{}
+
 // _CountMultiplicityStep computes the running sum M/E where
 // ins[0] = S (values), ins[1] = T (table), ins[2] = Sel (selector)
 func CountMultiplicityStep(ins []expr.Expr, out string, t trace.Trace, _ *proof.Proof, _ *Program, mu *sync.Mutex, _ StepContext) error {
@@ -74,6 +83,8 @@ func CountMultiplicityStep(ins []expr.Expr, out string, t trace.Trace, _ *proof.
 
 	return nil
 }
+
+type LogUpCtx struct{}
 
 // _LogUpStep computes the running sum M/E where
 // ins[0] = E, ins[1] = M
@@ -92,6 +103,8 @@ func LogUpStep(ins []expr.Expr, out string, t trace.Trace, _ *proof.Proof, prog 
 
 	return nil
 }
+
+type GPCtx struct{}
 
 // _GrandProductStep computes the running product N/D where
 // ins[0] = N, ins[1] = D
