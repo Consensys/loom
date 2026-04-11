@@ -57,6 +57,8 @@ func TestViz(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	ViewDag(program, "dag.html")
+
 	out := filepath.Join(t.TempDir(), "dag.html")
 	ViewDag(program, out)
 

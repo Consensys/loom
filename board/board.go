@@ -184,55 +184,156 @@ type Program struct {
 
 func Compile(b *Builder) (Program, error) {
 
-	// --- Step 1: Compute the level of every ProverStep. ---
-	// Level = max(level of deps in inputs) + 1, or 0 if no deps.
-	// Iterate to a fixed point so the result is correct regardless of registration order.
+	config := expr.NewConfig()
+	onlyChallenges := expr.NewConfig(expr.OnlyChallenges...)
+
+	isFSStep := make([]bool, len(b.Steps))
+	for i, step := range b.Steps {
+		_, isFSStep[i] = step.Ctx.(FSCtx)
+	}
+
+	// --- Phase 1: Initial level computation via fixed-point. ---
+	// level[i] = max(varLevel[dep]+1 for all deps in Ins) or 0 if no known deps.
 
 	stepLevel := make([]int, len(b.Steps))
-	for i := range b.Steps {
+	varLevel := map[string]int{}
+	for i := 0; i < len(b.Steps); i++ {
 		stepLevel[i] = -1
 	}
-	varLevel := map[string]int{}
-	config := expr.NewConfig()
 	for {
 		changed := false
 		for i, step := range b.Steps {
-			level := 0
+			lvl := 0
 			for _, inp := range step.Ins {
 				for _, leaf := range inp.LeavesFull(config) {
-					if l, ok := varLevel[leaf.Name]; ok && l+1 > level {
-						level = l + 1
+					if l, ok := varLevel[leaf.Name]; ok && l+1 > lvl {
+						lvl = l + 1
 					}
 				}
 			}
-			if stepLevel[i] != level {
-				stepLevel[i] = level
+			if stepLevel[i] != lvl {
+				stepLevel[i] = lvl
 				changed = true
 			}
-			varLevel[step.Out] = level
+			varLevel[step.Out] = lvl
 		}
 		if !changed {
 			break
 		}
 	}
 
-	maxStepLevel := 0
-	stepsByLevel := map[int][]int{}
-	for i := 0; i < len(b.Steps); i++ {
-		if stepLevel[i] > maxStepLevel {
-			maxStepLevel = stepLevel[i]
+	// --- Phase 2: Assign each FS step a "round". ---
+	// Two FS steps belong to the same round when neither's challenge feeds the
+	// other's inputs (directly or transitively through FS outputs only).
+	// round[i] = 1 + max round of any FS step whose challenge appears in step i's inputs.
+
+	challengeProducer := map[string]int{} // challenge name → index of the FS step that outputs it
+	for i, step := range b.Steps {
+		if isFSStep[i] {
+			challengeProducer[step.Out] = i
 		}
-		stepsByLevel[stepLevel[i]] = append(stepsByLevel[stepLevel[i]], i)
+	}
+
+	fsRound := make([]int, len(b.Steps))
+	for i := 0; i < len(b.Steps); i++ {
+		fsRound[i] = -1
+	}
+	for {
+		changed := false
+		for i, step := range b.Steps {
+			if !isFSStep[i] {
+				continue
+			}
+			round := 0
+			for _, inp := range step.Ins {
+				for _, name := range inp.Leaves(onlyChallenges) {
+					if j, ok := challengeProducer[name]; ok && fsRound[j]+1 > round {
+						round = fsRound[j] + 1
+					}
+				}
+			}
+			if fsRound[i] != round {
+				fsRound[i] = round
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+
+	// --- Phase 3: Sync FS steps in the same round to the max level in that round. ---
+
+	maxLevelForRound := map[int]int{}
+	for i := range b.Steps {
+		if !isFSStep[i] {
+			continue
+		}
+		r := fsRound[i]
+		if l, ok := maxLevelForRound[r]; !ok || stepLevel[i] > l {
+			maxLevelForRound[r] = stepLevel[i]
+		}
+	}
+	for i, step := range b.Steps {
+		if !isFSStep[i] {
+			continue
+		}
+		stepLevel[i] = maxLevelForRound[fsRound[i]]
+		varLevel[step.Out] = stepLevel[i]
+	}
+
+	// --- Phase 4: Re-propagate non-FS levels, skipping over FS levels. ---
+	// FS steps are frozen; non-FS steps are recomputed from dependencies,
+	// then bumped past any FS level they land on.
+
+	fsLevelSet := map[int]bool{}
+	for i := range b.Steps {
+		if isFSStep[i] {
+			fsLevelSet[stepLevel[i]] = true
+		}
+	}
+
+	for {
+		changed := false
+		for i, step := range b.Steps {
+			if isFSStep[i] {
+				continue
+			}
+			lvl := 0
+			for _, inp := range step.Ins {
+				for _, leaf := range inp.LeavesFull(config) {
+					if l, ok := varLevel[leaf.Name]; ok && l+1 > lvl {
+						lvl = l + 1
+					}
+				}
+			}
+			for fsLevelSet[lvl] {
+				lvl++
+			}
+			if stepLevel[i] != lvl {
+				stepLevel[i] = lvl
+				changed = true
+			}
+			varLevel[step.Out] = lvl
+		}
+		if !changed {
+			break
+		}
+	}
+
+	// --- Phase 5: Group steps by level. ---
+
+	maxLevel := 0
+	for _, l := range stepLevel {
+		if l > maxLevel {
+			maxLevel = l
+		}
 	}
 
 	var res Program
-	res.Steps = make([][]ProverStep, maxStepLevel+1)
-	for k, idx := range stepsByLevel {
-		stepk := make([]ProverStep, 0)
-		for _, s := range idx {
-			stepk = append(stepk, b.Steps[s])
-		}
-		res.Steps[k] = stepk
+	res.Steps = make([][]ProverStep, maxLevel+1)
+	for i, step := range b.Steps {
+		res.Steps[stepLevel[i]] = append(res.Steps[stepLevel[i]], step)
 	}
 
 	return res, nil
