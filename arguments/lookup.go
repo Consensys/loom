@@ -6,6 +6,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/constants"
 )
 
 type LookupConfig struct {
@@ -38,7 +39,7 @@ func Lookup(builder *board.Builder, S, T board.Input, opts ...LookupOption) erro
 		return err
 	}
 	multiplicity = fmt.Sprintf("Mult_%s", multiplicity)
-	builder.AddCountMultiplicityStep(S.In, T.In, config.Selector.In, multiplicity)
+	builder.AddCountMultiplicityStep(S.In, T.In, multiplicity)
 
 	// 2. sample challenge
 	fsInputs := []board.Input{S, T}
@@ -50,8 +51,7 @@ func Lookup(builder *board.Builder, S, T board.Input, opts ...LookupOption) erro
 	builder.AddFiatShamirStep(fsInputs, _gamma)
 
 	// 3. register lookup for both parties
-	gamma := expr.NewChallenge(_gamma)
-	prefixLogup := "logup"
+	gamma := expr.Challenge(_gamma)
 	_logupT, err := RandomString(10)
 	if err != nil {
 		return err
@@ -60,8 +60,8 @@ func Lookup(builder *board.Builder, S, T board.Input, opts ...LookupOption) erro
 	if err != nil {
 		return err
 	}
-	_logupT = fmt.Sprintf("%s_%s", prefixLogup, _logupT)
-	_logupS = fmt.Sprintf("%s_%s", prefixLogup, _logupS)
+	_logupT = fmt.Sprintf("%s_%s", constants.LOGUP, _logupT)
+	_logupS = fmt.Sprintf("%s_%s", constants.LOGUP, _logupS)
 	{
 		tMinusGamma := T.In.Sub(gamma)
 		builder.AddLogupStep(T.Module, tMinusGamma, expr.Col(multiplicity), _logupT)
@@ -71,7 +71,7 @@ func Lookup(builder *board.Builder, S, T board.Input, opts ...LookupOption) erro
 		builder.AddLogupStep(S.Module, sMinusGamma, expr.Const(koalabear.One()), _logupS)
 	}
 
-	// 4. if the inputs come from the same module, build the vanishing relation
+	// 4. if the inputs come from the same module, build the vanishing relation, else build a logup bus
 	AddLogupEqualityCheck(builder, S.Module, T.Module, []string{_logupS}, []string{_logupT})
 
 	return nil
@@ -98,7 +98,7 @@ func LookupTuple(builder *board.Builder, S, T []board.Input) error {
 		exprS[i] = S[i].In
 		exprT[i] = T[i].In
 	}
-	alpha := expr.NewChallenge(_alpha)
+	alpha := expr.Challenge(_alpha)
 	foldedS := expr.Fold(alpha, exprS)
 	foldedT := expr.Fold(alpha, exprT)
 

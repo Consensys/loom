@@ -9,44 +9,43 @@ import (
 	"github.com/consensys/loom/proof"
 )
 
-type CrossModulesLogupBus = proof.CrossModulesLogupBus
-type Logup = proof.Logup
+type LogupBus = proof.LogupBus
+type LogupInfo = proof.LogupInfo
 
-func NewLogup(module, column string) Logup {
-	return Logup{Module: module, Column: column}
+func NewLogupInfo(module, column string) LogupInfo {
+	return LogupInfo{Module: module, Column: column}
 }
 
-func NewCrossModulesLogupBus(positive, negative Logup) CrossModulesLogupBus {
-	return CrossModulesLogupBus{
-		Positive: []Logup{positive},
-		Negative: []Logup{negative},
+func NewLogupBus(positive, negative LogupInfo) LogupBus {
+	return LogupBus{
+		Positive: []LogupInfo{positive},
+		Negative: []LogupInfo{negative},
 	}
 }
 
-func NewrossModulesLogupBusTuple(positive, negative []Logup) CrossModulesLogupBus {
-	return CrossModulesLogupBus{
+func NewrossModulesLogupBusTuple(positive, negative []LogupInfo) LogupBus {
+	return LogupBus{
 		Positive: positive,
 		Negative: negative,
 	}
 }
 
 type Builder struct {
-	Modules              map[string]*Module
-	CountMultiplicity    []CountMultiplicityIO
-	FiatShamir           []FiatShamirIO
-	GrandProduct         []GrandProductIO // used for permutation within a module, it saves columns compared to logup
-	Logup                []LogUpIO
-	CrossModulesLogupBus []CrossModulesLogupBus
+	Modules    map[string]*Module
+	FiatShamir []FiatShamirStep
+	LogupBus   []LogupBus
+	Steps      []ProverStep
 }
 
 func NewBuilder() Builder {
 	var res Builder
 	res.Modules = make(map[string]*Module)
-	res.CountMultiplicity = make([]CountMultiplicityIO, 0)
-	res.FiatShamir = make([]FiatShamirIO, 0)
-	res.GrandProduct = make([]GrandProductIO, 0)
-	res.Logup = make([]LogUpIO, 0)
-	res.CrossModulesLogupBus = make([]CrossModulesLogupBus, 0)
+	// res.CountMultiplicity = make([]CountMultiplicityStep, 0)
+	res.FiatShamir = make([]FiatShamirStep, 0)
+	// res.GrandProduct = make([]GrandProductStep, 0)
+	// res.Logup = make([]LogUpStep, 0)
+	res.Steps = make([]ProverStep, 0)
+	res.LogupBus = make([]LogupBus, 0)
 	return res
 }
 
@@ -54,8 +53,8 @@ func (b *Builder) AddModule(name string, m Module) {
 	b.Modules[name] = &m
 }
 
-func (b *Builder) AddCrossModulesLogupBus(cm CrossModulesLogupBus) {
-	b.CrossModulesLogupBus = append(b.CrossModulesLogupBus, cm)
+func (b *Builder) AddLogupBus(cm LogupBus) {
+	b.LogupBus = append(b.LogupBus, cm)
 }
 
 func (b *Builder) AssertEqualAt(module string, A, B expr.Expr, i int) error {
@@ -88,48 +87,44 @@ type Output struct {
 	ColName string
 }
 
-type FiatShamirIO struct {
+type FiatShamirStep struct {
 	Inputs []Input
-	Output string
-}
-
-type CountMultiplicityIO struct {
-	S, T   expr.Expr
-	Sel    expr.Expr // selector, might be nil
-	Output string
-}
-
-type LogUpIO struct {
-	Module string
-	E, M   expr.Expr
-	Output string
-}
-
-type GrandProductIO struct {
-	Module string
-	N, D   expr.Expr
 	Output string
 }
 
 func (b *Builder) AddFiatShamirStep(inputs []Input, output string) {
 	b.FiatShamir = append(
 		b.FiatShamir,
-		FiatShamirIO{
+		FiatShamirStep{
 			Inputs: inputs,
 			Output: output,
 		},
 	)
 }
 
-// S ⊂ T, the ouptut is in T's module
-func (b *Builder) AddCountMultiplicityStep(S, T, Sel expr.Expr, output string) {
-	countMultiplicityIO := CountMultiplicityIO{
-		S:      S,
-		T:      T,
-		Sel:    Sel, // might be nil
-		Output: output,
+func (b *Builder) addPickValueConstraint(module string, E expr.Expr, output string, pos int) {
+	m := b.Modules[module]
+	v := expr.Value(output)
+	m.AssertEqualAt(E, v, pos)
+}
+
+func (b *Builder) AddPickValueStep(module string, E expr.Expr, out string, pos int) {
+	ctx := PickValueCtx{Pos: pos}
+	pvStep := ProverStep{
+		Ctx: ctx,
+
+		Ins:  []expr.Expr{E},
+		Out:  out,
+		Step: PickValueStep,
 	}
-	b.CountMultiplicity = append(b.CountMultiplicity, countMultiplicityIO)
+	b.Steps = append(b.Steps, pvStep)
+	b.addPickValueConstraint(module, E, out, pos)
+}
+
+// S ⊂ T, the ouptut is in T's module
+func (b *Builder) AddCountMultiplicityStep(S, T expr.Expr, output string) {
+	cmStep := NewProverStep([]expr.Expr{S, T}, output, CountMultiplicityStep)
+	b.Steps = append(b.Steps, cmStep)
 }
 
 func (b *Builder) addLogupConstraint(module string, E, M expr.Expr, output string) {
@@ -148,15 +143,8 @@ func (b *Builder) addLogupConstraint(module string, E, M expr.Expr, output strin
 // AddLogupStep register the action of computing the column interpolating the running sum
 // \Sigma_j<=i M[i]/E[i]
 func (b *Builder) AddLogupStep(module string, E, M expr.Expr, output string) {
-
-	logupIO := LogUpIO{
-		Module: module,
-		E:      E,
-		M:      M,
-		Output: output,
-	}
-	b.Logup = append(b.Logup, logupIO)
-
+	logupStep := NewProverStep([]expr.Expr{E, M}, output, LogUpStep)
+	b.Steps = append(b.Steps, logupStep)
 	b.addLogupConstraint(module, E, M, output)
 }
 
@@ -169,15 +157,8 @@ func (b *Builder) addGrandProductConstraint(module string, N, D expr.Expr, outpu
 }
 
 func (b *Builder) AddGrandProductStep(module string, N, D expr.Expr, output string) {
-
-	GrandProductIO := GrandProductIO{
-		Module: module,
-		N:      N,
-		D:      D,
-		Output: output,
-	}
-	b.GrandProduct = append(b.GrandProduct, GrandProductIO)
-
+	gpStep := NewProverStep([]expr.Expr{N, D}, output, GrandProductStep)
+	b.Steps = append(b.Steps, gpStep)
 	b.addGrandProductConstraint(module, N, D, output)
 }
 
@@ -190,19 +171,17 @@ type RoundInputs = map[string][]string
 // [2][] -> contains all steps that can be executed after the second FS round
 // etc
 type Program struct {
-	Modules              map[string]CompiledModule
-	CountMultiplicity    [][]CountMultiplicityIO
-	FiatShamir           []RoundInputs
-	GrandProduct         [][]GrandProductIO
-	CrossModulesLogupBus []CrossModulesLogupBus
-	Logup                [][]LogUpIO
+	Modules    map[string]CompiledModule
+	FiatShamir []RoundInputs
+	LogupBus   []LogupBus
+	Steps      [][]ProverStep
 }
 
 func Compile(b *Builder) (Program, error) {
 
 	var res Program
 
-	// --- Step 1: Compute the level of every FiatShamirIO. ---
+	// --- Step 1: Compute the level of every FiatShamirStep. ---
 	// Level = max(level of challenge deps in inputs) + 1, or 0 if no challenge deps.
 	// Iterate to a fixed point so the result is correct regardless of registration order.
 
@@ -260,7 +239,7 @@ func Compile(b *Builder) (Program, error) {
 
 	renameExprs := make(map[string]expr.Expr, len(rename))
 	for old, canonical := range rename {
-		renameExprs[old] = expr.NewChallenge(canonical)
+		renameExprs[old] = expr.Challenge(canonical)
 	}
 	applyRename := func(e expr.Expr) expr.Expr {
 		return expr.ReplaceLeavesByMap(e, renameExprs)
@@ -271,7 +250,7 @@ func Compile(b *Builder) (Program, error) {
 	// leaf.Name is the bare base column name for both CommittedColumn and RotatedColumn.
 	committedOrRotated := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges())
 
-	// Merge FiatShamirIO per level → RoundInputs (module → deduplicated bare column names).
+	// Merge FiatShamirStep per level → RoundInputs (module → deduplicated bare column names).
 	if maxLevel >= 0 {
 		res.FiatShamir = make([]RoundInputs, maxLevel+1)
 		for level := 0; level <= maxLevel; level++ {
@@ -308,56 +287,22 @@ func Compile(b *Builder) (Program, error) {
 		nSlots = 1
 	}
 
-	// --- Step 3: Group CountMultiplicity, Logup and grandProduct by level. ---
+	// --- Step 3: Group Steps by level. ---
 
-	res.CountMultiplicity = make([][]CountMultiplicityIO, nSlots)
-	for _, cm := range b.CountMultiplicity {
-		sIn := applyRename(cm.S)
-		tIn := applyRename(cm.T)
-		level := maxCanonicalChallengeLevel(sIn)
-		if l := maxCanonicalChallengeLevel(tIn); l > level {
-			level = l
+	res.Steps = make([][]ProverStep, nSlots)
+	for _, s := range b.Steps {
+		level := -1
+		for k, e := range s.Ins {
+			if e == nil {
+				continue
+			}
+			s.Ins[k] = applyRename(e)
+			if l := maxCanonicalChallengeLevel(s.Ins[k]); l > level {
+				level = l
+			}
 		}
 		slot := level + 1
-		res.CountMultiplicity[slot] = append(res.CountMultiplicity[slot], CountMultiplicityIO{
-			S:      sIn,
-			T:      tIn,
-			Output: cm.Output,
-		})
-	}
-
-	res.Logup = make([][]LogUpIO, nSlots)
-	for _, lu := range b.Logup {
-		eIn := applyRename(lu.E)
-		mIn := applyRename(lu.M)
-		level := maxCanonicalChallengeLevel(eIn)
-		if l := maxCanonicalChallengeLevel(mIn); l > level {
-			level = l
-		}
-		slot := level + 1
-		res.Logup[slot] = append(res.Logup[slot], LogUpIO{
-			Module: lu.Module,
-			E:      eIn,
-			M:      mIn,
-			Output: lu.Output,
-		})
-	}
-
-	res.GrandProduct = make([][]GrandProductIO, nSlots)
-	for _, gp := range b.GrandProduct {
-		nIn := applyRename(gp.N)
-		dIn := applyRename(gp.D)
-		level := maxCanonicalChallengeLevel(nIn)
-		if l := maxCanonicalChallengeLevel(dIn); l > level {
-			level = l
-		}
-		slot := level + 1
-		res.GrandProduct[slot] = append(res.GrandProduct[slot], GrandProductIO{
-			Module: gp.Module,
-			N:      nIn,
-			D:      dIn,
-			Output: gp.Output,
-		})
+		res.Steps[slot] = append(res.Steps[slot], s)
 	}
 
 	// --- Step 4: Append the folding-challenge round to res.FiatShamir.
@@ -391,7 +336,7 @@ func Compile(b *Builder) (Program, error) {
 
 	// --- Step 5: fold each module's relations with the folding challenge and convert to a DAG.
 
-	foldingChallenge := expr.NewChallenge(foldingChallengeName)
+	foldingChallenge := expr.Challenge(foldingChallengeName)
 	res.Modules = make(map[string]CompiledModule, len(b.Modules))
 	for modName, module := range b.Modules {
 		rels := make([]expr.Expr, len(module.Relations))
@@ -415,7 +360,7 @@ func Compile(b *Builder) (Program, error) {
 		}
 	}
 
-	res.CrossModulesLogupBus = b.CrossModulesLogupBus
+	res.LogupBus = b.LogupBus
 
 	return res, nil
 }

@@ -11,8 +11,8 @@ type Commitment struct {
 }
 
 type Proof struct {
-	CrossModulesLogupBus []CrossModulesLogupBus
-	openingValues        []map[string]koalabear.Element
+	LogupBus []LogupBus
+	Values   map[string]koalabear.Element // map string -> value, assigning a value to every leafs that appear in the vanishing relations of the program
 }
 
 // // Proof holds the output of the prover in the batched commitment model.

@@ -17,6 +17,7 @@ const (
 	LagrangeColumn
 	ChallengeColumn
 	ConstantColumn
+	LocalValue // value computed at proving time, corresponding to an entry of a column. A column of type LocalValue is of size 1
 )
 
 type Leaf struct {
@@ -33,6 +34,7 @@ type Config struct {
 	WoLagrangeumns     bool
 	WoRotatedColumns   bool
 	WoChallenges       bool
+	WoLocalValues      bool
 }
 
 type Option func(*Config)
@@ -65,6 +67,13 @@ func WithoutChallenges() Option {
 	}
 }
 
+// Leaves() doesnt return the Challenge
+func WithoutLocalValues() Option {
+	return func(c *Config) {
+		c.WoLocalValues = true
+	}
+}
+
 func NewConfig(opts ...Option) Config {
 	var res Config
 	for _, opt := range opts {
@@ -73,16 +82,7 @@ func NewConfig(opts ...Option) Config {
 	return res
 }
 
-var OnlyChallenges = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns()}
-var OnlyCommittedColumns = []Option{WithoutLagrangeColumns(), WithoutChallenges(), WithoutRotatedColumns()}
-var OnlyRotatedColumns = []Option{WithoutLagrangeColumns(), WithoutChallenges(), WithoutCommittedColumns()}
-
-// The LeafType encodes the status of a column at the protocol level:
-//   - CommittedColumn: the prover commits to this column
-//   - LagrangeColumn: recomputable by the verifier (e.g. Lagrange basis columns)
-//   - Challenge: a Fiat-Shamir challenge (degree 0)
-//   - RotatedColumn: a column evaluated at a shifted point P(ω^shift·X)
-//   - Const: a constant field element (degree 0)
+var OnlyChallenges = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutLocalValues()}
 
 type Expr interface {
 	Degree() int
@@ -128,6 +128,10 @@ func Col(name string) *Leaf {
 	return &Leaf{Type: CommittedColumn, Name: name}
 }
 
+func Value(name string) *Leaf {
+	return &Leaf{Type: LocalValue, Name: name}
+}
+
 func Rot(name string, shift int) *Leaf {
 	return &Leaf{Type: RotatedColumn, Shift: shift, Name: name}
 }
@@ -136,7 +140,7 @@ func Lagrange(name string) *Leaf {
 	return &Leaf{Type: LagrangeColumn, Name: name}
 }
 
-func NewChallenge(name string) *Leaf {
+func Challenge(name string) *Leaf {
 	return &Leaf{Type: ChallengeColumn, Name: name}
 }
 

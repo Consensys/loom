@@ -26,17 +26,17 @@ func RandomString(n int) (string, error) {
 
 func AddLogupEqualityCheck(builder *board.Builder, moduleS, moduleT string, _logupS, _logupT []string) {
 
-	logupS := make([]board.Logup, len(_logupS))
-	logupT := make([]board.Logup, len(_logupT))
+	logupS := make([]board.LogupInfo, len(_logupS))
+	logupT := make([]board.LogupInfo, len(_logupT))
 	for i, n := range _logupS {
-		logupS[i] = board.NewLogup(moduleS, n)
+		logupS[i] = board.NewLogupInfo(moduleS, n)
 	}
 	for i, n := range _logupT {
-		logupT[i] = board.NewLogup(moduleT, n)
+		logupT[i] = board.NewLogupInfo(moduleT, n)
 	}
 
 	if moduleS != moduleT {
-		builder.AddCrossModulesLogupBus(
+		builder.AddLogupBus(
 			board.NewrossModulesLogupBusTuple(
 				logupS,
 				logupT,
@@ -44,7 +44,6 @@ func AddLogupEqualityCheck(builder *board.Builder, moduleS, moduleT string, _log
 		)
 	} else {
 		m := builder.Modules[moduleS]
-		lagrange := m.LagrangeCol(m.N - 1)
 		positives := expr.Col(_logupS[0])
 		for i := 1; i < len(_logupS); i++ {
 			positives.Add(expr.Col(_logupS[i]))
@@ -53,8 +52,7 @@ func AddLogupEqualityCheck(builder *board.Builder, moduleS, moduleT string, _log
 		for i := 1; i < len(_logupT); i++ {
 			negatives.Add(expr.Col(_logupT[i]))
 		}
-		relation := lagrange.Mul(positives.Sub(negatives))
-		m.AssertZero(relation)
+		m.AssertEqualAt(positives, negatives, m.N-1)
 		builder.Modules[moduleS] = m
 	}
 }

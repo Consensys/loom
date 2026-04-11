@@ -81,8 +81,8 @@ func TestLeaves(t *testing.T) {
 	AssertSameSet(t, Const(five).Leaves(all), []string{})
 
 	// Challenge: present by default, absent when excluded
-	AssertSameSet(t, NewChallenge("beta").Leaves(all), []string{"beta"})
-	AssertSameSet(t, NewChallenge("beta").Leaves(woChal), []string{})
+	AssertSameSet(t, Challenge("beta").Leaves(all), []string{"beta"})
+	AssertSameSet(t, Challenge("beta").Leaves(woChal), []string{})
 
 	// --- Composite expressions ---
 
@@ -92,7 +92,7 @@ func TestLeaves(t *testing.T) {
 	AssertSameSet(t, e.Leaves(woCC), []string{"x"})
 
 	// LagrangeColumn * Challenge
-	e = Lagrange("L0").Mul(NewChallenge("gamma"))
+	e = Lagrange("L0").Mul(Challenge("gamma"))
 	AssertSameSet(t, e.Leaves(all), []string{"L0", "gamma"})
 	AssertSameSet(t, e.Leaves(woCC), []string{"gamma"})
 	AssertSameSet(t, e.Leaves(woChal), []string{"L0"})
@@ -117,7 +117,7 @@ func TestLeaves(t *testing.T) {
 	AssertSameSet(t, Col("x").Pow(3).Leaves(woCC), []string{"x"})
 
 	// Nested: (x + L0) * (y - alpha) — all four leaf types interact
-	e = Col("x").Add(Lagrange("L0")).Mul(Col("y").Sub(NewChallenge("alpha")))
+	e = Col("x").Add(Lagrange("L0")).Mul(Col("y").Sub(Challenge("alpha")))
 	AssertSameSet(t, e.Leaves(all), []string{"x", "L0", "y", "alpha"})
 	AssertSameSet(t, e.Leaves(woCC), []string{"x", "y", "alpha"})
 	AssertSameSet(t, e.Leaves(woChal), []string{"x", "L0", "y"})
@@ -144,12 +144,12 @@ func TestReplaceLeafByExpression(t *testing.T) {
 	}
 
 	// Challenge: matching name → replaced
-	if got := NewChallenge("alpha").ReplaceLeafByExpression("alpha", Col("y")); got.String() != "y" {
+	if got := Challenge("alpha").ReplaceLeafByExpression("alpha", Col("y")); got.String() != "y" {
 		t.Errorf("expected 'y', got '%s'", got.String())
 	}
 
 	// Challenge: non-matching name → unchanged
-	if got := NewChallenge("alpha").ReplaceLeafByExpression("beta", Col("y")); got.String() != "alpha" {
+	if got := Challenge("alpha").ReplaceLeafByExpression("beta", Col("y")); got.String() != "alpha" {
 		t.Errorf("expected 'alpha', got '%s'", got.String())
 	}
 
@@ -171,7 +171,7 @@ func TestReplaceLeafByExpression(t *testing.T) {
 	}
 
 	// Sub: alpha replaced by composite expression
-	e = Col("x").Sub(NewChallenge("alpha"))
+	e = Col("x").Sub(Challenge("alpha"))
 	if got := e.ReplaceLeafByExpression("alpha", Col("x").Mul(Col("y"))); got.String() != "(x - (x * y))" {
 		t.Errorf("expected '(x - (x * y))', got '%s'", got.String())
 	}

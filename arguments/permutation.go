@@ -20,7 +20,7 @@ func PermutationCrossModules(builder *board.Builder, A, B board.Input) error {
 	builder.AddFiatShamirStep(fsInputs, _gamma)
 
 	// 2. register lookup for both parties
-	gamma := expr.NewChallenge(_gamma)
+	gamma := expr.Challenge(_gamma)
 	prefixLogup := "logup"
 	_logupA, err := RandomString(10)
 	if err != nil {
@@ -117,7 +117,7 @@ func PermutationTupleWithinModule(builder *board.Builder, module string, A, B []
 	builder.AddFiatShamirStep(fsInputs, _gamma)
 
 	// 2. fold relations
-	gamma := expr.NewChallenge(_gamma)
+	gamma := expr.Challenge(_gamma)
 	foldedA := make([]expr.Expr, len(A))
 	foldedB := make([]expr.Expr, len(B))
 	for i := 0; i < len(A); i++ { // A and B must be of the same size

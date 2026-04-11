@@ -591,7 +591,7 @@ func TestBuildLogup(t *testing.T) {
 		E := expr.Col("P")
 		M := expr.Const(koalabear.One())
 		T := map[string]Polynomial{"P": P}
-		R, err := BuildLogup(T, E, M, size, nil)
+		R, err := BuildLogup(T, E, M, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -673,7 +673,7 @@ func verifyQuotientIdentity(t *testing.T, Pi map[string]Polynomial, E expr.Expr,
 // 		Eexpr := expr.Col("e")
 // 		Fexpr := expr.Col("f")
 
-// 		R, err := BuildFilteredAccPolynomial(Pi, Eexpr, Fexpr, expr.NewChallenge("alpha"), N, nil)
+// 		R, err := BuildFilteredAccPolynomial(Pi, Eexpr, Fexpr, expr.Challenge("alpha"), N, nil)
 // 		if err != nil {
 // 			t.Fatal(err)
 // 		}
