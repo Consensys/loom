@@ -4,9 +4,11 @@ package poly
 
 import (
 	"fmt"
+	"math/bits"
 	"sync"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/dag"
 )
@@ -152,6 +154,24 @@ func accumulateProducts(P Polynomial, N int) (Polynomial, error) {
 		result[i].Mul(&result[i-1], &pi)
 	}
 	return result, nil
+}
+
+// Evaluate evaluates a polynomial p in Lagrange form at zeta
+// the domain d is assumed to be correctly formed
+func Evaluate(p Polynomial, d *fft.Domain, zeta koalabear.Element) koalabear.Element {
+	n := len(p)
+	_p := getBuf(n)
+	copy(_p, p)
+	nn := uint64(64 - bits.TrailingZeros64(uint64(n)))
+	d.FFTInverse(_p, fft.DIF)
+	var res koalabear.Element
+	for i := n - 1; i >= 0; i-- {
+		iRev := bits.Reverse64(uint64(i)) >> nn
+		res.Mul(&res, &zeta)
+		res.Add(&res, &_p[iRev])
+	}
+	putBuf(_p)
+	return res
 }
 
 // Eval evaluates vanishingRelation pointwise on Pi and returns the N results
