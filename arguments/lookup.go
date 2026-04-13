@@ -24,32 +24,32 @@ func WithSelector(input board.Input) LookupOption {
 
 type RawLogupCtx struct{}
 
-func RawLogup(builder *board.Builder, S board.Input) error {
+// func RawLogup(builder *board.Builder, S board.Input) error {
 
-	fsInputs := []expr.Expr{S.In}
-	_gamma, err := RandomString(10)
-	if err != nil {
-		return err
-	}
-	builder.AddFiatShamirStep(fsInputs, _gamma)
+// 	fsInputs := []expr.Expr{S.In}
+// 	_gamma, err := constants.RandomString(10)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	builder.AddFiatShamirStep(fsInputs, _gamma)
 
-	gamma := expr.Challenge(_gamma)
-	_logupS, err := RandomString(10)
-	if err != nil {
-		return err
-	}
-	_logupS = fmt.Sprintf("%s_%s", constants.LOGUP, _logupS)
-	sMinusGamma := S.In.Sub(gamma)
-	builder.AddLogupStep(S.Module, sMinusGamma, expr.Const(koalabear.One()), _logupS)
+// 	gamma := expr.Challenge(_gamma)
+// 	_logupS, err := constants.RandomString(10)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	_logupS = fmt.Sprintf("%s_%s", constants.LOGUP, _logupS)
+// 	sMinusGamma := S.In.Sub(gamma)
+// 	builder.AddLogupStep(S.Module, sMinusGamma, expr.Const(koalabear.One()), _logupS)
 
-	return nil
-}
+// 	return nil
+// }
 
 // Lookup arguments that S ⊂ T
 func Lookup(builder *board.Builder, S, T board.Input) error {
 
 	// 1. compute multiplicity
-	multiplicity, err := RandomString(10)
+	multiplicity, err := constants.RandomString(10)
 	if err != nil {
 		return err
 	}
@@ -59,7 +59,7 @@ func Lookup(builder *board.Builder, S, T board.Input) error {
 	// 2. sample challenge
 	fsInputs := []expr.Expr{S.In, T.In}
 	fsInputs = append(fsInputs, expr.Col(multiplicity))
-	_gamma, err := RandomString(10)
+	_gamma, err := constants.RandomString(10)
 	if err != nil {
 		return err
 	}
@@ -67,11 +67,11 @@ func Lookup(builder *board.Builder, S, T board.Input) error {
 
 	// 3. register lookup for both parties
 	gamma := expr.Challenge(_gamma)
-	_logupT, err := RandomString(10)
+	_logupT, err := constants.RandomString(10)
 	if err != nil {
 		return err
 	}
-	_logupS, err := RandomString(10)
+	_logupS, err := constants.RandomString(10)
 	if err != nil {
 		return err
 	}
@@ -87,7 +87,9 @@ func Lookup(builder *board.Builder, S, T board.Input) error {
 	}
 
 	// 4. if the inputs come from the same module, build the vanishing relation, else build a logup bus
-	AddLogupEqualityCheck(builder, S.Module, T.Module, []string{_logupS}, []string{_logupT})
+	logupS := expr.Col(_logupS)
+	logupT := expr.Col(_logupT)
+	AddLogupEqualityCheck(builder, S.Module, T.Module, []expr.Expr{logupS}, []expr.Expr{logupT})
 
 	return nil
 }
@@ -100,7 +102,7 @@ func LookupTuple(builder *board.Builder, S, T []board.Input) error {
 	}
 
 	// 1. sample a challenge
-	_alpha, err := RandomString(10)
+	_alpha, err := constants.RandomString(10)
 	if err != nil {
 		return err
 	}

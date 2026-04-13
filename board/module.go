@@ -29,7 +29,8 @@ func NewModule() Module {
 type CompiledModule struct {
 	GenCol            []Gen // public columns generator (lagrange, permutation columns, etc)
 	N                 int
-	VanishingRelation dag.DAG
+	VanishingRelation *dag.DAG
+	D                 *fft.Domain
 }
 
 type Gen interface {

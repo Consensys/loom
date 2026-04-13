@@ -67,7 +67,7 @@ func WithoutChallenges() Option {
 	}
 }
 
-// Leaves() doesnt return the Challenge
+// Leaves() doesnt return the LocalValues
 func WithoutLocalValues() Option {
 	return func(c *Config) {
 		c.WoLocalValues = true

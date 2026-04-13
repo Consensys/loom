@@ -2,29 +2,24 @@ package proof
 
 import "github.com/consensys/gnark-crypto/field/koalabear"
 
-// PublicColumnInfo contains the indices and values of a public column
-type PublicColumnInfo struct {
-	Idx  []int
-	Vals []koalabear.Element
+type PublicEntry struct {
+	Idx   int
+	Value koalabear.Element
 }
+
+// PublicColumnInfo contains the indices and values of a public column
+// type PublicColumnInfo []PublicEntry
 
 // PublicInputs string -> ([]PublicColumnInfo) where
 // PublicInputs[i] is the public info of the i-th segment of the column whose name is the key
-type PublicInputs map[string][]PublicColumnInfo
-
-// stores the logup sum of a column in a given module. Value is considered a public value, it must be given to the
-// verifier. The value corresponds to the last entry of the column interpolating the running sum (the logup column).
-type LogupInfo struct {
-	Module string
-	Column string
-}
+type PublicInputs map[string][]PublicEntry
 
 // Bus stores the running sums of the sender and receiver
 // participating in a log derivative based interaction, for instance a lookup
 // The logup must satisfy Σ_i Logup_Sender_val_i - Σ_i Logup_Receiver_val_i=0
 type LogupBus struct {
-	Positive []LogupInfo // Positive[i] = logup of the i-th segment of the positive logup column
-	Negative []LogupInfo // Negative[i] = logup of the i-th segment of the negative logup column
+	Positive []string // Positive[i] = logup of the i-th positive logup column
+	Negative []string // Negative[i] = logup of the i-th negative logup column
 }
 
 // CrossSegmentBus bus to ensure that a column is split correctly
@@ -37,5 +32,5 @@ type LogupBus struct {
 type CrossSegmentBus struct {
 	Module   string
 	Column   string
-	Stitches [][2]PublicColumnInfo
+	Stitches [][2][]PublicEntry
 }

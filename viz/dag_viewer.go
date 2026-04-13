@@ -57,7 +57,7 @@ func stepDagHTML(program board.Program) string {
 	var edges []visEdge
 	nextID := 0
 
-	colID := map[string]int{}    // column name → node ID
+	colID := map[string]int{}     // column name → node ID
 	colVisLvl := map[string]int{} // column name → vis.js level
 	challenges := map[string]bool{}
 
@@ -91,20 +91,39 @@ func stepDagHTML(program board.Program) string {
 				Font:  visFont{Color: "#cdd6f4", Face: "monospace", Size: 13},
 			})
 
-			// Input edges: one per unique base column name in Ins
+			// Input edges: one per unique base column name in Ins.
+			// For canonical FS steps (Ins is nil), inputs come from program.FiatShamir[round].
 			seen := map[string]bool{}
-			for _, inp := range step.Ins {
-				for _, leaf := range inp.LeavesFull(config) {
-					name := leaf.Name
-					if seen[name] {
-						continue
+			if isFS(step) {
+				var round int
+				fmt.Sscanf(step.Out, "challenge@loom_%d", &round)
+				if round < len(program.FScolumnsDependencies) {
+					for _, name := range program.FScolumnsDependencies[round] {
+						if seen[name] {
+							continue
+						}
+						seen[name] = true
+						cid := getColID(name)
+						if _, ok := colVisLvl[name]; !ok {
+							colVisLvl[name] = 0
+						}
+						edges = append(edges, visEdge{From: cid, To: stepNodeID})
 					}
-					seen[name] = true
-					cid := getColID(name)
-					if _, ok := colVisLvl[name]; !ok {
-						colVisLvl[name] = 0
+				}
+			} else {
+				for _, inp := range step.Ins {
+					for _, leaf := range inp.LeavesFull(config) {
+						name := leaf.Name
+						if seen[name] {
+							continue
+						}
+						seen[name] = true
+						cid := getColID(name)
+						if _, ok := colVisLvl[name]; !ok {
+							colVisLvl[name] = 0
+						}
+						edges = append(edges, visEdge{From: cid, To: stepNodeID})
 					}
-					edges = append(edges, visEdge{From: cid, To: stepNodeID})
 				}
 			}
 

@@ -47,10 +47,10 @@ func TestViz(t *testing.T) {
 		}
 	}
 
-	arguments.RawLogup(&builder, board.Input{
-		Module: "fibonacci",
-		In:     expr.Col("A"),
-	})
+	// arguments.RawLogup(&builder, board.Input{
+	// 	Module: "fibonacci",
+	// 	In:     expr.Col("A"),
+	// })
 
 	program, err := board.Compile(&builder)
 	if err != nil {

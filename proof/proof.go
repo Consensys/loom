@@ -2,17 +2,17 @@ package proof
 
 import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/loom/internal/commitment"
 )
 
 type Commitment struct {
-	Digest  commitment.Digest
+	// Digest  commitment.Digest
 	Columns []string
 }
 
 type Proof struct {
-	LogupBus []LogupBus
-	Values   map[string]koalabear.Element // map string -> value, assigning a value to every leafs that appear in the vanishing relations of the program
+	LogupBus        []LogupBus
+	ValuesAtZeta    map[string]koalabear.Element // map string -> evaluation of the column whose String() is the key at zeta
+	ExtractedValues map[string][]PublicEntry     // extracted values from columns of the trace, those values are passed as public inputs
 }
 
 // // Proof holds the output of the prover in the batched commitment model.

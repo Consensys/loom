@@ -6,13 +6,14 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/constants"
 )
 
 // PermutationCrossModules we use the lookup in this case, so that each module has its own logup
 func PermutationCrossModules(builder *board.Builder, A, B board.Input) error {
 
 	// 1. sample challenge
-	_gamma, err := RandomString(10)
+	_gamma, err := constants.RandomString(10)
 	if err != nil {
 		return err
 	}
@@ -22,11 +23,11 @@ func PermutationCrossModules(builder *board.Builder, A, B board.Input) error {
 	// 2. register lookup for both parties
 	gamma := expr.Challenge(_gamma)
 	prefixLogup := "logup"
-	_logupA, err := RandomString(10)
+	_logupA, err := constants.RandomString(10)
 	if err != nil {
 		return err
 	}
-	_logupB, err := RandomString(10)
+	_logupB, err := constants.RandomString(10)
 	if err != nil {
 		return err
 	}
@@ -41,8 +42,10 @@ func PermutationCrossModules(builder *board.Builder, A, B board.Input) error {
 		builder.AddLogupStep(B.Module, bMinusGamma, expr.Const(koalabear.One()), _logupB)
 	}
 
-	// 3. if the inputs come from the same module, build the vanishing relation
-	AddLogupEqualityCheck(builder, A.Module, B.Module, []string{_logupA}, []string{_logupB})
+	// 3. Check logup relation
+	logupA := expr.Col(_logupA)
+	logupB := expr.Col(_logupB)
+	AddLogupEqualityCheck(builder, A.Module, B.Module, []expr.Expr{logupA}, []expr.Expr{logupB})
 
 	return nil
 }
@@ -51,7 +54,7 @@ func PermutationCrossModules(builder *board.Builder, A, B board.Input) error {
 func PermutationWithinModule(builder *board.Builder, module string, A, B []expr.Expr) error {
 
 	// 1. sample challenge
-	_gamma, err := RandomString(10)
+	_gamma, err := constants.RandomString(10)
 	if err != nil {
 		return err
 	}
@@ -77,7 +80,7 @@ func PermutationWithinModule(builder *board.Builder, module string, A, B []expr.
 	for i, b := range B {
 		BminusGamma[i] = b.Sub(gamma)
 	}
-	_gp, err := RandomString(10)
+	_gp, err := constants.RandomString(10)
 	if err != nil {
 		return err
 	}
@@ -97,7 +100,7 @@ func PermutationWithinModule(builder *board.Builder, module string, A, B []expr.
 func PermutationTupleWithinModule(builder *board.Builder, module string, A, B [][]expr.Expr) error {
 
 	// 1. sample folding challenge
-	_gamma, err := RandomString(10)
+	_gamma, err := constants.RandomString(10)
 	if err != nil {
 		return err
 	}
