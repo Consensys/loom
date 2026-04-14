@@ -17,7 +17,7 @@ const (
 	LagrangeColumn
 	ChallengeColumn
 	ConstantColumn
-	LocalValue // value computed at proving time, corresponding to an entry of a column. A column of type LocalValue is of size 1
+	PublicColumn // column containing only public values, used for local openings, when the verifier needs to know the entries of a particular column
 )
 
 type Leaf struct {
@@ -34,7 +34,7 @@ type Config struct {
 	WoLagrangeumns     bool
 	WoRotatedColumns   bool
 	WoChallenges       bool
-	WoLocalValues      bool
+	WoPublicColumns    bool
 }
 
 type Option func(*Config)
@@ -67,10 +67,10 @@ func WithoutChallenges() Option {
 	}
 }
 
-// Leaves() doesnt return the LocalValues
-func WithoutLocalValues() Option {
+// Leaves() doesnt return the PublicColumns
+func WithoutPublicColumns() Option {
 	return func(c *Config) {
-		c.WoLocalValues = true
+		c.WoPublicColumns = true
 	}
 }
 
@@ -82,7 +82,7 @@ func NewConfig(opts ...Option) Config {
 	return res
 }
 
-var OnlyChallenges = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutLocalValues()}
+var OnlyChallenges = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutPublicColumns()}
 
 type Expr interface {
 	Degree() int
@@ -128,8 +128,8 @@ func Col(name string) *Leaf {
 	return &Leaf{Type: CommittedColumn, Name: name}
 }
 
-func Value(name string) *Leaf {
-	return &Leaf{Type: LocalValue, Name: name}
+func Public(name string) *Leaf {
+	return &Leaf{Type: PublicColumn, Name: name}
 }
 
 func Rot(name string, shift int) *Leaf {
@@ -473,6 +473,10 @@ func (l *Leaf) LeavesFull(config Config) []*Leaf {
 		}
 	case ChallengeColumn:
 		if config.WoChallenges {
+			return nil
+		}
+	case PublicColumn:
+		if config.WoPublicColumns {
 			return nil
 		}
 	case ConstantColumn:

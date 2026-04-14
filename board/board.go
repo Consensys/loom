@@ -13,11 +13,7 @@ import (
 type LogupBus = proof.LogupBus
 type Proof = proof.Proof
 type PublicEntry = proof.PublicEntry
-type PublicInputs = proof.PublicInputs
-
-// type Proof = proof.Proof
-// type PublicInputs = proof.PublicInputs
-// type PublicEntry = proof.PublicEntry
+type PublicInput = proof.PublicInput
 
 func NewLogupBus(positive, negative []string) LogupBus {
 	return LogupBus{
@@ -89,24 +85,25 @@ func (b *Builder) AddFiatShamirStep(E []expr.Expr, out string) {
 	b.Steps = append(b.Steps, pvStep)
 }
 
-func (b *Builder) addPickValueConstraint(module string, E expr.Expr, output string, pos int) {
+func (b *Builder) addMakeIthValuePublicConstraint(module string, E expr.Expr, output string, pos int) {
 	m := b.Modules[module]
-	v := expr.Value(output)
+	v := expr.Public(output)
 	m.AssertEqualAt(E, v, pos)
 }
 
-// AddPickValueStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
+// AddMakeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
 // the 1 entry column expr[pos] is registered in the trace
-func (b *Builder) AddPickValueStep(module string, E expr.Expr, out string, pos int) {
-	ctx := PickValueCtx{Pos: pos}
+func (b *Builder) AddMakeIthValuePublicStep(module string, E expr.Expr, out string, pos int) {
+	m := b.Modules[module]
+	ctx := MakeIthValuePublicCtx{Pos: pos, N: m.N}
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  []expr.Expr{E},
 		Out:  out,
-		Step: PickValueStep,
+		Step: MakeIthValuePublicStep,
 	}
 	b.Steps = append(b.Steps, pvStep)
-	b.addPickValueConstraint(module, E, out, pos)
+	b.addMakeIthValuePublicConstraint(module, E, out, pos)
 }
 
 // S ⊂ T, the ouptut is in T's module
@@ -303,10 +300,8 @@ func Compile(b *Builder) (Program, error) {
 	// --- Phase 5: Group steps by level. ---
 
 	maxLevel := 0
-	highestStepIdx := -1
-	for i, l := range stepLevel {
+	for _, l := range stepLevel {
 		if l > maxLevel {
-			highestStepIdx = i
 			maxLevel = l
 		}
 	}
@@ -324,12 +319,12 @@ func Compile(b *Builder) (Program, error) {
 	if err != nil {
 		return res, err
 	}
-	res.Steps[maxLevel+1][0] = NewProverStep([]expr.Expr{expr.Col(b.Steps[highestStepIdx].Out)}, foldingChallenge, FSStep, FSCtx{})
+	res.Steps[maxLevel+1][0] = NewProverStep(nil, foldingChallenge, FSStep, FSCtx{})
 
 	// --- Phase 7: Collapse FS steps of the same round (level) into one canonical step. ---
 
-	// Config: keep CommittedColumn and RotatedColumn; discard LagrangeColumn and ChallengeColumn.
-	noLagrangeNoChallengeNoLocalValues := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutLocalValues())
+	// Config: keep CommittedColumn and RotatedColumn; discard LagrangeColumn, ChallengeColumn and PublicColumns.
+	noLagrangeNoChallengeNoPublicCols := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutPublicColumns())
 
 	// Step 7a: Identify which levels are FS steps and assign round indices in level order.
 	// from the preivous Phase, a level either contains only FS, or no FS at all
@@ -340,6 +335,7 @@ func Compile(b *Builder) (Program, error) {
 			if _, ok := step.Ctx.(FSCtx); ok {
 				levelToRound[lvl] = roundIdx
 				roundIdx++
+				break // only one round per FS level
 			}
 		}
 	}
@@ -348,7 +344,7 @@ func Compile(b *Builder) (Program, error) {
 	// Step 7b: Build rename map: old FS output name → canonical "challenge@loom_<i>".
 	renameExprs := make(map[string]expr.Expr, numRounds)
 	for lvl, round := range levelToRound {
-		canonical := fmt.Sprintf("challenge@loom_%d", round)
+		canonical := constants.CanonicalChallengeName(round)
 		for _, step := range res.Steps[lvl] {
 			if _, ok := step.Ctx.(FSCtx); ok {
 				renameExprs[step.Out] = expr.Challenge(canonical)
@@ -386,7 +382,7 @@ func Compile(b *Builder) (Program, error) {
 		if !ok {
 			continue
 		}
-		canonical := fmt.Sprintf("challenge@loom_%d", round)
+		canonical := constants.CanonicalChallengeName(round)
 
 		// Collect input column names for this round (disjoint from all previous rounds).
 		for _, step := range res.Steps[lvl] {
@@ -394,7 +390,7 @@ func Compile(b *Builder) (Program, error) {
 				continue
 			}
 			for _, inp := range step.Ins {
-				for _, leaf := range inp.LeavesFull(noLagrangeNoChallengeNoLocalValues) {
+				for _, leaf := range inp.LeavesFull(noLagrangeNoChallengeNoPublicCols) {
 					if !prevCovered[leaf.Name] {
 						prevCovered[leaf.Name] = true
 						res.FScolumnsDependencies[round] = append(res.FScolumnsDependencies[round], leaf.Name)
@@ -422,7 +418,7 @@ func Compile(b *Builder) (Program, error) {
 	lastRound := numRounds - 1
 	for _, m := range b.Modules {
 		for _, rel := range m.Relations {
-			for _, leaf := range rel.LeavesFull(noLagrangeNoChallengeNoLocalValues) {
+			for _, leaf := range rel.LeavesFull(noLagrangeNoChallengeNoPublicCols) {
 				if !prevCovered[leaf.Name] {
 					prevCovered[leaf.Name] = true
 					res.FScolumnsDependencies[lastRound] = append(res.FScolumnsDependencies[lastRound], leaf.Name)

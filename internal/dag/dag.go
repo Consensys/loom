@@ -525,7 +525,7 @@ func absorbChildren(n *DAGNode, kind NodeKind, flat map[*DAGNode]*DAGNode) []*DA
 // Add and Mul are n-ary: all children are summed / multiplied together.
 // Sub is binary: Children[0] − Children[1].
 // Pow uses the exponent stored in the node.
-// Leaves are looked up in vals; missing keys cause a panic.
+// Leaves are looked up in vals, keyed by String() (not the bare name); missing keys cause a panic.
 func (d *DAG) Eval(vals map[string]koalabear.Element) koalabear.Element {
 	cache := make(map[*DAGNode]koalabear.Element, len(d.Nodes))
 	for _, n := range d.Nodes {

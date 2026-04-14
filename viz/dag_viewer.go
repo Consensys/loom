@@ -167,7 +167,7 @@ func stepLabel(ps board.ProverStep) string {
 	case board.FSCtx:
 		_ = c
 		return "FiatShamir"
-	case board.PickValueCtx:
+	case board.MakeIthValuePublicCtx:
 		return fmt.Sprintf("PickValue\npos=%d", c.Pos)
 	case board.CMCtx:
 		_ = c

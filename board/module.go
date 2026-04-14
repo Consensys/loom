@@ -15,7 +15,7 @@ type Relation = expr.Expr
 
 type Module struct {
 	Relations []Relation
-	GenCol    []Gen // public columns generator (lagrange, permutation columns, etc)
+	GenCol    []Gen // public columns generator (lagrange, permutation columns, selectors, etc)
 	N         int
 }
 
@@ -35,11 +35,6 @@ type CompiledModule struct {
 
 type Gen interface {
 	Gen(t trace.Trace, m *CompiledModule)
-}
-
-type PermutationGen struct {
-	S    []int64
-	Name string
 }
 
 type LagrangeGen struct {
@@ -90,6 +85,28 @@ func (m *Module) AssertZeroAt(relation expr.Expr, i ...int) {
 	}
 	_relation := relation.Mul(disj)
 	m.AssertZero(_relation)
+}
+
+type SelectorGen struct {
+	Idx  []int
+	Name string
+}
+
+func (s SelectorGen) Gen(t trace.Trace, m *Module) error {
+	res := make([]koalabear.Element, m.N)
+	for _, idx := range s.Idx {
+		res[idx].SetOne()
+	}
+	err := trace.RegisterColumn(t, s.Name, res)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+type PermutationGen struct {
+	S    []int64
+	Name string
 }
 
 func (p PermutationGen) Gen(t trace.Trace, m *Module) error {

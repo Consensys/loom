@@ -21,9 +21,9 @@ type ProverStep struct {
 
 type StepContext any
 
-func (ps *ProverStep) Execute(trace trace.Trace, prog *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+func (ps *ProverStep) Execute(trace trace.Trace, prog *Program, proof *proof.Proof, mu *sync.Mutex) error {
 	step := ps.Step
-	return step(ps.Ins, ps.Out, trace, prog, proof, mu, ctx)
+	return step(ps.Ins, ps.Out, trace, prog, proof, mu, ps.Ctx)
 }
 
 func NewProverStep(ins []expr.Expr, out string, step Step, ctx StepContext) ProverStep {
@@ -41,36 +41,39 @@ func FSStep(ins []expr.Expr, out string, t trace.Trace, _ *Program, proof *proof
 	return nil
 }
 
-type PickValueCtx struct {
+type MakeIthValuePublicCtx struct {
+	N   int // size of the module in which the column lives
 	Pos int // position of the value to pick in a column
 }
 
-// PickValueStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
-func PickValueStep(ins []expr.Expr, _ string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+// MakeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
+func MakeIthValuePublicStep(ins []expr.Expr, out string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
 
-	_ctx, ok := ctx.(PickValueCtx)
+	_ctx, ok := ctx.(MakeIthValuePublicCtx)
 	if !ok {
 		return fmt.Errorf("[PickLocalValueStep] wrong context type")
 	}
 
 	C := ins[0]
-	res, err := poly.PickIthValue(t, C, _ctx.Pos, mu)
+	res, err := poly.SelectIthValue(t, C, _ctx.Pos, mu)
 	if err != nil {
 		return err
 	}
 
 	var pe PublicEntry
 	pe.Idx = _ctx.Pos
-	pe.Value = res
+	pe.Value = res[_ctx.Pos]
 
-	colName := C.String()
-	publicColumnInfo := make([]PublicEntry, 0, 1)
-	_, ok = proof.ExtractedValues[colName]
-	if ok {
-		publicColumnInfo = proof.ExtractedValues[colName]
+	var publicColumnInfo PublicInput
+	publicColumnInfo.N = _ctx.N
+	publicColumnInfo.Entries = make([]PublicEntry, 1)
+	publicColumnInfo.Entries[0].Idx = _ctx.Pos
+	publicColumnInfo.Entries[0].Value = res[_ctx.Pos]
+	proof.PublicColumns[out] = publicColumnInfo
+
+	if err := trace.RegisterColumn(t, out, res); err != nil {
+		panic(fmt.Sprintf("[_GrandProductStep] register grand product column %s: %v", out, err))
 	}
-	publicColumnInfo = append(publicColumnInfo, pe)
-	proof.ExtractedValues[colName] = publicColumnInfo
 
 	return nil
 }

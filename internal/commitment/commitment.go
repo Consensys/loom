@@ -41,7 +41,7 @@ func NodeHash(left, right []byte) []byte {
 
 // Commit to the polynomials p. The polynomials in p are assumed to be in Lagrange form, and might be of
 // different sizes. It is assumed that the maximum size is < rs.N
-func (rs *RSCommit) Commit(p []poly.Polynomial, rsEncoder *reedsolomon.Encoder, maxSize int) (*merkle.Tree, error) {
+func (rs *RSCommit) Commit(p []poly.Polynomial, rsEncoder *reedsolomon.Encoder) (*merkle.Tree, error) {
 
 	domainsPool := map[int]*fft.Domain{}
 
@@ -66,7 +66,7 @@ func (rs *RSCommit) Commit(p []poly.Polynomial, rsEncoder *reedsolomon.Encoder, 
 	}
 	buf := make([]byte, koalabear.Bytes*len(_p))
 	for i := 0; i < int(N); i++ {
-		for j := 0; j < len(_p); i++ {
+		for j := 0; j < len(_p); j++ {
 			copy(buf[j*koalabear.Bytes:], _p[j][i].Marshal())
 		}
 		tree.BuildIthLeaf(buf, i)

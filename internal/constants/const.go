@@ -9,7 +9,6 @@ import (
 	"strings"
 )
 
-const FINAL_QUOTIENT = "__quotient"
 const FINAL_EVALUATION_POINT = "__zeta"
 const SUFFIX_SHIFT_SPLIT = "_"
 const SUFFIX_SHIFT = "shift"
@@ -39,7 +38,7 @@ func LagrangeName(i, N int) string {
 // CanonicalChallengeName returns the shared challenge name for all Fiat-Shamir steps
 // at a given BFS level in the challenge-dependency DAG.
 func CanonicalChallengeName(level int) string {
-	return fmt.Sprintf("loom@challenge_%d", level)
+	return fmt.Sprintf("challenge@loom_%d", level)
 }
 
 func GetShiftedName(name string, shift int) string {

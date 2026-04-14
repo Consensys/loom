@@ -16,18 +16,22 @@ func BuildPointwiseEvaluation(Pi map[string]Polynomial, E expr.Expr, N int, mu *
 	return dst, evalPointWiseInto(Pi, E, N, mu, dst)
 }
 
-func PickIthValue(Pi map[string]Polynomial, E expr.Expr, pos int, mu *sync.Mutex) (koalabear.Element, error) {
+func SelectIthValue(Pi map[string]Polynomial, E expr.Expr, pos int, mu *sync.Mutex) ([]koalabear.Element, error) {
 
 	eLeaves := E.LeavesFull(expr.NewConfig(expr.WithoutChallenges()))
 	_n := Pi[eLeaves[0].Name]
 	n := len(_n)
-	_C := getBuf(n)
-	if err := evalPointWiseInto(Pi, E, n, mu, _C); err != nil {
-		putBuf(_C)
-		return _C[pos], err
+	res := make([]koalabear.Element, n)
+	// TODO inefficient, double loop
+	if err := evalPointWiseInto(Pi, E, n, mu, res); err != nil {
+		return res, err
 	}
-	putBuf(_C)
-	return _C[pos], nil
+	for i := 0; i < n; i++ {
+		if i != pos {
+			res[i].SetZero()
+		}
+	}
+	return res, nil
 }
 
 // BuildMultiplicityPolynomial returns P such that:

@@ -178,6 +178,7 @@ func Evaluate(p Polynomial, d *fft.Domain, zeta koalabear.Element) koalabear.Ele
 // as a Polynomial in Lagrange normal form.
 // All polynomials in Pi must be in Lagrange normal form with the same size N
 // (constants of length 1 are also accepted).
+// Used for testing only
 func Eval(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int) (Polynomial, error) {
 
 	// Assign Leaf.Idx by column name, same convention as ComputeQuotient.

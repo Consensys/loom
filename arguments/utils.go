@@ -17,12 +17,12 @@ func AddLogupEqualityCheck(builder *board.Builder, moduleS, moduleT string, logu
 		for i, ls := range logupS {
 			lsName := fmt.Sprintf("%s_%d", ls.String(), ns)
 			positives[i] = lsName
-			builder.AddPickValueStep(moduleS, ls, lsName, ns) // this step makes logupS[N-1] accessible to the verifier
+			builder.AddMakeIthValuePublicStep(moduleS, ls, lsName, ns) // this step makes logupS[N-1] accessible to the verifier
 		}
 		for i, lt := range logupT {
 			ltName := fmt.Sprintf("%s_%d", lt.String(), nt)
 			negatives[i] = ltName
-			builder.AddPickValueStep(moduleT, lt, ltName, nt) // this step makes logupT[N-1] accessible to the verifier
+			builder.AddMakeIthValuePublicStep(moduleT, lt, ltName, nt)
 		}
 		builder.LogupBus = append(builder.LogupBus, board.NewLogupBus(positives, negatives))
 	} else {

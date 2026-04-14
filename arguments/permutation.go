@@ -93,6 +93,9 @@ func PermutationWithinModule(builder *board.Builder, module string, A, B []expr.
 		Bmul = Bmul.Mul(BminusGamma[i])
 	}
 	builder.AddGrandProductStep(module, Amul, Bmul, _gp)
+	m := builder.Modules[module]
+	m.AssertEqualAt(expr.Const(koalabear.One()), expr.Col(_gp), 0)
+	builder.Modules[module] = m
 
 	return nil
 }
