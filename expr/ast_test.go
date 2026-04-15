@@ -62,15 +62,15 @@ func TestLeaves(t *testing.T) {
 	five.SetUint64(5)
 
 	all := NewConfig()
-	woCC := NewConfig(WithoutVirtualumns())
+	woCC := NewConfig(WithoutLagrangeColumns())
 	woChal := NewConfig(WithoutChallenges())
-	woAll := NewConfig(WithoutVirtualumns(), WithoutChallenges())
+	woAll := NewConfig(WithoutLagrangeColumns(), WithoutChallenges())
 
 	// --- Leaf nodes ---
 
-	// VirtualColumn: present by default, absent when excluded
-	AssertSameSet(t, Virtual("L0").Leaves(all), []string{"L0"})
-	AssertSameSet(t, Virtual("L0").Leaves(woCC), []string{})
+	// LagrangeColumn: present by default, absent when excluded
+	AssertSameSet(t, Lagrange("L0").Leaves(all), []string{"L0"})
+	AssertSameSet(t, Lagrange("L0").Leaves(woCC), []string{})
 
 	// CommittedColumn: always present regardless of config
 	AssertSameSet(t, Col("x").Leaves(all), []string{"x"})
@@ -81,50 +81,50 @@ func TestLeaves(t *testing.T) {
 	AssertSameSet(t, Const(five).Leaves(all), []string{})
 
 	// Challenge: present by default, absent when excluded
-	AssertSameSet(t, NewChallenge("beta").Leaves(all), []string{"beta"})
-	AssertSameSet(t, NewChallenge("beta").Leaves(woChal), []string{})
+	AssertSameSet(t, Challenge("beta").Leaves(all), []string{"beta"})
+	AssertSameSet(t, Challenge("beta").Leaves(woChal), []string{})
 
 	// --- Composite expressions ---
 
-	// VirtualColumn + CommittedColumn
-	e := Virtual("L0").Add(Col("x"))
+	// LagrangeColumn + CommittedColumn
+	e := Lagrange("L0").Add(Col("x"))
 	AssertSameSet(t, e.Leaves(all), []string{"L0", "x"})
 	AssertSameSet(t, e.Leaves(woCC), []string{"x"})
 
-	// VirtualColumn * Challenge
-	e = Virtual("L0").Mul(NewChallenge("gamma"))
+	// LagrangeColumn * Challenge
+	e = Lagrange("L0").Mul(Challenge("gamma"))
 	AssertSameSet(t, e.Leaves(all), []string{"L0", "gamma"})
 	AssertSameSet(t, e.Leaves(woCC), []string{"gamma"})
 	AssertSameSet(t, e.Leaves(woChal), []string{"L0"})
 	AssertSameSet(t, e.Leaves(woAll), []string{})
 
-	// Multiple VirtualColumns
-	e = Virtual("L0").Add(Virtual("L1"))
+	// Multiple LagrangeColumns
+	e = Lagrange("L0").Add(Lagrange("L1"))
 	AssertSameSet(t, e.Leaves(all), []string{"L0", "L1"})
 	AssertSameSet(t, e.Leaves(woCC), []string{})
 
-	// Sub: VirtualColumn on the right
-	e = Col("x").Sub(Virtual("L0"))
+	// Sub: LagrangeColumn on the right
+	e = Col("x").Sub(Lagrange("L0"))
 	AssertSameSet(t, e.Leaves(all), []string{"x", "L0"})
 	AssertSameSet(t, e.Leaves(woCC), []string{"x"})
 
-	// Pow: VirtualColumn inside
-	AssertSameSet(t, Virtual("L0").Pow(2).Leaves(all), []string{"L0"})
-	AssertSameSet(t, Virtual("L0").Pow(2).Leaves(woCC), []string{})
+	// Pow: LagrangeColumn inside
+	AssertSameSet(t, Lagrange("L0").Pow(2).Leaves(all), []string{"L0"})
+	AssertSameSet(t, Lagrange("L0").Pow(2).Leaves(woCC), []string{})
 
-	// Pow: CommittedColumn inside — no VirtualColumn
+	// Pow: CommittedColumn inside — no LagrangeColumn
 	AssertSameSet(t, Col("x").Pow(3).Leaves(all), []string{"x"})
 	AssertSameSet(t, Col("x").Pow(3).Leaves(woCC), []string{"x"})
 
 	// Nested: (x + L0) * (y - alpha) — all four leaf types interact
-	e = Col("x").Add(Virtual("L0")).Mul(Col("y").Sub(NewChallenge("alpha")))
+	e = Col("x").Add(Lagrange("L0")).Mul(Col("y").Sub(Challenge("alpha")))
 	AssertSameSet(t, e.Leaves(all), []string{"x", "L0", "y", "alpha"})
 	AssertSameSet(t, e.Leaves(woCC), []string{"x", "y", "alpha"})
 	AssertSameSet(t, e.Leaves(woChal), []string{"x", "L0", "y"})
 	AssertSameSet(t, e.Leaves(woAll), []string{"x", "y"})
 
-	// Same VirtualColumn appearing multiple times — deduplicated
-	e = Virtual("L0").Add(Virtual("L0"))
+	// Same LagrangeColumn appearing multiple times — deduplicated
+	e = Lagrange("L0").Add(Lagrange("L0"))
 	AssertSameSet(t, e.Leaves(all), []string{"L0"})
 }
 
@@ -144,12 +144,12 @@ func TestReplaceLeafByExpression(t *testing.T) {
 	}
 
 	// Challenge: matching name → replaced
-	if got := NewChallenge("alpha").ReplaceLeafByExpression("alpha", Col("y")); got.String() != "y" {
+	if got := Challenge("alpha").ReplaceLeafByExpression("alpha", Col("y")); got.String() != "y" {
 		t.Errorf("expected 'y', got '%s'", got.String())
 	}
 
 	// Challenge: non-matching name → unchanged
-	if got := NewChallenge("alpha").ReplaceLeafByExpression("beta", Col("y")); got.String() != "alpha" {
+	if got := Challenge("alpha").ReplaceLeafByExpression("beta", Col("y")); got.String() != "alpha" {
 		t.Errorf("expected 'alpha', got '%s'", got.String())
 	}
 
@@ -171,7 +171,7 @@ func TestReplaceLeafByExpression(t *testing.T) {
 	}
 
 	// Sub: alpha replaced by composite expression
-	e = Col("x").Sub(NewChallenge("alpha"))
+	e = Col("x").Sub(Challenge("alpha"))
 	if got := e.ReplaceLeafByExpression("alpha", Col("x").Mul(Col("y"))); got.String() != "(x - (x * y))" {
 		t.Errorf("expected '(x - (x * y))', got '%s'", got.String())
 	}

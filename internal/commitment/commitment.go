@@ -1,92 +1,77 @@
 package commitment
 
 import (
-	"math/big"
+	"crypto/sha256"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
+	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
+	"github.com/consensys/loom/internal/reedsolomon"
 )
 
-type Digest struct {
-	D koalabear.Element // digest of a batch of polynomials
+type RSCommit struct {
+	Encoder    reedsolomon.Encoder
+	LeafHasher merkle.LeafHasher
+	NodeHasher merkle.NodeHasher
 }
 
-func (d *Digest) Marshal() []byte {
-	return d.D.Marshal()
-}
-
-// BatchProofOpening
-type Opening struct {
-	// ClaimedValues[i][j] contains the claimed evaluation of P[i] at ζ shifted by Shift[i][j]
-	ClaimedValues [][]koalabear.Element
-	Shift         [][]int
-}
-
-// VerifyBatch verifies a batch opening proof (toy: always returns nil).
-func Verify(digest Digest, proof Opening, zeta koalabear.Element) error {
-	return nil
-}
-
-func Commit(list []poly.Polynomial) (Digest, error) {
-	var res koalabear.Element
-	for _, l := range list {
-		res.Add(&res, &l[0])
+func NewRSCommit(N uint64, leafHasher merkle.LeafHasher, nodehasher merkle.NodeHasher) RSCommit {
+	d := fft.NewDomain(N)
+	rsEncoder := reedsolomon.Encoder{Domain: d}
+	return RSCommit{
+		Encoder:    rsEncoder,
+		LeafHasher: leafHasher,
+		NodeHasher: nodehasher,
 	}
-	return Digest{D: res}, nil
 }
 
-// Open batch open a subtrace at zeta. The polynomials in the trace
-// are interpreted in Lagrange form.
-// the i-th claimed values list is structured as follows:
-// ClaimedValues[i][j] = claimed value of P[i] at zeta shifted by ω to the Shift[j]
-func Open(digest Digest, list []poly.Polynomial, zeta koalabear.Element, shift [][]int) (Opening, error) {
+func LeafHash(data []byte) []byte {
+	h := sha256.New()
+	h.Write(data)
+	return h.Sum(nil)
+}
 
-	res := Opening{
-		ClaimedValues: make([][]koalabear.Element, len(list)),
-		Shift:         shift,
-	}
-	for i, p := range list {
+func NodeHash(left, right []byte) []byte {
+	h := sha256.New()
+	h.Write(left)
+	h.Write(right)
+	return h.Sum(nil)
+}
 
-		res.ClaimedValues[i] = make([]koalabear.Element, len(shift[i]))
+// Commit to the polynomials p. The polynomials in p are assumed to be in Lagrange form, and might be of
+// different sizes. It is assumed that the maximum size is < rs.N
+func (rs *RSCommit) Commit(p []poly.Polynomial, rsEncoder *reedsolomon.Encoder) (*merkle.Tree, error) {
 
-		for j, s := range shift[i] {
+	domainsPool := map[int]*fft.Domain{}
 
-			if len(p) == 1 {
-				res.ClaimedValues[i][j] = p[0]
-				continue
-			}
-
-			// Copy to avoid mutating the trace
-			coeffs := make([]koalabear.Element, len(p))
-			copy(coeffs, p)
-
-			// Lagrange Normal → Canonical BitReversed via IFFT(DIF)
-			d := fft.NewDomain(uint64(len(coeffs)))
-			d.FFTInverse(coeffs, fft.DIF)
-
-			// BitReversed → Normal canonical
-			fft.BitReverse(coeffs)
-
-			// Horner evaluation: c₀ + c₁*x + c₂*x² + ...
-			var point koalabear.Element
-			point.Set(&zeta)
-			if s != 0 {
-				w, err := koalabear.Generator(uint64(len(p)))
-				if err != nil {
-					return res, err
-				}
-				w.Exp(w, big.NewInt(int64(s)))
-				point.Mul(&point, &w)
-			}
-			y := coeffs[len(coeffs)-1]
-			for k := len(coeffs) - 2; k >= 0; k-- {
-				y.Mul(&y, &point)
-				y.Add(&y, &coeffs[k])
-			}
-			res.ClaimedValues[i][j].Set(&y)
+	// 1- encode every polynomial
+	_p := make([]poly.Polynomial, len(p))
+	for i, pol := range p {
+		n := len(pol)
+		_, ok := domainsPool[n]
+		if !ok {
+			d := fft.NewDomain(uint64(n))
+			domainsPool[n] = d
 		}
-
+		d := domainsPool[n]
+		_p[i] = rs.Encoder.Encode(pol, d)
 	}
-	return res, nil
+
+	// 2- build the merkle tree, whose i-th leaf is the vector of the i-th entries of the encoded polynomials
+	N := rs.Encoder.Domain.Cardinality
+	tree, err := merkle.New(int(N), LeafHash, NodeHash)
+	if err != nil {
+		return nil, err
+	}
+	buf := make([]byte, koalabear.Bytes*len(_p))
+	for i := 0; i < int(N); i++ {
+		for j := 0; j < len(_p); j++ {
+			copy(buf[j*koalabear.Bytes:], _p[j][i].Marshal())
+		}
+		tree.BuildIthLeaf(buf, i)
+	}
+	tree.BuildNodes()
+
+	return tree, nil
 }

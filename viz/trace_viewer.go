@@ -8,7 +8,7 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-func WriteTraceToCSV(filename string, trace trace.Trace, N int) error {
+func WriteRawTraceToCSV(filename string, trace trace.Trace) error {
 	file, err := os.Create(filename)
 	if err != nil {
 		return err
@@ -25,7 +25,15 @@ func WriteTraceToCSV(filename string, trace trace.Trace, N int) error {
 	}
 	sort.Strings(keys)
 
-	// 2️⃣ Write header row
+	// 2️⃣ Compute N as the max column length
+	N := 0
+	for _, poly := range trace {
+		if len(poly) > N {
+			N = len(poly)
+		}
+	}
+
+	// 3️⃣ Write header row
 	if err := writer.Write(keys); err != nil {
 		return err
 	}

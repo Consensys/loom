@@ -16,33 +16,79 @@ func BuildPointwiseEvaluation(Pi map[string]Polynomial, E expr.Expr, N int, mu *
 	return dst, evalPointWiseInto(Pi, E, N, mu, dst)
 }
 
+func SelectIthValue(Pi map[string]Polynomial, E expr.Expr, pos int, mu *sync.Mutex) ([]koalabear.Element, error) {
+
+	eLeaves := E.LeavesFull(expr.NewConfig(expr.WithoutChallenges()))
+	_n := Pi[eLeaves[0].Name]
+	n := len(_n)
+	res := make([]koalabear.Element, n)
+	// TODO inefficient, double loop
+	if err := evalPointWiseInto(Pi, E, n, mu, res); err != nil {
+		return res, err
+	}
+	for i := 0; i < n; i++ {
+		if i != pos {
+			res[i].SetZero()
+		}
+	}
+	return res, nil
+}
+
 // BuildMultiplicityPolynomial returns P such that:
-// P[i] = #{ j | S[j] = T[i] }
-func BuildMultiplicityPolynomial(Pi map[string]Polynomial, S, T expr.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
+// P[i] = #{ j | S[j] = T[i] and Sel[j]!=0 if Sel!=nil }
+func BuildMultiplicityPolynomial(Pi map[string]Polynomial, S, T expr.Expr, mu *sync.Mutex) (Polynomial, error) {
 
 	// evaluate S and T on P
-	_S := getBuf(N)
-	_T := getBuf(N)
-	if err := evalPointWiseInto(Pi, S, N, mu, _S); err != nil {
+	sLeaves := S.LeavesFull(expr.NewConfig(expr.WithoutChallenges()))
+	tLeaves := T.LeavesFull(expr.NewConfig(expr.WithoutChallenges()))
+	_s := Pi[sLeaves[0].Name]
+	_t := Pi[tLeaves[0].Name]
+	ns := len(_s)
+	nt := len(_t)
+	_S := getBuf(ns)
+	_T := getBuf(nt)
+	if err := evalPointWiseInto(Pi, S, ns, mu, _S); err != nil {
 		putBuf(_S)
 		return Polynomial{}, err
 	}
-	if err := evalPointWiseInto(Pi, T, N, mu, _T); err != nil {
+	if err := evalPointWiseInto(Pi, T, nt, mu, _T); err != nil {
 		putBuf(_S)
 		return Polynomial{}, err
 	}
 
-	res := countMultiplicity(_S, _T, N)
+	res := countMultiplicity(_S, _T)
 	putBuf(_S)
 	putBuf(_T)
 	return res, nil
+}
 
+// inferN returns the length of the first polynomial in P whose leaf (non-challenge, non-constant)
+// has length != 1. Constants and challenges have length 1 and are skipped.
+func inferN(P map[string]Polynomial, exprs ...expr.Expr) (int, error) {
+	noChallenge := expr.NewConfig(expr.WithoutChallenges())
+	for _, e := range exprs {
+		if e == nil {
+			continue
+		}
+		for _, leaf := range e.LeavesFull(noChallenge) {
+			if p, ok := P[leaf.Name]; ok && len(p) != 1 {
+				return len(p), nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("inferN: could not determine N — all leaves are constant or missing from trace")
 }
 
 // BuildGrandSum returns R such that
 // R[i] = Σ_{j⩽i}M[j]/E[j]
 // The notation E[i] means the i-th entry of E evaluated on P (same for M).
-func BuildGrandSum(P map[string]Polynomial, E, M expr.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
+func BuildLogup(P map[string]Polynomial, E, M expr.Expr, mu *sync.Mutex) (Polynomial, error) {
+
+	// pick first non length(1) entry of one of the leafs of type Col of E or M, let N be that value
+	N, err := inferN(P, E, M)
+	if err != nil {
+		return Polynomial{}, err
+	}
 
 	// D stores the denominators 1/E(P); pooled because it is only needed until accumulateSums copies it.
 	D := getBuf(N)
@@ -74,7 +120,13 @@ func BuildGrandSum(P map[string]Polynomial, E, M expr.Expr, N int, mu *sync.Mute
 // BuildGrandProduct returns R such that R[0]=1, R[i+1] = R[i] * E1(P[i]) / E2(P[i])
 // N = size of the polynomials in P
 // Polynomials in P must have the same basis, same layout
-func BuildGrandProduct(P map[string]Polynomial, E1, E2 expr.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
+func BuildGrandProduct(P map[string]Polynomial, E1, E2 expr.Expr, mu *sync.Mutex) (Polynomial, error) {
+
+	// pick first non length(1) entry of one of the leafs of type Col of E1 or E2, let N be that value
+	N, err := inferN(P, E1, E2)
+	if err != nil {
+		return Polynomial{}, fmt.Errorf("BuildGrandProduct: %w", err)
+	}
 
 	// Q0 and Q1 are intermediate buffers: pooled because they are fully consumed by divPointwise.
 	Q0 := getBuf(N)
@@ -98,65 +150,4 @@ func BuildGrandProduct(P map[string]Polynomial, E1, E2 expr.Expr, N int, mu *syn
 	}
 
 	return accumulateProducts(ratio, N)
-}
-
-// BuildFilteredAccPolynomial builds a polynomial R such that:
-// * R[0] = F[0]*E[0]
-// *  R[i] = F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1] for i>0
-// F is a an expression whose evaluation is a binary column (contains only 0 and 1s), it acts as a filter.
-// It is up to the caller to ensure that F evaluations contain only 0 and 1.
-// alpha is a challenge in the trace. R represents the evaluation of E filtered by F, with coeff ordering
-// on par with the filter.
-//
-// example:
-// E = [1, 7, 9, 10, 6, 12]
-// F = [0, 1, 0, 0, 1, 1]
-// E filter by F is E_F = [0, 7, 0, 0, 6, 12]
-// R is built such R[N-1] is the evaluation of E_F at alpha, when we discard the non selected elements in E_F.
-// After discarding non selected elmts in E_F we get [7, 6, 12], so R[N-1]=7α²+6α+12. This is what the formula
-//
-//	R[i] = F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1]
-//
-// encodes.
-func BuildFilteredAccPolynomial(P map[string]Polynomial, E, F, alpha expr.Expr, N int, mu *sync.Mutex) (Polynomial, error) {
-
-	_E := getBuf(N)
-	_F := getBuf(N)
-	if err := evalPointWiseInto(P, E, N, mu, _E); err != nil {
-		putBuf(_E)
-		putBuf(_F)
-		return Polynomial{}, err
-	}
-	if err := evalPointWiseInto(P, F, N, mu, _F); err != nil {
-		putBuf(_E)
-		putBuf(_F)
-		return Polynomial{}, err
-	}
-	res := make(Polynomial, N)
-	if _, ok := alpha.(*expr.Leaf); !ok {
-		return Polynomial{}, fmt.Errorf("alpha must be a leaf")
-	}
-	alphaExpr := alpha.(*expr.Leaf)
-	if alphaExpr.Type != expr.ChallengeColumn {
-		return Polynomial{}, fmt.Errorf("alpha must be a challenge")
-	}
-	_alpha := P[alpha.String()]
-	a := _alpha[0]
-
-	// R[0] = F[0]*E[0]
-	res[0].Mul(&_E[0], &_F[0])
-
-	// R[i] = F[i]*(α*R[i-1]+E[i]) + (1-F[i])R[i-1]
-	var path1, path2, one koalabear.Element
-	one = koalabear.One()
-	for i := 1; i < N; i++ {
-		path1.Sub(&one, &_F[i]).Mul(&path1, &res[i-1])                   // (1-F[i])R[i-1]
-		path2.Mul(&a, &res[i-1]).Add(&path2, &_E[i]).Mul(&path2, &_F[i]) // F[i]*(α*R[i-1]+E[i])
-		res[i].Add(&path1, &path2)
-	}
-
-	putBuf(_E)
-	putBuf(_F)
-
-	return res, nil
 }

@@ -1,5 +1,11 @@
 package poly
 
+import (
+	"math/big"
+
+	"github.com/consensys/gnark-crypto/field/koalabear"
+)
+
 // isPowerOfTwo checks if n is a power of two
 func isPowerOfTwo(n int) bool {
 	return n > 0 && (n&(n-1)) == 0
@@ -21,6 +27,24 @@ func NextPowerOfTwo(n int) int {
 	n |= n >> 16
 	n |= n >> 32
 	return n + 1
+}
+
+func LagrangeAtZeta(zeta koalabear.Element, N, i int) koalabear.Element {
+	var zetan, omegai, one, Nk koalabear.Element
+	Nk.SetUint64(uint64(N))
+	omegai, err := koalabear.Generator(uint64(N))
+	if err != nil {
+		panic(err)
+	}
+	omegai.Exp(omegai, big.NewInt(int64(i)))
+	zetan.Exp(zeta, big.NewInt(int64(N)))
+	one.SetOne()
+	zetan.Sub(&zetan, &one)
+	zeta.Sub(&zeta, &omegai)
+	omegai.Mul(&omegai, &zetan)
+	zeta.Mul(&zeta, &Nk)
+	omegai.Div(&omegai, &zeta)
+	return omegai
 }
 
 // nextPowerOfTwo is an alias for NextPowerOfTwo for internal use

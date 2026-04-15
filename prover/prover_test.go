@@ -1,0 +1,119 @@
+package prover
+
+import (
+	"fmt"
+	"testing"
+
+	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/arguments"
+	"github.com/consensys/loom/board"
+	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/poly"
+	"github.com/consensys/loom/trace"
+	"github.com/consensys/loom/viz"
+)
+
+func checkVanishingRelation(t *testing.T, tr trace.Trace, md board.CompiledModule) {
+	ev, err := poly.Eval(tr, *md.VanishingRelation, md.N)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, v := range ev {
+		if !v.IsZero() {
+			t.Errorf("vanishing relation doesn hold at %d, got %s", i, v.String())
+		}
+	}
+}
+
+func TestVanishingRelationsAndLogupBus(t *testing.T) {
+
+	builder := board.NewBuilder()
+
+	fibonacciModule := board.NewModule()
+	rangeModule := board.NewModule()
+
+	N := 4
+	fibonacciModule.N = N
+	rangeModule.N = 2 * N
+
+	C := expr.Rot("A", 1).Sub(expr.Col("B"))
+	fibonacciModule.AssertZeroExceptAt(C, N-1)
+	C = expr.Rot("B", 1).Sub(expr.Col("C"))
+	fibonacciModule.AssertZeroExceptAt(C, N-1)
+	C = expr.Col("C").Sub(expr.Col("A")).Sub(expr.Col("B"))
+	fibonacciModule.AssertZero(C)
+
+	builder.AddModule("fibonacci", fibonacciModule)
+	builder.AddModule("range", rangeModule)
+
+	T := board.Input{
+		Module: "range",
+		In:     expr.Col("Lookup"),
+	}
+	columnsFibonacci := []string{"A", "B", "C"}
+	for _, c := range columnsFibonacci {
+		S := board.Input{
+			Module: "fibonacci",
+			In:     expr.Col(c),
+		}
+		err := arguments.Lookup(&builder, S, T)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	program, err := board.Compile(&builder)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	viz.ViewDag(program, "dag.html")
+
+	// load the traces
+	var a, b koalabear.Element
+	b.SetOne()
+	traceFrob := TraceFibonacci(N, a, b)
+	traceRange := TraceRange(N)
+	tr := MergeTrace(traceFrob, traceRange)
+
+	proof, err := Prove(tr, nil, program, EmulateFS())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for k, _ := range proof.ValuesAtZeta {
+		fmt.Println(k)
+	}
+
+	viz.WriteRawTraceToCSV("trace.csv", tr)
+
+	for _, m := range program.Modules {
+		checkVanishingRelation(t, tr, m)
+	}
+
+	// check the values of the bus
+	for _, bus := range program.LogupBus {
+		var cumNegative, cumPositive koalabear.Element
+		for _, pos := range bus.Positive {
+			if len(proof.PublicColumns[pos].Entries) > 1 {
+				t.Fatal("an extracted value from a logup column should have exactly one entry")
+			}
+			pe := proof.PublicColumns[pos].Entries[0]
+			cumPositive.Add(&cumPositive, &pe.Value)
+		}
+		for _, neg := range bus.Negative {
+			if len(proof.PublicColumns[neg].Entries) > 1 {
+				t.Fatal("an extracted value from a logup column should have exactly one entry")
+			}
+			pe := proof.PublicColumns[neg].Entries[0]
+			cumNegative.Add(&cumNegative, &pe.Value)
+		}
+		cumPositive.Sub(&cumPositive, &cumNegative)
+		if !cumPositive.IsZero() {
+			t.Fatal("the cumulative sums of the bus are not equal")
+		}
+	}
+
+	viz.WriteRawTraceToCSV("trace.csv", tr)
+
+}

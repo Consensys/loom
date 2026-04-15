@@ -4,10 +4,13 @@ package poly
 
 import (
 	"fmt"
+	"math/bits"
 	"sync"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/dag"
 )
 
 // Polynomial is a wrapper around EPolynomial that includes additional metadata such as shift.
@@ -86,13 +89,28 @@ func divPointwise(P1, P2 Polynomial, N int) (Polynomial, error) {
 	return res, nil
 }
 
-func countMultiplicity(S, T Polynomial, N int) Polynomial {
-	freq := make(map[[1]uint32]uint64, N)
-	for j := 0; j < N; j++ {
+func countMultiplicity(S, T Polynomial) Polynomial {
+	freq := make(map[[1]uint32]uint64, len(T))
+	for j := 0; j < len(S); j++ {
 		freq[S[j].Bits()]++
 	}
-	res := make(Polynomial, N)
-	for i := 0; i < N; i++ {
+	res := make(Polynomial, len(T))
+	for i := 0; i < len(T); i++ {
+		res[i].SetUint64(freq[T[i].Bits()])
+	}
+	return res
+}
+
+func countMultiplicityWithSelector(S, T, Sel Polynomial) Polynomial {
+	freq := make(map[[1]uint32]uint64, len(T))
+	for j := 0; j < len(S); j++ {
+		if Sel[j].IsZero() {
+			continue
+		}
+		freq[S[j].Bits()]++
+	}
+	res := make(Polynomial, len(T))
+	for i := 0; i < len(T); i++ {
 		res[i].SetUint64(freq[T[i].Bits()])
 	}
 	return res
@@ -136,4 +154,57 @@ func accumulateProducts(P Polynomial, N int) (Polynomial, error) {
 		result[i].Mul(&result[i-1], &pi)
 	}
 	return result, nil
+}
+
+// Evaluate evaluates a polynomial p in Lagrange form at zeta
+// the domain d is assumed to be correctly formed
+func Evaluate(p Polynomial, d *fft.Domain, zeta koalabear.Element) koalabear.Element {
+	n := len(p)
+	_p := getBuf(n)
+	copy(_p, p)
+	nn := uint64(64 - bits.TrailingZeros64(uint64(n)))
+	d.FFTInverse(_p, fft.DIF)
+	var res koalabear.Element
+	for i := n - 1; i >= 0; i-- {
+		iRev := bits.Reverse64(uint64(i)) >> nn
+		res.Mul(&res, &zeta)
+		res.Add(&res, &_p[iRev])
+	}
+	putBuf(_p)
+	return res
+}
+
+// Eval evaluates vanishingRelation pointwise on Pi and returns the N results
+// as a Polynomial in Lagrange normal form.
+// All polynomials in Pi must be in Lagrange normal form with the same size N
+// (constants of length 1 are also accepted).
+// Used for testing only
+func Eval(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int) (Polynomial, error) {
+
+	// Assign Leaf.Idx by column name, same convention as ComputeQuotient.
+	nameToIdx := make(map[string]int)
+	for _, n := range vanishingRelation.Nodes {
+		if n.Kind != dag.KindLeaf || n.Leaf.Type == expr.ConstantColumn {
+			continue
+		}
+		l := n.Leaf
+		if _, ok := nameToIdx[l.Name]; !ok {
+			col, ok2 := Pi[l.Name]
+			if !ok2 {
+				return Polynomial{}, fmt.Errorf("Eval: column %q not found in Pi", l.Name)
+			}
+			if len(col) != N && len(col) != 1 {
+				return Polynomial{}, fmt.Errorf("Eval: column %q has length %d, want %d or 1", l.Name, len(col), N)
+			}
+			nameToIdx[l.Name] = len(nameToIdx)
+		}
+		l.Idx = nameToIdx[l.Name]
+	}
+
+	_Pi := make([][]koalabear.Element, len(nameToIdx))
+	for name, idx := range nameToIdx {
+		_Pi[idx] = Pi[name]
+	}
+
+	return vanishingRelation.EvalOnAllEntries(_Pi, N), nil
 }

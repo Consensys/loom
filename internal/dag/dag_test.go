@@ -41,13 +41,14 @@ func checkFlatDAGEval(t *testing.T, expr expr.Expr, vals map[string]koalabear.El
 
 // TestDAGEvalLeaves checks that every leaf kind evaluates correctly via the DAG.
 func TestDAGEvalLeaves(t *testing.T) {
-	vals := u64Vals("x", uint64(7), "alpha", uint64(3), "L0", uint64(11))
+	lagName := "L0"
+	vals := u64Vals("x", uint64(7), "alpha", uint64(3), lagName, uint64(11))
 	var c koalabear.Element
 	c.SetUint64(42)
 
 	checkDAGEval(t, expr.Col("x"), vals)
-	checkDAGEval(t, expr.NewChallenge("alpha"), vals)
-	checkDAGEval(t, expr.Virtual("L0"), vals)
+	checkDAGEval(t, expr.Challenge("alpha"), vals)
+	checkDAGEval(t, expr.Lagrange("L0"), vals)
 	checkDAGEval(t, expr.Const(c), vals)
 }
 
@@ -164,13 +165,14 @@ func TestDAGLeaves(t *testing.T) {
 	all := expr.NewConfig()
 	woCC := expr.NewConfig(expr.WithoutCommittedColumns())
 	woChal := expr.NewConfig(expr.WithoutChallenges())
-	woComp := expr.NewConfig(expr.WithoutVirtualumns())
+	woComp := expr.NewConfig(expr.WithoutLagrangeColumns())
 
 	mixed := expr.Col("x").
-		Mul(expr.NewChallenge("gamma")).
-		Add(expr.Virtual("L0")).
+		Mul(expr.Challenge("gamma")).
+		Add(expr.Lagrange("L0")).
 		Sub(expr.Const(c))
 
+	lagrangeName := "L0"
 	tests := []struct {
 		name   string
 		expr   expr.Expr
@@ -179,14 +181,14 @@ func TestDAGLeaves(t *testing.T) {
 	}{
 		// Individual leaf kinds with default config
 		{"CommittedColumn/all", expr.Col("x"), all, []string{"x"}},
-		{"Challenge/all", expr.NewChallenge("alpha"), all, []string{"alpha"}},
-		{"VirtualColumn/all", expr.Virtual("L0"), all, []string{"L0"}},
+		{"Challenge/all", expr.Challenge("alpha"), all, []string{"alpha"}},
+		{"LagrangeColumn/all", expr.Lagrange("L0"), all, []string{lagrangeName}},
 		{"Const/all", expr.Const(c), all, []string{}}, // Const never included
 
 		// Filtering individual leaf kinds
 		{"CommittedColumn/woCC", expr.Col("x"), woCC, []string{}},
-		{"Challenge/woChal", expr.NewChallenge("alpha"), woChal, []string{}},
-		{"VirtualColumn/woComp", expr.Virtual("L0"), woComp, []string{}},
+		{"Challenge/woChal", expr.Challenge("alpha"), woChal, []string{}},
+		{"LagrangeColumn/woComp", expr.Lagrange("L0"), woComp, []string{}},
 
 		// DAG deduplication
 		{"SharedLeaf", // a+a → col:a once
@@ -198,11 +200,11 @@ func TestDAGLeaves(t *testing.T) {
 			all, []string{"a", "b"}},
 
 		// Mixed leaf kinds with filtering
-		{"Mixed/all", mixed, all, []string{"x", "gamma", "L0"}}, // Const excluded always
-		{"Mixed/woCC", mixed, woCC, []string{"gamma", "L0"}},
-		{"Mixed/woChal", mixed, woChal, []string{"x", "L0"}},
+		{"Mixed/all", mixed, all, []string{"x", "gamma", lagrangeName}}, // Const excluded always
+		{"Mixed/woCC", mixed, woCC, []string{"gamma", lagrangeName}},
+		{"Mixed/woChal", mixed, woChal, []string{"x", lagrangeName}},
 		{"Mixed/woComp", mixed, woComp, []string{"x", "gamma"}},
-		{"Mixed/woCC+woChal", mixed, expr.NewConfig(expr.WithoutCommittedColumns(), expr.WithoutChallenges()), []string{"L0"}},
+		{"Mixed/woCC+woChal", mixed, expr.NewConfig(expr.WithoutCommittedColumns(), expr.WithoutChallenges()), []string{lagrangeName}},
 	}
 
 	for _, tc := range tests {
@@ -226,23 +228,23 @@ func TestDAGDegree(t *testing.T) {
 	}{
 		// Leaves
 		{"CommittedColumn", expr.Col("x"), 1},
-		{"VirtualColumn", expr.Virtual("L0"), 1},
-		{"Challenge", expr.NewChallenge("alpha"), 0}, // Challenge is degree 0
+		{"LagrangeColumn", expr.Lagrange("L0"), 1},
+		{"Challenge", expr.Challenge("alpha"), 0},    // Challenge is degree 0
 		{"ConstNonZero", expr.Const(one), 0},         // non-zero constant
 		{"ConstZero", expr.Const(zero), expr.NegInf}, // zero polynomial
 
 		// Binary operators
 		{"Add(1,1)", expr.Col("a").Add(expr.Col("b")), 1},
-		{"Sub(1,0)", expr.Col("a").Sub(expr.NewChallenge("g")), 1},
+		{"Sub(1,0)", expr.Col("a").Sub(expr.Challenge("g")), 1},
 		{"Mul(1,1)", expr.Col("a").Mul(expr.Col("b")), 2},
-		{"Mul(1,0)", expr.Col("a").Mul(expr.NewChallenge("g")), 1},
+		{"Mul(1,0)", expr.Col("a").Mul(expr.Challenge("g")), 1},
 		{"Pow2", &expr.Pow{Base: expr.Col("a"), Exp: 2}, 2},
 		{"Pow5", expr.Col("a").Pow(5), 5},
 		{"Pow0", &expr.Pow{Base: expr.Col("a"), Exp: 0}, 0},
 
 		// Challenge treated as degree-0 in a larger expression
-		{"AddChallenge", expr.Col("a").Add(expr.NewChallenge("g")), 1},
-		{"MulChallenge", expr.Col("a").Mul(expr.NewChallenge("g")).Mul(expr.Col("b")), 2},
+		{"AddChallenge", expr.Col("a").Add(expr.Challenge("g")), 1},
+		{"MulChallenge", expr.Col("a").Mul(expr.Challenge("g")).Mul(expr.Col("b")), 2},
 
 		// Flattened n-ary chains should have the same degree as the AST
 		{"AddChain", expr.Col("a").Add(expr.Col("b")).Add(expr.Col("c")), 1},

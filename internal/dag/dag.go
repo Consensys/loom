@@ -31,7 +31,7 @@ func fnvKeyUint(s string) uint64 {
 type NodeKind int
 
 const (
-	KindLeaf NodeKind = iota // leaf: CommittedColumn, Challenge, VirtualColumn, or Const
+	KindLeaf NodeKind = iota // leaf: CommittedColumn, Challenge, LagrangeColumn, or Const
 	KindAdd
 	KindSub
 	KindMul
@@ -142,7 +142,7 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 				prefix = "col"
 			case expr.ChallengeColumn:
 				prefix = "chal"
-			case expr.VirtualColumn:
+			case expr.LagrangeColumn:
 				prefix = "comp"
 			case expr.ConstantColumn:
 				prefix = "const"
@@ -525,7 +525,7 @@ func absorbChildren(n *DAGNode, kind NodeKind, flat map[*DAGNode]*DAGNode) []*DA
 // Add and Mul are n-ary: all children are summed / multiplied together.
 // Sub is binary: Children[0] − Children[1].
 // Pow uses the exponent stored in the node.
-// Leaves are looked up in vals; missing keys cause a panic.
+// Leaves are looked up in vals, keyed by String() (not the bare name); missing keys cause a panic.
 func (d *DAG) Eval(vals map[string]koalabear.Element) koalabear.Element {
 	cache := make(map[*DAGNode]koalabear.Element, len(d.Nodes))
 	for _, n := range d.Nodes {
@@ -876,7 +876,7 @@ func evalDAGNodeSlice(n *DAGNode, cache []koalabear.Element, vals map[string]koa
 // Leaves returns the String() representation of every unique leaf in the DAG
 // that is not excluded by config. The filtering rules are identical to those
 // of Expr.Leaves: WithoutCommittedColumns, WithoutChallenges, and
-// WithoutVirtualumns suppress the corresponding leaf kinds; Const leaves
+// WithoutLagrangeColumns suppress the corresponding leaf kinds; Const leaves
 // are never included. Because the DAG deduplicates nodes, each
 // structurally-identical leaf appears at most once.
 func (d *DAG) Leaves(config expr.Config) []string {
@@ -905,7 +905,7 @@ func (d *DAG) LeavesFull(config expr.Config) []*expr.Leaf {
 
 // Degree returns the total degree of the DAG expression, following the same
 // conventions as Expr.Degree:
-//   - CommittedColumn and VirtualColumn leaves have degree 1.
+//   - CommittedColumn and LagrangeColumn leaves have degree 1.
 //   - Challenge and non-zero Const leaves have degree 0.
 //   - The zero Const leaf has degree NegInf (math.MinInt).
 //   - Add/Sub: max of children's degrees (n-ary after Flatten).

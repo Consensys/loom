@@ -4,3 +4,4 @@ playground/
 *.txt
 .DS_Store
 .idea/
+*.tmp

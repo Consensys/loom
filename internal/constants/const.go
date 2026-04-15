@@ -2,21 +2,51 @@
 package constants
 
 import (
+	"crypto/rand"
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 )
 
-const FINAL_QUOTIENT = "__quotient"
 const FINAL_EVALUATION_POINT = "__zeta"
 const SUFFIX_SHIFT_SPLIT = "_"
 const SUFFIX_SHIFT = "shift"
+const LOGUP = "logup"
 const SIZE_RANDOM_STRING = 10 // size of the names randomly created for the intermediate columns issued with prover actions
+
+const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+func RandomString(n int) (string, error) {
+	result := make([]byte, n)
+
+	for i := range result {
+		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
+		if err != nil {
+			return "", err
+		}
+		result[i] = letters[num.Int64()]
+	}
+
+	return string(result), nil
+}
+
+func LagrangeName(i, N int) string {
+	return fmt.Sprintf("Lagrange_%d_%d", i, N)
+}
+
+func ParseLagrangeName(name string) (i, N int) {
+	_, err := fmt.Sscanf(name, "Lagrange_%d_%d", &i, &N)
+	if err != nil {
+		panic(err)
+	}
+	return
+}
 
 // CanonicalChallengeName returns the shared challenge name for all Fiat-Shamir steps
 // at a given BFS level in the challenge-dependency DAG.
 func CanonicalChallengeName(level int) string {
-	return fmt.Sprintf("loom@challenge_%d", level)
+	return fmt.Sprintf("challenge@loom_%d", level)
 }
 
 func GetShiftedName(name string, shift int) string {
