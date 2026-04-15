@@ -82,6 +82,7 @@ func NewConfig(opts ...Option) Config {
 	return res
 }
 
+var OnlyLagranges = []Option{WithoutChallenges(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutPublicColumns()}
 var OnlyChallenges = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutPublicColumns()}
 
 type Expr interface {

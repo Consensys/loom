@@ -60,6 +60,31 @@ func evalLagrangeNormalAt(p Polynomial, z koalabear.Element) koalabear.Element {
 	return hornerEval(coeffs, z)
 }
 
+func TestLagrangeAtZeta(t *testing.T) {
+
+	n := 16
+	p := make([]koalabear.Element, n)
+	d := fft.NewDomain(uint64(n))
+	var zeta koalabear.Element
+	zeta.SetRandom()
+	for i := 0; i < n; i++ {
+		for j := 0; j < n; j++ {
+			p[j].SetZero()
+			if i == j {
+				p[j].SetOne()
+			}
+		}
+		d.FFTInverse(p, fft.DIF)
+		fft.BitReverse(p)
+		expected := hornerEval(p, zeta)
+		computed := LagrangeAtZeta(zeta, n, i)
+		if !expected.Equal(&computed) {
+			t.Errorf("expected %s, got %s", expected.String(), computed.String())
+		}
+	}
+
+}
+
 func TestEvalPointWise(t *testing.T) {
 
 	t.Run("NonHomogeneous_x0sq_plus_x1", func(t *testing.T) {

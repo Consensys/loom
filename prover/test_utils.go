@@ -6,7 +6,7 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-func mergeTrace(t1 trace.Trace, t2 ...trace.Trace) trace.Trace {
+func MergeTrace(t1 trace.Trace, t2 ...trace.Trace) trace.Trace {
 	res := t1
 	for _, t := range t2 {
 		for k, v := range t {

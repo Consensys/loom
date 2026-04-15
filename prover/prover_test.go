@@ -74,7 +74,7 @@ func TestVanishingRelationsAndLogupBus(t *testing.T) {
 	b.SetOne()
 	traceFrob := TraceFibonacci(N, a, b)
 	traceRange := TraceRange(N)
-	tr := mergeTrace(traceFrob, traceRange)
+	tr := MergeTrace(traceFrob, traceRange)
 
 	proof, err := Prove(tr, nil, program, EmulateFS())
 	if err != nil {

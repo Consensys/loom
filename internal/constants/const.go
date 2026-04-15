@@ -35,6 +35,14 @@ func LagrangeName(i, N int) string {
 	return fmt.Sprintf("Lagrange_%d_%d", i, N)
 }
 
+func ParseLagrangeName(name string) (i, N int) {
+	_, err := fmt.Sscanf(name, "Lagrange_%d_%d", &i, &N)
+	if err != nil {
+		panic(err)
+	}
+	return
+}
+
 // CanonicalChallengeName returns the shared challenge name for all Fiat-Shamir steps
 // at a given BFS level in the challenge-dependency DAG.
 func CanonicalChallengeName(level int) string {
