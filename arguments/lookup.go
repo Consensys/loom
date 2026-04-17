@@ -22,29 +22,6 @@ func WithSelector(input board.Input) LookupOption {
 	}
 }
 
-type RawLogupCtx struct{}
-
-// func RawLogup(builder *board.Builder, S board.Input) error {
-
-// 	fsInputs := []expr.Expr{S.In}
-// 	_gamma, err := constants.RandomString(10)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	builder.AddFiatShamirStep(fsInputs, _gamma)
-
-// 	gamma := expr.Challenge(_gamma)
-// 	_logupS, err := constants.RandomString(10)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	_logupS = fmt.Sprintf("%s_%s", constants.LOGUP, _logupS)
-// 	sMinusGamma := S.In.Sub(gamma)
-// 	builder.AddLogupStep(S.Module, sMinusGamma, expr.Const(koalabear.One()), _logupS)
-
-// 	return nil
-// }
-
 // Lookup arguments that S ⊂ T
 func Lookup(builder *board.Builder, S, T board.Input) error {
 
