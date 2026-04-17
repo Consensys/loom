@@ -51,6 +51,7 @@ func PermutationCrossModules(builder *board.Builder, A, B board.Input) error {
 }
 
 // PermutationWithinModule we use the grand product argument in that case, it saves a column (1 grand product instead of 2 logups+bus)
+// Generates an argument to prove that (A[0] || A[1] || ..) and (B[0] || B[1] || ..) are equal up to permutation
 func PermutationWithinModule(builder *board.Builder, module string, A, B []expr.Expr) error {
 
 	// 1. sample challenge
@@ -100,6 +101,18 @@ func PermutationWithinModule(builder *board.Builder, module string, A, B []expr.
 	return nil
 }
 
+// PermutationTupleWithinModule
+// Generates an argument to prove that
+// (A[0][0] || A[1][0] || A[2][0] || ..) |
+// (A[0][1] || A[1][1] || A[2][1] || ..) | <- the rows are folded
+// (A[0][2] || A[1][2] || A[2][2] || ..) |
+// ..
+// and
+// (B[0][0] || B[1][0] || B[2][0] || ..) |
+// (B[0][1] || B[1][1] || B[2][1] || ..) | <- the rows are folded
+// (B[0][2] || B[1][2] || B[2][2] || ..) |
+// are equal up to permutation
+// The rows of each matrix are folded, and we call PermutationWithinModule afterwards
 func PermutationTupleWithinModule(builder *board.Builder, module string, A, B [][]expr.Expr) error {
 
 	// 1. sample folding challenge
@@ -131,3 +144,11 @@ func PermutationTupleWithinModule(builder *board.Builder, module string, A, B []
 	// 3. call 1 dimensional permutation
 	return PermutationWithinModule(builder, module, foldedA, foldedB)
 }
+
+// func FixedPermutationWithinModule(builder *board.Builder, module string, A, B [][]expr.Expr, S board.PermutationGen) error {
+
+// 	// 1 - register the permutation in the module
+
+// 	// 2 -
+
+// }
