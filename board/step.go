@@ -12,14 +12,14 @@ import (
 
 type Step func([]expr.Expr, string, trace.Trace, *Program, *proof.Proof, *sync.Mutex, StepContext) error
 
+type StepContext any
+
 type ProverStep struct {
 	Ctx  StepContext
 	Ins  []expr.Expr
 	Out  string
 	Step Step
 }
-
-type StepContext any
 
 func (ps *ProverStep) Execute(trace trace.Trace, prog *Program, proof *proof.Proof, mu *sync.Mutex) error {
 	step := ps.Step
@@ -59,10 +59,6 @@ func MakeIthValuePublicStep(ins []expr.Expr, out string, t trace.Trace, _ *Progr
 	if err != nil {
 		return err
 	}
-
-	var pe PublicEntry
-	pe.Idx = _ctx.Pos
-	pe.Value = res[_ctx.Pos]
 
 	var publicColumnInfo PublicInput
 	publicColumnInfo.N = _ctx.N

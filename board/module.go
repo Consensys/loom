@@ -121,7 +121,7 @@ func (p PermutationGen) Gen(t trace.Trace, m *Module) error {
 		return err
 	}
 	for i := 0; i < nbChunks; i++ {
-		err := trace.RegisterColumn(t, fmt.Sprintf("ID_%d", i), support[i])
+		err := trace.RegisterColumn(t, fmt.Sprintf("ID_%d_%d", i, m.N), support[i])
 		if err != nil {
 			return err
 		}

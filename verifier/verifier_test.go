@@ -12,6 +12,7 @@ import (
 
 func TestVerifier(t *testing.T) {
 
+	// build the modules
 	builder := board.NewBuilder()
 
 	fibonacciModule := board.NewModule()
@@ -69,3 +70,23 @@ func TestVerifier(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// func TestPlonk(t *testing.T) {
+
+// 	// build the plonk module
+
+// 	plonkModule := board.NewModule()
+
+// 	N := 2024
+// 	plonkModule.N = N
+
+// 	qll := expr.Col(ID_Ql).Mul(expr.Col(ID_L))
+// 	qrr := expr.Col(ID_Qr).Mul(expr.Col(ID_R))
+// 	qmlr := expr.Col(ID_Qm).Mul(expr.Col(ID_L)).Mul(expr.Col(ID_R))
+// 	qoo := expr.Col(ID_Qo).Mul(expr.Col(ID_O))
+// 	qk := expr.Col(ID_Qk)
+// 	vanishingRelation := qll.Add(qrr).Add(qmlr).Add(qoo).Add(qk)
+
+// 	sigmaName := "S"
+
+// }
