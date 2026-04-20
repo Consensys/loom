@@ -16,7 +16,13 @@ var (
 		Vectorize: true,
 	}
 
-	// MirConfig controls MIR-to-AIR lowering. An empty config lets go-corset
-	// decompose all range constraints natively down to u1 (binary) checks.
-	MirConfig = mir.OptimisationConfig{}
+	// MirConfig controls MIR-to-AIR lowering. MaxRangeConstraint=11 ensures
+	// go-corset only decomposes types > 11 bits (u16 → u8+u8, byte-aligned).
+	// Smaller types become AIR-level range constraints, which we translate to
+	// lookups against synthetic type-table board modules.
+	MirConfig = mir.OptimisationConfig{
+		InverseEliminiationLevel: 1,
+		MaxRangeConstraint:       11,
+		ShiftNormalisation:       true,
+	}
 )

@@ -21,15 +21,15 @@ import (
 // ExpandTrace takes a compiled schema stack and raw input JSON (mapping
 // qualified column names to value arrays), propagates outputs via the ASM
 // executor, expands computed columns (pseudo-inverses, type-table
-// decompositions), and returns a loom trace padded to the next power of two.
+// decompositions), and returns a loom trace plus per-module N values.
 func ExpandTrace(
 	stack *cmdutil.SchemaStack[corsetkoalabear.Element],
 	inputJSON []byte,
-) (trace.Trace, int, error) {
+) (trace.Trace, map[string]int, error) {
 	// Parse the input JSON into an lt.TraceFile.
 	pool, modules, err := json.FromBytes(inputJSON)
 	if err != nil {
-		return nil, 0, fmt.Errorf("parsing input JSON: %w", err)
+		return nil, nil, fmt.Errorf("parsing input JSON: %w", err)
 	}
 	tf := lt.NewTraceFile(nil, pool, modules)
 
@@ -37,7 +37,7 @@ func ExpandTrace(
 	// columns that were not provided in the input JSON.
 	tf, propErrors := asm.Propagate(stack.BinaryFile().Schema, tf)
 	if len(propErrors) > 0 {
-		return nil, 0, fmt.Errorf("trace propagation: %w", propErrors[0])
+		return nil, nil, fmt.Errorf("trace propagation: %w", propErrors[0])
 	}
 
 	// Expand the trace against the AIR schema. This fills in computed columns
@@ -45,27 +45,35 @@ func ExpandTrace(
 	builder := stack.TraceBuilder()
 	expanded, buildErrors := builder.Build(stack.ConcreteSchema(), tf)
 	if len(buildErrors) > 0 {
-		return nil, 0, fmt.Errorf("trace expansion: %w", buildErrors[0])
+		return nil, nil, fmt.Errorf("trace expansion: %w", buildErrors[0])
 	}
 
-	// Determine N = next power of two large enough to hold all module data and
-	// any synthetic type-table columns for range constraints.
-	typeTables := collectRangeConstraintBitwidths(stack.ConcreteSchema())
-	var maxHeight uint64
+	// Compute per-module N (next power of two of each module's height).
+	// Workaround: go-corset produces a root module ("") with non-zero height
+	// but zero columns. Such a module can never have any constraints, so
+	// including it would produce an empty board module that board.Compile
+	// cannot handle. Skip modules with no columns.
+	moduleN := make(map[string]int)
 	for i := range expanded.Width() {
-		maxHeight = max(maxHeight, uint64(expanded.Module(i).Height()))
+		mod := expanded.Module(i)
+		if mod.Width() == 0 {
+			continue
+		}
+		name := mod.Name().String()
+		h := uint64(mod.Height())
+		if h == 0 {
+			continue
+		}
+		moduleN[name] = int(ecc.NextPowerOfTwo(h))
 	}
-	for bw := range typeTables {
-		maxHeight = max(maxHeight, uint64(1)<<bw)
-	}
-	N := ecc.NextPowerOfTwo(maxHeight)
 
-	// Convert the go-corset trace to a flat loom trace, padding each column to N
-	// with its declared padding value.
+	// Convert the go-corset trace to a flat loom trace. Each module's columns
+	// are padded to that module's N with the column's declared padding value.
 	result := make(trace.Trace)
 	for i := range expanded.Width() {
 		mod := expanded.Module(i)
 		modName := mod.Name().String()
+		N := uint64(moduleN[modName])
 
 		for j := range mod.Width() {
 			col := mod.Column(j)
@@ -95,17 +103,35 @@ func ExpandTrace(
 	}
 
 	// Inject synthetic type-table columns for AIR-level range constraints.
-	for bw := range typeTables {
+	// Each type table lives in its own board module with N = 2^bitwidth.
+	for bw := range collectRangeConstraintBitwidths(stack.ConcreteSchema()) {
 		tableSize := uint64(1) << bw
+		N := int(ecc.NextPowerOfTwo(tableSize))
+		colName := typeTableColName(bw)
+		moduleName := typeTableModuleName(bw)
 		vals := make([]koalabear.Element, N)
 		for i := range tableSize {
 			vals[i].SetUint64(i)
 		}
-		// Remaining entries are zero (0 is always in [0, 2^n)).
-		result[TypeTableColName(bw)] = vals
+		// Padding rows beyond tableSize stay zero; 0 is always a valid value
+		// so it won't appear as a duplicate that breaks the lookup.
+		// More importantly, the table has exactly 2^bw distinct values filling
+		// rows 0..tableSize-1, with no extra padding since N == tableSize.
+		result[colName] = vals
+		moduleN[moduleName] = N
 	}
 
-	return result, int(N), nil
+	return result, moduleN, nil
+}
+
+// typeTableModuleName returns the board module name for a synthetic type table.
+func typeTableModuleName(bitwidth uint) string {
+	return fmt.Sprintf("__type_u%d", bitwidth)
+}
+
+// typeTableColName returns the column name within a synthetic type-table module.
+func typeTableColName(bitwidth uint) string {
+	return fmt.Sprintf("__type_u%d:V", bitwidth)
 }
 
 // collectRangeConstraintBitwidths scans the AIR schema for range constraints

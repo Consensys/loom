@@ -8,14 +8,27 @@ import (
 	"github.com/consensys/go-corset/pkg/schema"
 	corsetkoalabear "github.com/consensys/go-corset/pkg/util/field/koalabear"
 	"github.com/consensys/loom/arguments"
-	"github.com/consensys/loom/constraint"
+	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 )
 
-// ConstraintBuilderFromSchema builds a loom constraint.Builder from a preloaded AIR schema.
-// N is the trace length (must match the N used in TraceFromFile).
-func ConstraintBuilderFromSchema(airSchema schema.AnySchema[corsetkoalabear.Element], N int) (constraint.Builder, error) {
-	builder := constraint.NewBuilder(N, nil)
+// BuilderFromSchema builds a loom board.Builder from a preloaded AIR schema.
+// moduleN maps module names to their padded trace length (next power of two).
+func BuilderFromSchema(
+	airSchema schema.AnySchema[corsetkoalabear.Element],
+	moduleN map[string]int,
+) (board.Builder, error) {
+	builder := board.NewBuilder()
+
+	// Create a board.Module for every entry in moduleN. This covers both
+	// go-corset schema modules and synthetic type-table modules.
+	for name, n := range moduleN {
+		m := board.NewModule()
+		m.N = n
+		builder.AddModule(name, m)
+	}
+
+	// Translate each constraint.
 	for _, c := range airSchema.Constraints().Collect() {
 		var err error
 		switch vc := c.(type) {
@@ -26,76 +39,70 @@ func ConstraintBuilderFromSchema(airSchema schema.AnySchema[corsetkoalabear.Elem
 		case air.PermutationConstraint[corsetkoalabear.Element]:
 			err = translatePermutation(&builder, airSchema, vc)
 		case air.RangeConstraint[corsetkoalabear.Element]:
-			err = translateRangeConstraint(&builder, airSchema, vc)
+			err = translateRange(&builder, airSchema, vc)
 		default:
-			return constraint.Builder{}, fmt.Errorf("unknown AIR constraint type %T", c)
+			return board.Builder{}, fmt.Errorf("unknown AIR constraint type %T", c)
 		}
 		if err != nil {
-			return constraint.Builder{}, err
+			return board.Builder{}, err
 		}
 	}
+
 	return builder, nil
 }
 
-// translateVanishing maps a go-corset vanishing constraint to loom. Global
-// constraints (empty domain) become AssertZero. Local constraints at a specific
-// row become AssertEqualAt with a zero RHS; negative row indices count from the
-// end of the trace.
+// moduleName returns the string key for a go-corset module.
+func moduleName(airSchema schema.AnySchema[corsetkoalabear.Element], id schema.ModuleId) string {
+	return airSchema.Module(id).Name().String()
+}
+
 func translateVanishing(
-	builder *constraint.Builder,
+	builder *board.Builder,
 	airSchema schema.AnySchema[corsetkoalabear.Element],
 	vc air.VanishingConstraint[corsetkoalabear.Element],
 ) error {
 	inner := vc.Unwrap()
+	modName := moduleName(airSchema, inner.Context)
 	e, err := translateTerm(inner.Constraint.Term, inner.Context, airSchema)
 	if err != nil {
 		return fmt.Errorf("vanishing %q: %w", inner.Handle, err)
 	}
-	// An empty domain means the constraint must hold on every row.
 	if inner.Domain.IsEmpty() {
-		builder.AssertZero(e)
-		return nil
+		return builder.AssertZero(modName, e)
 	}
-	// A non-empty domain pins the constraint to one row. Negative indices are
-	// relative to the end of the trace (e.g. -1 is the last row).
 	row := inner.Domain.Unwrap()
 	if row < 0 {
-		row = builder.N + row
+		m := builder.Modules[modName]
+		row = m.N + row
 	}
-	builder.AssertEqualAt(e, expr.Const(koalabear.Element{}), row)
-	return nil
+	return builder.AssertEqualAt(modName, e, expr.Const(koalabear.Element{}), row)
 }
 
-// translateLookup maps a go-corset lookup constraint to loom's LookupTuple.
-// Only constraints with exactly one source vector and one target vector are
-// supported; selector-gated vectors are not supported.
 func translateLookup(
-	builder *constraint.Builder,
+	builder *board.Builder,
 	airSchema schema.AnySchema[corsetkoalabear.Element],
 	lc air.LookupConstraint[corsetkoalabear.Element],
 ) error {
 	inner := lc.Unwrap()
-	// go-corset allows multiple source/target vector pairs for OR-style lookups;
-	// loom's LookupTuple only expresses the single-pair case.
 	if len(inner.Sources) != 1 || len(inner.Targets) != 1 {
 		return fmt.Errorf("lookup %q: only single source/target vector supported (got %d sources, %d targets)",
 			inner.Handle, len(inner.Sources), len(inner.Targets))
 	}
 	src := inner.Sources[0]
 	tgt := inner.Targets[0]
-	// Selectors filter which rows participate in the lookup; there is no
-	// equivalent in loom's LookupTuple.
 	if src.HasSelector() || tgt.HasSelector() {
 		return fmt.Errorf("lookup %q: selector-gated vectors are not supported", inner.Handle)
 	}
-	// Each vector holds one column access per element of the row-tuple.
-	S := make([]expr.Expr, src.Len())
+	srcMod := moduleName(airSchema, src.Module)
+	tgtMod := moduleName(airSchema, tgt.Module)
+
+	S := make([]board.Input, src.Len())
 	for i := range src.Len() {
-		S[i] = colAccessExpr(airSchema, src.Module, src.Ith(i))
+		S[i] = board.Input{Module: srcMod, In: colAccessExpr(airSchema, src.Module, src.Ith(i))}
 	}
-	T := make([]expr.Expr, tgt.Len())
+	T := make([]board.Input, tgt.Len())
 	for i := range tgt.Len() {
-		T[i] = colAccessExpr(airSchema, tgt.Module, tgt.Ith(i))
+		T[i] = board.Input{Module: tgtMod, In: colAccessExpr(airSchema, tgt.Module, tgt.Ith(i))}
 	}
 	if err := arguments.LookupTuple(builder, S, T); err != nil {
 		return fmt.Errorf("lookup %q: %w", inner.Handle, err)
@@ -103,18 +110,15 @@ func translateLookup(
 	return nil
 }
 
-// translatePermutation maps a go-corset permutation constraint to loom's
-// PermutationTuple, treating the full set of source and target columns as a
-// single tuple.
 func translatePermutation(
-	builder *constraint.Builder,
+	builder *board.Builder,
 	airSchema schema.AnySchema[corsetkoalabear.Element],
 	pc air.PermutationConstraint[corsetkoalabear.Element],
 ) error {
 	inner := pc.Unwrap()
-	// All source and target columns live in the same module.
+	modName := moduleName(airSchema, inner.Context)
+
 	mod := airSchema.Module(inner.Context)
-	// Resolve column IDs to qualified name expressions.
 	sources := make([]expr.Expr, len(inner.Sources))
 	for i, id := range inner.Sources {
 		sources[i] = expr.Col(mod.Register(id).QualifiedName(mod))
@@ -123,54 +127,37 @@ func translatePermutation(
 	for i, id := range inner.Targets {
 		targets[i] = expr.Col(mod.Register(id).QualifiedName(mod))
 	}
-	// Wrap as a single tuple so PermutationTuple checks the full row-vector.
-	if err := arguments.PermutationTuple(builder, [][]expr.Expr{sources}, [][]expr.Expr{targets}); err != nil {
+	if err := arguments.PermutationTupleWithinModule(builder, modName, [][]expr.Expr{sources}, [][]expr.Expr{targets}); err != nil {
 		return fmt.Errorf("permutation %q: %w", inner.Handle, err)
 	}
 	return nil
 }
 
-// TypeTableColName returns the synthetic column name for a type table of the
-// given bitwidth, e.g. "__type_u8". This must match between constraint and trace
-// generation.
-func TypeTableColName(bitwidth uint) string {
-	return fmt.Sprintf("__type_u%d", bitwidth)
-}
-
-// AddTypeTableLookup registers a lookup argument constraining sourceCol to lie
-// in [0, 2^bitwidth). The target column is the synthetic type-table column
-// "__type_u{bitwidth}", which must be present in the trace.
-func AddTypeTableLookup(builder *constraint.Builder, sourceCol string, bitwidth uint) error {
-	S := []expr.Expr{expr.Col(sourceCol)}
-	T := []expr.Expr{expr.Col(TypeTableColName(bitwidth))}
-	return arguments.LookupTuple(builder, S, T)
-}
-
-// translateRangeConstraint converts an AIR range constraint into one or more
-// lookup arguments against synthetic type-table columns.
-func translateRangeConstraint(
-	builder *constraint.Builder,
+func translateRange(
+	builder *board.Builder,
 	airSchema schema.AnySchema[corsetkoalabear.Element],
 	rc air.RangeConstraint[corsetkoalabear.Element],
 ) error {
 	inner := rc.Unwrap()
+	srcMod := moduleName(airSchema, inner.Context)
+	mod := airSchema.Module(inner.Context)
 	for i, source := range inner.Sources {
 		bw := inner.Bitwidths[i]
-		mod := airSchema.Module(inner.Context)
-		name := mod.Register(source.Register()).QualifiedName(mod)
 		if source.RelativeShift() != 0 {
 			return fmt.Errorf("range constraint %q: shifted source not supported", inner.Handle)
 		}
-		if err := AddTypeTableLookup(builder, name, bw); err != nil {
+		colName := mod.Register(source.Register()).QualifiedName(mod)
+		tgtMod := typeTableModuleName(bw)
+		tgtCol := typeTableColName(bw)
+		S := []board.Input{{Module: srcMod, In: expr.Col(colName)}}
+		T := []board.Input{{Module: tgtMod, In: expr.Col(tgtCol)}}
+		if err := arguments.LookupTuple(builder, S, T); err != nil {
 			return fmt.Errorf("range constraint %q (u%d): %w", inner.Handle, bw, err)
 		}
 	}
 	return nil
 }
 
-// translateTerm recursively converts a go-corset AIR term to a loom expr.Expr.
-// Column accesses are resolved to qualified names ("module:col" or "col" for
-// the root module). Shifted accesses become expr.Rot.
 func translateTerm(
 	t air.Term[corsetkoalabear.Element],
 	moduleId schema.ModuleId,
@@ -178,29 +165,22 @@ func translateTerm(
 ) (expr.Expr, error) {
 	switch v := t.(type) {
 	case *air.Add[corsetkoalabear.Element]:
-		// Identity for empty sums is zero.
 		return foldTerms(v.Args, moduleId, airSchema,
 			func(a, b expr.Expr) expr.Expr { return a.Add(b) },
 			koalabear.Element{})
 	case *air.Sub[corsetkoalabear.Element]:
-		// go-corset Sub semantics: Args[0] - Args[1] - Args[2] - ...
-		// Identity for an empty difference is zero.
 		return foldTerms(v.Args, moduleId, airSchema,
 			func(a, b expr.Expr) expr.Expr { return a.Sub(b) },
 			koalabear.Element{})
 	case *air.Mul[corsetkoalabear.Element]:
-		// Identity for empty products is one.
 		var one koalabear.Element
 		one.SetOne()
 		return foldTerms(v.Args, moduleId, airSchema,
 			func(a, b expr.Expr) expr.Expr { return a.Mul(b) },
 			one)
 	case *air.Constant[corsetkoalabear.Element]:
-		// go-corset uses its own koalabear type; convert to gnark-crypto's.
 		return expr.Const(toKoalabear(v.Value)), nil
 	case *air.ColumnAccess[corsetkoalabear.Element]:
-		// Resolve the column ID to a qualified name, then emit Col or Rot
-		// depending on whether there is a row shift.
 		mod := airSchema.Module(moduleId)
 		name := mod.Register(v.Register()).QualifiedName(mod)
 		if v.RelativeShift() == 0 {
@@ -212,8 +192,6 @@ func translateTerm(
 	}
 }
 
-// foldTerms translates each argument in args and combines them left-to-right
-// using combine. Returns expr.Const(identity) for an empty argument list.
 func foldTerms(
 	args []air.Term[corsetkoalabear.Element],
 	moduleId schema.ModuleId,
@@ -238,9 +216,6 @@ func foldTerms(
 	return result, nil
 }
 
-// colAccessExpr converts a go-corset ColumnAccess to a loom leaf expression.
-// The column name is qualified with its module ("module:col" or "col" for the
-// root module). A non-zero shift produces expr.Rot; zero shift produces expr.Col.
 func colAccessExpr(
 	airSchema schema.AnySchema[corsetkoalabear.Element],
 	moduleId schema.ModuleId,

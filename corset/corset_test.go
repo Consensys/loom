@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/consensys/loom"
+	"github.com/consensys/loom/board"
+	"github.com/consensys/loom/prover"
+	"github.com/consensys/loom/verifier"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,9 +24,6 @@ func TestProve(t *testing.T) {
 
 	for _, zkasmPath := range zkasmFiles {
 		name := filepath.Base(zkasmPath)
-		if name != "inc.zkasm" {
-			continue
-		}
 
 		t.Run(name, func(t *testing.T) {
 			ioPath := ioForZkasm(zkasmPath)
@@ -33,18 +32,20 @@ func TestProve(t *testing.T) {
 
 			stack := CompileSchema(zkasmPath)
 
-			tr, N, err := ExpandTrace(stack, inputJSON)
+			tr, moduleN, err := ExpandTrace(stack, inputJSON)
 			require.NoError(t, err)
 
-			builder, err := ConstraintBuilderFromSchema(stack.ConcreteSchema(), N)
+			builder, err := BuilderFromSchema(stack.ConcreteSchema(), moduleN)
 			require.NoError(t, err)
 
-			program := builder.Compile(nil)
-
-			pf, err := loom.Prove(program, tr, nil, 1)
+			program, err := board.Compile(&builder)
 			require.NoError(t, err)
 
-			require.NoError(t, loom.Verify(program, &pf, nil, 1))
+			pf, err := prover.Prove(tr, nil, program, prover.EmulateFS())
+			require.NoError(t, err)
+
+			require.NoError(t, verifier.Verify(nil, program, pf))
 		})
+		break
 	}
 }
