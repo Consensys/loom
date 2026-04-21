@@ -8,27 +8,46 @@ import (
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/prover"
+	"github.com/consensys/loom/viz"
 )
 
-func TestVerifier(t *testing.T) {
-
-	// build the modules
-	builder := board.NewBuilder()
-
+func prepareFibonacciModule(t *testing.T, N int) board.Module {
 	fibonacciModule := board.NewModule()
-	rangeModule := board.NewModule()
-
-	N := 4
 	fibonacciModule.N = N
-	rangeModule.N = 2 * N
-
 	C := expr.Rot("A", 1).Sub(expr.Col("B"))
 	fibonacciModule.AssertZeroExceptAt(C, N-1)
 	C = expr.Rot("B", 1).Sub(expr.Col("C"))
 	fibonacciModule.AssertZeroExceptAt(C, N-1)
 	C = expr.Col("C").Sub(expr.Col("A")).Sub(expr.Col("B"))
 	fibonacciModule.AssertZero(C)
+	return fibonacciModule
+}
 
+func perparePlonkModule(t *testing.T, N int) board.Module {
+	plonkModule := board.NewModule()
+	plonkModule.N = N
+
+	qll := expr.Col(ID_Ql).Mul(expr.Col(ID_L))
+	qrr := expr.Col(ID_Qr).Mul(expr.Col(ID_R))
+	qmlr := expr.Col(ID_Qm).Mul(expr.Col(ID_L)).Mul(expr.Col(ID_R))
+	qoo := expr.Col(ID_Qo).Mul(expr.Col(ID_O))
+	qk := expr.Col(ID_Qk)
+	vanishingRelation := qll.Add(qrr).Add(qmlr).Add(qoo).Add(qk)
+	plonkModule.AssertZero(vanishingRelation)
+	return plonkModule
+}
+
+func TestVerifierFibo(t *testing.T) {
+
+	// build the modules
+	builder := board.NewBuilder()
+
+	rangeModule := board.NewModule()
+
+	N := 4
+	rangeModule.N = 2 * N
+
+	fibonacciModule := prepareFibonacciModule(t, N)
 	builder.AddModule("fibonacci", fibonacciModule)
 	builder.AddModule("range", rangeModule)
 
@@ -71,22 +90,115 @@ func TestVerifier(t *testing.T) {
 	}
 }
 
-// func TestPlonk(t *testing.T) {
+func TestVerifierPlonk(t *testing.T) {
 
-// 	// build the plonk module
+	builder := board.NewBuilder()
 
-// 	plonkModule := board.NewModule()
+	// fetch the plonk trace
+	N := 16
+	tr, sigma, size, err := getPlonkTrace(N)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-// 	N := 2024
-// 	plonkModule.N = N
+	// build the plonk module
+	plonkModule := perparePlonkModule(t, size)
+	builder.AddModule("plonk", plonkModule)
 
-// 	qll := expr.Col(ID_Ql).Mul(expr.Col(ID_L))
-// 	qrr := expr.Col(ID_Qr).Mul(expr.Col(ID_R))
-// 	qmlr := expr.Col(ID_Qm).Mul(expr.Col(ID_L)).Mul(expr.Col(ID_R))
-// 	qoo := expr.Col(ID_Qo).Mul(expr.Col(ID_O))
-// 	qk := expr.Col(ID_Qk)
-// 	vanishingRelation := qll.Add(qrr).Add(qmlr).Add(qoo).Add(qk)
+	lro := []expr.Expr{expr.Col(ID_L), expr.Col(ID_R), expr.Col(ID_O)}
+	sigmaGen := board.NewPermutationGen(sigma, "S")
+	err = arguments.CopyConstraint(&builder, "plonk", lro, sigmaGen)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-// 	sigmaName := "S"
+	program, err := board.Compile(&builder)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-// }
+	proof, err := prover.Prove(tr, nil, program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viz.ViewDag(program, "dag_plonk.html")
+
+	err = Verify(nil, program, proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFiboPlonk(t *testing.T) {
+
+	// fetch the plonk trace
+	NPlonk := 16
+	tr, sigma, size, err := getPlonkTrace(NPlonk)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// build the modules
+	plonkModule := perparePlonkModule(t, size)
+	NFibo := 4
+	fibonacciModule := prepareFibonacciModule(t, NFibo)
+	rangeModule := board.NewModule()
+	rangeModule.N = 2 * NFibo
+
+	// build the arguments
+	builder := board.NewBuilder()
+	builder.AddModule("plonk", plonkModule)
+	builder.AddModule("fibonacci", fibonacciModule)
+	builder.AddModule("range", rangeModule)
+
+	// 1 - lookup of fibo's columns
+	T := board.Input{
+		Module: "range",
+		In:     expr.Col("Lookup"),
+	}
+	columnsFibonacci := []string{"A", "B", "C"}
+	for _, c := range columnsFibonacci {
+		S := board.Input{
+			Module: "fibonacci",
+			In:     expr.Col(c),
+		}
+		err := arguments.Lookup(&builder, S, T)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 2 - plonk copy constraint
+	lro := []expr.Expr{expr.Col(ID_L), expr.Col(ID_R), expr.Col(ID_O)}
+	sigmaGen := board.NewPermutationGen(sigma, "S")
+	err = arguments.CopyConstraint(&builder, "plonk", lro, sigmaGen)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// compile
+	program, err := board.Compile(&builder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viz.ViewDag(program, "mixed_dag.html")
+
+	// load traces for range and TestFibo
+	var a, b koalabear.Element
+	b.SetOne()
+	traceFrob := prover.TraceFibonacci(NFibo, a, b)
+	traceRange := prover.TraceRange(NFibo)
+	fullTrace := prover.MergeTrace(traceFrob, traceRange, tr)
+
+	// prover, verify
+	proof, err := prover.Prove(fullTrace, nil, program)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Verify(nil, program, proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+}
