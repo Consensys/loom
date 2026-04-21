@@ -145,10 +145,59 @@ func PermutationTupleWithinModule(builder *board.Builder, module string, A, B []
 	return PermutationWithinModule(builder, module, foldedA, foldedB)
 }
 
-// func FixedPermutationWithinModule(builder *board.Builder, module string, A, B [][]expr.Expr, S board.PermutationGen) error {
+// CopyConstraint copy constraint argument from plonk, ensuring that (A[0] || A[1] || .. ) is invariant when
+// permuted by S.
+// Syntactic sugar for FixedPermutationWithinModule
+func CopyConstraint(builder *board.Builder, module string, A []expr.Expr, S board.PermutationGen) error {
 
-// 	// 1 - register the permutation in the module
+	// 1 - register the permutation in the module
+	m := builder.Modules[module]
+	if m.N*len(A) != len(S.S) {
+		return fmt.Errorf("m.N*len(A) must be equal to len(S.S), got %d, %d, %d", m.N, len(A), len(S.S))
+	}
+	m.GenCol = append(m.GenCol, S)
 
-// 	// 2 -
+	// 2 - add the support of the permutation + the interpolation of the permutation to A and B
+	AID := make([][]expr.Expr, len(A))
+	APermuted := make([][]expr.Expr, len(A))
+	for i := 0; i < len(A); i++ {
+		AID[i] = make([]expr.Expr, 2)
+		APermuted[i] = make([]expr.Expr, 2)
+		AID[i][0] = A[i]
+		AID[i][1] = expr.Col(m.NameIthIDSupport(i))
+		APermuted[i][0] = A[i]
+		APermuted[i][1] = expr.Col(S.NameIthPermutationChunk(i))
+	}
 
-// }
+	// 3 - the case is now reduced to PermutationTupleWithinModule
+	return PermutationTupleWithinModule(builder, module, AID, APermuted)
+}
+
+// FixedPermutationWithinModule
+func FixedPermutationWithinModule(builder *board.Builder, module string, A, B [][]expr.Expr, S board.PermutationGen) error {
+
+	// 1 - register the permutation in the module
+	m := builder.Modules[module]
+	if m.N*len(A) != len(S.S) {
+		return fmt.Errorf("m.N*len(A) must be equal to len(S.S), got %d, %d, %d", m.N, len(A), len(S.S))
+	}
+	m.GenCol = append(m.GenCol, S)
+
+	// 2 - add the support of the permutation + the interpolation of the permutation to A and B
+	APrime := make([][]expr.Expr, len(A))
+	BPrime := make([][]expr.Expr, len(B))
+	if len(A) != len(B) {
+		return fmt.Errorf("len(A) must equal len(B), got respectively %d and %d", len(A), len(B))
+	}
+	for i := 0; i < len(A); i++ {
+		APrime[i] = make([]expr.Expr, len(A[i])+1)
+		BPrime[i] = make([]expr.Expr, len(B[i])+1)
+		copy(APrime[i], A[i])
+		copy(BPrime[i], B[i])
+		APrime[i][len(A[i])] = expr.Col(m.NameIthIDSupport(i))
+		BPrime[i][len(B[i])] = expr.Col(S.NameIthPermutationChunk(i))
+	}
+
+	// 3 - the case is now reduced to PermutationTupleWithinModule
+	return PermutationTupleWithinModule(builder, module, APrime, BPrime)
+}

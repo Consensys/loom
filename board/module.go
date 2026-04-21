@@ -34,21 +34,34 @@ type CompiledModule struct {
 }
 
 type Gen interface {
-	Gen(t trace.Trace, m *CompiledModule)
+	Gen(t trace.Trace, m *CompiledModule) error
 }
 
 type LagrangeGen struct {
 	i, N int
 }
 
-func (p LagrangeGen) Gen(t trace.Trace, m *CompiledModule) {
+func (p LagrangeGen) Gen(t trace.Trace, m *CompiledModule) error {
 	res := make([]koalabear.Element, p.N)
 	res[p.i].SetOne()
 	name := constants.LagrangeName(p.i, p.N)
 	if _, ok := t[name]; ok {
-		return
+		return nil
 	}
 	t[name] = res
+	return nil
+}
+
+// NameIthIDSupport returns the name of the i-th chunk of the support of a permutation
+// (common to every permutation within a module)
+func (m *Module) NameIthIDSupport(i int) string {
+	return fmt.Sprintf("ID_%d_%d", i, m.N)
+}
+
+// NameIthIDSupport returns the name of the i-th chunk of the support of a permutation
+// (common to every permutation within a CompiledModule)
+func (m *CompiledModule) NameIthIDSupport(i int) string {
+	return fmt.Sprintf("ID_%d_%d", i, m.N)
 }
 
 func (m *Module) LagrangeCol(i int) expr.Expr {
@@ -92,7 +105,7 @@ type SelectorGen struct {
 	Name string
 }
 
-func (s SelectorGen) Gen(t trace.Trace, m *Module) error {
+func (s SelectorGen) Gen(t trace.Trace, m *CompiledModule) error {
 	res := make([]koalabear.Element, m.N)
 	for _, idx := range s.Idx {
 		res[idx].SetOne()
@@ -109,7 +122,18 @@ type PermutationGen struct {
 	Name string
 }
 
-func (p PermutationGen) Gen(t trace.Trace, m *Module) error {
+func (p PermutationGen) NameIthPermutationChunk(i int) string {
+	return fmt.Sprintf("%s_%d", p.Name, i)
+}
+
+func NewPermutationGen(S []int64, name string) PermutationGen {
+	return PermutationGen{
+		S:    S,
+		Name: name,
+	}
+}
+
+func (p PermutationGen) Gen(t trace.Trace, m *CompiledModule) error {
 
 	// 1 - gen permutation support
 	if len(p.S)%m.N != 0 {
@@ -121,7 +145,7 @@ func (p PermutationGen) Gen(t trace.Trace, m *Module) error {
 		return err
 	}
 	for i := 0; i < nbChunks; i++ {
-		err := trace.RegisterColumn(t, fmt.Sprintf("ID_%d_%d", i, m.N), support[i])
+		err := trace.RegisterColumn(t, m.NameIthIDSupport(i), support[i])
 		if err != nil {
 			return err
 		}
@@ -130,7 +154,7 @@ func (p PermutationGen) Gen(t trace.Trace, m *Module) error {
 	// 2 - register permutation columns
 	perm := generatePermutation(support, p.S)
 	for i := 0; i < nbChunks; i++ {
-		err := trace.RegisterColumn(t, fmt.Sprintf("%s_%d", p.Name, i), perm[i])
+		err := trace.RegisterColumn(t, p.NameIthPermutationChunk(i), perm[i])
 		if err != nil {
 			return err
 		}
