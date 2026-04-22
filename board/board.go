@@ -109,6 +109,7 @@ func (b *Builder) AddMakeEntriesPublicStep(module string, E expr.Expr, selector,
 		Step: MakeEntriesPublicStep,
 	}
 	b.Steps = append(b.Steps, pvStep)
+
 	genSel := SelectorGen{Idx: idx, Name: selector}
 	m.GenCol = append(m.GenCol, genSel)
 	b.Modules[module] = m

@@ -6,3 +6,4 @@ playground/
 *.csv
 .DS_Store
 .idea/
+*.csv
