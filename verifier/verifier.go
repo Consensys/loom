@@ -10,19 +10,23 @@ import (
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
 )
+
+type PublicKey = merkle.Tree
 
 type verifierRunTime struct {
 	proof        proof.Proof
 	publicInputs map[string]proof.PublicInput
 	program      board.Program
 	zeta         koalabear.Element
+	setup        *PublicKey
 	fs           *fiatshamir.Transcript
 }
 
-func newVerifierRuntime(program board.Program, publicInputs map[string]proof.PublicInput, proof proof.Proof) verifierRunTime {
+func newVerifierRuntime(program board.Program, setup *PublicKey, publicInputs map[string]proof.PublicInput, proof proof.Proof) verifierRunTime {
 
 	res := verifierRunTime{
 		proof:        proof,
@@ -36,6 +40,10 @@ func newVerifierRuntime(program board.Program, publicInputs map[string]proof.Pub
 		res.fs.NewChallenge(constants.CanonicalChallengeName(i))
 	}
 	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
+
+	if setup != nil {
+		res.fs.Bind(constants.CanonicalChallengeName(0), res.setup.Root())
+	}
 
 	return res
 }
@@ -161,9 +169,9 @@ func (vr *verifierRunTime) checkAIRRelations() error {
 	return nil
 }
 
-func Verify(publicInputs map[string]proof.PublicInput, program board.Program, proof proof.Proof) error {
+func Verify(publicInputs map[string]proof.PublicInput, setup *PublicKey, program board.Program, proof proof.Proof) error {
 
-	vr := newVerifierRuntime(program, publicInputs, proof)
+	vr := newVerifierRuntime(program, setup, publicInputs, proof)
 
 	// 1 - derive the challenges, and populate proof.ValuesAtZeta with those challenges
 	err := vr.deriveChallenges()

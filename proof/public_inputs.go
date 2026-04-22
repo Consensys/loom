@@ -1,8 +1,6 @@
 package proof
 
-import (
-	"github.com/consensys/gnark-crypto/field/koalabear"
-)
+import "github.com/consensys/gnark-crypto/field/koalabear"
 
 type PublicEntry struct {
 	Idx   int

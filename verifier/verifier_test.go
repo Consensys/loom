@@ -11,7 +11,7 @@ import (
 	"github.com/consensys/loom/viz"
 )
 
-func prepareFibonacciModule(t *testing.T, N int) board.Module {
+func prepareFibonacciModule(N int) board.Module {
 	fibonacciModule := board.NewModule()
 	fibonacciModule.N = N
 	C := expr.Rot("A", 1).Sub(expr.Col("B"))
@@ -23,7 +23,7 @@ func prepareFibonacciModule(t *testing.T, N int) board.Module {
 	return fibonacciModule
 }
 
-func perparePlonkModule(t *testing.T, N int) board.Module {
+func perparePlonkModule(N int) board.Module {
 	plonkModule := board.NewModule()
 	plonkModule.N = N
 
@@ -47,7 +47,7 @@ func TestVerifierFibo(t *testing.T) {
 	N := 4
 	rangeModule.N = 2 * N
 
-	fibonacciModule := prepareFibonacciModule(t, N)
+	fibonacciModule := prepareFibonacciModule(N)
 	builder.AddModule("fibonacci", fibonacciModule)
 	builder.AddModule("range", rangeModule)
 
@@ -79,12 +79,12 @@ func TestVerifierFibo(t *testing.T) {
 	traceRange := prover.TraceRange(N)
 	tr := prover.MergeTrace(traceFrob, traceRange)
 
-	proof, err := prover.Prove(tr, nil, program)
+	proof, err := prover.Prove(tr, nil, nil, program)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = Verify(nil, program, proof)
+	err = Verify(nil, nil, program, proof)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestVerifierPlonk(t *testing.T) {
 	}
 
 	// build the plonk module
-	plonkModule := perparePlonkModule(t, size)
+	plonkModule := perparePlonkModule(size)
 	builder.AddModule("plonk", plonkModule)
 
 	lro := []expr.Expr{expr.Col(ID_L), expr.Col(ID_R), expr.Col(ID_O)}
@@ -117,13 +117,13 @@ func TestVerifierPlonk(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	proof, err := prover.Prove(tr, nil, program)
+	proof, err := prover.Prove(tr, nil, nil, program)
 	if err != nil {
 		t.Fatal(err)
 	}
 	viz.ViewDag(program, "dag_plonk.html")
 
-	err = Verify(nil, program, proof)
+	err = Verify(nil, nil, program, proof)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,9 +139,9 @@ func TestFiboPlonk(t *testing.T) {
 	}
 
 	// build the modules
-	plonkModule := perparePlonkModule(t, size)
+	plonkModule := perparePlonkModule(size)
 	NFibo := 4
-	fibonacciModule := prepareFibonacciModule(t, NFibo)
+	fibonacciModule := prepareFibonacciModule(NFibo)
 	rangeModule := board.NewModule()
 	rangeModule.N = 2 * NFibo
 
@@ -191,12 +191,12 @@ func TestFiboPlonk(t *testing.T) {
 	fullTrace := prover.MergeTrace(traceFrob, traceRange, tr)
 
 	// prover, verify
-	proof, err := prover.Prove(fullTrace, nil, program)
+	proof, err := prover.Prove(fullTrace, nil, nil, program)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = Verify(nil, program, proof)
+	err = Verify(nil, nil, program, proof)
 	if err != nil {
 		t.Fatal(err)
 	}

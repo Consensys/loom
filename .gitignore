@@ -5,3 +5,5 @@ playground/
 *.tmp
 .DS_Store
 .idea/
+*.csv
+.DS_Store
