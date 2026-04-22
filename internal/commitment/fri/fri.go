@@ -64,12 +64,11 @@ type Verifier struct {
 // Committer is a FRI-backed commitment scheme. It computes the first enlarged-domain oracle commitment and
 // stores the codeword/Merkle state required for later DEEP-FRI openings.
 type Committer struct {
-	LeafHasher       merkle.LeafHasher
-	NodeHasher       merkle.NodeHasher
-	Transcript       *fiatshamir.Transcript
-	Config           Config
-	CommittedOracles []committedOracle
-	commitments      []Commitment
+	leafHasher       merkle.LeafHasher
+	nodeHasher       merkle.NodeHasher
+	transcript       *fiatshamir.Transcript
+	config           Config
+	committedOracles []committedOracle
 	polynomials      map[string]int
 	openRequests     []openRequest
 }
@@ -81,12 +80,11 @@ func NewCommitter(transcript *fiatshamir.Transcript, config Config, leafHasher m
 	}
 	config.BlowupFactor = blowup
 	return Committer{
-		LeafHasher:       leafHasher,
-		NodeHasher:       nodeHasher,
-		Transcript:       transcript,
-		Config:           config,
-		CommittedOracles: make([]committedOracle, 0),
-		commitments:      make([]Commitment, 0),
+		leafHasher:       leafHasher,
+		nodeHasher:       nodeHasher,
+		transcript:       transcript,
+		config:           config,
+		committedOracles: make([]committedOracle, 0),
 		polynomials:      make(map[string]int),
 		openRequests:     make([]openRequest, 0),
 	}
@@ -100,16 +98,8 @@ func NewVerifier(transcript *fiatshamir.Transcript) Verifier {
 // tree over the interleaved codewords.
 func (c *Committer) Commit(challengeName string, polys map[string]poly.Polynomial) error {
 	if len(polys) == 0 {
-		empty := Commitment{
-			Root:               nil,
-			BaseDomainSize:     0,
-			CodewordDomainSize: 0,
-			NumPolynomials:     0,
-			PolynomialSizes:    nil,
-		}
-		c.commitments = append(c.commitments, empty)
-		if c.Transcript != nil {
-			if err := c.Transcript.Bind(challengeName, nil); err != nil {
+		if c.transcript != nil {
+			if err := c.transcript.Bind(challengeName, nil); err != nil {
 				return err
 			}
 		}
@@ -138,14 +128,14 @@ func (c *Committer) Commit(challengeName string, polys map[string]poly.Polynomia
 			maxBaseDomain = size
 		}
 	}
-	codewordDomainSize := uint64(c.Config.BlowupFactor) * maxBaseDomain
+	codewordDomainSize := uint64(c.config.BlowupFactor) * maxBaseDomain
 	if codewordDomainSize == 0 {
 		return fmt.Errorf("%w: zero codeword domain", ErrInvalidPolynomial)
 	}
 	encoder := reedsolomon.Encoder{Domain: fft.NewDomain(codewordDomainSize)}
 
 	codewords := c.encode(orderedPolys, &encoder)
-	tree, err := buildCodewordMerkleTree(codewords, c.LeafHasher, c.NodeHasher)
+	tree, err := buildCodewordMerkleTree(codewords, c.leafHasher, c.nodeHasher)
 	if err != nil {
 		return err
 	}
@@ -165,19 +155,18 @@ func (c *Committer) Commit(challengeName string, polys map[string]poly.Polynomia
 	}
 	meta.BaseDomainSize = maxBaseDomain
 
-	oracleI := len(c.CommittedOracles)
+	oracleI := len(c.committedOracles)
 	codewordsByName := make(map[string]poly.Polynomial, len(names))
 	for i, name := range names {
 		codewordsByName[name] = codewords[i]
 	}
-	c.CommittedOracles = append(c.CommittedOracles, committedOracle{
+	c.committedOracles = append(c.committedOracles, committedOracle{
 		Commitment: meta,
 		Codewords:  codewordsByName,
 		Tree:       tree,
 	})
-	c.commitments = append(c.commitments, meta)
-	if c.Transcript != nil {
-		if err := c.Transcript.Bind(challengeName, meta.Root); err != nil {
+	if c.transcript != nil {
+		if err := c.transcript.Bind(challengeName, meta.Root); err != nil {
 			return err
 		}
 	}
@@ -191,7 +180,7 @@ func (c *Committer) Commit(challengeName string, polys map[string]poly.Polynomia
 // Commitment returns the commitment metadata for the oracle containing name.
 func (c *Committer) Commitment(name string) Commitment {
 	oracleI := c.polynomials[name]
-	return c.CommittedOracles[oracleI].Commitment
+	return c.committedOracles[oracleI].Commitment
 }
 
 // Open registers a request to open the named polynomial at point.
@@ -206,8 +195,10 @@ func (c *Committer) Open(name string, point koalabear.Element) error {
 
 // Prove produces an OpeningProof covering all registered Open requests.
 func (c *Committer) Prove() (OpeningProof, error) {
-	commitments := make([]Commitment, len(c.commitments))
-	copy(commitments, c.commitments)
+	commitments := make([]Commitment, len(c.committedOracles))
+	for i, oracle := range c.committedOracles {
+		commitments[i] = oracle.Commitment
+	}
 	return OpeningProof{Commitments: commitments}, nil
 }
 
