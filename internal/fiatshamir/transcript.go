@@ -63,7 +63,6 @@ func (l *ProtocolLayout) validate() error {
 
 type ProtocolLayoutIterator struct {
 	stack       []protocolLayoutIteratorFrame
-	current     protocolLayoutIteratorFrame
 	currentName string
 }
 
@@ -77,52 +76,62 @@ func (f *protocolLayoutIteratorFrame) childI() int {
 	return f.challengeI + f.subProtocolI
 }
 
+func (i *ProtocolLayoutIterator) current() *protocolLayoutIteratorFrame {
+	return &i.stack[len(i.stack)-1]
+}
+
 func (i *ProtocolLayoutIterator) BeginSubProtocol(name string) error {
-	expectedSubName := i.currentName + iteratorDelimiter + name
-	if i.current.childI() >= len(i.current.layout.ChildTypes) {
+	current := i.current()
+	childI := current.childI()
+	expectedSubName := i.currentName + iteratorDelimiter + childName(name, childI)
+	if childI >= len(current.layout.ChildTypes) {
 		return fmt.Errorf("unexpected subprotocol %s; no protocol actions left", expectedSubName)
 	}
-	if i.current.layout.ChildTypes[i.current.childI()] != ProtocolActionTypeSubProtocol {
-		return fmt.Errorf("unexpected subprotocol %s; expected challenge %s", expectedSubName, i.current.layout.Names[i.current.childI()])
+	if current.layout.ChildTypes[childI] != ProtocolActionTypeSubProtocol {
+		return fmt.Errorf("unexpected subprotocol %s; expected challenge %s", expectedSubName, childName(current.layout.Names[childI], childI))
 	}
-	parent := i.current
+	if current.layout.Names[childI] != name {
+		return fmt.Errorf("unexpected subprotocol %s; expected %s", expectedSubName, childName(current.layout.Names[childI], childI))
+	}
 	next := protocolLayoutIteratorFrame{
-		layout: &parent.layout.SubProtocols[parent.subProtocolI],
+		layout: &current.layout.SubProtocols[current.subProtocolI],
 	}
-	parent.subProtocolI++
-	i.stack = append(i.stack, parent)
-	i.current = next
+	current.subProtocolI++
+	i.stack = append(i.stack, next)
 	i.currentName = expectedSubName
 	return nil
 }
 
 func (i *ProtocolLayoutIterator) EndSubProtocol() error {
-	if i.current.childI() != len(i.current.layout.ChildTypes) {
+	current := i.current()
+	if current.childI() != len(current.layout.ChildTypes) {
 		return fmt.Errorf("unexpected end of subprotocol %s", i.currentName)
 	}
-	if len(i.stack) == 0 {
+	if len(i.stack) <= 1 {
 		return errors.New("cannot end subprotocol; no subprotocol is open")
 	}
 	i.currentName = i.currentName[:strings.LastIndex(i.currentName, iteratorDelimiter)]
-	i.current = i.stack[len(i.stack)-1]
 	i.stack = i.stack[:len(i.stack)-1]
 	return nil
 }
 
 func (i *ProtocolLayoutIterator) Challenge(name string, nbBindings int) error {
-	if i.current.childI() >= len(i.current.layout.ChildTypes) {
-		return fmt.Errorf("unexpected challenge %s%s%s; no protocol actions left", i.currentName, iteratorDelimiter, name)
+	current := i.current()
+	childI := current.childI()
+	fullName := childName(name, childI)
+	if childI >= len(current.layout.ChildTypes) {
+		return fmt.Errorf("unexpected challenge %s%s%s; no protocol actions left", i.currentName, iteratorDelimiter, fullName)
 	}
-	if i.current.layout.ChildTypes[i.current.childI()] != ProtocolActionTypeChallenge {
-		return fmt.Errorf("unexpected challenge %s%s%s; expected subprotocol %s", i.currentName, iteratorDelimiter, name, i.current.layout.Names[i.current.childI()])
+	if current.layout.ChildTypes[childI] != ProtocolActionTypeChallenge {
+		return fmt.Errorf("unexpected challenge %s%s%s; expected subprotocol %s", i.currentName, iteratorDelimiter, fullName, childName(current.layout.Names[childI], childI))
 	}
-	if i.current.layout.Names[i.current.childI()] != name {
-		return fmt.Errorf("unexpected challenge %s%s%s; expected %s", i.currentName, iteratorDelimiter, name, i.current.layout.Names[i.current.childI()])
+	if current.layout.Names[childI] != name {
+		return fmt.Errorf("unexpected challenge %s%s%s; expected %s", i.currentName, iteratorDelimiter, fullName, childName(current.layout.Names[childI], childI))
 	}
-	if nbBindings != i.current.layout.ChallengeNbBindings[i.current.challengeI] {
-		return fmt.Errorf("challenge %s%s%s: expected %d bindings, got %d", i.currentName, iteratorDelimiter, name, i.current.layout.ChallengeNbBindings[i.current.challengeI], nbBindings)
+	if nbBindings != current.layout.ChallengeNbBindings[current.challengeI] {
+		return fmt.Errorf("challenge %s%s%s: expected %d bindings, got %d", i.currentName, iteratorDelimiter, fullName, current.layout.ChallengeNbBindings[current.challengeI], nbBindings)
 	}
-	i.current.challengeI++
+	current.challengeI++
 	return nil
 }
 
@@ -149,11 +158,11 @@ type NewTranscriptOption func(*Transcript) error
 func WithProtocolLayout(layout ProtocolLayout) NewTranscriptOption {
 	return func(t *Transcript) error {
 		t.layoutIterator = &ProtocolLayoutIterator{
-			current: protocolLayoutIteratorFrame{
+			stack: []protocolLayoutIteratorFrame{{
 				layout: &layout,
-			},
+			}},
 		}
-		if err := t.layoutIterator.current.layout.validate(); err != nil {
+		if err := t.layoutIterator.current().layout.validate(); err != nil {
 			return fmt.Errorf("invalid protocol layout: %w", err)
 		}
 		return nil
@@ -208,7 +217,6 @@ func (t *Transcript) Bind(bindings ...[]byte) {
 }
 
 func (t *Transcript) Challenge(name string, bindings ...[]byte) ([]byte, error) {
-
 	nbBindings := len(bindings) + t.nbBindings
 	if t.layoutIterator != nil {
 		if err := t.layoutIterator.Challenge(name, nbBindings); err != nil {

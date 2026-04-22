@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sync"
 
-	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/gnark-crypto/utils"
@@ -13,6 +12,7 @@ import (
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/internal/fiatshamir"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/trace"
@@ -65,16 +65,15 @@ func newProverRuntime(t trace.Trace, setup *PublicKey, publicInputs proof.Public
 	}
 	res.Committer = commitment.NewRSCommit(uint64(maxN), commitment.LeafHash, commitment.NodeHash)
 
-	// initialize FS transcript and pre-register all challenges (challenge@loom_0..n-1 and zeta)
-	res.fs = fiatshamir.NewTranscript(sha256.New())
-	numRounds := len(program.FScolumnsDependencies)
-	for i := 0; i < numRounds; i++ {
-		res.fs.NewChallenge(constants.CanonicalChallengeName(i))
+	// Initialize the Fiat-Shamir transcript.
+	var err error
+	res.fs, err = fiatshamir.NewTranscript(sha256.New())
+	if err != nil {
+		panic(err)
 	}
-	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
 
 	if setup != nil {
-		res.fs.Bind(constants.CanonicalChallengeName(0), res.setup.Root())
+		res.fs.Bind(res.setup.Root())
 	}
 
 	return res
@@ -117,17 +116,13 @@ func (pr *proverRuntime) ExecuteSteps() error {
 
 				// store the commitment in proof.FSInputs[roundIdx], bind it to challengeName in fs
 				pr.Proof.FSInputs = append(pr.Proof.FSInputs, commitRoot)
-				if err := pr.fs.Bind(challengeName, commitRoot); err != nil {
-					return err
-				}
-
 				// derive 'challengeName' using fs, or sample a random element if EmulateFS is set,
 				// then store the value in the trace under challengeName as a polynomial of size 1
 				var challengeVal koalabear.Element
 				if pr.config.EmulateFS {
 					challengeVal.MustSetRandom()
 				} else {
-					challengeBytes, err := pr.fs.ComputeChallenge(challengeName)
+					challengeBytes, err := pr.fs.Challenge(challengeName, commitRoot)
 					if err != nil {
 						return err
 					}
@@ -204,15 +199,11 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	pr.Proof.AIRQuotientsCommitment = tree.Root()
 
 	// 3 - derive zeta using FS (or emulate), bind to the AIR quotient commitment
-	if err := pr.fs.Bind(constants.FINAL_EVALUATION_POINT, pr.Proof.AIRQuotientsCommitment); err != nil {
-		return err
-	}
-
 	var zetaVal koalabear.Element
 	if pr.config.EmulateFS {
 		zetaVal.MustSetRandom()
 	} else {
-		zetaBytes, err := pr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
+		zetaBytes, err := pr.fs.Challenge(constants.FINAL_EVALUATION_POINT, pr.Proof.AIRQuotientsCommitment)
 		if err != nil {
 			return err
 		}

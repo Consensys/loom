@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"math/big"
 
-	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/internal/fiatshamir"
 	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
@@ -32,17 +32,17 @@ func newVerifierRuntime(program board.Program, setup *PublicKey, publicInputs ma
 		proof:        proof,
 		publicInputs: publicInputs,
 		program:      program,
+		setup:        setup,
 	}
 
-	res.fs = fiatshamir.NewTranscript(sha256.New())
-	numRounds := len(program.FScolumnsDependencies)
-	for i := 0; i < numRounds; i++ {
-		res.fs.NewChallenge(constants.CanonicalChallengeName(i))
+	var err error
+	res.fs, err = fiatshamir.NewTranscript(sha256.New())
+	if err != nil {
+		panic(err)
 	}
-	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
 
 	if setup != nil {
-		res.fs.Bind(constants.CanonicalChallengeName(0), res.setup.Root())
+		res.fs.Bind(res.setup.Root())
 	}
 
 	return res
@@ -53,8 +53,7 @@ func (vr *verifierRunTime) deriveChallenges() error {
 	// populate proof.ValuesAtZeta with the challenges
 	for i, fsi := range vr.proof.FSInputs {
 		challengeName := constants.CanonicalChallengeName(i)
-		vr.fs.Bind(challengeName, fsi)
-		bChallenge, err := vr.fs.ComputeChallenge((challengeName))
+		bChallenge, err := vr.fs.Challenge(challengeName, fsi)
 		if err != nil {
 			return err
 		}
@@ -62,8 +61,7 @@ func (vr *verifierRunTime) deriveChallenges() error {
 		c.SetBytes(bChallenge)
 		vr.proof.ValuesAtZeta[challengeName] = c
 	}
-	vr.fs.Bind(constants.FINAL_EVALUATION_POINT, vr.proof.AIRQuotientsCommitment)
-	bzeta, err := vr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
+	bzeta, err := vr.fs.Challenge(constants.FINAL_EVALUATION_POINT, vr.proof.AIRQuotientsCommitment)
 	if err != nil {
 		return err
 	}
