@@ -12,6 +12,7 @@ import (
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/commitment"
+	"github.com/consensys/loom/internal/commitment/fri"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
@@ -32,7 +33,7 @@ func EmulateFS() Option {
 }
 
 type proverRuntime struct {
-	Committer    commitment.RSCommit
+	Committer    fri.Committer
 	Proof        proof.Proof
 	config       Config
 	t            trace.Trace
@@ -54,22 +55,17 @@ func newProverRuntime(t trace.Trace, publicInputs proof.PublicInputs, program bo
 		mu:           sync.Mutex{}, // mutex to protect the trace when reading/writing (in case of parallelisation)
 	}
 
-	// find the largest module size N in program and populate the Committer
-	maxN := 0
-	for _, m := range program.Modules {
-		if m.N > maxN {
-			maxN = m.N
-		}
-	}
-	res.Committer = commitment.NewRSCommit(uint64(maxN), commitment.LeafHash, commitment.NodeHash)
-
 	// initialize FS transcript and pre-register all challenges (challenge@loom_0..n-1 and zeta)
 	res.fs = fiatshamir.NewTranscript(sha256.New())
 	numRounds := len(program.FScolumnsDependencies)
-	for i := 0; i < numRounds; i++ {
+	for i := range numRounds {
 		res.fs.NewChallenge(constants.CanonicalChallengeName(i))
 	}
 	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
+
+	// Initialize the FRI committer against the same transcript used by the rest
+	// of the prover. Domain sizing is inferred from each Commit call.
+	res.Committer = fri.NewCommitter(res.fs, fri.Config{}, commitment.LeafHash, commitment.NodeHash)
 
 	return res
 }
@@ -95,23 +91,15 @@ func (pr *proverRuntime) ExecuteSteps() error {
 
 				// fetch all trace polynomials referred in FScolumnsDependencies[roundIdx]
 				deps := pr.program.FScolumnsDependencies[roundIdx]
-				polys := make([]poly.Polynomial, len(deps))
+				polys := make(map[string]poly.Polynomial, len(deps))
 				pr.mu.Lock()
-				for i, name := range deps {
-					polys[i] = pr.t[name]
+				for _, name := range deps {
+					polys[name] = pr.t[name]
 				}
 				pr.mu.Unlock()
 
-				// commit to them using RSCommit
-				tree, err := pr.Committer.Commit(polys, &pr.Committer.Encoder)
-				if err != nil {
-					return err
-				}
-				commitRoot := tree.Root()
-
-				// store the commitment in proof.FSInputs[roundIdx], bind it to challengeName in fs
-				pr.Proof.FSInputs = append(pr.Proof.FSInputs, commitRoot)
-				if err := pr.fs.Bind(challengeName, commitRoot); err != nil {
+				// commit to them using FRI
+				if err := pr.Committer.Commit(challengeName, polys); err != nil {
 					return err
 				}
 
@@ -175,7 +163,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 		// split into chunks of size N; convert each chunk back to Lagrange Normal for commitment
 		N := module.N
 		numChunks := bigSize / N
-		for i := 0; i < numChunks; i++ {
+		for i := range numChunks {
 			chunk := make(poly.Polynomial, N)
 			copy(chunk, quotient[i*N:(i+1)*N])
 			module.D.FFT(chunk, fft.DIF)
@@ -187,21 +175,16 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	}
 
 	// 2 - commit to the AIR quotient trace
-	polysToCommit := make([]poly.Polynomial, 0, len(airTrace))
-	for _, p := range airTrace {
-		polysToCommit = append(polysToCommit, p)
+	polysToCommit := make(map[string]poly.Polynomial, len(airTrace))
+	for name, p := range airTrace {
+		polysToCommit[name] = p
 	}
-	tree, err := pr.Committer.Commit(polysToCommit, &pr.Committer.Encoder)
-	if err != nil {
-		return err
-	}
-	pr.Proof.AIRQuotientsCommitment = tree.Root()
-
-	// 3 - derive zeta using FS (or emulate), bind to the AIR quotient commitment
-	if err := pr.fs.Bind(constants.FINAL_EVALUATION_POINT, pr.Proof.AIRQuotientsCommitment); err != nil {
+	if err := pr.Committer.Commit(constants.FINAL_EVALUATION_POINT, polysToCommit); err != nil {
 		return err
 	}
 
+	// 3 - derive zeta using FS (or emulate) after the quotient commitment has
+	// already been bound by the FRI committer.
 	var zetaVal koalabear.Element
 	if pr.config.EmulateFS {
 		zetaVal.MustSetRandom()
@@ -239,7 +222,7 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 				shift := ((leaf.Shift % module.N) + module.N) % module.N
 				var omegaPow koalabear.Element
 				omegaPow.SetOne()
-				for k := 0; k < shift; k++ {
+				for range shift {
 					omegaPow.Mul(&omegaPow, &module.D.Generator)
 				}
 				evalPoint.Mul(&evalPoint, &omegaPow)
@@ -287,6 +270,12 @@ func Prove(t trace.Trace, publicInputs proof.PublicInputs, program board.Program
 	if err := pr.ComputeEvaluationsAtZeta(); err != nil {
 		return proof.Proof{}, err
 	}
+
+	openingProof, err := pr.Committer.Prove()
+	if err != nil {
+		return proof.Proof{}, err
+	}
+	pr.Proof.CommitmentOpenings = openingProof
 
 	return pr.Proof, nil
 }

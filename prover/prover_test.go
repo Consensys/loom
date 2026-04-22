@@ -117,3 +117,49 @@ func TestVanishingRelationsAndLogupBus(t *testing.T) {
 	viz.WriteRawTraceToCSV("trace.csv", tr)
 
 }
+
+func TestFRICommitPhaseRecordsExpandedOracleMetadata(t *testing.T) {
+	builder := board.NewBuilder()
+
+	module := board.NewModule()
+	module.N = 4
+	// Keep the module trivial so the proof only exercises the commitment flow.
+	module.AssertZero(expr.Col("A").Sub(expr.Col("A")))
+	builder.AddModule("main", module)
+	// Add one FS round so we get a trace-oracle commitment before zeta is sampled.
+	builder.AddFiatShamirStep([]expr.Expr{expr.Col("A")}, "alpha")
+
+	program, err := board.Compile(&builder)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var zero koalabear.Element
+	tr := trace.Trace{
+		"A": []koalabear.Element{zero, zero, zero, zero},
+	}
+
+	prf, err := Prove(tr, nil, program, EmulateFS())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prf.CommitmentOpenings.Commitments) < 2 {
+		t.Fatalf("got %d commitments, want at least 2", len(prf.CommitmentOpenings.Commitments))
+	}
+	got := prf.CommitmentOpenings.Commitments[0]
+	// The committed codeword should live on the enlarged FRI domain, not the
+	// original trace domain.
+	if got.BaseDomainSize != 4 {
+		t.Fatalf("got base domain size %d, want 4", got.BaseDomainSize)
+	}
+	if got.CodewordDomainSize != 8 {
+		t.Fatalf("got codeword domain size %d, want 8", got.CodewordDomainSize)
+	}
+	if got.NumPolynomials != 1 {
+		t.Fatalf("got %d committed polynomials, want 1", got.NumPolynomials)
+	}
+	last := prf.CommitmentOpenings.Commitments[len(prf.CommitmentOpenings.Commitments)-1]
+	if last.NumPolynomials == 0 {
+		t.Fatal("expected the AIR quotient commitment to contain committed polynomials")
+	}
+}

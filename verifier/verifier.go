@@ -9,6 +9,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/commitment/fri"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
@@ -41,11 +42,18 @@ func newVerifierRuntime(program board.Program, publicInputs map[string]proof.Pub
 }
 
 func (vr *verifierRunTime) deriveChallenges() error {
+	friVerifier := fri.NewVerifier(vr.fs)
+	numRounds := len(vr.program.FScolumnsDependencies)
 
 	// populate proof.ValuesAtZeta with the challenges
-	for i, fsi := range vr.proof.FSInputs {
+	for i := range numRounds {
 		challengeName := constants.CanonicalChallengeName(i)
-		vr.fs.Bind(challengeName, fsi)
+		if i >= len(vr.proof.CommitmentOpenings.Commitments) {
+			return fmt.Errorf("missing commitment transcript entry for %s", challengeName)
+		}
+		if err := friVerifier.Bind(challengeName, vr.proof.CommitmentOpenings.Commitments[i]); err != nil {
+			return err
+		}
 		bChallenge, err := vr.fs.ComputeChallenge((challengeName))
 		if err != nil {
 			return err
@@ -54,7 +62,13 @@ func (vr *verifierRunTime) deriveChallenges() error {
 		c.SetBytes(bChallenge)
 		vr.proof.ValuesAtZeta[challengeName] = c
 	}
-	vr.fs.Bind(constants.FINAL_EVALUATION_POINT, vr.proof.AIRQuotientsCommitment)
+	finalCommitmentIndex := numRounds
+	if finalCommitmentIndex >= len(vr.proof.CommitmentOpenings.Commitments) {
+		return fmt.Errorf("missing commitment for final evaluation point binding")
+	}
+	if err := friVerifier.Bind(constants.FINAL_EVALUATION_POINT, vr.proof.CommitmentOpenings.Commitments[finalCommitmentIndex]); err != nil {
+		return err
+	}
 	bzeta, err := vr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
 	if err != nil {
 		return err
