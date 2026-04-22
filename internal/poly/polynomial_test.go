@@ -100,7 +100,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := expr.Col("x0").Pow(2).Add(expr.Col("x1"))
 		Pi := map[string]Polynomial{"x0": coeffs0, "x1": coeffs1}
 
-		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
+		R, err := BuildPointwiseEvaluation(Pi, C, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -123,7 +123,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := expr.Col("x0").Sub(expr.Col("x1"))
 		Pi := map[string]Polynomial{"x0": P0, "x1": P1}
 
-		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
+		R, err := BuildPointwiseEvaluation(Pi, C, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -143,7 +143,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := expr.Col("x0").Mul(expr.Col("x1"))
 		Pi := map[string]Polynomial{"x0": P0, "x1": P1}
 
-		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
+		R, err := BuildPointwiseEvaluation(Pi, C, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -167,7 +167,7 @@ func TestEvalPointWise(t *testing.T) {
 			Sub(expr.Col("x3"))
 		Pi := map[string]Polynomial{"x0": P0, "x1": P1, "x2": P2, "x3": P3}
 
-		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
+		R, err := BuildPointwiseEvaluation(Pi, C, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -188,7 +188,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := expr.Col("x0").Mul(expr.Col("x0")).Sub(expr.Col("x0"))
 		Pi := map[string]Polynomial{"x0": P0}
 
-		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
+		R, err := BuildPointwiseEvaluation(Pi, C, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -210,7 +210,7 @@ func TestEvalPointWise(t *testing.T) {
 		C := expr.Col("x0").Sub(expr.Col("x1")).Mul(expr.Col("x2"))
 		Pi := map[string]Polynomial{"x0": P0, "x1": P1, "x2": P2}
 
-		R, err := BuildPointwiseEvaluation(Pi, C, size, nil)
+		R, err := BuildPointwiseEvaluation(Pi, C, nil)
 		if err != nil {
 			t.Fatalf("EvalPointWise failed: %v", err)
 		}
@@ -263,7 +263,7 @@ func TestEvaluateOnIthEntry(t *testing.T) {
 		E := expr.Col("x0").Pow(2).Add(expr.Col("x1"))
 
 		_Pi := setupPiSlice(Pi, E)
-		R, err := BuildPointwiseEvaluation(Pi, E, size, nil)
+		R, err := BuildPointwiseEvaluation(Pi, E, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -285,7 +285,7 @@ func TestEvaluateOnIthEntry(t *testing.T) {
 		E := expr.Col("x0").Sub(expr.Col("gamma"))
 
 		_Pi := setupPiSlice(Pi, E)
-		R, err := BuildPointwiseEvaluation(Pi, E, size, nil)
+		R, err := BuildPointwiseEvaluation(Pi, E, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -307,7 +307,7 @@ func TestEvaluateOnIthEntry(t *testing.T) {
 		E := expr.Col("x0").Sub(expr.Const(three))
 
 		_Pi := setupPiSlice(Pi, E)
-		R, err := BuildPointwiseEvaluation(Pi, E, size, nil)
+		R, err := BuildPointwiseEvaluation(Pi, E, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

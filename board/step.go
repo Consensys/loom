@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
@@ -35,9 +36,40 @@ func NewProverStep(ins []expr.Expr, out string, step Step, ctx StepContext) Prov
 	}
 }
 
+type MakeEntriesPublicCtx struct {
+	Idx []int // indices of the entries to make public
+	N   int
+}
+
+func MakeEntriesPublicStep(ins []expr.Expr, out string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+
+	_ctx, ok := ctx.(MakeEntriesPublicCtx)
+	if !ok {
+		return fmt.Errorf("[MakeEntriesPublicStep] wrong context type")
+	}
+
+	C := ins[0]
+	res, err := poly.BuildPointwiseEvaluation(t, C, mu)
+	if err != nil {
+		return err
+	}
+
+	var publicColumnInfo PublicInput
+	publicColumnInfo.N = _ctx.N
+	publicColumnInfo.Entries = make([]PublicEntry, len(_ctx.Idx))
+	for _, i := range _ctx.Idx {
+		publicColumnInfo.Entries[i].Idx = i
+		publicColumnInfo.Entries[i].Value.Set(&res[i])
+	}
+	proof.PublicColumns[out] = publicColumnInfo
+
+	return nil
+}
+
 type FSCtx struct{}
 
 func FSStep(ins []expr.Expr, out string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+
 	return nil
 }
 
@@ -55,7 +87,7 @@ func MakeIthValuePublicStep(ins []expr.Expr, out string, t trace.Trace, _ *Progr
 	}
 
 	C := ins[0]
-	res, err := poly.SelectIthValue(t, C, _ctx.Pos, mu)
+	res, err := poly.BuildPointwiseEvaluation(t, C, mu)
 	if err != nil {
 		return err
 	}
@@ -67,8 +99,13 @@ func MakeIthValuePublicStep(ins []expr.Expr, out string, t trace.Trace, _ *Progr
 	publicColumnInfo.Entries[0].Value = res[_ctx.Pos]
 	proof.PublicColumns[out] = publicColumnInfo
 
-	if err := trace.RegisterColumn(t, out, res); err != nil {
-		panic(fmt.Sprintf("[_GrandProductStep] register grand product column %s: %v", out, err))
+	// The constraint L_pos*(E - Public(out))=0 requires Public(out) to be the sparse
+	// polynomial with E[pos] at index pos and 0 elsewhere, matching what computePublicColumns
+	// reconstructs on the verifier side via Lagrange interpolation.
+	sparseCol := make([]koalabear.Element, _ctx.N)
+	sparseCol[_ctx.Pos].Set(&res[_ctx.Pos])
+	if err := trace.RegisterColumn(t, out, sparseCol); err != nil {
+		panic(fmt.Sprintf("[MakeIthValuePublicStep] register public column %s: %v", out, err))
 	}
 
 	return nil

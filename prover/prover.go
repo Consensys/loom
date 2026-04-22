@@ -40,10 +40,11 @@ type proverRuntime struct {
 	program      board.Program
 	zeta         koalabear.Element
 	mu           sync.Mutex
+	setup        *PublicKey
 	fs           *fiatshamir.Transcript
 }
 
-func newProverRuntime(t trace.Trace, publicInputs proof.PublicInputs, program board.Program, config Config) proverRuntime {
+func newProverRuntime(t trace.Trace, setup *PublicKey, publicInputs proof.PublicInputs, program board.Program, config Config) proverRuntime {
 
 	res := proverRuntime{
 		Proof:        proof.NewProof(),
@@ -51,6 +52,7 @@ func newProverRuntime(t trace.Trace, publicInputs proof.PublicInputs, program bo
 		t:            t,
 		publicInputs: publicInputs,
 		program:      program,
+		setup:        setup,
 		mu:           sync.Mutex{}, // mutex to protect the trace when reading/writing (in case of parallelisation)
 	}
 
@@ -70,6 +72,10 @@ func newProverRuntime(t trace.Trace, publicInputs proof.PublicInputs, program bo
 		res.fs.NewChallenge(constants.CanonicalChallengeName(i))
 	}
 	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
+
+	if setup != nil {
+		res.fs.Bind(constants.CanonicalChallengeName(0), res.setup.Root())
+	}
 
 	return res
 }
@@ -261,7 +267,7 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 	return nil
 }
 
-func Prove(t trace.Trace, publicInputs proof.PublicInputs, program board.Program, opts ...Option) (proof.Proof, error) {
+func Prove(t trace.Trace, setup *PublicKey, publicInputs proof.PublicInputs, program board.Program, opts ...Option) (proof.Proof, error) {
 
 	var config Config
 	for _, opt := range opts {
@@ -271,7 +277,7 @@ func Prove(t trace.Trace, publicInputs proof.PublicInputs, program board.Program
 		}
 	}
 
-	pr := newProverRuntime(t, publicInputs, program, config)
+	pr := newProverRuntime(t, setup, publicInputs, program, config)
 
 	// run ExecuteSteps
 	if err := pr.ExecuteSteps(); err != nil {

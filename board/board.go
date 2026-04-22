@@ -23,9 +23,10 @@ func NewLogupBus(positive, negative []string) LogupBus {
 }
 
 type Builder struct {
-	Modules  map[string]*Module
-	LogupBus []LogupBus
-	Steps    []ProverStep
+	Modules       map[string]*Module
+	LogupBus      []LogupBus
+	Steps         []ProverStep
+	PublicColumns []string // known columns, precommitted (ex: ql, qr, etc in plonk)
 }
 
 func NewBuilder() Builder {
@@ -34,6 +35,10 @@ func NewBuilder() Builder {
 	res.Steps = make([]ProverStep, 0)
 	res.LogupBus = make([]LogupBus, 0)
 	return res
+}
+
+func (b *Builder) AddPublicColumn(name string) {
+	b.PublicColumns = append(b.PublicColumns, name)
 }
 
 func (b *Builder) AddModule(name string, m Module) {
@@ -83,6 +88,31 @@ func (b *Builder) AddFiatShamirStep(E []expr.Expr, out string) {
 		Step: FSStep,
 	}
 	b.Steps = append(b.Steps, pvStep)
+}
+
+func (b *Builder) addMakeEntriesPublicConstraint(module string, E expr.Expr, sel, out string) {
+	selExpr := expr.Col(sel)
+	outExpr := expr.Public(out)
+	rel := E.Mul(selExpr).Sub(outExpr)
+	m := b.Modules[module]
+	m.AssertZero(rel)
+	b.Modules[module] = m
+}
+
+func (b *Builder) AddMakeEntriesPublicStep(module string, E expr.Expr, sel, out string, idx []int) {
+	m := b.Modules[module]
+	ctx := MakeEntriesPublicCtx{Idx: idx, N: m.N}
+	pvStep := ProverStep{
+		Ctx:  ctx,
+		Ins:  []expr.Expr{E},
+		Out:  out,
+		Step: MakeEntriesPublicStep,
+	}
+	b.Steps = append(b.Steps, pvStep)
+	genSel := SelectorGen{Idx: idx, Name: sel}
+	m.GenCol = append(m.GenCol, genSel)
+	b.Modules[module] = m
+	b.addMakeEntriesPublicConstraint(module, E, sel, out)
 }
 
 func (b *Builder) addMakeIthValuePublicConstraint(module string, E expr.Expr, output string, pos int) {
@@ -153,6 +183,7 @@ type RoundInputs = map[string][]string
 // Program the double slice [][] means that the steps are scheduled
 type Program struct {
 	Modules               map[string]CompiledModule
+	PublicColumns         []string // known columns, precommitted (ex: ql, qr, etc in plonk)
 	FScolumnsDependencies [][]string
 	LogupBus              []LogupBus
 	Steps                 [][]ProverStep
@@ -375,8 +406,13 @@ func Compile(b *Builder) (Program, error) {
 	}
 
 	// Step 7e: Build res.FiatShamir and replace per-round FS steps with a single canonical one.
+	res.PublicColumns = make([]string, len(b.PublicColumns))
+	copy(res.PublicColumns, b.PublicColumns)
 	res.FScolumnsDependencies = make([][]string, numRounds)
 	prevCovered := map[string]bool{}
+	for _, n := range res.PublicColumns {
+		prevCovered[n] = true
+	}
 	for lvl := 0; lvl < len(res.Steps); lvl++ {
 		round, ok := levelToRound[lvl]
 		if !ok {

@@ -11,27 +11,12 @@ import (
 // BuildPointwiseEvaluation evaluates E point-wise over Pi and returns the N results as a
 // freshly allocated slice. N is the size of the polynomials in Pi (all must
 // have the same size, except constants which have size 1).
-func BuildPointwiseEvaluation(Pi map[string]Polynomial, E expr.Expr, N int, mu *sync.Mutex) ([]koalabear.Element, error) {
+func BuildPointwiseEvaluation(Pi map[string]Polynomial, E expr.Expr, mu *sync.Mutex) ([]koalabear.Element, error) {
+	leaves := E.LeavesFull(expr.NewConfig(expr.WithoutChallenges()))
+	_c := Pi[leaves[0].Name]
+	N := len(_c)
 	dst := make([]koalabear.Element, N)
 	return dst, evalPointWiseInto(Pi, E, N, mu, dst)
-}
-
-func SelectIthValue(Pi map[string]Polynomial, E expr.Expr, pos int, mu *sync.Mutex) ([]koalabear.Element, error) {
-
-	eLeaves := E.LeavesFull(expr.NewConfig(expr.WithoutChallenges()))
-	_n := Pi[eLeaves[0].Name]
-	n := len(_n)
-	res := make([]koalabear.Element, n)
-	// TODO inefficient, double loop
-	if err := evalPointWiseInto(Pi, E, n, mu, res); err != nil {
-		return res, err
-	}
-	for i := 0; i < n; i++ {
-		if i != pos {
-			res[i].SetZero()
-		}
-	}
-	return res, nil
 }
 
 // BuildMultiplicityPolynomial returns P such that:

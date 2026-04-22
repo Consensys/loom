@@ -3,4 +3,5 @@ playground/
 *.prof
 *.txt
 *.tmp
+*.csv
 .DS_Store

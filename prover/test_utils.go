@@ -1,10 +1,27 @@
 package prover
 
 import (
+	"fmt"
+
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/board"
+	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/trace"
 )
+
+func CheckVanishingRelation(tr trace.Trace, md board.CompiledModule) error {
+	ev, err := poly.Eval(tr, *md.VanishingRelation, md.N)
+	if err != nil {
+		return err
+	}
+	for i, v := range ev {
+		if !v.IsZero() {
+			return fmt.Errorf("vanishing relation doesn hold at %d, got %s", i, v.String())
+		}
+	}
+	return nil
+}
 
 func MergeTrace(t1 trace.Trace, t2 ...trace.Trace) trace.Trace {
 	res := t1

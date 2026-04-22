@@ -1,29 +1,14 @@
 package prover
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/arguments"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
-	"github.com/consensys/loom/internal/poly"
-	"github.com/consensys/loom/trace"
 	"github.com/consensys/loom/viz"
 )
-
-func checkVanishingRelation(t *testing.T, tr trace.Trace, md board.CompiledModule) {
-	ev, err := poly.Eval(tr, *md.VanishingRelation, md.N)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i, v := range ev {
-		if !v.IsZero() {
-			t.Errorf("vanishing relation doesn hold at %d, got %s", i, v.String())
-		}
-	}
-}
 
 func TestVanishingRelationsAndLogupBus(t *testing.T) {
 
@@ -76,19 +61,15 @@ func TestVanishingRelationsAndLogupBus(t *testing.T) {
 	traceRange := TraceRange(N)
 	tr := MergeTrace(traceFrob, traceRange)
 
-	proof, err := Prove(tr, nil, program, EmulateFS())
+	proof, err := Prove(tr, nil, nil, program, EmulateFS())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for k, _ := range proof.ValuesAtZeta {
-		fmt.Println(k)
-	}
-
-	viz.WriteRawTraceToCSV("trace.csv", tr)
-
 	for _, m := range program.Modules {
-		checkVanishingRelation(t, tr, m)
+		if err := CheckVanishingRelation(tr, m); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// check the values of the bus
