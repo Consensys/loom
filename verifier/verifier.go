@@ -32,7 +32,7 @@ func newVerifierRuntime(program board.Program, publicInputs map[string]proof.Pub
 
 	res.fs = fiatshamir.NewTranscript(sha256.New())
 	numRounds := len(program.FScolumnsDependencies)
-	for i := 0; i < numRounds; i++ {
+	for i := range numRounds {
 		res.fs.NewChallenge(constants.CanonicalChallengeName(i))
 	}
 	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)

@@ -5,3 +5,4 @@ playground/
 *.tmp
 .DS_Store
 .idea/
+.gocache/

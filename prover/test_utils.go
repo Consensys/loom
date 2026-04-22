@@ -33,7 +33,7 @@ func TraceFibonacci(n int, a, b koalabear.Element) trace.Trace {
 
 	A[0].Set(&a)
 	B[0].Set(&b)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		C[i].Add(&A[i], &B[i])
 		if i < n-1 {
 			A[i+1].Set(&B[i])
@@ -51,7 +51,7 @@ func TraceRange(n int) trace.Trace {
 	n = int(ecc.NextPowerOfTwo(uint64(n)))
 	res := make(trace.Trace)
 	col := make([]koalabear.Element, 2*n) // to handle modules of different size
-	for i := 0; i < 2*n; i++ {
+	for i := range 2 * n {
 		col[i].SetUint64(uint64(i))
 	}
 	res["Lookup"] = col
