@@ -9,7 +9,8 @@ import (
 )
 
 func TestTranscript(t *testing.T) {
-	fst := NewTranscript(hash.POSEIDON2_KOALABEAR.New())
+	fst, err := NewTranscript(hash.POSEIDON2_KOALABEAR.New())
+	require.NoError(t, err)
 
 	c1, err := fst.Challenge("one", []byte{1})
 	require.NoError(t, err)
@@ -28,7 +29,8 @@ func TestTranscript(t *testing.T) {
 	require.NoError(t, err)
 
 	// "Verifier" side
-	fst = NewTranscript(hash.POSEIDON2_KOALABEAR.New(), WithProtocolLayout(fst.Layout()))
+	fst, err = NewTranscript(hash.POSEIDON2_KOALABEAR.New(), WithProtocolLayout(fst.Layout()))
+	require.NoError(t, err)
 
 	v, err := fst.Challenge("one", []byte{1})
 	require.NoError(t, err)
@@ -48,6 +50,9 @@ func TestTranscript(t *testing.T) {
 
 	require.NoError(t, fst.EndSubProtocol())
 	require.Error(t, fst.EndSubProtocol())
+
+	v, err = fst.Challenge("four")
+	require.Error(t, err)
 
 	v, err = fst.Challenge("four", []byte{4})
 	require.NoError(t, err)
