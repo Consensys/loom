@@ -63,6 +63,17 @@ func MakeEntriesPublicStep(ins []expr.Expr, out string, t trace.Trace, _ *Progra
 	}
 	proof.PublicColumns[out] = publicColumnInfo
 
+	// The constraint L_pos*(E - Public(out))=0 requires Public(out) to be the sparse
+	// polynomial with E[pos] at index pos and 0 elsewhere, matching what computePublicColumns
+	// reconstructs on the verifier side via Lagrange interpolation.
+	sparseCol := make([]koalabear.Element, _ctx.N)
+	for _, i := range _ctx.Idx {
+		sparseCol[i].Set(&res[i])
+	}
+	if err := trace.RegisterColumn(t, out, sparseCol); err != nil {
+		panic(fmt.Sprintf("[MakeIthValuePublicStep] register public column %s: %v", out, err))
+	}
+
 	return nil
 }
 

@@ -99,7 +99,7 @@ func (b *Builder) addMakeEntriesPublicConstraint(module string, E expr.Expr, sel
 	b.Modules[module] = m
 }
 
-func (b *Builder) AddMakeEntriesPublicStep(module string, E expr.Expr, sel, out string, idx []int) {
+func (b *Builder) AddMakeEntriesPublicStep(module string, E expr.Expr, selector, out string, idx []int) {
 	m := b.Modules[module]
 	ctx := MakeEntriesPublicCtx{Idx: idx, N: m.N}
 	pvStep := ProverStep{
@@ -109,10 +109,10 @@ func (b *Builder) AddMakeEntriesPublicStep(module string, E expr.Expr, sel, out 
 		Step: MakeEntriesPublicStep,
 	}
 	b.Steps = append(b.Steps, pvStep)
-	genSel := SelectorGen{Idx: idx, Name: sel}
+	genSel := SelectorGen{Idx: idx, Name: selector}
 	m.GenCol = append(m.GenCol, genSel)
 	b.Modules[module] = m
-	b.addMakeEntriesPublicConstraint(module, E, sel, out)
+	b.addMakeEntriesPublicConstraint(module, E, selector, out)
 }
 
 func (b *Builder) addMakeIthValuePublicConstraint(module string, E expr.Expr, output string, pos int) {
