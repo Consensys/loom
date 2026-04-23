@@ -3,6 +3,7 @@ package prover
 import (
 	"crypto/sha256"
 	"fmt"
+	"sort"
 	"sync"
 
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
@@ -36,6 +37,7 @@ type proverRuntime struct {
 	Proof        proof.Proof
 	config       Config
 	t            trace.Trace
+	airTrace     trace.Trace
 	publicInputs proof.PublicInputs
 	program      board.Program
 	zeta         koalabear.Element
@@ -53,6 +55,7 @@ func newProverRuntime(t trace.Trace, setup *PublicKey, publicInputs proof.Public
 		publicInputs: publicInputs,
 		program:      program,
 		setup:        setup,
+		airTrace:     make(trace.Trace),
 		mu:           sync.Mutex{}, // mutex to protect the trace when reading/writing (in case of parallelisation)
 	}
 
@@ -158,7 +161,6 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	// The quotient is written in canonical (coefficient) form, split into chunks
 	// of size n, and stored as Lagrange-normal polynomials in a dedicated trace.
 	// We also keep a map from chunk name to its domain for later evaluation at zeta.
-	airTrace := make(trace.Trace)
 	chunkDomains := make(map[string]*fft.Domain)
 
 	for moduleName, module := range pr.program.Modules {
@@ -187,14 +189,14 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 			module.D.FFT(chunk, fft.DIF)
 			utils.BitReverse(chunk)
 			chunkName := fmt.Sprintf("%s_%d", moduleName, i)
-			airTrace[chunkName] = chunk
+			pr.airTrace[chunkName] = chunk
 			chunkDomains[chunkName] = module.D
 		}
 	}
 
 	// 2 - commit to the AIR quotient trace
-	polysToCommit := make([]poly.Polynomial, 0, len(airTrace))
-	for _, p := range airTrace {
+	polysToCommit := make([]poly.Polynomial, 0, len(pr.airTrace))
+	for _, p := range pr.airTrace {
 		polysToCommit = append(polysToCommit, p)
 	}
 	tree, err := pr.Committer.Commit(polysToCommit, &pr.Committer.Encoder)
@@ -221,7 +223,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	pr.zeta = zetaVal
 
 	// evaluate each quotient chunk at zeta and store in ValuesAtZeta
-	for chunkName, chunkPoly := range airTrace {
+	for chunkName, chunkPoly := range pr.airTrace {
 		pr.Proof.ValuesAtZeta[chunkName] = poly.Evaluate(chunkPoly, chunkDomains[chunkName], pr.zeta)
 	}
 
@@ -264,6 +266,183 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 			pr.Proof.ValuesAtZeta[leaf.String()] = val
 		}
 	}
+	return nil
+}
+
+func (pr *proverRuntime) ComputeDeepQuotient() error {
+
+	// sort modules by N in decreasing order
+	sortedModule := make([]string, 0, len(pr.program.Modules))
+	for name := range pr.program.Modules {
+		sortedModule = append(sortedModule, name)
+	}
+	sort.Slice(sortedModule, func(i, j int) bool {
+		return pr.program.Modules[sortedModule[i]].N > pr.program.Modules[sortedModule[j]].N
+	})
+
+	// for now we emulate the folding challenge
+	var alpha koalabear.Element
+	alpha.MustSetRandom()
+
+	// deepQuotient result -> it is equal to \sum_i \alpha^i (C(zeta*omega^shift)-C)/(zeta*omega^shift-X))
+	// the columns C are fetched from the vanishing relation of the modules, shift!=0 according to the column being
+	// rotated or not
+	maxN := pr.program.Modules[sortedModule[0]].N
+	largestD := pr.program.Modules[sortedModule[0]].D
+	deepQuotient := make([]koalabear.Element, maxN) // largest N
+
+	var alphaAcc koalabear.Element
+	alphaAcc.SetOne()
+
+	// loop through sortedModule, get the corresponding module
+	for _, moduleName := range sortedModule {
+		module := pr.program.Modules[moduleName]
+		N := module.N
+
+		// 1 - get the RotatedColumn and CommittedColumn from the module's vanishing relation
+		config := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutPublicColumns())
+		leaves := module.VanishingRelation.LeavesFull(config)
+
+		// 2 - group columns by normalized shift; deduplicate by leaf.String()
+		// Each entry carries the bare column name (for trace lookup) and the original
+		// leaf.String() key (for ValuesAtZeta lookup, which preserves the raw shift).
+		type colEntry struct {
+			name string // bare column name → key in pr.t
+			key  string // leaf.String() → key in ValuesAtZeta
+		}
+		byShift := map[int][]colEntry{} // normalized shift → entries
+		seenKey := map[string]bool{}    // deduplicate by leaf.String()
+		for _, leaf := range leaves {
+			k := leaf.String()
+			if seenKey[k] {
+				continue
+			}
+			seenKey[k] = true
+			normalizedShift := 0
+			if leaf.Type == expr.RotatedColumn {
+				normalizedShift = ((leaf.Shift % N) + N) % N
+			}
+			byShift[normalizedShift] = append(byShift[normalizedShift], colEntry{name: leaf.Name, key: k})
+		}
+		// store shifts sorted in increasing order
+		shifts := make([]int, 0, len(byShift))
+		for s := range byShift {
+			shifts = append(shifts, s)
+		}
+		sort.Ints(shifts)
+
+		// 3 - for each shift in 'sorted' (looped through in increasing order), fold the corresponding columns in the trace
+		// using alpha to build C_shift := \sum_i \alpha^i C
+		// compute C_shift_deep := (C_shift(\omega^shift * zeta)-C_shift)/(omega^shift*zeta - X) using synthetic division
+		for _, shift := range shifts {
+
+			// evaluation point z_s = omega^shift * zeta
+			var omegaShift koalabear.Element
+			omegaShift.SetOne()
+			for k := 0; k < shift; k++ {
+				omegaShift.Mul(&omegaShift, &module.D.Generator)
+			}
+			var z_s koalabear.Element
+			z_s.Mul(&pr.zeta, &omegaShift)
+
+			// fold: C_s(X) = sum_i alphaAcc_i * C_i(X), v_s = C_s(z_s) = sum_i alphaAcc_i * C_i(z_s)
+			C_s := make(poly.Polynomial, N)
+			var v_s koalabear.Element
+			for _, entry := range byShift[shift] {
+				col := pr.t[entry.name]
+				evalAtZ, ok := pr.Proof.ValuesAtZeta[entry.key]
+				if !ok {
+					return fmt.Errorf("ComputeDeepQuotient: %q not found in ValuesAtZeta", entry.key)
+				}
+				for j := 0; j < N; j++ {
+					var term koalabear.Element
+					if len(col) == 1 {
+						term = col[0] // constant polynomial
+					} else {
+						term = col[j]
+					}
+					term.Mul(&term, &alphaAcc)
+					C_s[j].Add(&C_s[j], &term)
+				}
+				var term koalabear.Element
+				term.Mul(&evalAtZ, &alphaAcc)
+				v_s.Add(&v_s, &term)
+				alphaAcc.Mul(&alphaAcc, &alpha)
+			}
+
+			// compute DQ_s = (v_s - C_s(X)) / (z_s - X) via synthetic division
+			DQ_s := poly.DeepQuotient(C_s, v_s, z_s, module.D)
+
+			// accumulate into deepQuotient; extend to maxN domain if this module is smaller
+			if N == maxN {
+				for j := 0; j < N; j++ {
+					deepQuotient[j].Add(&deepQuotient[j], &DQ_s[j])
+				}
+			} else {
+				// IFFT DQ_s to canonical (natural order), zero-pad to maxN, FFT to largest domain
+				module.D.FFTInverse(DQ_s, fft.DIF)
+				utils.BitReverse(DQ_s)
+				extended := make(poly.Polynomial, maxN)
+				copy(extended, DQ_s)
+				// largestD := fft.NewDomain(uint64(maxN))
+				largestD.FFT(extended, fft.DIF)
+				utils.BitReverse(extended)
+				for j := 0; j < maxN; j++ {
+					deepQuotient[j].Add(&deepQuotient[j], &extended[j])
+				}
+			}
+		}
+	}
+
+	// Compute the AIR quotient shares of the DEEP ComputeDeepQuotient
+	// 1- loop through the modules in the program (in the order given by sortedModule)
+	// 2- add the contribution of each quotient shares for the given module (ordered by share 0, then share 1, etc...) to the deep quotient
+	for _, moduleName := range sortedModule {
+		module := pr.program.Modules[moduleName]
+		N := module.N
+
+		C_s := make(poly.Polynomial, N)
+		var v_s koalabear.Element
+		for i := 0; ; i++ {
+			chunkName := constants.QuotientChunkName(moduleName, i)
+			chunk, ok := pr.airTrace[chunkName]
+			if !ok {
+				break
+			}
+			evalAtZ := pr.Proof.ValuesAtZeta[chunkName]
+			for j := 0; j < N; j++ {
+				var term koalabear.Element
+				term.Mul(&chunk[j], &alphaAcc)
+				C_s[j].Add(&C_s[j], &term)
+			}
+			var term koalabear.Element
+			term.Mul(&evalAtZ, &alphaAcc)
+			v_s.Add(&v_s, &term)
+			alphaAcc.Mul(&alphaAcc, &alpha)
+		}
+
+		DQ_air := poly.DeepQuotient(C_s, v_s, pr.zeta, module.D)
+
+		if N == maxN {
+			for j := 0; j < N; j++ {
+				deepQuotient[j].Add(&deepQuotient[j], &DQ_air[j])
+			}
+		} else {
+			module.D.FFTInverse(DQ_air, fft.DIF)
+			utils.BitReverse(DQ_air)
+			extended := make(poly.Polynomial, maxN)
+			copy(extended, DQ_air)
+			largestD.FFT(extended, fft.DIF)
+			utils.BitReverse(extended)
+			for j := 0; j < maxN; j++ {
+				deepQuotient[j].Add(&deepQuotient[j], &extended[j])
+			}
+		}
+	}
+
+	// for the moment, stop here, the deepQuotient will be used later for FRI
+	_ = deepQuotient
+
 	return nil
 }
 

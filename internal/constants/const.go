@@ -31,6 +31,10 @@ func RandomString(n int) (string, error) {
 	return string(result), nil
 }
 
+func QuotientChunkName(moduleName string, chunk int) string {
+	return fmt.Sprintf("%s_%d", moduleName, chunk)
+}
+
 func LagrangeName(i, N int) string {
 	return fmt.Sprintf("Lagrange_%d_%d", i, N)
 }

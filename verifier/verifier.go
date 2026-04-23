@@ -140,7 +140,7 @@ func (vr *verifierRunTime) checkAIRRelations() error {
 		var zetaN koalabear.Element
 		zetaN.Exp(vr.zeta, big.NewInt(int64(m.N)))
 		for i := 0; ; i++ {
-			chunkName := fmt.Sprintf("%s_%d", moduleName, i)
+			chunkName := constants.QuotientChunkName(moduleName, i)
 			chunkVal, ok := vr.proof.ValuesAtZeta[chunkName]
 			if !ok {
 				break
