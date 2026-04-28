@@ -122,6 +122,26 @@ func MakeIthValuePublicStep(ins []expr.Expr, out string, t trace.Trace, _ *Progr
 	return nil
 }
 
+type CWMCtx struct{}
+
+// _CountMultiplicityStep computes the running sum M/E where
+// ins[0] = S (values), ins[1] = T (table), ins[2] = Sel (selector)
+func CountWeightedMultiplicityStep(ins []expr.Expr, out string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, _ StepContext) error {
+
+	S := ins[0]
+	T := ins[1]
+	SelS := ins[2]
+	res, err := poly.BuildWeightedMultiplicityPolynomial(t, S, T, SelS, mu)
+	if err != nil {
+		return err
+	}
+	if err := trace.RegisterColumn(t, out, res); err != nil {
+		panic(fmt.Sprintf("[CountWeightedMultiplicityStep] register multiplicity column %s: %v", out, err))
+	}
+
+	return nil
+}
+
 type CMCtx struct{}
 
 // _CountMultiplicityStep computes the running sum M/E where

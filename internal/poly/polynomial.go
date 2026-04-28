@@ -101,7 +101,7 @@ func countMultiplicity(S, T Polynomial) Polynomial {
 	return res
 }
 
-func countMultiplicityWithSelector(S, T, Sel Polynomial) Polynomial {
+func countWeightedMultiplicityWithSelector(S, T, Sel Polynomial) Polynomial {
 	freq := make(map[[1]uint32]uint64, len(T))
 	for j := 0; j < len(S); j++ {
 		if Sel[j].IsZero() {

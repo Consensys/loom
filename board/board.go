@@ -137,6 +137,12 @@ func (b *Builder) AddMakeIthValuePublicStep(module string, E expr.Expr, out stri
 	b.addMakeIthValuePublicConstraint(module, E, out, pos)
 }
 
+// S ⊂ T for selS!=0, the ouptut is in T's module
+func (b *Builder) AddCountWeightedMultiplicityStep(S, T, selS expr.Expr, output string) {
+	cmStep := NewProverStep([]expr.Expr{S, T, selS}, output, CountWeightedMultiplicityStep, CMCtx{})
+	b.Steps = append(b.Steps, cmStep)
+}
+
 // S ⊂ T, the ouptut is in T's module
 func (b *Builder) AddCountMultiplicityStep(S, T expr.Expr, output string) {
 	cmStep := NewProverStep([]expr.Expr{S, T}, output, CountMultiplicityStep, CMCtx{})
