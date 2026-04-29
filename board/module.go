@@ -14,19 +14,22 @@ import (
 type Relation = expr.Expr
 
 type Module struct {
+	Name      string
 	Relations []Relation
 	GenCol    []Gen // public columns generator (lagrange, permutation columns, selectors, etc)
 	N         int
 }
 
-func NewModule() Module {
+func NewModule(name string) Module {
 	var res Module
+	res.Name = name
 	res.Relations = make([]Relation, 0)
 	res.GenCol = make([]Gen, 0)
 	return res
 }
 
 type CompiledModule struct {
+	Name              string
 	GenCol            []Gen // public columns generator (lagrange, permutation columns, etc)
 	N                 int
 	VanishingRelation *dag.DAG
@@ -35,6 +38,23 @@ type CompiledModule struct {
 
 type Gen interface {
 	Gen(t trace.Trace, m *CompiledModule) error
+}
+
+type RangeColumnGen struct {
+	Bound uint64
+}
+
+func (rc RangeColumnGen) Gen(t trace.Trace, m *CompiledModule) error {
+	res := make([]koalabear.Element, m.N)
+	for i := 0; i < int(rc.Bound); i++ {
+		res[i].SetUint64(uint64(i))
+	}
+	name := constants.RangeColName(rc.Bound)
+	if _, ok := t[name]; ok {
+		return nil
+	}
+	t[name] = res
+	return nil
 }
 
 type LagrangeGen struct {

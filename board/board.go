@@ -476,6 +476,7 @@ func Compile(b *Builder) (Program, error) {
 	lastChallenge := expr.Challenge(fmt.Sprintf("challenge@loom_%d", lastRound))
 	for k, m := range b.Modules {
 		var cm CompiledModule
+		cm.Name = m.Name
 		cm.GenCol = make([]Gen, len(m.GenCol))
 		copy(cm.GenCol, m.GenCol)
 		cm.N = m.N

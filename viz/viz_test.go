@@ -14,8 +14,8 @@ func TestViz(t *testing.T) {
 
 	builder := board.NewBuilder()
 
-	fibonacciModule := board.NewModule()
-	rangeModule := board.NewModule()
+	fibonacciModule := board.NewModule("fibo")
+	rangeModule := board.NewModule("range")
 
 	N := 4
 	fibonacciModule.N = N

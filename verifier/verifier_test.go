@@ -12,7 +12,7 @@ import (
 )
 
 func prepareFibonacciModule(N int) board.Module {
-	fibonacciModule := board.NewModule()
+	fibonacciModule := board.NewModule("fibo")
 	fibonacciModule.N = N
 	C := expr.Rot("A", 1).Sub(expr.Col("B"))
 	fibonacciModule.AssertZeroExceptAt(C, N-1)
@@ -24,7 +24,7 @@ func prepareFibonacciModule(N int) board.Module {
 }
 
 func perparePlonkModule(N int) board.Module {
-	plonkModule := board.NewModule()
+	plonkModule := board.NewModule("plonk")
 	plonkModule.N = N
 
 	qll := expr.Col(ID_Ql).Mul(expr.Col(ID_L))
@@ -42,7 +42,7 @@ func TestVerifierFibo(t *testing.T) {
 	// build the modules
 	builder := board.NewBuilder()
 
-	rangeModule := board.NewModule()
+	rangeModule := board.NewModule("lookup")
 
 	N := 4
 	rangeModule.N = 2 * N
@@ -142,7 +142,7 @@ func TestFiboPlonk(t *testing.T) {
 	plonkModule := perparePlonkModule(size)
 	NFibo := 4
 	fibonacciModule := prepareFibonacciModule(NFibo)
-	rangeModule := board.NewModule()
+	rangeModule := board.NewModule("range")
 	rangeModule.N = 2 * NFibo
 
 	// build the arguments

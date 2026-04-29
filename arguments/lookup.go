@@ -65,9 +65,9 @@ func Range(builder *board.Builder, S board.Input, bound uint64) error {
 	rangeModuleName := constants.RangeModuleName(bound)
 	_, ok := builder.Modules[rangeModuleName]
 	if !ok {
-		rangeModule := board.NewModule()
+		rangeModule := board.NewModule(constants.RangeModuleName(bound))
 		rangeModule.N = int(bound)
-		rangeModule.GenCol = append(rangeModule.GenCol, board.RangeColumnGen{Bound: bound, Name: constants.RangeColName(bound)})
+		rangeModule.GenCol = append(rangeModule.GenCol, board.RangeColumnGen{Bound: bound})
 		builder.AddModule(constants.RangeModuleName(bound), rangeModule)
 	}
 	T := board.Input{Module: rangeModuleName, In: expr.Col(constants.RangeColName(bound))}
