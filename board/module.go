@@ -140,18 +140,16 @@ func (s SelectorGen) Gen(t trace.Trace, m *CompiledModule) error {
 type PermutationGen struct {
 	S               []int64
 	PermutationName string
-	ModuleName      string
 }
 
 func (p PermutationGen) NameIthPermutationChunk(i int) string {
-	return fmt.Sprintf("%s.%s_%d", p.ModuleName, p.PermutationName, i)
+	return fmt.Sprintf("%s_%d", p.PermutationName, i)
 }
 
-func NewPermutationGen(S []int64, permutationName, moduleName string) PermutationGen {
+func NewPermutationGen(S []int64, permutationName string) PermutationGen {
 	return PermutationGen{
 		S:               S,
 		PermutationName: permutationName,
-		ModuleName:      moduleName,
 	}
 }
 

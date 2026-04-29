@@ -39,8 +39,8 @@ func CLookup(builder *board.Builder, S, T board.Input, SelS, SelT expr.Expr) err
 	if err != nil {
 		return err
 	}
-	_logupT = fmt.Sprintf("%s_%s", constants.LOGUP, _logupT)
-	_logupS = fmt.Sprintf("%s_%s", constants.LOGUP, _logupS)
+	_logupT = fmt.Sprintf("%s.%s_%s", T.Module, constants.LOGUP, _logupT)
+	_logupS = fmt.Sprintf("%s.%s_%s", S.Module, constants.LOGUP, _logupS)
 	{
 		tMinusGamma := T.In.Sub(gamma)
 		builder.AddLogupStep(T.Module, tMinusGamma, expr.Col(wmultiplicity).Mul(SelT), _logupT)

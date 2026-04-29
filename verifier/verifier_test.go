@@ -106,7 +106,7 @@ func TestVerifierPlonk(t *testing.T) {
 	builder.AddModule("plonk", plonkModule)
 
 	lro := []expr.Expr{expr.Col(ID_L), expr.Col(ID_R), expr.Col(ID_O)}
-	sigmaGen := board.NewPermutationGen(sigma, "plonk", "S")
+	sigmaGen := board.NewPermutationGen(sigma, "plonk.S")
 	err = arguments.CopyConstraint(&builder, "plonk", lro, sigmaGen)
 	if err != nil {
 		t.Fatal(err)
@@ -170,7 +170,7 @@ func TestFiboPlonk(t *testing.T) {
 
 	// 2 - plonk copy constraint
 	lro := []expr.Expr{expr.Col(ID_L), expr.Col(ID_R), expr.Col(ID_O)}
-	sigmaGen := board.NewPermutationGen(sigma, "plonk", "S")
+	sigmaGen := board.NewPermutationGen(sigma, "plonk.S")
 	err = arguments.CopyConstraint(&builder, "plonk", lro, sigmaGen)
 	if err != nil {
 		t.Fatal(err)
