@@ -1,0 +1,5 @@
+(defcolumns (P :binary) (X :i16))
+(defperspective p1 P ((Y :i16)))
+(definterleaved Z (X p1/Y))
+(definterleaved Q (P P))
+(defconstraint c1 (:guard Q) (== 0 Z))
