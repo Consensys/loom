@@ -3,6 +3,7 @@ package board
 import (
 	"fmt"
 
+	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/constants"
@@ -124,9 +125,28 @@ func (b *Builder) addMakeIthValuePublicConstraint(module string, E expr.Expr, ou
 
 // AddMakeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
 // the 1 entry column expr[pos] is registered in the trace
-func (b *Builder) AddMakeIthValuePublicStep(module string, E expr.Expr, out string, pos int) {
+func (b *Builder) AddMakeRelativeIthValuePublicStep(module string, E expr.Expr, out string, pos int) {
+	ctx := MakeRelativeIthValuePublicCtx{Pos: pos}
+	pvStep := ProverStep{
+		Ctx:  ctx,
+		Ins:  []expr.Expr{E},
+		Out:  out,
+		Step: MakeRelativeIthValuePublicStep,
+	}
+	b.Steps = append(b.Steps, pvStep)
+	b.addMakeRelativeIthValuePublicConstraint(module, E, out, pos)
+}
+
+func (b *Builder) addMakeRelativeIthValuePublicConstraint(module string, E expr.Expr, output string, pos int) {
 	m := b.Modules[module]
-	ctx := MakeIthValuePublicCtx{Pos: pos, N: m.N}
+	v := expr.Public(output)
+	m.AssertEqualRelativeAt(E, v, pos)
+}
+
+// AddMakeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
+// the 1 entry column expr[pos] is registered in the trace
+func (b *Builder) AddMakeIthValuePublicStep(module string, E expr.Expr, out string, pos int) {
+	ctx := MakeIthValuePublicCtx{Pos: pos}
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  []expr.Expr{E},
@@ -194,6 +214,17 @@ type Program struct {
 	FScolumnsDependencies [][]string
 	LogupBus              []LogupBus
 	Steps                 [][]ProverStep
+}
+
+func (pg *Program) SetSize(module string, size int) {
+	_, ok := pg.Modules[module]
+	if !ok {
+		panic(fmt.Errorf("module %s not found in the trace", module))
+	}
+	m := pg.Modules[module]
+	m.N = int(ecc.NextPowerOfTwo(uint64(size)))
+	m.D = fft.NewDomain(uint64(m.N))
+	pg.Modules[module] = m
 }
 
 func Compile(b *Builder) (Program, error) {

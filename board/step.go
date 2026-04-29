@@ -84,13 +84,52 @@ func FSStep(ins []expr.Expr, out string, t trace.Trace, _ *Program, proof *proof
 	return nil
 }
 
+type MakeRelativeIthValuePublicCtx struct {
+	Module string
+	Pos    int // relative position of the value to pick in a column -> the position module.N - 1 - Pos. It allows to refer to N, so N can be modified
+}
+
+// MakeRelativeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
+func MakeRelativeIthValuePublicStep(ins []expr.Expr, out string, t trace.Trace, pg *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+
+	_ctx, ok := ctx.(MakeRelativeIthValuePublicCtx)
+	if !ok {
+		return fmt.Errorf("[PickLocalValueStep] wrong context type")
+	}
+
+	C := ins[0]
+	res, err := poly.BuildPointwiseEvaluation(t, C, mu)
+	if err != nil {
+		return err
+	}
+
+	var publicColumnInfo PublicInput
+	m := pg.Modules[_ctx.Module]
+	publicColumnInfo.N = m.N
+	publicColumnInfo.Entries = make([]PublicEntry, 1)
+	publicColumnInfo.Entries[0].Idx = m.N - 1 - _ctx.Pos
+	publicColumnInfo.Entries[0].Value = res[m.N-1-_ctx.Pos]
+	proof.PublicColumns[out] = publicColumnInfo
+
+	// The constraint L_pos*(E - Public(out))=0 requires Public(out) to be the sparse
+	// polynomial with E[m.N-1-_ctx.Pos] at index m.N-1-_ctx.Pos and 0 elsewhere, matching what computePublicColumns
+	// reconstructs on the verifier side via Lagrange interpolation.
+	sparseCol := make([]koalabear.Element, m.N)
+	sparseCol[_ctx.Pos].Set(&res[m.N-1-_ctx.Pos])
+	if err := trace.RegisterColumn(t, out, sparseCol); err != nil {
+		panic(fmt.Sprintf("[MakeIthValuePublicStep] register public column %s: %v", out, err))
+	}
+
+	return nil
+}
+
 type MakeIthValuePublicCtx struct {
-	N   int // size of the module in which the column lives
-	Pos int // position of the value to pick in a column
+	Module string
+	Pos    int // position of the value to pick in a column
 }
 
 // MakeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
-func MakeIthValuePublicStep(ins []expr.Expr, out string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+func MakeIthValuePublicStep(ins []expr.Expr, out string, t trace.Trace, pg *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
 
 	_ctx, ok := ctx.(MakeIthValuePublicCtx)
 	if !ok {
@@ -104,7 +143,8 @@ func MakeIthValuePublicStep(ins []expr.Expr, out string, t trace.Trace, _ *Progr
 	}
 
 	var publicColumnInfo PublicInput
-	publicColumnInfo.N = _ctx.N
+	m := pg.Modules[_ctx.Module]
+	publicColumnInfo.N = m.N
 	publicColumnInfo.Entries = make([]PublicEntry, 1)
 	publicColumnInfo.Entries[0].Idx = _ctx.Pos
 	publicColumnInfo.Entries[0].Value = res[_ctx.Pos]
@@ -113,7 +153,7 @@ func MakeIthValuePublicStep(ins []expr.Expr, out string, t trace.Trace, _ *Progr
 	// The constraint L_pos*(E - Public(out))=0 requires Public(out) to be the sparse
 	// polynomial with E[pos] at index pos and 0 elsewhere, matching what computePublicColumns
 	// reconstructs on the verifier side via Lagrange interpolation.
-	sparseCol := make([]koalabear.Element, _ctx.N)
+	sparseCol := make([]koalabear.Element, m.N)
 	sparseCol[_ctx.Pos].Set(&res[_ctx.Pos])
 	if err := trace.RegisterColumn(t, out, sparseCol); err != nil {
 		panic(fmt.Sprintf("[MakeIthValuePublicStep] register public column %s: %v", out, err))

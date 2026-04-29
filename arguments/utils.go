@@ -12,17 +12,17 @@ func AddLogupEqualityCheck(builder *board.Builder, moduleS, moduleT string, logu
 	if moduleS != moduleT {
 		positives := make([]string, len(logupS))
 		negatives := make([]string, len(logupT))
-		ns := builder.Modules[moduleS].N - 1
-		nt := builder.Modules[moduleT].N - 1
+		nsRelative := 0 // absolute position modulesS.N-1-nsRelative
+		ntRelative := 0 // absolute position modulesS.N-1-ntRelative
 		for i, ls := range logupS {
-			lsName := fmt.Sprintf("%s_%d", ls.String(), ns)
+			lsName := fmt.Sprintf("%s_%d", ls.String(), nsRelative)
 			positives[i] = lsName
-			builder.AddMakeIthValuePublicStep(moduleS, ls, lsName, ns) // this step makes logupS[N-1] accessible to the verifier
+			builder.AddMakeRelativeIthValuePublicStep(moduleS, ls, lsName, nsRelative) // this step makes logupS[N-1] accessible to the verifier
 		}
 		for i, lt := range logupT {
-			ltName := fmt.Sprintf("%s_%d", lt.String(), nt)
+			ltName := fmt.Sprintf("%s_%d", lt.String(), ntRelative)
 			negatives[i] = ltName
-			builder.AddMakeIthValuePublicStep(moduleT, lt, ltName, nt)
+			builder.AddMakeRelativeIthValuePublicStep(moduleT, lt, ltName, ntRelative) // this step makes logupS[N-1] accessible to the verifier
 		}
 		builder.LogupBus = append(builder.LogupBus, board.NewLogupBus(positives, negatives))
 	} else {
@@ -35,7 +35,7 @@ func AddLogupEqualityCheck(builder *board.Builder, moduleS, moduleT string, logu
 		for i := 1; i < len(logupT); i++ {
 			negatives.Add(logupT[i])
 		}
-		m.AssertEqualAt(positives, negatives, m.N-1)
+		m.AssertEqualRelativeAt(positives, negatives, 0)
 		builder.Modules[moduleS] = m
 	}
 }

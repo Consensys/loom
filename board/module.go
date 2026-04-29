@@ -57,14 +57,37 @@ func (rc RangeColumnGen) Gen(t trace.Trace, m *CompiledModule) error {
 	return nil
 }
 
+func LagrangeName(moduleName string, i int) string {
+	return fmt.Sprintf("%s.Lagrange_%d", moduleName, i)
+}
+
+func LagrangeNameRelative(moduleName string, i int) string {
+	return fmt.Sprintf("%s.Lagrange_relative_%d", moduleName, i)
+}
+
+type LagrangeRelativeGen struct {
+	i int // <- real position: module.N-i
+}
+
+func (p LagrangeRelativeGen) Gen(t trace.Trace, m *CompiledModule) error {
+	res := make([]koalabear.Element, m.N)
+	res[m.N-1-p.i].SetOne()
+	name := LagrangeNameRelative(m.Name, p.i)
+	if _, ok := t[name]; ok {
+		return nil
+	}
+	t[name] = res
+	return nil
+}
+
 type LagrangeGen struct {
-	i, N int
+	i int
 }
 
 func (p LagrangeGen) Gen(t trace.Trace, m *CompiledModule) error {
-	res := make([]koalabear.Element, p.N)
+	res := make([]koalabear.Element, m.N)
 	res[p.i].SetOne()
-	name := constants.LagrangeName(m.Name, p.i)
+	name := LagrangeName(m.Name, p.i)
 	if _, ok := t[name]; ok {
 		return nil
 	}
@@ -84,9 +107,22 @@ func (m *CompiledModule) NameIthIDSupport(i int) string {
 	return fmt.Sprintf("%s.ID_%d_%d", m.Name, i, m.N)
 }
 
+func (m *Module) LagrangeColRelative(i int) expr.Expr {
+	m.GenCol = append(m.GenCol, LagrangeRelativeGen{i: i})
+	name := LagrangeName(m.Name, i)
+	return &expr.Leaf{Type: expr.LagrangeColumn, Name: name}
+}
+
+// asserts that A[m.N-1-i]=B[m.N-1-i]
+func (m *Module) AssertEqualRelativeAt(A, B expr.Expr, i int) {
+	relation := A.Sub(B)
+	relation = relation.Mul(m.LagrangeColRelative(i))
+	m.AssertZero(relation)
+}
+
 func (m *Module) LagrangeCol(i int) expr.Expr {
-	m.GenCol = append(m.GenCol, LagrangeGen{i: i, N: m.N})
-	name := constants.LagrangeName(m.Name, i)
+	m.GenCol = append(m.GenCol, LagrangeGen{i: i})
+	name := LagrangeName(m.Name, i)
 	return &expr.Leaf{Type: expr.LagrangeColumn, Name: name}
 }
 
@@ -108,6 +144,15 @@ func (m *Module) AssertZeroExceptAt(relation expr.Expr, i ...int) {
 		conj = conj.Mul(_conj)
 	}
 	_relation := relation.Mul(conj)
+	m.AssertZero(_relation)
+}
+
+func (m *Module) AssertZeroRelativeAt(relation expr.Expr, i ...int) {
+	disj := expr.Expr(m.LagrangeColRelative(i[0]))
+	for k := 1; k < len(i); k++ {
+		disj = disj.Add(m.LagrangeColRelative(i[k]))
+	}
+	_relation := relation.Mul(disj)
 	m.AssertZero(_relation)
 }
 

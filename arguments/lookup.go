@@ -17,7 +17,7 @@ func CLookup(builder *board.Builder, S, T board.Input, SelS, SelT expr.Expr) err
 	if err != nil {
 		return err
 	}
-	wmultiplicity = fmt.Sprintf("Mult_%s", wmultiplicity)
+	wmultiplicity = fmt.Sprintf("%s.Mult_%s", T.Module, wmultiplicity)
 	builder.AddCountWeightedMultiplicityStep(S.In, T.In, SelS, wmultiplicity)
 
 	// 2. sample challenge
