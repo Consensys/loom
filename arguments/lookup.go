@@ -3,6 +3,7 @@ package arguments
 import (
 	"fmt"
 
+	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
@@ -55,6 +56,24 @@ func CLookup(builder *board.Builder, S, T board.Input, SelS, SelT expr.Expr) err
 	AddLogupEqualityCheck(builder, S.Module, T.Module, []expr.Expr{logupS}, []expr.Expr{logupT})
 
 	return nil
+}
+
+func Range(builder *board.Builder, S board.Input, bound uint64) error {
+
+	// 1 - check if the range module for bound exists, if not, create it
+	bound = ecc.NextPowerOfTwo(bound)
+	rangeModuleName := constants.RangeModuleName(bound)
+	_, ok := builder.Modules[rangeModuleName]
+	if !ok {
+		rangeModule := board.NewModule()
+		rangeModule.N = int(bound)
+		rangeModule.GenCol = append(rangeModule.GenCol, board.RangeColumnGen{Bound: bound, Name: constants.RangeColName(bound)})
+		builder.AddModule(constants.RangeModuleName(bound), rangeModule)
+	}
+	T := board.Input{Module: rangeModuleName, In: expr.Col(constants.RangeColName(bound))}
+
+	// 2 - add the lookup
+	return Lookup(builder, S, T)
 }
 
 // Lookup arguments that S ⊂ T

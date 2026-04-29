@@ -9,6 +9,7 @@ import (
 	"strings"
 )
 
+const RANGE_MODULE = "range"
 const FINAL_EVALUATION_POINT = "__zeta"
 const SUFFIX_SHIFT_SPLIT = "_"
 const SUFFIX_SHIFT = "shift"
@@ -29,6 +30,14 @@ func RandomString(n int) (string, error) {
 	}
 
 	return string(result), nil
+}
+
+func RangeModuleName(bound uint64) string {
+	return fmt.Sprintf("%s_%d", RANGE_MODULE, bound)
+}
+
+func RangeColName(bound uint64) string {
+	return fmt.Sprintf("%s/%s_%d", RANGE_MODULE, "bound", bound)
 }
 
 func QuotientChunkName(moduleName string, chunk int) string {
