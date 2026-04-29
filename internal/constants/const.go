@@ -37,11 +37,11 @@ func RangeModuleName(bound uint64) string {
 }
 
 func RangeColName(bound uint64) string {
-	return fmt.Sprintf("%s/%s_%d", RANGE_MODULE, "bound", bound)
+	return fmt.Sprintf("%s.%s_%d", RANGE_MODULE, "bound", bound)
 }
 
 func QuotientChunkName(moduleName string, chunk int) string {
-	return fmt.Sprintf("%s_%d", moduleName, chunk)
+	return fmt.Sprintf("%s.%d", moduleName, chunk)
 }
 
 func LagrangeName(i, N int) string {

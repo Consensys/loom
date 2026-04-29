@@ -188,7 +188,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 			copy(chunk, quotient[i*N:(i+1)*N])
 			module.D.FFT(chunk, fft.DIF)
 			utils.BitReverse(chunk)
-			chunkName := fmt.Sprintf("%s_%d", moduleName, i)
+			chunkName := constants.QuotientChunkName(moduleName, i)
 			pr.airTrace[chunkName] = chunk
 			chunkDomains[chunkName] = module.D
 		}
