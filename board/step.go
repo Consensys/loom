@@ -115,7 +115,7 @@ func MakeRelativeIthValuePublicStep(ins []expr.Expr, out string, t trace.Trace, 
 	// polynomial with E[m.N-1-_ctx.Pos] at index m.N-1-_ctx.Pos and 0 elsewhere, matching what computePublicColumns
 	// reconstructs on the verifier side via Lagrange interpolation.
 	sparseCol := make([]koalabear.Element, m.N)
-	sparseCol[_ctx.Pos].Set(&res[m.N-1-_ctx.Pos])
+	sparseCol[m.N-1-_ctx.Pos].Set(&res[m.N-1-_ctx.Pos])
 	if err := trace.RegisterColumn(t, out, sparseCol); err != nil {
 		panic(fmt.Sprintf("[MakeIthValuePublicStep] register public column %s: %v", out, err))
 	}

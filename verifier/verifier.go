@@ -94,7 +94,13 @@ func (vr *verifierRunTime) computeLagrange() error {
 			if ok {
 				continue
 			}
-			i := constants.ParseLagrangeName(lag)
+			var i int
+			i = constants.ParseLagrangeName(lag)
+			if i < 0 {
+				// relative column: stored as -(k+1) where k is the offset from
+				// the last row, so absolute position = N-1-k = N + i.
+				i = m.N + i
+			}
 			v := poly.LagrangeAtZeta(vr.zeta, m.N, i)
 			vr.proof.ValuesAtZeta[lag] = v
 		}

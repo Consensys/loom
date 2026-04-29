@@ -126,7 +126,7 @@ func (b *Builder) addMakeIthValuePublicConstraint(module string, E expr.Expr, ou
 // AddMakeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
 // the 1 entry column expr[pos] is registered in the trace
 func (b *Builder) AddMakeRelativeIthValuePublicStep(module string, E expr.Expr, out string, pos int) {
-	ctx := MakeRelativeIthValuePublicCtx{Pos: pos}
+	ctx := MakeRelativeIthValuePublicCtx{Pos: pos, Module: module}
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  []expr.Expr{E},

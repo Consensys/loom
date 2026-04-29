@@ -57,14 +57,6 @@ func (rc RangeColumnGen) Gen(t trace.Trace, m *CompiledModule) error {
 	return nil
 }
 
-func LagrangeName(moduleName string, i int) string {
-	return fmt.Sprintf("%s.Lagrange_%d", moduleName, i)
-}
-
-func LagrangeNameRelative(moduleName string, i int) string {
-	return fmt.Sprintf("%s.Lagrange_relative_%d", moduleName, i)
-}
-
 type LagrangeRelativeGen struct {
 	i int // <- real position: module.N-i
 }
@@ -72,7 +64,7 @@ type LagrangeRelativeGen struct {
 func (p LagrangeRelativeGen) Gen(t trace.Trace, m *CompiledModule) error {
 	res := make([]koalabear.Element, m.N)
 	res[m.N-1-p.i].SetOne()
-	name := LagrangeNameRelative(m.Name, p.i)
+	name := constants.LagrangeNameRelative(m.Name, p.i)
 	if _, ok := t[name]; ok {
 		return nil
 	}
@@ -87,7 +79,7 @@ type LagrangeGen struct {
 func (p LagrangeGen) Gen(t trace.Trace, m *CompiledModule) error {
 	res := make([]koalabear.Element, m.N)
 	res[p.i].SetOne()
-	name := LagrangeName(m.Name, p.i)
+	name := constants.LagrangeName(m.Name, p.i)
 	if _, ok := t[name]; ok {
 		return nil
 	}
@@ -109,7 +101,7 @@ func (m *CompiledModule) NameIthIDSupport(i int) string {
 
 func (m *Module) LagrangeColRelative(i int) expr.Expr {
 	m.GenCol = append(m.GenCol, LagrangeRelativeGen{i: i})
-	name := LagrangeName(m.Name, i)
+	name := constants.LagrangeNameRelative(m.Name, i)
 	return &expr.Leaf{Type: expr.LagrangeColumn, Name: name}
 }
 
@@ -122,7 +114,7 @@ func (m *Module) AssertEqualRelativeAt(A, B expr.Expr, i int) {
 
 func (m *Module) LagrangeCol(i int) expr.Expr {
 	m.GenCol = append(m.GenCol, LagrangeGen{i: i})
-	name := LagrangeName(m.Name, i)
+	name := constants.LagrangeName(m.Name, i)
 	return &expr.Leaf{Type: expr.LagrangeColumn, Name: name}
 }
 
