@@ -31,8 +31,8 @@ func PermutationCrossModules(builder *board.Builder, A, B board.Input) error {
 	if err != nil {
 		return err
 	}
-	_logupA = fmt.Sprintf("%s_%s", prefixLogup, _logupA)
-	_logupB = fmt.Sprintf("%s_%s", prefixLogup, _logupB)
+	_logupA = fmt.Sprintf("%s.%s_%s", A.Module, prefixLogup, _logupA)
+	_logupB = fmt.Sprintf("%s.%s_%s", B.Module, prefixLogup, _logupB)
 	{
 		aMinusGamma := A.In.Sub(gamma)
 		builder.AddLogupStep(A.Module, aMinusGamma, expr.Const(koalabear.One()), _logupA)

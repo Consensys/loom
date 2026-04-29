@@ -64,7 +64,7 @@ type LagrangeGen struct {
 func (p LagrangeGen) Gen(t trace.Trace, m *CompiledModule) error {
 	res := make([]koalabear.Element, p.N)
 	res[p.i].SetOne()
-	name := constants.LagrangeName(p.i, p.N)
+	name := constants.LagrangeName(m.Name, p.i)
 	if _, ok := t[name]; ok {
 		return nil
 	}
@@ -75,18 +75,18 @@ func (p LagrangeGen) Gen(t trace.Trace, m *CompiledModule) error {
 // NameIthIDSupport returns the name of the i-th chunk of the support of a permutation
 // (common to every permutation within a module)
 func (m *Module) NameIthIDSupport(i int) string {
-	return fmt.Sprintf("ID_%d_%d", i, m.N)
+	return fmt.Sprintf("%s.ID_%d_%d", m.Name, i, m.N)
 }
 
 // NameIthIDSupport returns the name of the i-th chunk of the support of a permutation
 // (common to every permutation within a CompiledModule)
 func (m *CompiledModule) NameIthIDSupport(i int) string {
-	return fmt.Sprintf("ID_%d_%d", i, m.N)
+	return fmt.Sprintf("%s.ID_%d_%d", m.Name, i, m.N)
 }
 
 func (m *Module) LagrangeCol(i int) expr.Expr {
 	m.GenCol = append(m.GenCol, LagrangeGen{i: i, N: m.N})
-	name := constants.LagrangeName(i, m.N)
+	name := constants.LagrangeName(m.Name, i)
 	return &expr.Leaf{Type: expr.LagrangeColumn, Name: name}
 }
 
@@ -138,18 +138,20 @@ func (s SelectorGen) Gen(t trace.Trace, m *CompiledModule) error {
 }
 
 type PermutationGen struct {
-	S    []int64
-	Name string
+	S               []int64
+	PermutationName string
+	ModuleName      string
 }
 
 func (p PermutationGen) NameIthPermutationChunk(i int) string {
-	return fmt.Sprintf("%s_%d", p.Name, i)
+	return fmt.Sprintf("%s.%s_%d", p.ModuleName, p.PermutationName, i)
 }
 
-func NewPermutationGen(S []int64, name string) PermutationGen {
+func NewPermutationGen(S []int64, permutationName, moduleName string) PermutationGen {
 	return PermutationGen{
-		S:    S,
-		Name: name,
+		S:               S,
+		PermutationName: permutationName,
+		ModuleName:      moduleName,
 	}
 }
 

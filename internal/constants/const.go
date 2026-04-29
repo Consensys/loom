@@ -44,12 +44,16 @@ func QuotientChunkName(moduleName string, chunk int) string {
 	return fmt.Sprintf("%s.%d", moduleName, chunk)
 }
 
-func LagrangeName(i, N int) string {
-	return fmt.Sprintf("Lagrange_%d_%d", i, N)
+func LagrangeName(moduleName string, i int) string {
+	return fmt.Sprintf("%s.Lagrange_%d", moduleName, i)
 }
 
-func ParseLagrangeName(name string) (i, N int) {
-	_, err := fmt.Sscanf(name, "Lagrange_%d_%d", &i, &N)
+func ParseLagrangeName(name string) (i int) {
+	parts := strings.Split(name, ".Lagrange_")
+	if len(parts) != 2 {
+		panic(fmt.Errorf("invalid format"))
+	}
+	i, err := strconv.Atoi(parts[1])
 	if err != nil {
 		panic(err)
 	}

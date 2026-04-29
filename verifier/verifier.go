@@ -94,8 +94,8 @@ func (vr *verifierRunTime) computeLagrange() error {
 			if ok {
 				continue
 			}
-			i, N := constants.ParseLagrangeName(lag)
-			v := poly.LagrangeAtZeta(vr.zeta, N, i)
+			i := constants.ParseLagrangeName(lag)
+			v := poly.LagrangeAtZeta(vr.zeta, m.N, i)
 			vr.proof.ValuesAtZeta[lag] = v
 		}
 	}
