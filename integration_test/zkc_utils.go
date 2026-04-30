@@ -22,6 +22,7 @@ import (
 	"github.com/consensys/go-corset/pkg/schema/register"
 	"github.com/consensys/go-corset/pkg/util/field"
 	gocorset_kb "github.com/consensys/go-corset/pkg/util/field/koalabear"
+	"github.com/consensys/go-corset/pkg/util/source"
 	"github.com/consensys/loom/arguments"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
@@ -45,6 +46,28 @@ func CompileBin(
 	mirSchema := asm.Compile(nasmSchema)
 	airSchema := mir.LowerToAir(mirSchema, 30, *optConfig)
 	return &airSchema, mapping
+}
+
+// CompileLisp compiles a .lisp source file into an air.Schema.
+// The bytes argument is the file contents; filename is used only for error messages.
+func CompileLisp(filename string, bytes []byte) (*air.Schema[gocorset_kb.Element], module.LimbsMap, error) {
+	config := corset.CompilationConfig{Stdlib: true}
+	srcfile := *source.NewSourceFile(filename, bytes)
+	prog, _, syntaxErrors := corset.CompileSourceFile(config, srcfile)
+	if len(syntaxErrors) > 0 {
+		msgs := make([]string, len(syntaxErrors))
+		for i, e := range syntaxErrors {
+			msgs[i] = e.Error()
+		}
+		return nil, nil, fmt.Errorf("compile %q: %s", filename, strings.Join(msgs, "; "))
+	}
+	asmConfig := asm.LoweringConfig{Field: field.KOALABEAR_16, Vectorize: true}
+	uasmSchema := asm.LowerMixedMacroProgram(asmConfig.Vectorize, prog)
+	nasmSchema, mapping := asm.Concretize[gocorset_kb.Element](asmConfig.Field, uasmSchema)
+	mirSchema := asm.Compile(nasmSchema)
+	optConfig := mir.DEFAULT_OPTIMISATION_LEVEL
+	airSchema := mir.LowerToAir(mirSchema, 30, optConfig)
+	return &airSchema, mapping, nil
 }
 
 // ReadBin reads and deserialises a .bin file produced by 'go-corset compile'.
@@ -102,11 +125,17 @@ func (b *CorsetBridge) loomModuleName(moduleID uint) string {
 	return b.Schema.Module(moduleID).Name().String()
 }
 
-// colName returns the loom column name for a (moduleID, registerID) pair,
-// formatted as "moduleName.registerName".
+// colName returns the loom column name for a (moduleID, registerID) pair.
+// For a named module it returns "moduleName.registerName"; for the root module
+// (empty name) it returns just "registerName" to match the trace key format.
 func (b *CorsetBridge) colName(moduleID uint, regID register.Id) string {
 	mod := b.Schema.Module(moduleID)
-	return mod.Name().String() + "." + mod.Register(regID).Name()
+	modName := mod.Name().String()
+	regName := mod.Register(regID).Name()
+	if modName == "" {
+		return regName
+	}
+	return modName + "." + regName
 }
 
 // toGnarkElement converts a go-corset koalabear field element to the
@@ -370,7 +399,7 @@ func TracesFromLT(r io.Reader) ([]trace.Trace, error) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+		if line == "" || strings.HasPrefix(line, ";;") {
 			continue
 		}
 		var raw map[string][]json.Number
@@ -410,10 +439,12 @@ func setSizes(program *board.Program, tr trace.Trace) {
 	for colName, col := range tr {
 		idx := strings.IndexByte(colName, '.')
 		if idx < 0 {
-			continue
+			// root module column (no dot) — maps to module with empty name
+			moduleSizes[""] = len(col)
+		} else {
+			modName := colName[:idx]
+			moduleSizes[modName] = len(col)
 		}
-		modName := colName[:idx]
-		moduleSizes[modName] = len(col)
 	}
 	for name, cm := range program.Modules {
 		n, ok := moduleSizes[name]

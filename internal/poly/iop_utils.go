@@ -81,6 +81,103 @@ func BuildMultiplicityPolynomial(Pi map[string]Polynomial, S, T expr.Expr, mu *s
 	return res, nil
 }
 
+// BuildUnionMultiplicityPolynomials returns one multiplicity polynomial per
+// target column such that chunks[k][i] = total number of times T[k][i] appears
+// across all source columns S[0], ..., S[len(S)-1].
+func BuildUnionMultiplicityPolynomials(Pi map[string]Polynomial, S, T []expr.Expr, mu *sync.Mutex) ([]Polynomial, error) {
+
+	// Evaluate all S expressions into pooled buffers.
+	sPolys := make([]Polynomial, len(S))
+	for i, s := range S {
+		ns, err := inferN(Pi, s)
+		if err != nil {
+			for j := 0; j < i; j++ {
+				putBuf(sPolys[j])
+			}
+			return nil, fmt.Errorf("BuildUnionMultiplicityPolynomials: S[%d]: %w", i, err)
+		}
+		buf := getBuf(ns)
+		if err := evalPointWiseInto(Pi, s, ns, mu, buf); err != nil {
+			putBuf(buf)
+			for j := 0; j < i; j++ {
+				putBuf(sPolys[j])
+			}
+			return nil, err
+		}
+		sPolys[i] = buf
+	}
+
+	// Evaluate all T expressions into pooled buffers, recording sizes.
+	tPolys := make([]Polynomial, len(T))
+	tSizes := make([]int, len(T))
+	for i, t := range T {
+		nt, err := inferN(Pi, t)
+		if err != nil {
+			for j := range sPolys {
+				putBuf(sPolys[j])
+			}
+			for j := 0; j < i; j++ {
+				putBuf(tPolys[j])
+			}
+			return nil, fmt.Errorf("BuildUnionMultiplicityPolynomials: T[%d]: %w", i, err)
+		}
+		buf := getBuf(nt)
+		if err := evalPointWiseInto(Pi, t, nt, mu, buf); err != nil {
+			putBuf(buf)
+			for j := range sPolys {
+				putBuf(sPolys[j])
+			}
+			for j := 0; j < i; j++ {
+				putBuf(tPolys[j])
+			}
+			return nil, err
+		}
+		tPolys[i] = buf
+		tSizes[i] = nt
+	}
+
+	// Concatenate all S evaluations into a single polynomial.
+	totalS := 0
+	for _, sp := range sPolys {
+		totalS += len(sp)
+	}
+	_S := getBuf(totalS)
+	off := 0
+	for _, sp := range sPolys {
+		copy(_S[off:], sp)
+		off += len(sp)
+		putBuf(sp)
+	}
+
+	// Concatenate all T evaluations into a single polynomial.
+	totalT := 0
+	for _, tp := range tPolys {
+		totalT += len(tp)
+	}
+	_T := getBuf(totalT)
+	off = 0
+	for _, tp := range tPolys {
+		copy(_T[off:], tp)
+		off += len(tp)
+		putBuf(tp)
+	}
+
+	// Count how many times each concatenated T value appears across all sources.
+	result := countMultiplicity(_S, _T)
+	putBuf(_S)
+	putBuf(_T)
+
+	// Split result into per-target chunks.
+	chunks := make([]Polynomial, len(T))
+	off = 0
+	for i, sz := range tSizes {
+		chunks[i] = result[off : off+sz]
+		off += sz
+	}
+
+	return chunks, nil
+}
+
 // inferN returns the length of the first polynomial in P whose leaf (non-challenge, non-constant)
 // has length != 1. Constants and challenges have length 1 and are skipped.
 func inferN(P map[string]Polynomial, exprs ...expr.Expr) (int, error) {
