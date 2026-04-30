@@ -31,13 +31,13 @@ func TestVanishingRelationsAndLogupBus(t *testing.T) {
 	builder.AddModule("fibonacci", fibonacciModule)
 	builder.AddModule("range", rangeModule)
 
-	T := board.Input{
+	T := board.Column{
 		Module: "range",
 		In:     expr.Col("Lookup"),
 	}
 	columnsFibonacci := []string{"A", "B", "C"}
 	for _, c := range columnsFibonacci {
-		S := board.Input{
+		S := board.Column{
 			Module: "fibonacci",
 			In:     expr.Col(c),
 		}

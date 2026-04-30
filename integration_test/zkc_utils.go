@@ -280,8 +280,8 @@ func (b *CorsetBridge) AddConstraintInLoom(name string, corsetCS schema.Constrai
 		}
 
 		if width == 1 {
-			S := board.Input{Module: srcMod, In: b.termToExpr(srcVec.Ith(0), srcVec.Module)}
-			T := board.Input{Module: tgtMod, In: b.termToExpr(tgtVec.Ith(0), tgtVec.Module)}
+			S := board.Column{Module: srcMod, In: b.termToExpr(srcVec.Ith(0), srcVec.Module)}
+			T := board.Column{Module: tgtMod, In: b.termToExpr(tgtVec.Ith(0), tgtVec.Module)}
 			if !hasSelector {
 				return arguments.Lookup(b.Builder, S, T)
 			}
@@ -289,11 +289,11 @@ func (b *CorsetBridge) AddConstraintInLoom(name string, corsetCS schema.Constrai
 		}
 
 		// Tuple lookup: fold all columns with a random challenge.
-		S := make([]board.Input, width)
-		T := make([]board.Input, width)
+		S := make([]board.Column, width)
+		T := make([]board.Column, width)
 		for i := range width {
-			S[i] = board.Input{Module: srcMod, In: b.termToExpr(srcVec.Ith(i), srcVec.Module)}
-			T[i] = board.Input{Module: tgtMod, In: b.termToExpr(tgtVec.Ith(i), tgtVec.Module)}
+			S[i] = board.Column{Module: srcMod, In: b.termToExpr(srcVec.Ith(i), srcVec.Module)}
+			T[i] = board.Column{Module: tgtMod, In: b.termToExpr(tgtVec.Ith(i), tgtVec.Module)}
 		}
 		if !hasSelector {
 			return arguments.LookupTuple(b.Builder, S, T)
@@ -337,7 +337,7 @@ func (b *CorsetBridge) AddConstraintInLoom(name string, corsetCS schema.Constrai
 		modName := b.loomModuleName(rc.Context)
 		for i, src := range rc.Sources {
 			bound := uint64(1) << rc.Bitwidths[i]
-			S := board.Input{Module: modName, In: b.termToExpr(src, rc.Context)}
+			S := board.Column{Module: modName, In: b.termToExpr(src, rc.Context)}
 			if err := arguments.Range(b.Builder, S, bound); err != nil {
 				return err
 			}

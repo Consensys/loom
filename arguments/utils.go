@@ -4,38 +4,31 @@ import (
 	"fmt"
 
 	"github.com/consensys/loom/board"
-	"github.com/consensys/loom/expr"
 )
 
-func AddLogupEqualityCheck(builder *board.Builder, moduleS, moduleT string, logupS, logupT []expr.Expr) {
+// func AddLogupEqualityCheck(builder *board.Builder, moduleS, moduleT string, logupS, logupT []expr.Expr) {
+func AddLogupEqualityCheck(builder *board.Builder, logupS, logupT []board.Column) {
 
-	if moduleS != moduleT {
+	if (len(logupS) == 1) && len(logupT) == 1 && (logupS[0].Module == logupT[0].Module) {
+		module := logupS[0].Module
+		m := builder.Modules[module]
+		positive := logupS[0].In
+		negative := logupT[0].In
+		m.AssertEqualRelativeAt(positive, negative, 0)
+		builder.Modules[module] = m
+
+	} else { // logup bus
 		positives := make([]string, len(logupS))
 		negatives := make([]string, len(logupT))
-		nsRelative := 0 // absolute position modulesS.N-1-nsRelative
-		ntRelative := 0 // absolute position modulesS.N-1-ntRelative
 		for i, ls := range logupS {
-			lsName := fmt.Sprintf("%s_%d", ls.String(), nsRelative)
+			lsName := fmt.Sprintf("%s.%s_%d", ls.Module, ls.In.String(), 0)
 			positives[i] = lsName
-			builder.AddMakeRelativeIthValuePublicStep(moduleS, ls, lsName, nsRelative) // this step makes logupS[N-1] accessible to the verifier
+			builder.AddMakeRelativeIthValuePublicStep(ls.Module, ls.In, lsName, 0) // this step makes ls.In[N-1] accessible to the verifier
 		}
 		for i, lt := range logupT {
-			ltName := fmt.Sprintf("%s_%d", lt.String(), ntRelative)
+			ltName := fmt.Sprintf("%s.%s_%d", lt.Module, lt.In.String(), 0)
 			negatives[i] = ltName
-			builder.AddMakeRelativeIthValuePublicStep(moduleT, lt, ltName, ntRelative) // this step makes logupS[N-1] accessible to the verifier
+			builder.AddMakeRelativeIthValuePublicStep(lt.Module, lt.In, ltName, 0) // this step makes lt.In[N-1] accessible to the verifier
 		}
-		builder.LogupBus = append(builder.LogupBus, board.NewLogupBus(positives, negatives))
-	} else {
-		m := builder.Modules[moduleS]
-		positives := logupS[0]
-		for i := 1; i < len(logupS); i++ {
-			positives.Add(logupS[i])
-		}
-		negatives := logupT[0]
-		for i := 1; i < len(logupT); i++ {
-			negatives.Add(logupT[i])
-		}
-		m.AssertEqualRelativeAt(positives, negatives, 0)
-		builder.Modules[moduleS] = m
 	}
 }

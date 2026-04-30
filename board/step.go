@@ -6,6 +6,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/trace"
@@ -184,8 +185,7 @@ func CountWeightedMultiplicityStep(ins []expr.Expr, out string, t trace.Trace, _
 
 type CMCtx struct{}
 
-// _CountMultiplicityStep computes the running sum M/E where
-// ins[0] = S (values), ins[1] = T (table), ins[2] = Sel (selector)
+// _CountMultiplicityStep builds M such that M[i] = { j | S[j] = T [i] } where S := ins[0], T := ins[1]
 func CountMultiplicityStep(ins []expr.Expr, out string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, _ StepContext) error {
 
 	S := ins[0]
@@ -196,6 +196,76 @@ func CountMultiplicityStep(ins []expr.Expr, out string, t trace.Trace, _ *Progra
 	}
 	if err := trace.RegisterColumn(t, out, res); err != nil {
 		panic(fmt.Sprintf("[_CountMultiplicityStep] register multiplicity column %s: %v", out, err))
+	}
+
+	return nil
+}
+
+type CMUnionCtx struct {
+	NbSources, NbTargets int
+}
+
+// CountUnionMultiplicityStep computes the running sum M/E where
+// ins[0] = S (values), ins[1] = T (table), ins[2] = Sel (selector)
+func CountUnionMultiplicityStep(ins []expr.Expr, out string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+
+	_ctx, ok := ctx.(CMUnionCtx)
+	if !ok {
+		return fmt.Errorf("[CountUnionMultiplicityStep] wrong context type")
+	}
+
+	nbS := _ctx.NbSources
+	nbT := _ctx.NbTargets
+	S := make([]expr.Expr, nbS)
+	T := make([]expr.Expr, nbT)
+	copy(S, ins[:nbS])
+	copy(T, ins[nbS:nbT+nbS])
+	res, err := poly.BuildUnionMultiplicityPolynomials(t, S, T, mu)
+	if err != nil {
+		return err
+	}
+
+	for i := 0; i < nbT; i++ {
+		_out := constants.MultiplicityChunkName(out, i)
+		if err := trace.RegisterColumn(t, _out, res[i]); err != nil {
+			panic(fmt.Sprintf("[_CountMultiplicityStep] register multiplicity column %s: %v", out, err))
+		}
+	}
+
+	return nil
+}
+
+type CWMUnionCtx struct {
+	NbSources, NbTargets int
+}
+
+// CountUnionMultiplicityStep computes the running sum M/E where
+// ins: [ selS || S || T]
+func CountUnionWeightedMultiplicityStep(ins []expr.Expr, out string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+
+	_ctx, ok := ctx.(CMUnionCtx)
+	if !ok {
+		return fmt.Errorf("[CountUnionMultiplicityStep] wrong context type")
+	}
+
+	nbS := _ctx.NbSources
+	nbT := _ctx.NbTargets
+	S := make([]expr.Expr, nbS)
+	selS := make([]expr.Expr, nbS)
+	T := make([]expr.Expr, nbT)
+	copy(selS, ins[:nbS])
+	copy(S, ins[nbS:nbS+nbS])
+	copy(T, ins[nbS+nbS:nbS+nbS+nbT])
+	res, err := poly.BuildUnionWeightedMultiplicityPolynomial(t, selS, S, T, mu)
+	if err != nil {
+		return err
+	}
+
+	for i := 0; i < nbT; i++ {
+		_out := constants.MultiplicityChunkName(out, i)
+		if err := trace.RegisterColumn(t, _out, res[i]); err != nil {
+			panic(fmt.Sprintf("[CountUnionWeightedMultiplicityStep] register multiplicity column %s: %v", out, err))
+		}
 	}
 
 	return nil

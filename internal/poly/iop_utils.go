@@ -81,6 +81,127 @@ func BuildMultiplicityPolynomial(Pi map[string]Polynomial, S, T expr.Expr, mu *s
 	return res, nil
 }
 
+// BuildUnionWeightedMultiplicityPolynomial same as BuildWeightedMultiplicityPolynomial, but selectors and
+// target and source are split
+func BuildUnionWeightedMultiplicityPolynomial(Pi map[string]Polynomial, selS, S, T []expr.Expr, mu *sync.Mutex) ([]Polynomial, error) {
+
+	// 1 - ensure len(selS)=len(S)
+	if len(selS) != len(S) {
+		return nil, fmt.Errorf("BuildUnionWeightedMultiplicityPolynomial: len(selS)=%d != len(S)=%d", len(selS), len(S))
+	}
+
+	// 2 - build joinedSelS, joinedS, joinedT -> concatenations of selS, S, T
+
+	// Evaluate all S and selS expressions into pooled buffers (same size per index).
+	sPolys := make([]Polynomial, len(S))
+	selPolys := make([]Polynomial, len(selS))
+	for i, s := range S {
+		ns, err := inferN(Pi, s)
+		if err != nil {
+			for j := 0; j < i; j++ {
+				putBuf(sPolys[j])
+				putBuf(selPolys[j])
+			}
+			return nil, fmt.Errorf("BuildUnionWeightedMultiplicityPolynomial: S[%d]: %w", i, err)
+		}
+		sBuf := getBuf(ns)
+		if err := evalPointWiseInto(Pi, s, ns, mu, sBuf); err != nil {
+			putBuf(sBuf)
+			for j := 0; j < i; j++ {
+				putBuf(sPolys[j])
+				putBuf(selPolys[j])
+			}
+			return nil, err
+		}
+		selBuf := getBuf(ns)
+		if err := evalPointWiseInto(Pi, selS[i], ns, mu, selBuf); err != nil {
+			putBuf(sBuf)
+			putBuf(selBuf)
+			for j := 0; j < i; j++ {
+				putBuf(sPolys[j])
+				putBuf(selPolys[j])
+			}
+			return nil, err
+		}
+		sPolys[i] = sBuf
+		selPolys[i] = selBuf
+	}
+
+	// Evaluate all T expressions into pooled buffers, recording sizes.
+	tPolys := make([]Polynomial, len(T))
+	tSizes := make([]int, len(T))
+	for i, t := range T {
+		nt, err := inferN(Pi, t)
+		if err != nil {
+			for j := range sPolys {
+				putBuf(sPolys[j])
+				putBuf(selPolys[j])
+			}
+			for j := 0; j < i; j++ {
+				putBuf(tPolys[j])
+			}
+			return nil, fmt.Errorf("BuildUnionWeightedMultiplicityPolynomial: T[%d]: %w", i, err)
+		}
+		buf := getBuf(nt)
+		if err := evalPointWiseInto(Pi, t, nt, mu, buf); err != nil {
+			putBuf(buf)
+			for j := range sPolys {
+				putBuf(sPolys[j])
+				putBuf(selPolys[j])
+			}
+			for j := 0; j < i; j++ {
+				putBuf(tPolys[j])
+			}
+			return nil, err
+		}
+		tPolys[i] = buf
+		tSizes[i] = nt
+	}
+
+	totalS := 0
+	for _, sp := range sPolys {
+		totalS += len(sp)
+	}
+	joinedS := getBuf(totalS)
+	joinedSelS := getBuf(totalS)
+	off := 0
+	for i, sp := range sPolys {
+		copy(joinedS[off:], sp)
+		copy(joinedSelS[off:], selPolys[i])
+		off += len(sp)
+		putBuf(sp)
+		putBuf(selPolys[i])
+	}
+
+	totalT := 0
+	for _, tp := range tPolys {
+		totalT += len(tp)
+	}
+	joinedT := getBuf(totalT)
+	off = 0
+	for _, tp := range tPolys {
+		copy(joinedT[off:], tp)
+		off += len(tp)
+		putBuf(tp)
+	}
+
+	// 3 - call countWeightedMultiplicityWithSelector on joinedS, joinedT, joinedSelS
+	result := countWeightedMultiplicityWithSelector(joinedS, joinedT, joinedSelS)
+	putBuf(joinedS)
+	putBuf(joinedT)
+	putBuf(joinedSelS)
+
+	// 4 - split result into len(T) chunks, chunk i of size tSizes[i]
+	chunks := make([]Polynomial, len(T))
+	off = 0
+	for i, sz := range tSizes {
+		chunks[i] = result[off : off+sz]
+		off += sz
+	}
+
+	return chunks, nil
+}
+
 // BuildUnionMultiplicityPolynomials returns one multiplicity polynomial per
 // target column such that chunks[k][i] = total number of times T[k][i] appears
 // across all source columns S[0], ..., S[len(S)-1].

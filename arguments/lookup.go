@@ -10,7 +10,7 @@ import (
 	"github.com/consensys/loom/internal/constants"
 )
 
-func CLookup(builder *board.Builder, S, T board.Input, SelS, SelT expr.Expr) error {
+func CLookup(builder *board.Builder, S, T board.Column, SelS, SelT expr.Expr) error {
 
 	// 1. compute multiplicity
 	wmultiplicity, err := constants.RandomString(10)
@@ -29,7 +29,7 @@ func CLookup(builder *board.Builder, S, T board.Input, SelS, SelT expr.Expr) err
 	}
 	builder.AddFiatShamirStep(fsInputs, _gamma)
 
-	// 3. register lookup for both parties
+	// 3. register logup for both parties
 	gamma := expr.Challenge(_gamma)
 	_logupT, err := constants.RandomString(10)
 	if err != nil {
@@ -51,14 +51,14 @@ func CLookup(builder *board.Builder, S, T board.Input, SelS, SelT expr.Expr) err
 	}
 
 	// 4. if the inputs come from the same module, build the vanishing relation, else build a logup bus
-	logupS := expr.Col(_logupS)
-	logupT := expr.Col(_logupT)
-	AddLogupEqualityCheck(builder, S.Module, T.Module, []expr.Expr{logupS}, []expr.Expr{logupT})
+	logupS := board.Column{Module: S.Module, In: expr.Col(_logupS)}
+	logupT := board.Column{Module: T.Module, In: expr.Col(_logupT)}
+	AddLogupEqualityCheck(builder, []board.Column{logupS}, []board.Column{logupT})
 
 	return nil
 }
 
-func Range(builder *board.Builder, S board.Input, bound uint64) error {
+func Range(builder *board.Builder, S board.Column, bound uint64) error {
 
 	// 1 - check if the range module for bound exists, if not, create it
 	bound = ecc.NextPowerOfTwo(bound)
@@ -70,14 +70,271 @@ func Range(builder *board.Builder, S board.Input, bound uint64) error {
 		rangeModule.GenCol = append(rangeModule.GenCol, board.RangeColumnGen{Bound: bound})
 		builder.AddModule(constants.RangeModuleName(bound), rangeModule)
 	}
-	T := board.Input{Module: rangeModuleName, In: expr.Col(constants.RangeColName(bound))}
+	T := board.Column{Module: rangeModuleName, In: expr.Col(constants.RangeColName(bound))}
 
 	// 2 - add the lookup
 	return Lookup(builder, S, T)
 }
 
+// LookupUnion argument that {S[0], S[1], ..} ⊂ {T[0], T[1], ..}
+// len(S) and len(T) need not be equal.
+func LookupUnion(builder *board.Builder, S, T []board.Column) error {
+
+	// 1 - compute union multiplicity
+	unionMultiplicity, err := constants.RandomString(10)
+	if err != nil {
+		return err
+	}
+	sIn := make([]expr.Expr, len(S))
+	tIn := make([]expr.Expr, len(T))
+	for i, sin := range S {
+		sIn[i] = sin.In
+	}
+	for i, tin := range T {
+		tIn[i] = tin.In
+	}
+	builder.AddCountUnionMultiplicityStep(sIn, tIn, unionMultiplicity)
+
+	// 2 - sample the challenge
+	fsInputs := make([]expr.Expr, len(S)+len(T)+len(T))
+	copy(fsInputs, sIn)
+	copy(fsInputs[len(S):], tIn)
+	for i := 0; i < len(T); i++ {
+		fsInputs[len(S)+len(T)+i] = expr.Col(constants.MultiplicityChunkName(unionMultiplicity, i))
+	}
+	_gamma, err := constants.RandomString(10)
+	if err != nil {
+		return err
+	}
+	builder.AddFiatShamirStep(fsInputs, _gamma)
+
+	// 3 - compute |S| logups for S, |T| logups for T
+	gamma := expr.Challenge(_gamma)
+	_logupS, err := constants.RandomString(10)
+	if err != nil {
+		return err
+	}
+	_logupT, err := constants.RandomString(10)
+	if err != nil {
+		return err
+	}
+	logupT := make([]board.Column, len(T))
+	logupS := make([]board.Column, len(S))
+	for i, t := range T {
+		_logupT = fmt.Sprintf("%s.%s_%s", t.Module, constants.LOGUP, _logupT)
+		sMinusGamma := t.In.Sub(gamma)
+		logupName := constants.LogupChunkName(_logupT, i)
+		builder.AddLogupStep(
+			t.Module,
+			sMinusGamma,
+			expr.Col(constants.MultiplicityChunkName(unionMultiplicity, i)),
+			logupName)
+		logupT[i] = board.Column{Module: t.Module, In: expr.Col(logupName)}
+	}
+	for i, s := range S {
+		_logupS = fmt.Sprintf("%s.%s_%s", s.Module, constants.LOGUP, _logupS)
+		sMinusGamma := s.In.Sub(gamma)
+		logupName := constants.LogupChunkName(_logupS, i)
+		builder.AddLogupStep(
+			s.Module,
+			sMinusGamma,
+			expr.Const(koalabear.One()),
+			logupName)
+		logupS[i] = board.Column{Module: s.Module, In: expr.Col(logupName)}
+	}
+
+	// 4. Add logup equality check
+	AddLogupEqualityCheck(builder, logupS, logupT)
+
+	return nil
+}
+
+// LookupUnionTuple
+// argument that {S[0], S[1], ..} ⊂ {T[0], T[1], ..}, where S[i], T[i] are tuples of columns
+//
+// for each i, len(S[i]) must be equal to len(T[i])
+func LookupUnionTuple(builder *board.Builder, S, T []board.Table) error {
+
+	refWidth := len(S[0].In)
+	for _, s := range S {
+		if len(s.In) != refWidth {
+			return fmt.Errorf("inconsistent width, expected %d, got %d", refWidth, len(s.In))
+		}
+	}
+	for _, t := range T {
+		if len(t.In) != refWidth {
+			return fmt.Errorf("inconsistent width, expected %d, got %d", refWidth, len(t.In))
+		}
+	}
+
+	// 1. fold each S[i], each T[i] to reduce the case to LookupUnion
+	fsInputs := make([]expr.Expr, 0, (len(S)+len(T))*len(S[0].In))
+	for _, s := range S {
+		fsInputs = append(fsInputs, s.In...)
+
+	}
+	for _, t := range T {
+		fsInputs = append(fsInputs, t.In...)
+
+	}
+	_alpha, err := constants.RandomString(10)
+	if err != nil {
+		return err
+	}
+	builder.AddFiatShamirStep(fsInputs, _alpha)
+
+	// 2. call LookupUnion on foldedS, foldedT
+	foldedS := make([]board.Column, len(S))
+	foldedT := make([]board.Column, len(T))
+	alpha := expr.Challenge(_alpha)
+	for i, s := range S {
+		foldedS[i].In = expr.Fold(alpha, s.In)
+		foldedS[i].Module = s.Module
+	}
+	for i, t := range T {
+		foldedT[i].In = expr.Fold(alpha, t.In)
+		foldedT[i].Module = t.Module
+	}
+
+	return LookupUnion(builder, foldedS, foldedT)
+}
+
+func CLookupUnion(builder *board.Builder, selS, selT []expr.Expr, S, T []board.Column) error {
+
+	if len(selS) != len(S) {
+		return fmt.Errorf("selS has %d chunks, but S has %d chunks", len(selS), len(S))
+	}
+	if len(selT) != len(T) {
+		return fmt.Errorf("selS has %d chunks, but S has %d chunks", len(selS), len(S))
+	}
+
+	// 1 - build the weigthed multiplicity
+	wmultiplicity, err := constants.RandomString(10)
+	if err != nil {
+		return err
+	}
+	wmultiplicity = fmt.Sprintf("Mult_%s", wmultiplicity)
+	sIn := make([]expr.Expr, len(S))
+	tIn := make([]expr.Expr, len(T))
+	for i, s := range S {
+		sIn[i] = s.In
+	}
+	for i, t := range T {
+		tIn[i] = t.In
+	}
+	builder.AddCountWeighteUnionMultiplicityStep(selS, sIn, tIn, wmultiplicity)
+
+	// 2 - samplea challenge
+	wmultiplicities := make([]expr.Expr, len(T))
+	for i := 0; i < len(T); i++ {
+		wmultiplicities[i] = expr.Col(constants.MultiplicityChunkName(wmultiplicity, i))
+	}
+	fsInputs := make([]expr.Expr, 3*len(T)+2*len(S))
+	offset := 0
+	copy(fsInputs, sIn)
+	offset += len(S)
+	copy(fsInputs[offset:], tIn)
+	offset += len(T)
+	copy(fsInputs[offset:], selS)
+	offset += len(selS)
+	copy(fsInputs[offset:], selT)
+	offset += len(T)
+	copy(fsInputs[offset:], wmultiplicities)
+	_gamma, err := constants.RandomString(10)
+	if err != nil {
+		return err
+	}
+	builder.AddFiatShamirStep(fsInputs, _gamma)
+
+	// 3. register logup for both parties
+	gamma := expr.Challenge(_gamma)
+	_logupT, err := constants.RandomString(10)
+	if err != nil {
+		return err
+	}
+	_logupS, err := constants.RandomString(10)
+	if err != nil {
+		return err
+	}
+	logupT := make([]board.Column, len(T))
+	logupS := make([]board.Column, len(S))
+	for i, t := range T {
+		_logupT = fmt.Sprintf("%s.%s_%s", t.Module, constants.LOGUP, _logupT)
+		sMinusGamma := t.In.Sub(gamma)
+		logupName := constants.LogupChunkName(_logupT, i)
+		M := wmultiplicities[i].Mul(selT[i])
+		builder.AddLogupStep(
+			t.Module,
+			sMinusGamma,
+			M,
+			logupName)
+		logupT[i] = board.Column{Module: t.Module, In: expr.Col(logupName)}
+	}
+	for i, s := range S {
+		_logupS = fmt.Sprintf("%s.%s_%s", s.Module, constants.LOGUP, _logupT)
+		sMinusGamma := s.In.Sub(gamma)
+		logupName := constants.LogupChunkName(_logupS, i)
+		builder.AddLogupStep(
+			s.Module,
+			sMinusGamma,
+			selS[i].Mul(S[i].In),
+			logupName)
+		logupS[i] = board.Column{Module: s.Module, In: expr.Col(logupName)}
+	}
+
+	return nil
+}
+
+func CLookupUnionTuple(builder *board.Builder, selS, selT []expr.Expr, S, T []board.Table) error {
+
+	refWidth := len(S[0].In)
+	for _, s := range S {
+		if len(s.In) != refWidth {
+			return fmt.Errorf("inconsistent width, expected %d, got %d", refWidth, len(s.In))
+		}
+	}
+	for _, t := range T {
+		if len(t.In) != refWidth {
+			return fmt.Errorf("inconsistent width, expected %d, got %d", refWidth, len(t.In))
+		}
+	}
+
+	// 1. fold each S[i], each T[i] to reduce the case to LookupUnion
+	fsInputs := make([]expr.Expr, 0, (len(S)+len(T))*len(S[0].In))
+	for _, s := range S {
+		fsInputs = append(fsInputs, s.In...)
+
+	}
+	for _, t := range T {
+		fsInputs = append(fsInputs, t.In...)
+
+	}
+	fsInputs = append(fsInputs, selS...)
+	fsInputs = append(fsInputs, selT...)
+	_alpha, err := constants.RandomString(10)
+	if err != nil {
+		return err
+	}
+	builder.AddFiatShamirStep(fsInputs, _alpha)
+
+	// 2. call LookupUnion on foldedS, foldedT
+	foldedS := make([]board.Column, len(S))
+	foldedT := make([]board.Column, len(T))
+	alpha := expr.Challenge(_alpha)
+	for i, s := range S {
+		foldedS[i].In = expr.Fold(alpha, s.In)
+		foldedS[i].Module = s.Module
+	}
+	for i, t := range T {
+		foldedT[i].In = expr.Fold(alpha, t.In)
+		foldedT[i].Module = t.Module
+	}
+
+	return CLookupUnion(builder, selS, selT, foldedS, foldedT)
+}
+
 // Lookup arguments that S ⊂ T
-func Lookup(builder *board.Builder, S, T board.Input) error {
+func Lookup(builder *board.Builder, S, T board.Column) error {
 
 	// 1. compute multiplicity
 	multiplicity, err := constants.RandomString(10)
@@ -118,9 +375,9 @@ func Lookup(builder *board.Builder, S, T board.Input) error {
 	}
 
 	// 4. if the inputs come from the same module, build the vanishing relation, else build a logup bus
-	logupS := expr.Col(_logupS)
-	logupT := expr.Col(_logupT)
-	AddLogupEqualityCheck(builder, S.Module, T.Module, []expr.Expr{logupS}, []expr.Expr{logupT})
+	logupS := board.Column{Module: S.Module, In: expr.Col(_logupS)}
+	logupT := board.Column{Module: T.Module, In: expr.Col(_logupT)}
+	AddLogupEqualityCheck(builder, []board.Column{logupS}, []board.Column{logupT})
 
 	return nil
 }
@@ -129,10 +386,7 @@ func Lookup(builder *board.Builder, S, T board.Input) error {
 // CLookupTuple argues that { row(S) | SelS != 0 } is a subset of { row(T) | SelT != 0 }
 // where row(.) denotes the tuple of all columns in a row. It folds the columns
 // with a random challenge and delegates to CLookup.
-func CLookupTuple(builder *board.Builder, S, T []board.Input, selS, selT expr.Expr) error {
-	if len(S) != len(T) {
-		return fmt.Errorf("[CLookupTuple] S and T must have equal size, got %d and %d", len(S), len(T))
-	}
+func CLookupTuple(builder *board.Builder, S, T []board.Column, selS, selT expr.Expr) error {
 
 	// 1. sample a folding challenge
 	_alpha, err := constants.RandomString(10)
@@ -156,13 +410,14 @@ func CLookupTuple(builder *board.Builder, S, T []board.Input, selS, selT expr.Ex
 		exprT[i] = T[i].In
 	}
 	alpha := expr.Challenge(_alpha)
-	inputS := board.Input{Module: S[0].Module, In: expr.Fold(alpha, exprS)}
-	inputT := board.Input{Module: T[0].Module, In: expr.Fold(alpha, exprT)}
+	inputS := board.Column{Module: S[0].Module, In: expr.Fold(alpha, exprS)}
+	inputT := board.Column{Module: T[0].Module, In: expr.Fold(alpha, exprT)}
 
 	return CLookup(builder, inputS, inputT, selS, selT)
 }
 
-func LookupTuple(builder *board.Builder, S, T []board.Input) error {
+// LookupTuple lookup on table of width len(S)=len(T)
+func LookupTuple(builder *board.Builder, S, T []board.Column) error {
 
 	if len(S) != len(T) {
 		return fmt.Errorf("[LookupTuple] S and T must have equal size, got %d and %d", len(S), len(T))
@@ -196,8 +451,8 @@ func LookupTuple(builder *board.Builder, S, T []board.Input) error {
 	// 3. call 1 single column lookup
 	moduleS := S[0].Module
 	moduleT := T[0].Module
-	inputS := board.Input{Module: moduleS, In: foldedS}
-	inputT := board.Input{Module: moduleT, In: foldedT}
+	inputS := board.Column{Module: moduleS, In: foldedS}
+	inputT := board.Column{Module: moduleT, In: foldedT}
 	Lookup(builder, inputS, inputT)
 
 	return nil

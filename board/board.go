@@ -70,7 +70,12 @@ func (b *Builder) AssertZero(module string, relation expr.Expr) error {
 	return nil
 }
 
-type Input struct {
+type Table struct {
+	Module string
+	In     []expr.Expr
+}
+
+type Column struct {
 	Module string
 	In     expr.Expr
 }
@@ -166,6 +171,20 @@ func (b *Builder) AddCountWeightedMultiplicityStep(S, T, selS expr.Expr, output 
 // S ⊂ T, the ouptut is in T's module
 func (b *Builder) AddCountMultiplicityStep(S, T expr.Expr, output string) {
 	cmStep := NewProverStep([]expr.Expr{S, T}, output, CountMultiplicityStep, CMCtx{})
+	b.Steps = append(b.Steps, cmStep)
+}
+
+// S ⊂ T, the ouptut is in T's module
+func (b *Builder) AddCountWeighteUnionMultiplicityStep(selS, S, T []expr.Expr, output string) {
+	ctx := CMUnionCtx{NbSources: len(S), NbTargets: len(T)}
+	cmStep := NewProverStep(append(selS, append(S, T...)...), output, CountUnionWeightedMultiplicityStep, ctx)
+	b.Steps = append(b.Steps, cmStep)
+}
+
+// S ⊂ T, the ouptut is in T's module
+func (b *Builder) AddCountUnionMultiplicityStep(S, T []expr.Expr, output string) {
+	ctx := CMUnionCtx{NbSources: len(S), NbTargets: len(T)}
+	cmStep := NewProverStep(append(S, T...), output, CountWeightedMultiplicityStep, ctx)
 	b.Steps = append(b.Steps, cmStep)
 }
 

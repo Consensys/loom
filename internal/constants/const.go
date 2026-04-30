@@ -40,6 +40,14 @@ func RangeColName(bound uint64) string {
 	return fmt.Sprintf("%s.%s_%d", RANGE_MODULE, "bound", bound)
 }
 
+func LogupChunkName(name string, chunk int) string {
+	return fmt.Sprintf("%s_%d", name, chunk)
+}
+
+func MultiplicityChunkName(name string, chunk int) string {
+	return fmt.Sprintf("%s_%d", name, chunk)
+}
+
 func QuotientChunkName(moduleName string, chunk int) string {
 	return fmt.Sprintf("%s.%d", moduleName, chunk)
 }

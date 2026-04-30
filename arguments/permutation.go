@@ -10,7 +10,7 @@ import (
 )
 
 // PermutationCrossModules we use the lookup in this case, so that each module has its own logup
-func PermutationCrossModules(builder *board.Builder, A, B board.Input) error {
+func PermutationCrossModules(builder *board.Builder, A, B board.Column) error {
 
 	// 1. sample challenge
 	_gamma, err := constants.RandomString(10)
@@ -43,9 +43,9 @@ func PermutationCrossModules(builder *board.Builder, A, B board.Input) error {
 	}
 
 	// 3. Check logup relation
-	logupA := expr.Col(_logupA)
-	logupB := expr.Col(_logupB)
-	AddLogupEqualityCheck(builder, A.Module, B.Module, []expr.Expr{logupA}, []expr.Expr{logupB})
+	logupA := board.Column{Module: A.Module, In: expr.Col(_logupA)}
+	logupB := board.Column{Module: B.Module, In: expr.Col(_logupB)}
+	AddLogupEqualityCheck(builder, []board.Column{logupA}, []board.Column{logupB})
 
 	return nil
 }
@@ -59,13 +59,13 @@ func PermutationWithinModule(builder *board.Builder, module string, A, B []expr.
 	if err != nil {
 		return err
 	}
-	inputA := make([]board.Input, len(A))
-	inputB := make([]board.Input, len(B))
+	inputA := make([]board.Column, len(A))
+	inputB := make([]board.Column, len(B))
 	for i, a := range A {
-		inputA[i] = board.Input{Module: module, In: a}
+		inputA[i] = board.Column{Module: module, In: a}
 	}
 	for i, b := range B {
-		inputB[i] = board.Input{Module: module, In: b}
+		inputB[i] = board.Column{Module: module, In: b}
 	}
 	// fsInputs := append(inputA, inputB...)
 	fsInputs := append(A, B...)
