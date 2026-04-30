@@ -240,65 +240,84 @@ func (b *CorsetBridge) AddConstraintInLoom(name string, corsetCS schema.Constrai
 	case air.LookupConstraint[gocorset_kb.Element]:
 		lc := cs.Unwrap()
 
-		// The AIR-level lookup has exactly one source vector and one target
-		// vector in the common case. Disjunctive lookups (len > 1) would need
-		// a union argument, which is not yet supported.
-		if len(lc.Sources) != 1 || len(lc.Targets) != 1 {
-			return fmt.Errorf("constraint %q: multi-group lookups not supported (%d sources, %d targets)",
-				name, len(lc.Sources), len(lc.Targets))
+		if len(lc.Sources) == 0 || len(lc.Targets) == 0 {
+			return fmt.Errorf("constraint %q: empty lookup", name)
 		}
-		srcVec := lc.Sources[0]
-		tgtVec := lc.Targets[0]
 
-		width := srcVec.Len()
+		width := lc.Sources[0].Len()
 		if width == 0 {
 			return fmt.Errorf("constraint %q: empty lookup vector", name)
 		}
-		if tgtVec.Len() != width {
-			return fmt.Errorf("constraint %q: source width %d != target width %d", name, width, tgtVec.Len())
-		}
 
-		srcMod := b.loomModuleName(srcVec.Module)
-		tgtMod := b.loomModuleName(tgtVec.Module)
-
-		hasSelector := srcVec.HasSelector() || tgtVec.HasSelector()
-
-		// selectorExpr returns the selector expression for a vector, or the
-		// constant 1 when the vector has no selector. The HasSelector() guard
-		// must be checked before calling Selector.Unwrap() to avoid a panic.
 		one := gnark_kb.One()
-		var selSExpr, selTExpr expr.Expr
-		if srcVec.HasSelector() {
-			selSExpr = b.termToExpr(srcVec.Selector.Unwrap(), srcVec.Module)
-		} else {
-			selSExpr = expr.Const(one)
+
+		hasAnySelector := false
+		for _, v := range lc.Sources {
+			if v.HasSelector() {
+				hasAnySelector = true
+				break
+			}
 		}
-		if tgtVec.HasSelector() {
-			selTExpr = b.termToExpr(tgtVec.Selector.Unwrap(), tgtVec.Module)
-		} else {
-			selTExpr = expr.Const(one)
+		if !hasAnySelector {
+			for _, v := range lc.Targets {
+				if v.HasSelector() {
+					hasAnySelector = true
+					break
+				}
+			}
+		}
+
+		selS := make([]expr.Expr, len(lc.Sources))
+		for i, v := range lc.Sources {
+			if v.HasSelector() {
+				selS[i] = b.termToExpr(v.Selector.Unwrap(), v.Module)
+			} else {
+				selS[i] = expr.Const(one)
+			}
+		}
+		selT := make([]expr.Expr, len(lc.Targets))
+		for i, v := range lc.Targets {
+			if v.HasSelector() {
+				selT[i] = b.termToExpr(v.Selector.Unwrap(), v.Module)
+			} else {
+				selT[i] = expr.Const(one)
+			}
 		}
 
 		if width == 1 {
-			S := board.Column{Module: srcMod, In: b.termToExpr(srcVec.Ith(0), srcVec.Module)}
-			T := board.Column{Module: tgtMod, In: b.termToExpr(tgtVec.Ith(0), tgtVec.Module)}
-			if !hasSelector {
-				return arguments.Lookup(b.Builder, S, T)
+			S := make([]board.Column, len(lc.Sources))
+			for i, v := range lc.Sources {
+				S[i] = board.Column{Module: b.loomModuleName(v.Module), In: b.termToExpr(v.Ith(0), v.Module)}
 			}
-			return arguments.CLookup(b.Builder, S, T, selSExpr, selTExpr)
+			T := make([]board.Column, len(lc.Targets))
+			for i, v := range lc.Targets {
+				T[i] = board.Column{Module: b.loomModuleName(v.Module), In: b.termToExpr(v.Ith(0), v.Module)}
+			}
+			if !hasAnySelector {
+				return arguments.LookupUnion(b.Builder, S, T)
+			}
+			return arguments.CLookupUnion(b.Builder, selS, selT, S, T)
 		}
 
-		// Tuple lookup: fold all columns with a random challenge.
-		S := board.NewTable(srcMod, int(width))
-		T := board.NewTable(tgtMod, int(width))
-		for i := range width {
-			S.In[i] = b.termToExpr(srcVec.Ith(i), srcVec.Module)
-			T.In[i] = b.termToExpr(tgtVec.Ith(i), tgtVec.Module)
+		// Tuple lookup: fold all columns per group with a random challenge.
+		S := make([]board.Table, len(lc.Sources))
+		for i, v := range lc.Sources {
+			S[i] = board.NewTable(b.loomModuleName(v.Module), int(width))
+			for j := range width {
+				S[i].In[j] = b.termToExpr(v.Ith(j), v.Module)
+			}
 		}
-		if !hasSelector {
-			return arguments.LookupTuple(b.Builder, S, T)
+		T := make([]board.Table, len(lc.Targets))
+		for i, v := range lc.Targets {
+			T[i] = board.NewTable(b.loomModuleName(v.Module), int(width))
+			for j := range width {
+				T[i].In[j] = b.termToExpr(v.Ith(j), v.Module)
+			}
 		}
-		return arguments.CLookupTuple(b.Builder, S, T, selSExpr, selTExpr)
+		if !hasAnySelector {
+			return arguments.LookupUnionTuple(b.Builder, S, T)
+		}
+		return arguments.CLookupUnionTuple(b.Builder, selS, selT, S, T)
 
 	// ── Permutation (grand-product argument) ──────────────────────────────
 	case air.PermutationConstraint[gocorset_kb.Element]:
