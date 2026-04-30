@@ -289,11 +289,11 @@ func (b *CorsetBridge) AddConstraintInLoom(name string, corsetCS schema.Constrai
 		}
 
 		// Tuple lookup: fold all columns with a random challenge.
-		S := make([]board.Column, width)
-		T := make([]board.Column, width)
+		S := board.NewTable(srcMod, int(width))
+		T := board.NewTable(tgtMod, int(width))
 		for i := range width {
-			S[i] = board.Column{Module: srcMod, In: b.termToExpr(srcVec.Ith(i), srcVec.Module)}
-			T[i] = board.Column{Module: tgtMod, In: b.termToExpr(tgtVec.Ith(i), tgtVec.Module)}
+			S.In[i] = b.termToExpr(srcVec.Ith(i), srcVec.Module)
+			T.In[i] = b.termToExpr(tgtVec.Ith(i), tgtVec.Module)
 		}
 		if !hasSelector {
 			return arguments.LookupTuple(b.Builder, S, T)

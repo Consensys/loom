@@ -6,32 +6,31 @@ import (
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/expr"
-	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/trace"
 )
 
-type Step func([]expr.Expr, string, trace.Trace, *Program, *proof.Proof, *sync.Mutex, StepContext) error
+type Step func([]expr.Expr, []string, trace.Trace, *Program, *proof.Proof, *sync.Mutex, StepContext) error
 
 type StepContext any
 
 type ProverStep struct {
 	Ctx  StepContext
 	Ins  []expr.Expr
-	Out  string
+	Outs []string
 	Step Step
 }
 
 func (ps *ProverStep) Execute(trace trace.Trace, prog *Program, proof *proof.Proof, mu *sync.Mutex) error {
 	step := ps.Step
-	return step(ps.Ins, ps.Out, trace, prog, proof, mu, ps.Ctx)
+	return step(ps.Ins, ps.Outs, trace, prog, proof, mu, ps.Ctx)
 }
 
-func NewProverStep(ins []expr.Expr, out string, step Step, ctx StepContext) ProverStep {
+func NewProverStep(ins []expr.Expr, outs []string, step Step, ctx StepContext) ProverStep {
 	return ProverStep{
 		Ins:  ins,
-		Out:  out,
+		Outs: outs,
 		Step: step,
 		Ctx:  ctx,
 	}
@@ -42,13 +41,14 @@ type MakeEntriesPublicCtx struct {
 	N   int
 }
 
-func MakeEntriesPublicStep(ins []expr.Expr, out string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+func MakeEntriesPublicStep(ins []expr.Expr, outs []string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
 
 	_ctx, ok := ctx.(MakeEntriesPublicCtx)
 	if !ok {
 		return fmt.Errorf("[MakeEntriesPublicStep] wrong context type")
 	}
 
+	out := outs[0]
 	C := ins[0]
 	res, err := poly.BuildPointwiseEvaluation(t, C, mu)
 	if err != nil {
@@ -80,7 +80,7 @@ func MakeEntriesPublicStep(ins []expr.Expr, out string, t trace.Trace, _ *Progra
 
 type FSCtx struct{}
 
-func FSStep(ins []expr.Expr, out string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+func FSStep(ins []expr.Expr, outs []string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
 
 	return nil
 }
@@ -91,13 +91,14 @@ type MakeRelativeIthValuePublicCtx struct {
 }
 
 // MakeRelativeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
-func MakeRelativeIthValuePublicStep(ins []expr.Expr, out string, t trace.Trace, pg *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+func MakeRelativeIthValuePublicStep(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
 
 	_ctx, ok := ctx.(MakeRelativeIthValuePublicCtx)
 	if !ok {
 		return fmt.Errorf("[PickLocalValueStep] wrong context type")
 	}
 
+	out := outs[0]
 	C := ins[0]
 	res, err := poly.BuildPointwiseEvaluation(t, C, mu)
 	if err != nil {
@@ -130,13 +131,14 @@ type MakeIthValuePublicCtx struct {
 }
 
 // MakeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
-func MakeIthValuePublicStep(ins []expr.Expr, out string, t trace.Trace, pg *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+func MakeIthValuePublicStep(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
 
 	_ctx, ok := ctx.(MakeIthValuePublicCtx)
 	if !ok {
 		return fmt.Errorf("[PickLocalValueStep] wrong context type")
 	}
 
+	out := outs[0]
 	C := ins[0]
 	res, err := poly.BuildPointwiseEvaluation(t, C, mu)
 	if err != nil {
@@ -163,53 +165,15 @@ func MakeIthValuePublicStep(ins []expr.Expr, out string, t trace.Trace, pg *Prog
 	return nil
 }
 
-type CWMCtx struct{}
-
-// _CountMultiplicityStep computes the running sum M/E where
-// ins[0] = S (values), ins[1] = T (table), ins[2] = Sel (selector)
-func CountWeightedMultiplicityStep(ins []expr.Expr, out string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, _ StepContext) error {
-
-	S := ins[0]
-	T := ins[1]
-	SelS := ins[2]
-	res, err := poly.BuildWeightedMultiplicityPolynomial(t, S, T, SelS, mu)
-	if err != nil {
-		return err
-	}
-	if err := trace.RegisterColumn(t, out, res); err != nil {
-		panic(fmt.Sprintf("[CountWeightedMultiplicityStep] register multiplicity column %s: %v", out, err))
-	}
-
-	return nil
-}
-
-type CMCtx struct{}
-
-// _CountMultiplicityStep builds M such that M[i] = { j | S[j] = T [i] } where S := ins[0], T := ins[1]
-func CountMultiplicityStep(ins []expr.Expr, out string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, _ StepContext) error {
-
-	S := ins[0]
-	T := ins[1]
-	res, err := poly.BuildMultiplicityPolynomial(t, S, T, mu)
-	if err != nil {
-		return err
-	}
-	if err := trace.RegisterColumn(t, out, res); err != nil {
-		panic(fmt.Sprintf("[_CountMultiplicityStep] register multiplicity column %s: %v", out, err))
-	}
-
-	return nil
-}
-
-type CMUnionCtx struct {
+type CMCtx struct {
 	NbSources, NbTargets int
 }
 
 // CountUnionMultiplicityStep computes the running sum M/E where
 // ins[0] = S (values), ins[1] = T (table), ins[2] = Sel (selector)
-func CountUnionMultiplicityStep(ins []expr.Expr, out string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+func CountMultiplicityStep(ins []expr.Expr, outs []string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
 
-	_ctx, ok := ctx.(CMUnionCtx)
+	_ctx, ok := ctx.(CMCtx)
 	if !ok {
 		return fmt.Errorf("[CountUnionMultiplicityStep] wrong context type")
 	}
@@ -220,30 +184,29 @@ func CountUnionMultiplicityStep(ins []expr.Expr, out string, t trace.Trace, _ *P
 	T := make([]expr.Expr, nbT)
 	copy(S, ins[:nbS])
 	copy(T, ins[nbS:nbT+nbS])
-	res, err := poly.BuildUnionMultiplicityPolynomials(t, S, T, mu)
+	res, err := poly.BuildMultiplicityPolynomials(t, S, T, mu)
 	if err != nil {
 		return err
 	}
 
 	for i := 0; i < nbT; i++ {
-		_out := constants.MultiplicityChunkName(out, i)
-		if err := trace.RegisterColumn(t, _out, res[i]); err != nil {
-			panic(fmt.Sprintf("[_CountMultiplicityStep] register multiplicity column %s: %v", out, err))
+		if err := trace.RegisterColumn(t, outs[i], res[i]); err != nil {
+			panic(fmt.Sprintf("[CountUnionMultiplicityStep] register multiplicity column %s: %v", outs[i], err))
 		}
 	}
 
 	return nil
 }
 
-type CWMUnionCtx struct {
+type CMWCtx struct {
 	NbSources, NbTargets int
 }
 
-// CountUnionMultiplicityStep computes the running sum M/E where
+// CountWeightedMultiplicityStep computes the running sum M/E where
 // ins: [ selS || S || T]
-func CountUnionWeightedMultiplicityStep(ins []expr.Expr, out string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+func CountWeightedMultiplicityStep(ins []expr.Expr, outs []string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
 
-	_ctx, ok := ctx.(CMUnionCtx)
+	_ctx, ok := ctx.(CMWCtx)
 	if !ok {
 		return fmt.Errorf("[CountUnionMultiplicityStep] wrong context type")
 	}
@@ -256,15 +219,14 @@ func CountUnionWeightedMultiplicityStep(ins []expr.Expr, out string, t trace.Tra
 	copy(selS, ins[:nbS])
 	copy(S, ins[nbS:nbS+nbS])
 	copy(T, ins[nbS+nbS:nbS+nbS+nbT])
-	res, err := poly.BuildUnionWeightedMultiplicityPolynomial(t, selS, S, T, mu)
+	res, err := poly.BuildWeightedMultiplicityPolynomial(t, selS, S, T, mu)
 	if err != nil {
 		return err
 	}
 
 	for i := 0; i < nbT; i++ {
-		_out := constants.MultiplicityChunkName(out, i)
-		if err := trace.RegisterColumn(t, _out, res[i]); err != nil {
-			panic(fmt.Sprintf("[CountUnionWeightedMultiplicityStep] register multiplicity column %s: %v", out, err))
+		if err := trace.RegisterColumn(t, outs[i], res[i]); err != nil {
+			panic(fmt.Sprintf("[CountUnionWeightedMultiplicityStep] register multiplicity column %s: %v", outs[i], err))
 		}
 	}
 
@@ -275,8 +237,9 @@ type LogUpCtx struct{}
 
 // _LogUpStep computes the running sum M/E where
 // ins[0] = E, ins[1] = M
-func LogUpStep(ins []expr.Expr, out string, t trace.Trace, prog *Program, proof *proof.Proof, mu *sync.Mutex, _ StepContext) error {
+func LogUpStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Program, proof *proof.Proof, mu *sync.Mutex, _ StepContext) error {
 
+	out := outs[0]
 	E := ins[0]
 	M := ins[1]
 
@@ -295,8 +258,9 @@ type GPCtx struct{}
 
 // _GrandProductStep computes the running product N/D where
 // ins[0] = N, ins[1] = D
-func GrandProductStep(ins []expr.Expr, out string, t trace.Trace, prog *Program, proof *proof.Proof, mu *sync.Mutex, _ StepContext) error {
+func GrandProductStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Program, proof *proof.Proof, mu *sync.Mutex, _ StepContext) error {
 
+	out := outs[0]
 	N := ins[0]
 	D := ins[1]
 

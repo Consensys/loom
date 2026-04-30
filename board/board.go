@@ -75,6 +75,10 @@ type Table struct {
 	In     []expr.Expr
 }
 
+func NewTable(module string, size int) Table {
+	return Table{Module: module, In: make([]expr.Expr, size)}
+}
+
 type Column struct {
 	Module string
 	In     expr.Expr
@@ -90,7 +94,7 @@ func (b *Builder) AddFiatShamirStep(E []expr.Expr, out string) {
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  E,
-		Out:  out,
+		Outs: []string{out},
 		Step: FSStep,
 	}
 	b.Steps = append(b.Steps, pvStep)
@@ -111,7 +115,7 @@ func (b *Builder) AddMakeEntriesPublicStep(module string, E expr.Expr, selector,
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  []expr.Expr{E},
-		Out:  out,
+		Outs: []string{out},
 		Step: MakeEntriesPublicStep,
 	}
 	b.Steps = append(b.Steps, pvStep)
@@ -135,7 +139,7 @@ func (b *Builder) AddMakeRelativeIthValuePublicStep(module string, E expr.Expr, 
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  []expr.Expr{E},
-		Out:  out,
+		Outs: []string{out},
 		Step: MakeRelativeIthValuePublicStep,
 	}
 	b.Steps = append(b.Steps, pvStep)
@@ -155,36 +159,32 @@ func (b *Builder) AddMakeIthValuePublicStep(module string, E expr.Expr, out stri
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  []expr.Expr{E},
-		Out:  out,
+		Outs: []string{out},
 		Step: MakeIthValuePublicStep,
 	}
 	b.Steps = append(b.Steps, pvStep)
 	b.addMakeIthValuePublicConstraint(module, E, out, pos)
 }
 
-// S ⊂ T for selS!=0, the ouptut is in T's module
-func (b *Builder) AddCountWeightedMultiplicityStep(S, T, selS expr.Expr, output string) {
-	cmStep := NewProverStep([]expr.Expr{S, T, selS}, output, CountWeightedMultiplicityStep, CMCtx{})
+// S ⊂ T, the ouptut is in T's module
+func (b *Builder) AddCountWeightedMultiplicityStep(selS, S, T []expr.Expr, output string) {
+	ctx := CMWCtx{NbSources: len(S), NbTargets: len(T)}
+	outs := make([]string, len(T))
+	for i := range T {
+		outs[i] = constants.MultiplicityChunkName(output, i)
+	}
+	cmStep := NewProverStep(append(selS, append(S, T...)...), outs, CountWeightedMultiplicityStep, ctx)
 	b.Steps = append(b.Steps, cmStep)
 }
 
 // S ⊂ T, the ouptut is in T's module
-func (b *Builder) AddCountMultiplicityStep(S, T expr.Expr, output string) {
-	cmStep := NewProverStep([]expr.Expr{S, T}, output, CountMultiplicityStep, CMCtx{})
-	b.Steps = append(b.Steps, cmStep)
-}
-
-// S ⊂ T, the ouptut is in T's module
-func (b *Builder) AddCountWeighteUnionMultiplicityStep(selS, S, T []expr.Expr, output string) {
-	ctx := CMUnionCtx{NbSources: len(S), NbTargets: len(T)}
-	cmStep := NewProverStep(append(selS, append(S, T...)...), output, CountUnionWeightedMultiplicityStep, ctx)
-	b.Steps = append(b.Steps, cmStep)
-}
-
-// S ⊂ T, the ouptut is in T's module
-func (b *Builder) AddCountUnionMultiplicityStep(S, T []expr.Expr, output string) {
-	ctx := CMUnionCtx{NbSources: len(S), NbTargets: len(T)}
-	cmStep := NewProverStep(append(S, T...), output, CountWeightedMultiplicityStep, ctx)
+func (b *Builder) AddCountMultiplicityStep(S, T []expr.Expr, output string) {
+	ctx := CMCtx{NbSources: len(S), NbTargets: len(T)}
+	outs := make([]string, len(T))
+	for i := range T {
+		outs[i] = constants.MultiplicityChunkName(output, i)
+	}
+	cmStep := NewProverStep(append(S, T...), outs, CountMultiplicityStep, ctx)
 	b.Steps = append(b.Steps, cmStep)
 }
 
@@ -204,7 +204,7 @@ func (b *Builder) addLogupConstraint(module string, E, M expr.Expr, output strin
 // AddLogupStep register the action of computing the column interpolating the running sum
 // \Sigma_j<=i M[i]/E[i]
 func (b *Builder) AddLogupStep(module string, E, M expr.Expr, output string) {
-	logupStep := NewProverStep([]expr.Expr{E, M}, output, LogUpStep, LogUpCtx{})
+	logupStep := NewProverStep([]expr.Expr{E, M}, []string{output}, LogUpStep, LogUpCtx{})
 	b.Steps = append(b.Steps, logupStep)
 	b.addLogupConstraint(module, E, M, output)
 }
@@ -218,7 +218,7 @@ func (b *Builder) addGrandProductConstraint(module string, N, D expr.Expr, outpu
 }
 
 func (b *Builder) AddGrandProductStep(module string, N, D expr.Expr, output string) {
-	gpStep := NewProverStep([]expr.Expr{N, D}, output, GrandProductStep, GPCtx{})
+	gpStep := NewProverStep([]expr.Expr{N, D}, []string{output}, GrandProductStep, GPCtx{})
 	b.Steps = append(b.Steps, gpStep)
 	b.addGrandProductConstraint(module, N, D, output)
 }
@@ -279,7 +279,9 @@ func Compile(b *Builder) (Program, error) {
 				stepLevel[i] = lvl
 				changed = true
 			}
-			varLevel[step.Out] = lvl
+			for _, o := range step.Outs {
+				varLevel[o] = lvl
+			}
 		}
 		if !changed {
 			break
@@ -294,7 +296,9 @@ func Compile(b *Builder) (Program, error) {
 	challengeProducer := map[string]int{} // challenge name → index of the FS step that outputs it
 	for i, step := range b.Steps {
 		if isFSStep[i] {
-			challengeProducer[step.Out] = i
+			for _, o := range step.Outs {
+				challengeProducer[o] = i
+			}
 		}
 	}
 
@@ -343,7 +347,9 @@ func Compile(b *Builder) (Program, error) {
 			continue
 		}
 		stepLevel[i] = maxLevelForRound[fsRound[i]]
-		varLevel[step.Out] = stepLevel[i]
+		for _, o := range step.Outs {
+			varLevel[o] = stepLevel[i]
+		}
 	}
 
 	// --- Phase 4: Re-propagate non-FS levels, skipping over FS levels. ---
@@ -378,7 +384,9 @@ func Compile(b *Builder) (Program, error) {
 				stepLevel[i] = lvl
 				changed = true
 			}
-			varLevel[step.Out] = lvl
+			for _, o := range step.Outs {
+				varLevel[o] = lvl
+			}
 		}
 		if !changed {
 			break
@@ -407,7 +415,7 @@ func Compile(b *Builder) (Program, error) {
 	if err != nil {
 		return res, err
 	}
-	res.Steps[maxLevel+1][0] = NewProverStep(nil, foldingChallenge, FSStep, FSCtx{})
+	res.Steps[maxLevel+1][0] = NewProverStep(nil, []string{foldingChallenge}, FSStep, FSCtx{})
 
 	// --- Phase 7: Collapse FS steps of the same round (level) into one canonical step. ---
 
@@ -435,7 +443,9 @@ func Compile(b *Builder) (Program, error) {
 		canonical := constants.CanonicalChallengeName(round)
 		for _, step := range res.Steps[lvl] {
 			if _, ok := step.Ctx.(FSCtx); ok {
-				renameExprs[step.Out] = expr.Challenge(canonical)
+				for _, o := range step.Outs {
+					renameExprs[o] = expr.Challenge(canonical)
+				}
 			}
 		}
 	}
@@ -500,7 +510,7 @@ func Compile(b *Builder) (Program, error) {
 				newSteps = append(newSteps, step)
 			}
 		}
-		newSteps = append(newSteps, NewProverStep(nil, canonical, FSStep, FSCtx{}))
+		newSteps = append(newSteps, NewProverStep(nil, []string{canonical}, FSStep, FSCtx{}))
 		res.Steps[lvl] = newSteps
 	}
 

@@ -19,71 +19,9 @@ func BuildPointwiseEvaluation(Pi map[string]Polynomial, E expr.Expr, mu *sync.Mu
 	return dst, evalPointWiseInto(Pi, E, N, mu, dst)
 }
 
-// BuildMultiplicityPolynomial returns P such that:
-// P[i] = #{ j | S[j] = T[i] && selS[j] != 0}
-func BuildWeightedMultiplicityPolynomial(Pi map[string]Polynomial, S, T, selS expr.Expr, mu *sync.Mutex) (Polynomial, error) {
-
-	// evaluate S and T on P
-	sLeaves := S.LeavesFull(expr.NewConfig(expr.WithoutChallenges()))
-	tLeaves := T.LeavesFull(expr.NewConfig(expr.WithoutChallenges()))
-	_s := Pi[sLeaves[0].Name]
-	_t := Pi[tLeaves[0].Name]
-	ns := len(_s)
-	nt := len(_t)
-	_S := getBuf(ns)
-	_T := getBuf(nt)
-	_SelS := getBuf(ns)
-	if err := evalPointWiseInto(Pi, S, ns, mu, _S); err != nil {
-		putBuf(_S)
-		return Polynomial{}, err
-	}
-	if err := evalPointWiseInto(Pi, T, nt, mu, _T); err != nil {
-		putBuf(_S)
-		return Polynomial{}, err
-	}
-	if err := evalPointWiseInto(Pi, selS, ns, mu, _SelS); err != nil {
-		putBuf(_S)
-		return Polynomial{}, err
-	}
-
-	res := countWeightedMultiplicityWithSelector(_S, _T, _SelS)
-	putBuf(_S)
-	putBuf(_T)
-	putBuf(_SelS)
-	return res, nil
-}
-
-// BuildMultiplicityPolynomial returns P such that:
-// P[i] = #{ j | S[j] = T[i]}
-func BuildMultiplicityPolynomial(Pi map[string]Polynomial, S, T expr.Expr, mu *sync.Mutex) (Polynomial, error) {
-
-	// evaluate S and T on P
-	sLeaves := S.LeavesFull(expr.NewConfig(expr.WithoutChallenges()))
-	tLeaves := T.LeavesFull(expr.NewConfig(expr.WithoutChallenges()))
-	_s := Pi[sLeaves[0].Name]
-	_t := Pi[tLeaves[0].Name]
-	ns := len(_s)
-	nt := len(_t)
-	_S := getBuf(ns)
-	_T := getBuf(nt)
-	if err := evalPointWiseInto(Pi, S, ns, mu, _S); err != nil {
-		putBuf(_S)
-		return Polynomial{}, err
-	}
-	if err := evalPointWiseInto(Pi, T, nt, mu, _T); err != nil {
-		putBuf(_S)
-		return Polynomial{}, err
-	}
-
-	res := countMultiplicity(_S, _T)
-	putBuf(_S)
-	putBuf(_T)
-	return res, nil
-}
-
-// BuildUnionWeightedMultiplicityPolynomial same as BuildWeightedMultiplicityPolynomial, but selectors and
+// BuildWeightedMultiplicityPolynomial same as BuildMultiplicityPolynomials, but selectors and
 // target and source are split
-func BuildUnionWeightedMultiplicityPolynomial(Pi map[string]Polynomial, selS, S, T []expr.Expr, mu *sync.Mutex) ([]Polynomial, error) {
+func BuildWeightedMultiplicityPolynomial(Pi map[string]Polynomial, selS, S, T []expr.Expr, mu *sync.Mutex) ([]Polynomial, error) {
 
 	// 1 - ensure len(selS)=len(S)
 	if len(selS) != len(S) {
@@ -202,10 +140,10 @@ func BuildUnionWeightedMultiplicityPolynomial(Pi map[string]Polynomial, selS, S,
 	return chunks, nil
 }
 
-// BuildUnionMultiplicityPolynomials returns one multiplicity polynomial per
+// BuildMultiplicityPolynomials returns one multiplicity polynomial per
 // target column such that chunks[k][i] = total number of times T[k][i] appears
 // across all source columns S[0], ..., S[len(S)-1].
-func BuildUnionMultiplicityPolynomials(Pi map[string]Polynomial, S, T []expr.Expr, mu *sync.Mutex) ([]Polynomial, error) {
+func BuildMultiplicityPolynomials(Pi map[string]Polynomial, S, T []expr.Expr, mu *sync.Mutex) ([]Polynomial, error) {
 
 	// Evaluate all S expressions into pooled buffers.
 	sPolys := make([]Polynomial, len(S))
@@ -215,7 +153,7 @@ func BuildUnionMultiplicityPolynomials(Pi map[string]Polynomial, S, T []expr.Exp
 			for j := 0; j < i; j++ {
 				putBuf(sPolys[j])
 			}
-			return nil, fmt.Errorf("BuildUnionMultiplicityPolynomials: S[%d]: %w", i, err)
+			return nil, fmt.Errorf("BuildMultiplicityPolynomials: S[%d]: %w", i, err)
 		}
 		buf := getBuf(ns)
 		if err := evalPointWiseInto(Pi, s, ns, mu, buf); err != nil {
@@ -240,7 +178,7 @@ func BuildUnionMultiplicityPolynomials(Pi map[string]Polynomial, S, T []expr.Exp
 			for j := 0; j < i; j++ {
 				putBuf(tPolys[j])
 			}
-			return nil, fmt.Errorf("BuildUnionMultiplicityPolynomials: T[%d]: %w", i, err)
+			return nil, fmt.Errorf("BuildMultiplicityPolynomials: T[%d]: %w", i, err)
 		}
 		buf := getBuf(nt)
 		if err := evalPointWiseInto(Pi, t, nt, mu, buf); err != nil {

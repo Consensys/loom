@@ -76,7 +76,7 @@ func stepDagHTML(program board.Program) string {
 
 		for _, step := range steps {
 			if isFS(step) {
-				challenges[step.Out] = true
+				challenges[step.Outs[0]] = true
 			}
 
 			stepNodeID := nextID
@@ -96,7 +96,7 @@ func stepDagHTML(program board.Program) string {
 			seen := map[string]bool{}
 			if isFS(step) {
 				var round int
-				fmt.Sscanf(step.Out, "challenge@loom_%d", &round)
+				fmt.Sscanf(step.Outs[0], "challenge@loom_%d", &round)
 				if round < len(program.FScolumnsDependencies) {
 					for _, name := range program.FScolumnsDependencies[round] {
 						if seen[name] {
@@ -127,10 +127,12 @@ func stepDagHTML(program board.Program) string {
 				}
 			}
 
-			// Output edge: step → output column node
-			outID := getColID(step.Out)
-			colVisLvl[step.Out] = 2*lvl + 2
-			edges = append(edges, visEdge{From: stepNodeID, To: outID})
+			// Output edges: step → each output column node
+			for _, out := range step.Outs {
+				outID := getColID(out)
+				colVisLvl[out] = 2*lvl + 2
+				edges = append(edges, visEdge{From: stepNodeID, To: outID})
+			}
 		}
 	}
 
