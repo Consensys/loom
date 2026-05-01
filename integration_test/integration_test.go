@@ -11,7 +11,7 @@ import (
 	"github.com/consensys/loom/verifier"
 )
 
-func IntegrationTest(t *testing.T) {
+func TestIntegration(t *testing.T) {
 
 	// 1. For every .lisp file in ./testdata (naming convention <main_name>_xx.lisp,
 	// xx starting from 01): compile it, turn it into a loom program, load the
@@ -25,13 +25,18 @@ func IntegrationTest(t *testing.T) {
 	for _, lispFile := range lispFiles {
 		base := strings.TrimSuffix(lispFile, ".lisp")
 		t.Run(filepath.Base(base), func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("panic: %v", r)
+				}
+			}()
 
 			lispBytes, err := os.ReadFile(lispFile)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			airSchema, _, err := CompileLisp(lispFile, lispBytes)
+			airSchema, mapping, err := CompileLisp(lispFile, lispBytes)
 			if err != nil {
 				t.Fatalf("compile: %v", err)
 			}
@@ -56,7 +61,7 @@ func IntegrationTest(t *testing.T) {
 				}
 				defer f.Close()
 
-				traces, err := TracesFromLT(f)
+				traces, err := TracesFromLT(f, airSchema, mapping)
 				if err != nil {
 					t.Errorf("load %s: %v", path, err)
 					return

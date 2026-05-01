@@ -2,6 +2,7 @@ package board
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
@@ -349,6 +350,38 @@ func Compile(b *Builder) (Program, error) {
 		stepLevel[i] = maxLevelForRound[fsRound[i]]
 		for _, o := range step.Outs {
 			varLevel[o] = stepLevel[i]
+		}
+	}
+
+	// --- Phase 3.5: Enforce strictly increasing levels across rounds. ---
+	// Phase 3 syncs FS steps within each round to that round's max level, but
+	// does not propagate the change to later rounds. If round r is bumped up,
+	// round r+1 must also be bumped to at least round-r-level+1, and so on.
+	// Without this, two FS steps from different rounds can land on the same
+	// level and get merged into one canonical challenge — breaking arguments
+	// (like grand product) that need distinct fold/randomness challenges.
+	{
+		rounds := make([]int, 0, len(maxLevelForRound))
+		for r := range maxLevelForRound {
+			rounds = append(rounds, r)
+		}
+		sort.Ints(rounds)
+		minLevel := -1
+		for _, r := range rounds {
+			if maxLevelForRound[r] <= minLevel {
+				maxLevelForRound[r] = minLevel + 1
+			}
+			minLevel = maxLevelForRound[r]
+		}
+		// Re-apply updated levels to FS steps and varLevel.
+		for i, step := range b.Steps {
+			if !isFSStep[i] {
+				continue
+			}
+			stepLevel[i] = maxLevelForRound[fsRound[i]]
+			for _, o := range step.Outs {
+				varLevel[o] = stepLevel[i]
+			}
 		}
 	}
 

@@ -30,5 +30,6 @@ func AddLogupEqualityCheck(builder *board.Builder, logupS, logupT []board.Column
 			negatives[i] = ltName
 			builder.AddMakeRelativeIthValuePublicStep(lt.Module, lt.In, ltName, 0) // this step makes lt.In[N-1] accessible to the verifier
 		}
+		builder.AddLogupBus(board.NewLogupBus(positives, negatives))
 	}
 }

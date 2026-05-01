@@ -237,19 +237,28 @@ func BuildMultiplicityPolynomials(Pi map[string]Polynomial, S, T []expr.Expr, mu
 	return chunks, nil
 }
 
-// inferN returns the length of the first polynomial in P whose leaf (non-challenge, non-constant)
-// has length != 1. Constants and challenges have length 1 and are skipped.
+// inferN returns the size N of the domain by inspecting the polynomials in P.
+// It prefers polynomials with length > 1 (unambiguous non-constant), but falls
+// back to length 1 if a named leaf is present in P (N=1 single-row trace).
+// Constant expressions (leaves absent from P) and challenges are ignored.
 func inferN(P map[string]Polynomial, exprs ...expr.Expr) (int, error) {
 	noChallenge := expr.NewConfig(expr.WithoutChallenges())
+	foundOne := false
 	for _, e := range exprs {
 		if e == nil {
 			continue
 		}
 		for _, leaf := range e.LeavesFull(noChallenge) {
-			if p, ok := P[leaf.Name]; ok && len(p) != 1 {
-				return len(p), nil
+			if p, ok := P[leaf.Name]; ok {
+				if len(p) != 1 {
+					return len(p), nil
+				}
+				foundOne = true // len==1 could be N=1 trace, not a constant
 			}
 		}
+	}
+	if foundOne {
+		return 1, nil
 	}
 	return 0, fmt.Errorf("inferN: could not determine N — all leaves are constant or missing from trace")
 }

@@ -164,6 +164,11 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	chunkDomains := make(map[string]*fft.Domain)
 
 	for moduleName, module := range pr.program.Modules {
+		// Skip modules with a trivially-zero VanishingRelation (no constraints).
+		// The zero polynomial is vacuously divisible by (X^N-1), quotient = 0, nothing to commit.
+		if module.VanishingRelation.Degree() <= 0 {
+			continue
+		}
 		// compute quotient: VanishingRelation / (X^n - 1), returned in coset-Lagrange form
 		quotient, err := poly.ComputeQuotient(pr.t, *module.VanishingRelation, module.N)
 		if err != nil {
