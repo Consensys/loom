@@ -1,3 +1,16 @@
+// Copyright Consensys Software Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+// the License. You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package board
 
 import (
@@ -359,6 +372,7 @@ func Compile(b *Builder) (Program, error) {
 	// round r+1 must also be bumped to at least round-r-level+1, and so on.
 	// Without this, two FS steps from different rounds can land on the same
 	// level and get merged into one canonical challenge — breaking arguments
+
 	// (like grand product) that need distinct fold/randomness challenges.
 	{
 		rounds := make([]int, 0, len(maxLevelForRound))
