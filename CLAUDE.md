@@ -21,6 +21,12 @@ go test ./internal/poly/...
 # Run a single test
 go test ./prover/... -run TestProver -v
 
+# Run integration tests (go-corset bridge)
+go test ./integration_test/... -run TestIntegration -v
+
+# Run a single integration subtest
+go test ./integration_test/... -run TestIntegration/permute_04 -v
+
 # Format and vet
 go fmt ./...
 go vet ./...
@@ -46,6 +52,7 @@ go vet ./...
 | `arguments/` | Standard IOP arguments (permutation, lookup, copy, projection) |
 | `prover/` | Prover pipeline: execute steps → quotient → evaluate at zeta |
 | `verifier/` | Verifier pipeline: replay FS → check relations |
+| `integration_test/` | go-corset → loom bridge + integration test suite |
 | `viz/` | HTML DAG visualisers, CSV trace viewer |
 
 ### `expr/` — symbolic expressions
@@ -110,14 +117,25 @@ This is the central package. A `Builder` accumulates modules, logup buses, publi
 
 **`Module`** (builder) holds relations and column generators for one constraint domain of size N. Methods:
 - `AssertZero(relation)` / `AssertEqualAt(A, B, i)` / `AssertZeroAt(relation, i...)` / `AssertZeroExceptAt(relation, i...)`
-- `LagrangeCol(i) expr.Expr` — idempotent; registers a `LagrangeGen` and returns the leaf expression
+- `AssertZeroRelativeAt(relation, i...)` — fires at row `N-1-i` (relative from end)
+- `LagrangeCol(i) expr.Expr` — absolute Lagrange basis; registers a `LagrangeGen` and returns the leaf expression
+- `LagrangeColRelative(i) expr.Expr` — relative Lagrange basis; fires at row `N-1-i`
+
+**`board.Column`** and **`board.Table`** — the two helper types used by `arguments/`:
+```go
+type Column struct { Module string; In expr.Expr }
+type Table  struct { Module string; In []expr.Expr }
+func NewTable(module string, size int) Table
+```
 
 **`Builder`** orchestrates all modules:
 - `AddModule(name, m)` / `AddPublicColumn(name)` / `AddLogupBus(cm)`
 - `AddFiatShamirStep(E, out)` — explicit FS challenge registration
 - `AddMakeEntriesPublicStep(module, E, sel, out, idx)` — extract values into `proof.PublicColumns`
-- `AddMakeIthValuePublicStep(module, E, out, pos)` — single value extraction
-- `AddCountMultiplicityStep(S, T, out)` — `M[i] = #{j|S[j]=T[i]}`
+- `AddMakeRelativeIthValuePublicStep(module, E, out, pos)` — single value extraction at row `N-1-pos`
+- `AddMakeIthValuePublicStep(module, E, out, pos)` — single value extraction at absolute row `pos`
+- `AddCountMultiplicityStep(S, T []expr.Expr, output)` — `M[i] = #{j|S[j]=T[i]}`
+- `AddCountWeightedMultiplicityStep(selS, S, T []expr.Expr, output)` — weighted variant
 - `AddLogupStep(module, E, M, out)` — running logup sum
 - `AddGrandProductStep(module, N, D, out)` — running grand product
 
@@ -126,50 +144,68 @@ This is the central package. A `Builder` accumulates modules, logup buses, publi
 type ProverStep struct {
     Ctx  StepContext
     Ins  []expr.Expr
-    Out  string
-    Step Step  // func([]expr.Expr, string, trace.Trace, *Program, *proof.Proof, *sync.Mutex, StepContext) error
+    Outs []string   // note: plural — a step can produce multiple output columns
+    Step Step       // func([]expr.Expr, []string, trace.Trace, *Program, *proof.Proof, *sync.Mutex, StepContext) error
 }
 ```
 
-**`Compile(b *Builder) Program`** — 9-phase scheduling algorithm:
+**`Compile(b *Builder) (Program, error)`** — scheduling algorithm:
 1. Compute data-flow levels via fixed-point iteration
 2. Assign FS steps to rounds (grouped by challenge dependencies)
 3. Sync FS steps in same round to max level in that round
-4. Re-propagate non-FS levels, bumping them over FS barriers
-5. Group steps by level
-6. Add final FS step (folding challenge `challenge@loom_final`)
-7. Collapse per-round FS steps into canonical challenges (`challenge@loom_i`)
-8. Extend final FS with all module-relation columns not yet committed
-9. Compile modules: fold relations with final challenge, build `*dag.DAG`, create `fft.Domain`
+4. **Enforce strictly increasing levels across rounds** — if round r is bumped, rounds r+1, r+2, … are also bumped. Without this, two FS steps from different rounds can land on the same level and get merged into one canonical challenge (breaking arguments that need distinct randomness per round).
+5. Re-propagate non-FS levels, bumping them over FS barriers
+6. Group steps by level
+7. Add final FS step (folding challenge `challenge@loom_final`)
+8. Collapse per-round FS steps into canonical challenges (`challenge@loom_i`)
+9. Extend final FS with all module-relation columns not yet committed
+10. Compile modules: fold relations with final challenge, build `*dag.DAG`, create `fft.Domain`
 
 **`Program`** (output of `Compile`):
 ```go
 type Program struct {
-    Modules              map[string]CompiledModule
-    PublicColumns        []string
+    Modules               map[string]CompiledModule
+    PublicColumns         []string
     FScolumnsDependencies [][]string  // columns committed per FS round
-    LogupBus             []LogupBus
-    Steps                [][]ProverStep  // step schedule grouped by level
+    LogupBus              []LogupBus
+    Steps                 [][]ProverStep  // step schedule grouped by level
 }
 
 type CompiledModule struct {
-    GenCol           []Gen       // column generators (Lagrange, selector, permutation)
-    N                int
+    GenCol            []Gen      // column generators (Lagrange, selector, permutation)
+    N                 int
     VanishingRelation *dag.DAG   // folded constraint DAG
-    D                *fft.Domain
+    D                 *fft.Domain
 }
 ```
 
 ### `arguments/` — standard IOP arguments
 
-These work on a `board.Builder` directly:
-- `Permutation(system, ID1, ID2 []string) error` — multiset equality via grand product
-- `PermutationTuple(system, ID1, ID2 [][]string) error` — row-tuple variant
-- `Lookup(system, S, T string) error` — subset argument via logup + multiplicity
-- `LookupTuple(system, S, T []string) error` — row-tuple variant
-- `Projection(system, A, F1, B, F2 string) error` — filtered subsequence equality
-- `ProjectionTuple(system, A []string, F1 string, B []string, F2 string) error`
-- `CopyPermutation(system, wires []string, S []int64) error` — PLONK-style copy
+All functions take a `*board.Builder`. Multi-source variants (Union) allow multiple source/target column groups sharing the same randomness for efficiency.
+
+```go
+// Permutation
+PermutationWithinModule(builder, module string, A, B []expr.Expr) error
+PermutationTupleWithinModule(builder, module string, A, B [][]expr.Expr) error
+PermutationCrossModules(builder *board.Builder, A, B board.Column) error
+FixedPermutationWithinModule(builder, module string, A, B [][]expr.Expr, S board.PermutationGen) error
+CopyConstraint(builder, module string, A []expr.Expr, S board.PermutationGen) error
+
+// Lookup (subset argument: every value in S appears in T)
+Lookup(builder, S, T board.Column) error
+LookupTuple(builder, S, T board.Table) error
+LookupUnion(builder, S, T []board.Column) error        // multiple S/T pairs sharing one challenge
+LookupUnionTuple(builder, S, T []board.Table) error
+
+// Conditional lookup (with per-row selectors)
+CLookup(builder, S, T board.Column, selS, selT expr.Expr) error
+CLookupTuple(builder, S, T board.Table, selS, selT expr.Expr) error
+CLookupUnion(builder, selS, selT []expr.Expr, S, T []board.Column) error
+CLookupUnionTuple(builder, selS, selT []expr.Expr, S, T []board.Table) error
+
+// Range: every value in S is in [0, bound)
+Range(builder *board.Builder, S board.Column, bound uint64) error
+```
 
 ### Prover pipeline (`prover/prover.go`)
 
@@ -199,6 +235,34 @@ These work on a `board.Builder` directly:
 4. **`checkLogupBus()`** — for each `LogupBus`: verify `sum(Positive last entries) = sum(Negative last entries)`
 5. **`checkAIRRelations()`** — for each module: reconstruct `Q(zeta)` from quotient chunks, evaluate `VanishingRelation.Eval(ValuesAtZeta)`, check `V(zeta) = (zeta^N - 1) · Q(zeta)`
 
+### `integration_test/` — go-corset bridge
+
+`zkc_utils.go` translates a compiled `go-corset` AIR schema into a loom `board.Builder`, then loads `.lt` trace files for end-to-end prove+verify testing.
+
+**`CorsetBridge`** — the central translator:
+- `NewCorsetBridge(builder, airSchema)` — constructor
+- `SetupModules()` — creates one loom `Module` per go-corset module (skips width-0 root modules)
+- `ScanConstraints(bridge)` — iterates all constraints in lexicographic order and calls `AddConstraintInLoom`
+- `AddConstraintInLoom(name, constraint)` — dispatches on constraint type:
+  - `VanishingConstraint`: global (multiplied by `IS_REAL` selector + bounds masking) or local (domain `{K}` for specific rows)
+  - `PermutationConstraint` → `arguments.PermutationWithinModule` / `PermutationTupleWithinModule`
+  - `LookupConstraint` → `arguments.LookupUnion` / `CLookupUnion` (with/without selectors)
+  - `RangeConstraint` → `arguments.Range`
+
+**IS_REAL column**: each module gets a synthetic `__is_real__` (or `modname.__is_real__`) column = 1 for real rows, 0 for zero-padded rows. All global vanishing constraints are multiplied by this selector.
+
+**Trace loading** (`TracesFromLT`):
+- Reads `.lt` (JSONL) trace files via go-corset's `TraceBuilder`
+- Records original heights before go-corset adds spillage rows
+- Zero-pads all columns to `nextPow2(H)` (IS_REAL handles row exclusion; last-value padding is not used)
+- Injects `IS_REAL` column per module
+
+**Constraint translation subtleties**:
+- `(:domain {0})` — trivially zero (spillage row in go-corset, skipped in loom)
+- `(:domain {-K})` — fires at the K-th row from the last **real** row (`H-K`). Implemented via selector `IS_REAL * Rot(IS_REAL,1) * … * Rot(IS_REAL,K-1) * ((1-Rot(IS_REAL,K)) + LagrangeColRelative(K-1))` to correctly handle both padded (H < N) and unpadded (H = N) traces
+- Forward-shift boundary: for global constraints with `bounds.End=k`, last k real rows are excluded by multiplying `Rot(IS_REAL,j) * (1-LagrangeColRelative(j-1))` for j=1..k
+- Backward-shift boundary: shifts of depth j ≤ `bounds.Start` are wrapped with `(1-L_0)*…*(1-L_{j-1})` to match go-corset's spillage-row zero semantics
+
 ## Key gotchas
 
 **Polynomial representation**: always Lagrange Normal form. `len(p) == 1` means constant. `ComputeQuotient` is the only function that returns coset-Lagrange — always call `CosetLagrangeToLagrangeNormal` on its result.
@@ -207,12 +271,16 @@ These work on a `board.Builder` directly:
 
 **FS challenge naming**: canonical challenge names are `challenge@loom_0`, `challenge@loom_1`, …, `challenge@loom_final`. These are stored in `proof.ValuesAtZeta` and used as `ChallengeColumn` leaves.
 
+**FS round distinctness**: two FS steps that depend on the same challenge set will be assigned the same round and merged into one canonical challenge. If an argument needs two independent random challenges (e.g. a folding gamma and a grand-product gamma), register them in separate `AddFiatShamirStep` calls with a data dependency ordering them. `Compile` enforces strictly increasing levels across rounds to prevent collapse.
+
 **Logup bus invariant**: both positive and negative sides must have the same final running sum. The verifier checks `Positive[last] = Negative[last]` (not the full polynomial identity).
 
 **`VanishingRelation` is a `*dag.DAG`**: not an `expr.Expr`. Use `.Eval(vars)` for scalar evaluation and `.Leaves(config)` for leaf enumeration.
 
 **Rotated columns**: use `expr.Rot(id, shift)` for `P(ω^shift · X)`. Evaluated at `ω^shift · zeta` in `ComputeEvaluationsAtZeta`. Named `id_shift_N` in the proof.
 
-**`Compile` phase ordering matters**: steps must encode the correct data-flow DAG before calling `Compile`. The 9-phase algorithm propagates levels via fixed-point — a missing dependency edge will produce a wrong schedule silently.
+**`ProverStep.Outs` is `[]string`**: a step can produce multiple output columns. The `Step` function signature is `func([]expr.Expr, []string, trace.Trace, *Program, *proof.Proof, *sync.Mutex, StepContext) error`.
+
+**`Compile` phase ordering matters**: steps must encode the correct data-flow DAG before calling `Compile`. The scheduling algorithm propagates levels via fixed-point — a missing dependency edge will produce a wrong schedule silently.
 
 **Thread safety in steps**: `ProverStep.Step` receives a `*sync.Mutex`; use it for any write to the shared `trace.Trace`. Reads from already-computed columns are safe without the lock.
