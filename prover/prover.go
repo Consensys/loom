@@ -21,6 +21,10 @@ import (
 
 type Config struct {
 	EmulateFS bool
+	// FRIGrindingBits is the number of leading zero bits the proof-of-work
+	// nonce inside the FRI commitment must satisfy. 0 disables grinding.
+	// The verifier must be configured with the same value to accept the proof.
+	FRIGrindingBits int
 }
 
 type Option func(c *Config) error
@@ -28,6 +32,16 @@ type Option func(c *Config) error
 func EmulateFS() Option {
 	return func(c *Config) error {
 		c.EmulateFS = true
+		return nil
+	}
+}
+
+// WithFRIGrindingBits sets the proof-of-work bit count for the FRI
+// commitment scheme. The verifier must be invoked with the matching
+// verifier.WithFRIGrindingBits option.
+func WithFRIGrindingBits(n int) Option {
+	return func(c *Config) error {
+		c.FRIGrindingBits = n
 		return nil
 	}
 }
@@ -57,15 +71,23 @@ func newProverRuntime(t trace.Trace, publicInputs proof.PublicInputs, program bo
 
 	// initialize FS transcript and pre-register all challenges (challenge@loom_0..n-1 and zeta)
 	res.fs = fiatshamir.NewTranscript(sha256.New())
-	numRounds := len(program.FScolumnsDependencies)
-	for i := range numRounds {
-		res.fs.NewChallenge(constants.CanonicalChallengeName(i))
+
+	// Compute the maximum polynomial base-domain size across all modules so that
+	// every committed oracle uses the same codeword domain.
+	var maxModuleN uint64
+	for _, m := range program.Modules {
+		if uint64(m.N) > maxModuleN {
+			maxModuleN = uint64(m.N)
+		}
 	}
-	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
+	friCfg := fri.Config{
+		MaxCodewordDomainSize: fri.DefaultFRIBlowupFactor * maxModuleN,
+		GrindingBits:          config.FRIGrindingBits,
+	}
 
 	// Initialize the FRI committer against the same transcript used by the rest
-	// of the prover. Domain sizing is inferred from each Commit call.
-	res.Committer = fri.NewCommitter(res.fs, fri.Config{}, commitment.LeafHash, commitment.NodeHash)
+	// of the prover. All oracles are encoded at MaxCodewordDomainSize.
+	res.Committer = fri.NewCommitter(res.fs, friCfg, commitment.LeafHash, commitment.NodeHash)
 
 	return res
 }

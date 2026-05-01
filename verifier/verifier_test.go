@@ -8,9 +8,13 @@ import (
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/prover"
+	"github.com/consensys/loom/trace"
 )
 
-func TestVerifier(t *testing.T) {
+// buildFibLookupProgram constructs the standard fibonacci+range+lookup
+// program used across the verifier integration tests.
+func buildFibLookupProgram(t *testing.T) board.Program {
+	t.Helper()
 
 	builder := board.NewBuilder()
 
@@ -31,18 +35,10 @@ func TestVerifier(t *testing.T) {
 	builder.AddModule("fibonacci", fibonacciModule)
 	builder.AddModule("range", rangeModule)
 
-	T := board.Input{
-		Module: "range",
-		In:     expr.Col("Lookup"),
-	}
-	columnsFibonacci := []string{"A", "B", "C"}
-	for _, c := range columnsFibonacci {
-		S := board.Input{
-			Module: "fibonacci",
-			In:     expr.Col(c),
-		}
-		err := arguments.Lookup(&builder, S, T)
-		if err != nil {
+	T := board.Input{Module: "range", In: expr.Col("Lookup")}
+	for _, c := range []string{"A", "B", "C"} {
+		S := board.Input{Module: "fibonacci", In: expr.Col(c)}
+		if err := arguments.Lookup(&builder, S, T); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -51,21 +47,63 @@ func TestVerifier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return program
+}
 
-	// load the traces
+func buildFibTrace(t *testing.T) (board.Program, trace.Trace) {
+	t.Helper()
+	program := buildFibLookupProgram(t)
+	N := 4
 	var a, b koalabear.Element
 	b.SetOne()
 	traceFrob := prover.TraceFibonacci(N, a, b)
 	traceRange := prover.TraceRange(N)
 	tr := prover.MergeTrace(traceFrob, traceRange)
+	return program, tr
+}
+
+func TestVerifier(t *testing.T) {
+	program, tr := buildFibTrace(t)
 
 	proof, err := prover.Prove(tr, nil, program)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = Verify(nil, program, proof)
+	if err := Verify(nil, program, proof); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestVerifierWithGrinding runs the full prove/verify loop with a small
+// proof-of-work bit count plumbed through both sides.
+func TestVerifierWithGrinding(t *testing.T) {
+	program, tr := buildFibTrace(t)
+
+	const grindingBits = 8
+
+	proof, err := prover.Prove(tr, nil, program, prover.WithFRIGrindingBits(grindingBits))
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	if err := Verify(nil, program, proof, WithFRIGrindingBits(grindingBits)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestVerifierGrindingMismatch — prover used grinding, verifier didn't
+// configure it. The resulting Fiat-Shamir state diverges and verification
+// fails.
+func TestVerifierGrindingMismatch(t *testing.T) {
+	program, tr := buildFibTrace(t)
+
+	proof, err := prover.Prove(tr, nil, program, prover.WithFRIGrindingBits(8))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Verify(nil, program, proof); err == nil {
+		t.Fatal("Verify: expected rejection when verifier ignores prover grinding")
 	}
 }

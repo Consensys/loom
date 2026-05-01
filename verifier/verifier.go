@@ -9,6 +9,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/commitment/fri"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/poly"
@@ -21,9 +22,29 @@ type verifierRunTime struct {
 	program      board.Program
 	zeta         koalabear.Element
 	fs           *fiatshamir.Transcript
+	friVerifier  fri.Verifier
 }
 
-func newVerifierRuntime(program board.Program, publicInputs map[string]proof.PublicInput, proof proof.Proof) verifierRunTime {
+// Config collects verifier-side protocol parameters that must agree with the
+// prover's. Mismatches surface as proof rejections.
+type Config struct {
+	// FRIGrindingBits must equal the prover's WithFRIGrindingBits value
+	// (default 0 = no grinding).
+	FRIGrindingBits int
+}
+
+type Option func(c *Config) error
+
+// WithFRIGrindingBits configures the verifier to require this many leading
+// zero bits in the proof's grinding nonce. Must match the prover-side value.
+func WithFRIGrindingBits(n int) Option {
+	return func(c *Config) error {
+		c.FRIGrindingBits = n
+		return nil
+	}
+}
+
+func newVerifierRuntime(program board.Program, publicInputs map[string]proof.PublicInput, proof proof.Proof, config Config) verifierRunTime {
 
 	res := verifierRunTime{
 		proof:        proof,
@@ -32,17 +53,13 @@ func newVerifierRuntime(program board.Program, publicInputs map[string]proof.Pub
 	}
 
 	res.fs = fiatshamir.NewTranscript(sha256.New())
-	numRounds := len(program.FScolumnsDependencies)
-	for i := range numRounds {
-		res.fs.NewChallenge(constants.CanonicalChallengeName(i))
-	}
-	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
+	res.friVerifier = fri.NewVerifier(res.fs)
+	res.friVerifier.GrindingBits = config.FRIGrindingBits
 
 	return res
 }
 
 func (vr *verifierRunTime) deriveChallenges() error {
-	friVerifier := fri.NewVerifier(vr.fs)
 	numRounds := len(vr.program.FScolumnsDependencies)
 
 	// populate proof.ValuesAtZeta with the challenges
@@ -51,7 +68,7 @@ func (vr *verifierRunTime) deriveChallenges() error {
 		if i >= len(vr.proof.CommitmentOpenings.Commitments) {
 			return fmt.Errorf("missing commitment transcript entry for %s", challengeName)
 		}
-		if err := friVerifier.Bind(challengeName, vr.proof.CommitmentOpenings.Commitments[i]); err != nil {
+		if err := vr.friVerifier.Bind(challengeName, vr.proof.CommitmentOpenings.Commitments[i]); err != nil {
 			return err
 		}
 		bChallenge, err := vr.fs.ComputeChallenge((challengeName))
@@ -66,7 +83,7 @@ func (vr *verifierRunTime) deriveChallenges() error {
 	if finalCommitmentIndex >= len(vr.proof.CommitmentOpenings.Commitments) {
 		return fmt.Errorf("missing commitment for final evaluation point binding")
 	}
-	if err := friVerifier.Bind(constants.FINAL_EVALUATION_POINT, vr.proof.CommitmentOpenings.Commitments[finalCommitmentIndex]); err != nil {
+	if err := vr.friVerifier.Bind(constants.FINAL_EVALUATION_POINT, vr.proof.CommitmentOpenings.Commitments[finalCommitmentIndex]); err != nil {
 		return err
 	}
 	bzeta, err := vr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
@@ -175,9 +192,16 @@ func (vr *verifierRunTime) checkAIRRelations() error {
 	return nil
 }
 
-func Verify(publicInputs map[string]proof.PublicInput, program board.Program, proof proof.Proof) error {
+func Verify(publicInputs map[string]proof.PublicInput, program board.Program, proof proof.Proof, opts ...Option) error {
 
-	vr := newVerifierRuntime(program, publicInputs, proof)
+	var config Config
+	for _, opt := range opts {
+		if err := opt(&config); err != nil {
+			return err
+		}
+	}
+
+	vr := newVerifierRuntime(program, publicInputs, proof, config)
 
 	// 1 - derive the challenges, and populate proof.ValuesAtZeta with those challenges
 	err := vr.deriveChallenges()
@@ -204,6 +228,11 @@ func Verify(publicInputs map[string]proof.PublicInput, program board.Program, pr
 	// 4 - check the AIR relations
 	err = vr.checkAIRRelations()
 	if err != nil {
+		return err
+	}
+
+	// 5 - verify FRI opening proofs
+	if err := vr.friVerifier.VerifyOpening(vr.proof.CommitmentOpenings, commitment.LeafHash, commitment.NodeHash); err != nil {
 		return err
 	}
 
