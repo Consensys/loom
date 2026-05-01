@@ -28,42 +28,6 @@ It lets you describe a computation as a set of polynomial constraints over a **t
 6. verifier.Verify(publicInputs, setup, program, proof)
 ```
 
-## Example: Fibonacci sequence
-
-Prove that columns `A`, `B`, `C` satisfy `A[i] + B[i] = C[i]` on every row and that consecutive rows shift correctly (`A[i+1] = B[i]`, `B[i+1] = C[i]`).
-
-```go
-import (
-    "github.com/consensys/loom/arguments"
-    "github.com/consensys/loom/board"
-    "github.com/consensys/loom/expr"
-    "github.com/consensys/loom/prover"
-    "github.com/consensys/loom/verifier"
-)
-
-// --- 1. Build constraint system ---
-builder := board.NewBuilder()
-mod := board.NewModule("")   // single unnamed module
-builder.AddModule("", mod)
-
-// A + B - C = 0 on every row
-mod.AssertZero(expr.Col("A").Add(expr.Col("B")).Sub(expr.Col("C")))
-
-// A[i+1] = B[i]  ↔  multiset {A[1..N-1]} = {B[0..N-2]}
-// Use a permutation argument restricted to the shifted rows.
-arguments.PermutationWithinModule(&builder, "", []expr.Expr{expr.Rot("A", 1)}, []expr.Expr{expr.Col("B")})
-arguments.PermutationWithinModule(&builder, "", []expr.Expr{expr.Rot("B", 1)}, []expr.Expr{expr.Col("C")})
-
-// --- 2. Compile ---
-pg, err := board.Compile(&builder)
-
-// --- 3. Prove ---
-prf, err := prover.Prove(trace, nil, nil, pg)
-
-// --- 4. Verify ---
-err = verifier.Verify(nil, nil, pg, prf)
-```
-
 ## Example: PLONK gate + copy constraint
 
 Prove that PLONK arithmetic gates are satisfied and that wires are consistently connected.

@@ -36,7 +36,7 @@ func prepareFibonacciModule(N int) board.Module {
 	return fibonacciModule
 }
 
-func perparePlonkModule(N int) board.Module {
+func preparePlonkModule(N int) board.Module {
 	plonkModule := board.NewModule("plonk")
 	plonkModule.N = N
 
@@ -115,7 +115,7 @@ func TestVerifierPlonk(t *testing.T) {
 	}
 
 	// build the plonk module
-	plonkModule := perparePlonkModule(size)
+	plonkModule := preparePlonkModule(size)
 	builder.AddModule("plonk", plonkModule)
 
 	lro := []expr.Expr{expr.Col(ID_L), expr.Col(ID_R), expr.Col(ID_O)}
@@ -152,7 +152,7 @@ func TestFiboPlonk(t *testing.T) {
 	}
 
 	// build the modules
-	plonkModule := perparePlonkModule(size)
+	plonkModule := preparePlonkModule(size)
 	NFibo := 4
 	fibonacciModule := prepareFibonacciModule(NFibo)
 	rangeModule := board.NewModule("range")
