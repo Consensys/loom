@@ -11,130 +11,125 @@ It lets you describe a computation as a set of polynomial constraints over a **t
 | Concept | Type | Description |
 |---|---|---|
 | Trace | `trace.Trace` (`map[string][]koalabear.Element`) | Named columns of field elements, all of length N |
-| Relation | `constraint.Relation` (= `expr.Expr`) | A multivariate polynomial that must vanish row-wise |
-| Builder | `constraint.Builder` | Accumulates relations and derivation steps before compilation |
-| Program | `constraint.Program` | Compiled IOP: derivation plan + folded vanishing relation |
-| Public inputs | `proof.PublicInputs` | Claimed values at specific row indices, verified by both parties |
+| Relation | `expr.Expr` | A multivariate polynomial that must vanish row-wise |
+| Builder | `board.Builder` | Accumulates modules, relations, and derivation steps before compilation |
+| Module | `board.Module` | A named constraint domain; all columns within it share the same N |
+| Program | `board.Program` | Compiled IOP: level-ordered step schedule + folded vanishing relations |
+| Public inputs | `proof.PublicInputs` | Claimed values at specific row indices, checked by both prover and verifier |
 
 ## Workflow
 
 ```
-1. Build a trace (your witness columns)
-2. Describe constraints on a Builder
-3. Attach standard arguments (permutation, lookup, projection, …)
-4. Compile → Program
-5. Prove(Program, trace, publicInputs) → Proof
-6. Verify(Program, proof, publicInputs)
+1. Create a board.Builder and add one board.Module per constraint domain
+2. Describe polynomial constraints on each module (AssertZero, …)
+3. Attach standard arguments (permutation, lookup, …) from the arguments/ package
+4. board.Compile(builder) → Program
+5. prover.Prove(trace, setup, publicInputs, program) → Proof
+6. verifier.Verify(publicInputs, setup, program, proof)
 ```
 
 ## Example: Fibonacci sequence
 
-Prove that three columns `A`, `B`, `C` form a Fibonacci sequence: `A[i] + B[i] = C[i]` for all `i`, and that each row correctly shifts into the next (`A[i+1] = B[i]`, `B[i+1] = C[i]`).
+Prove that columns `A`, `B`, `C` satisfy `A[i] + B[i] = C[i]` on every row and that consecutive rows shift correctly (`A[i+1] = B[i]`, `B[i+1] = C[i]`).
 
 ```go
 import (
-    "github.com/consensys/loom"
     "github.com/consensys/loom/arguments"
-    "github.com/consensys/loom/constraint"
+    "github.com/consensys/loom/board"
     "github.com/consensys/loom/expr"
-    "github.com/consensys/loom/proof"
-    "github.com/consensys/gnark-crypto/field/koalabear"
+    "github.com/consensys/loom/prover"
+    "github.com/consensys/loom/verifier"
 )
 
-N := 16
+// --- 1. Build constraint system ---
+builder := board.NewBuilder()
+mod := board.NewModule("")   // single unnamed module
+builder.AddModule("", mod)
 
-// --- 1. Declare public inputs: A[0]=0, B[0]=1 ---
-publicInputs := proof.PublicInputs{
-    "A": {Idx: []int{0}, Vals: []koalabear.Element{{}}},         // A[0] = 0
-    "B": {Idx: []int{0}, Vals: []koalabear.Element{koalabear.One()}}, // B[0] = 1
-}
+// A + B - C = 0 on every row
+mod.AssertZero(expr.Col("A").Add(expr.Col("B")).Sub(expr.Col("C")))
 
-// --- 2. Describe constraints ---
-system := constraint.NewBuilder(N, publicInputs)
+// A[i+1] = B[i]  ↔  multiset {A[1..N-1]} = {B[0..N-2]}
+// Use a permutation argument restricted to the shifted rows.
+arguments.PermutationWithinModule(&builder, "", []expr.Expr{expr.Rot("A", 1)}, []expr.Expr{expr.Col("B")})
+arguments.PermutationWithinModule(&builder, "", []expr.Expr{expr.Rot("B", 1)}, []expr.Expr{expr.Col("C")})
 
-colA := expr.Col("A")
-colB := expr.Col("B")
-colC := expr.Col("C")
+// --- 2. Compile ---
+pg, err := board.Compile(&builder)
 
-// A + B - C = 0  (Fibonacci recurrence, row-wise)
-system.AssertZero(colA.Add(colB).Sub(colC))
+// --- 3. Prove ---
+prf, err := prover.Prove(trace, nil, nil, pg)
 
-// Shift constraints: A[i]=B[i-1] and B[i]=C[i-1]
-// expressed via a filter: rows 1..N-1 of A equal rows 0..N-2 of B, etc.
-filter := make([]koalabear.Element, N)
-for i := 1; i < N; i++ {
-    filter[i].SetOne()
-}
-system.AddColumn("F", filter)
-F := expr.Col("F")
-Fshift := expr.Rot("F", 1) // F shifted by +1: selects rows 0..N-2
-arguments.Projection(&system, colA, F, colB, Fshift)
-arguments.Projection(&system, colB, F, colC, Fshift)
-
-// --- 3. Compile ---
-cp := system.Compile()
-
-// --- 4. Build the trace ---
-trace := GetFibonacciTrace(N, "A", "B", "C")
-
-// --- 5. Prove ---
-prf, err := loom.Prove(cp, trace, publicInputs, 1 /*nbWorkers*/)
-
-// --- 6. Verify ---
-err = loom.Verify(cp, &prf, publicInputs, 1)
+// --- 4. Verify ---
+err = verifier.Verify(nil, nil, pg, prf)
 ```
-
-Full source: [`examples/fibonacci/`](examples/fibonacci/)
 
 ## Example: PLONK gate + copy constraint
 
-Prove that PLONK arithmetic gates are satisfied and that wires are correctly connected via a permutation argument.
+Prove that PLONK arithmetic gates are satisfied and that wires are consistently connected.
 
 ```go
 // Arithmetic gate: QL·L + QR·R + QM·L·R + QO·O + QK = 0
-C := expr.Col("QL").Mul(expr.Col("L")).
+gate := expr.Col("QL").Mul(expr.Col("L")).
     Add(expr.Col("QR").Mul(expr.Col("R"))).
     Add(expr.Col("QM").Mul(expr.Col("L")).Mul(expr.Col("R"))).
     Add(expr.Col("QO").Mul(expr.Col("O"))).
     Add(expr.Col("QK"))
-system.AssertZero(C)
+mod.AssertZero(gate)
 
-// Copy constraint: wire columns L, R, O are consistently permuted by S
-arguments.CopyPermutation(&system, []string{"L", "R", "O"}, S)
+// Copy constraint: wires L, R, O are consistently permuted by S
+arguments.CopyConstraint(&builder, "", []expr.Expr{
+    expr.Col("L"), expr.Col("R"), expr.Col("O"),
+}, S)  // S is a board.PermutationGen
 
-cp := system.Compile()
-prf, err := loom.Prove(cp, trace, nil, 1)
-err = loom.Verify(cp, &prf, nil, 1)
+pg, err := board.Compile(&builder)
+prf, err := prover.Prove(trace, nil, nil, pg)
+err = verifier.Verify(nil, nil, pg, prf)
 ```
-
-Full source: [`examples/plonk_example/`](examples/plonk_example/)
 
 ## Standard arguments (`arguments/`)
 
 | Function | What it proves |
 |---|---|
-| `Permutation(system, E1, E2 []expr.Expr)` | `{E1[i]}` = `{E2[i]}` as multisets |
-| `PermutationTuple(system, E1, E2 [][]expr.Expr)` | Same for row-tuples |
-| `Lookup(system, S, T expr.Expr)` | Every value in `S` appears in `T` |
-| `LookupTuple(system, S, T []expr.Expr)` | Same for row-tuples |
-| `Projection(system, A, B, F1, F2 expr.Expr)` | The `F1`-selected sub-sequence of `A` equals the `F2`-selected sub-sequence of `B` |
-| `ProjectionTuple(system, A []expr.Expr, F1, B []expr.Expr, F2)` | Same for row-tuples |
-| `CopyPermutation(system, wires []string, S []int64)` | PLONK-style copy constraint |
+| `PermutationWithinModule(builder, module, A, B []expr.Expr)` | `{A[i]}` = `{B[i]}` as multisets (same module) |
+| `PermutationTupleWithinModule(builder, module, A, B [][]expr.Expr)` | Same for row-tuples |
+| `PermutationCrossModules(builder, A, B board.Column)` | Multiset equality across two modules |
+| `CopyConstraint(builder, module, A []expr.Expr, S PermutationGen)` | PLONK-style copy constraint |
+| `FixedPermutationWithinModule(builder, module, A, B [][]expr.Expr, S PermutationGen)` | Fixed permutation check |
+| `Lookup(builder, S, T board.Column)` | Every value in `S` appears in `T` |
+| `LookupTuple(builder, S, T board.Table)` | Same for row-tuples |
+| `LookupUnion(builder, S, T []board.Column)` | Multiple S/T pairs sharing one challenge |
+| `LookupUnionTuple(builder, S, T []board.Table)` | Same for row-tuples |
+| `CLookup(builder, S, T board.Column, selS, selT expr.Expr)` | Conditional lookup with per-row selectors |
+| `CLookupUnion(builder, selS, selT []expr.Expr, S, T []board.Column)` | Conditional lookup, multi-pair |
+| `Range(builder, S board.Column, bound uint64)` | Every value in `S` is in `[0, bound)` |
+
+`board.Column{Module: "name", In: expr}` and `board.Table{Module: "name", In: []expr}` are the two helper types used across all argument functions.
 
 ## Public inputs
 
-`proof.PublicInputs` is a `map[string]PublicColumnInfo` that binds specific row indices of named columns to claimed field values. Both prover and verifier receive it; the verifier checks the claims before accepting the proof.
+`proof.PublicInputs` is a `map[string]PublicInput` that binds specific row indices of named columns to claimed field values. Pass it to both `prover.Prove` and `verifier.Verify`.
 
 ```go
 publicInputs := proof.PublicInputs{
-    "A": {Idx: []int{0, 5}, Vals: []koalabear.Element{v0, v5}},
+    "A": {N: 16, Entries: []proof.PublicEntry{
+        {Idx: 0, Value: zeroElement},
+        {Idx: 5, Value: someElement},
+    }},
 }
+```
+
+For columns that require a setup commitment (e.g. PLONK selector columns), use `prover.Setup` to pre-commit them:
+
+```go
+setup, err := prover.Setup(trace, pg)
+prf, err  := prover.Prove(trace, setup, publicInputs, pg)
+err        = verifier.Verify(publicInputs, setup, pg, prf)
 ```
 
 ## Visualisation (`viz/`)
 
 ```go
-viz.WriteDerivationPlanDagToHTML(cp, "plan.html")           // interactive derivation DAG
-viz.WriteProofTranscriptRoundsDagToHTML(proof.TranscriptRounds, "rounds.html") // FS transcript
-viz.WriteTraceToCSV("trace.csv", trace, N)                  // column dump
+viz.ViewDag(pg, "plan.html")         // interactive step-DAG in the browser
+viz.WriteRawTraceToCSV("trace.csv", trace)  // column dump
 ```
