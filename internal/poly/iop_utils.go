@@ -1,3 +1,16 @@
+// Copyright Consensys Software Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+// the License. You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package poly
 
 import (
@@ -11,70 +24,254 @@ import (
 // BuildPointwiseEvaluation evaluates E point-wise over Pi and returns the N results as a
 // freshly allocated slice. N is the size of the polynomials in Pi (all must
 // have the same size, except constants which have size 1).
-func BuildPointwiseEvaluation(Pi map[string]Polynomial, E expr.Expr, N int, mu *sync.Mutex) ([]koalabear.Element, error) {
+func BuildPointwiseEvaluation(Pi map[string]Polynomial, E expr.Expr, mu *sync.Mutex) ([]koalabear.Element, error) {
+	leaves := E.LeavesFull(expr.NewConfig(expr.WithoutChallenges()))
+	_c := Pi[leaves[0].Name]
+	N := len(_c)
 	dst := make([]koalabear.Element, N)
 	return dst, evalPointWiseInto(Pi, E, N, mu, dst)
 }
 
-func SelectIthValue(Pi map[string]Polynomial, E expr.Expr, pos int, mu *sync.Mutex) ([]koalabear.Element, error) {
+// BuildWeightedMultiplicityPolynomial same as BuildMultiplicityPolynomials, but selectors and
+// target and source are split
+func BuildWeightedMultiplicityPolynomial(Pi map[string]Polynomial, selS, S, T []expr.Expr, mu *sync.Mutex) ([]Polynomial, error) {
 
-	eLeaves := E.LeavesFull(expr.NewConfig(expr.WithoutChallenges()))
-	_n := Pi[eLeaves[0].Name]
-	n := len(_n)
-	res := make([]koalabear.Element, n)
-	// TODO inefficient, double loop
-	if err := evalPointWiseInto(Pi, E, n, mu, res); err != nil {
-		return res, err
+	// 1 - ensure len(selS)=len(S)
+	if len(selS) != len(S) {
+		return nil, fmt.Errorf("BuildUnionWeightedMultiplicityPolynomial: len(selS)=%d != len(S)=%d", len(selS), len(S))
 	}
-	for i := 0; i < n; i++ {
-		if i != pos {
-			res[i].SetZero()
+
+	// 2 - build joinedSelS, joinedS, joinedT -> concatenations of selS, S, T
+
+	// Evaluate all S and selS expressions into pooled buffers (same size per index).
+	sPolys := make([]Polynomial, len(S))
+	selPolys := make([]Polynomial, len(selS))
+	for i, s := range S {
+		ns, err := inferN(Pi, s)
+		if err != nil {
+			for j := 0; j < i; j++ {
+				putBuf(sPolys[j])
+				putBuf(selPolys[j])
+			}
+			return nil, fmt.Errorf("BuildUnionWeightedMultiplicityPolynomial: S[%d]: %w", i, err)
 		}
+		sBuf := getBuf(ns)
+		if err := evalPointWiseInto(Pi, s, ns, mu, sBuf); err != nil {
+			putBuf(sBuf)
+			for j := 0; j < i; j++ {
+				putBuf(sPolys[j])
+				putBuf(selPolys[j])
+			}
+			return nil, err
+		}
+		selBuf := getBuf(ns)
+		if err := evalPointWiseInto(Pi, selS[i], ns, mu, selBuf); err != nil {
+			putBuf(sBuf)
+			putBuf(selBuf)
+			for j := 0; j < i; j++ {
+				putBuf(sPolys[j])
+				putBuf(selPolys[j])
+			}
+			return nil, err
+		}
+		sPolys[i] = sBuf
+		selPolys[i] = selBuf
 	}
-	return res, nil
+
+	// Evaluate all T expressions into pooled buffers, recording sizes.
+	tPolys := make([]Polynomial, len(T))
+	tSizes := make([]int, len(T))
+	for i, t := range T {
+		nt, err := inferN(Pi, t)
+		if err != nil {
+			for j := range sPolys {
+				putBuf(sPolys[j])
+				putBuf(selPolys[j])
+			}
+			for j := 0; j < i; j++ {
+				putBuf(tPolys[j])
+			}
+			return nil, fmt.Errorf("BuildUnionWeightedMultiplicityPolynomial: T[%d]: %w", i, err)
+		}
+		buf := getBuf(nt)
+		if err := evalPointWiseInto(Pi, t, nt, mu, buf); err != nil {
+			putBuf(buf)
+			for j := range sPolys {
+				putBuf(sPolys[j])
+				putBuf(selPolys[j])
+			}
+			for j := 0; j < i; j++ {
+				putBuf(tPolys[j])
+			}
+			return nil, err
+		}
+		tPolys[i] = buf
+		tSizes[i] = nt
+	}
+
+	totalS := 0
+	for _, sp := range sPolys {
+		totalS += len(sp)
+	}
+	joinedS := getBuf(totalS)
+	joinedSelS := getBuf(totalS)
+	off := 0
+	for i, sp := range sPolys {
+		copy(joinedS[off:], sp)
+		copy(joinedSelS[off:], selPolys[i])
+		off += len(sp)
+		putBuf(sp)
+		putBuf(selPolys[i])
+	}
+
+	totalT := 0
+	for _, tp := range tPolys {
+		totalT += len(tp)
+	}
+	joinedT := getBuf(totalT)
+	off = 0
+	for _, tp := range tPolys {
+		copy(joinedT[off:], tp)
+		off += len(tp)
+		putBuf(tp)
+	}
+
+	// 3 - call countWeightedMultiplicityWithSelector on joinedS, joinedT, joinedSelS
+	result := countWeightedMultiplicityWithSelector(joinedS, joinedT, joinedSelS)
+	putBuf(joinedS)
+	putBuf(joinedT)
+	putBuf(joinedSelS)
+
+	// 4 - split result into len(T) chunks, chunk i of size tSizes[i]
+	chunks := make([]Polynomial, len(T))
+	off = 0
+	for i, sz := range tSizes {
+		chunks[i] = result[off : off+sz]
+		off += sz
+	}
+
+	return chunks, nil
 }
 
-// BuildMultiplicityPolynomial returns P such that:
-// P[i] = #{ j | S[j] = T[i] and Sel[j]!=0 if Sel!=nil }
-func BuildMultiplicityPolynomial(Pi map[string]Polynomial, S, T expr.Expr, mu *sync.Mutex) (Polynomial, error) {
+// BuildMultiplicityPolynomials returns one multiplicity polynomial per
+// target column such that chunks[k][i] = total number of times T[k][i] appears
+// across all source columns S[0], ..., S[len(S)-1].
+func BuildMultiplicityPolynomials(Pi map[string]Polynomial, S, T []expr.Expr, mu *sync.Mutex) ([]Polynomial, error) {
 
-	// evaluate S and T on P
-	sLeaves := S.LeavesFull(expr.NewConfig(expr.WithoutChallenges()))
-	tLeaves := T.LeavesFull(expr.NewConfig(expr.WithoutChallenges()))
-	_s := Pi[sLeaves[0].Name]
-	_t := Pi[tLeaves[0].Name]
-	ns := len(_s)
-	nt := len(_t)
-	_S := getBuf(ns)
-	_T := getBuf(nt)
-	if err := evalPointWiseInto(Pi, S, ns, mu, _S); err != nil {
-		putBuf(_S)
-		return Polynomial{}, err
-	}
-	if err := evalPointWiseInto(Pi, T, nt, mu, _T); err != nil {
-		putBuf(_S)
-		return Polynomial{}, err
+	// Evaluate all S expressions into pooled buffers.
+	sPolys := make([]Polynomial, len(S))
+	for i, s := range S {
+		ns, err := inferN(Pi, s)
+		if err != nil {
+			for j := 0; j < i; j++ {
+				putBuf(sPolys[j])
+			}
+			return nil, fmt.Errorf("BuildMultiplicityPolynomials: S[%d]: %w", i, err)
+		}
+		buf := getBuf(ns)
+		if err := evalPointWiseInto(Pi, s, ns, mu, buf); err != nil {
+			putBuf(buf)
+			for j := 0; j < i; j++ {
+				putBuf(sPolys[j])
+			}
+			return nil, err
+		}
+		sPolys[i] = buf
 	}
 
-	res := countMultiplicity(_S, _T)
+	// Evaluate all T expressions into pooled buffers, recording sizes.
+	tPolys := make([]Polynomial, len(T))
+	tSizes := make([]int, len(T))
+	for i, t := range T {
+		nt, err := inferN(Pi, t)
+		if err != nil {
+			for j := range sPolys {
+				putBuf(sPolys[j])
+			}
+			for j := 0; j < i; j++ {
+				putBuf(tPolys[j])
+			}
+			return nil, fmt.Errorf("BuildMultiplicityPolynomials: T[%d]: %w", i, err)
+		}
+		buf := getBuf(nt)
+		if err := evalPointWiseInto(Pi, t, nt, mu, buf); err != nil {
+			putBuf(buf)
+			for j := range sPolys {
+				putBuf(sPolys[j])
+			}
+			for j := 0; j < i; j++ {
+				putBuf(tPolys[j])
+			}
+			return nil, err
+		}
+		tPolys[i] = buf
+		tSizes[i] = nt
+	}
+
+	// Concatenate all S evaluations into a single polynomial.
+	totalS := 0
+	for _, sp := range sPolys {
+		totalS += len(sp)
+	}
+	_S := getBuf(totalS)
+	off := 0
+	for _, sp := range sPolys {
+		copy(_S[off:], sp)
+		off += len(sp)
+		putBuf(sp)
+	}
+
+	// Concatenate all T evaluations into a single polynomial.
+	totalT := 0
+	for _, tp := range tPolys {
+		totalT += len(tp)
+	}
+	_T := getBuf(totalT)
+	off = 0
+	for _, tp := range tPolys {
+		copy(_T[off:], tp)
+		off += len(tp)
+		putBuf(tp)
+	}
+
+	// Count how many times each concatenated T value appears across all sources.
+	result := countMultiplicity(_S, _T)
 	putBuf(_S)
 	putBuf(_T)
-	return res, nil
+
+	// Split result into per-target chunks.
+	chunks := make([]Polynomial, len(T))
+	off = 0
+	for i, sz := range tSizes {
+		chunks[i] = result[off : off+sz]
+		off += sz
+	}
+
+	return chunks, nil
 }
 
-// inferN returns the length of the first polynomial in P whose leaf (non-challenge, non-constant)
-// has length != 1. Constants and challenges have length 1 and are skipped.
+// inferN returns the size N of the domain by inspecting the polynomials in P.
+// It prefers polynomials with length > 1 (unambiguous non-constant), but falls
+// back to length 1 if a named leaf is present in P (N=1 single-row trace).
+// Constant expressions (leaves absent from P) and challenges are ignored.
 func inferN(P map[string]Polynomial, exprs ...expr.Expr) (int, error) {
 	noChallenge := expr.NewConfig(expr.WithoutChallenges())
+	foundOne := false
 	for _, e := range exprs {
 		if e == nil {
 			continue
 		}
 		for _, leaf := range e.LeavesFull(noChallenge) {
-			if p, ok := P[leaf.Name]; ok && len(p) != 1 {
-				return len(p), nil
+			if p, ok := P[leaf.Name]; ok {
+				if len(p) != 1 {
+					return len(p), nil
+				}
+				foundOne = true // len==1 could be N=1 trace, not a constant
 			}
 		}
+	}
+	if foundOne {
+		return 1, nil
 	}
 	return 0, fmt.Errorf("inferN: could not determine N — all leaves are constant or missing from trace")
 }

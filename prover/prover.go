@@ -1,8 +1,20 @@
+// Copyright Consensys Software Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+// the License. You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package prover
 
 import (
 	"crypto/sha256"
-	"fmt"
 	"slices"
 	"sync"
 
@@ -52,14 +64,16 @@ type proverRuntime struct {
 	Proof        proof.Proof
 	config       Config
 	t            trace.Trace
+	airTrace     trace.Trace
 	publicInputs proof.PublicInputs
 	program      board.Program
 	zeta         koalabear.Element
 	mu           sync.Mutex
+	setup        *PublicKey
 	fs           *fiatshamir.Transcript
 }
 
-func newProverRuntime(t trace.Trace, publicInputs proof.PublicInputs, program board.Program, config Config) proverRuntime {
+func newProverRuntime(t trace.Trace, setup *PublicKey, publicInputs proof.PublicInputs, program board.Program, config Config) proverRuntime {
 
 	res := proverRuntime{
 		Proof:        proof.NewProof(),
@@ -67,6 +81,8 @@ func newProverRuntime(t trace.Trace, publicInputs proof.PublicInputs, program bo
 		t:            t,
 		publicInputs: publicInputs,
 		program:      program,
+		setup:        setup,
+		airTrace:     make(trace.Trace),
 		mu:           sync.Mutex{}, // mutex to protect the trace when reading/writing (in case of parallelisation)
 	}
 
@@ -89,6 +105,10 @@ func newProverRuntime(t trace.Trace, publicInputs proof.PublicInputs, program bo
 	// Initialize the FRI committer against the same transcript used by the rest
 	// of the prover. All oracles are encoded at MaxCodewordDomainSize.
 	res.Committer = fri.NewCommitter(res.fs, friCfg, commitment.LeafHash, commitment.NodeHash)
+
+	if setup != nil {
+		res.fs.Bind(constants.CanonicalChallengeName(0), res.setup.Root())
+	}
 
 	return res
 }
@@ -121,9 +141,16 @@ func (pr *proverRuntime) ExecuteSteps() error {
 				}
 				pr.mu.Unlock()
 
-				// commit to them using FRI
-				if err := pr.Committer.Commit(challengeName, polys); err != nil {
-					return err
+				// Commit only when this round introduces new oracle columns.
+				// Some compiled FS rounds only advance the outer transcript.
+				if len(polys) > 0 {
+					if err := pr.Committer.Commit(challengeName, polys); err != nil {
+						return err
+					}
+				} else if !pr.config.EmulateFS {
+					if err := pr.fs.NewChallenge(challengeName); err != nil {
+						return err
+					}
 				}
 
 				// derive 'challengeName' using fs, or sample a random element if EmulateFS is set,
@@ -162,9 +189,13 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	// 1 - Compute the AIR quotient for each module in the Program.
 	// The quotient is written in canonical (coefficient) form, split into chunks
 	// of size n, and stored as Lagrange-normal polynomials in a dedicated trace.
-	airTrace := make(trace.Trace)
 
 	for moduleName, module := range pr.program.Modules {
+		// Skip modules with a trivially-zero VanishingRelation (no constraints).
+		// The zero polynomial is vacuously divisible by (X^N-1), quotient = 0, nothing to commit.
+		if module.VanishingRelation.Degree() <= 0 {
+			continue
+		}
 		// compute quotient: VanishingRelation / (X^n - 1), returned in coset-Lagrange form
 		quotient, err := poly.ComputeQuotient(pr.t, *module.VanishingRelation, module.N)
 		if err != nil {
@@ -189,14 +220,14 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 			copy(chunk, quotient[i*N:(i+1)*N])
 			module.D.FFT(chunk, fft.DIF)
 			utils.BitReverse(chunk)
-			chunkName := fmt.Sprintf("%s_%d", moduleName, i)
-			airTrace[chunkName] = chunk
+			chunkName := constants.QuotientChunkName(moduleName, i)
+			pr.airTrace[chunkName] = chunk
 		}
 	}
 
 	// 2 - commit to the AIR quotient trace
-	polysToCommit := make(map[string]poly.Polynomial, len(airTrace))
-	for name, p := range airTrace {
+	polysToCommit := make(map[string]poly.Polynomial, len(pr.airTrace))
+	for name, p := range pr.airTrace {
 		polysToCommit[name] = p
 	}
 	if err := pr.Committer.Commit(constants.FINAL_EVALUATION_POINT, polysToCommit); err != nil {
@@ -228,8 +259,8 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 
 	for _, moduleName := range sortedModuleNames {
 		for i := 0; ; i++ {
-			chunkName := fmt.Sprintf("%s_%d", moduleName, i)
-			if _, ok := airTrace[chunkName]; !ok {
+			chunkName := constants.QuotientChunkName(moduleName, i)
+			if _, ok := pr.airTrace[chunkName]; !ok {
 				break
 			}
 			if err := pr.Committer.Open(chunkName, pr.zeta); err != nil {
@@ -296,7 +327,7 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 	return nil
 }
 
-func Prove(t trace.Trace, publicInputs proof.PublicInputs, program board.Program, opts ...Option) (proof.Proof, error) {
+func Prove(t trace.Trace, setup *PublicKey, publicInputs proof.PublicInputs, program board.Program, opts ...Option) (proof.Proof, error) {
 
 	var config Config
 	for _, opt := range opts {
@@ -306,7 +337,7 @@ func Prove(t trace.Trace, publicInputs proof.PublicInputs, program board.Program
 		}
 	}
 
-	pr := newProverRuntime(t, publicInputs, program, config)
+	pr := newProverRuntime(t, setup, publicInputs, program, config)
 
 	// run ExecuteSteps
 	if err := pr.ExecuteSteps(); err != nil {

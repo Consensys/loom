@@ -1,8 +1,23 @@
+// Copyright Consensys Software Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+// the License. You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package board
 
 import (
 	"fmt"
+	"sort"
 
+	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/constants"
@@ -23,9 +38,10 @@ func NewLogupBus(positive, negative []string) LogupBus {
 }
 
 type Builder struct {
-	Modules  map[string]*Module
-	LogupBus []LogupBus
-	Steps    []ProverStep
+	Modules       map[string]*Module
+	LogupBus      []LogupBus
+	Steps         []ProverStep
+	PublicColumns []string // known columns, precommitted (ex: ql, qr, etc in plonk)
 }
 
 func NewBuilder() Builder {
@@ -34,6 +50,10 @@ func NewBuilder() Builder {
 	res.Steps = make([]ProverStep, 0)
 	res.LogupBus = make([]LogupBus, 0)
 	return res
+}
+
+func (b *Builder) AddPublicColumn(name string) {
+	b.PublicColumns = append(b.PublicColumns, name)
 }
 
 func (b *Builder) AddModule(name string, m Module) {
@@ -64,7 +84,16 @@ func (b *Builder) AssertZero(module string, relation expr.Expr) error {
 	return nil
 }
 
-type Input struct {
+type Table struct {
+	Module string
+	In     []expr.Expr
+}
+
+func NewTable(module string, size int) Table {
+	return Table{Module: module, In: make([]expr.Expr, size)}
+}
+
+type Column struct {
 	Module string
 	In     expr.Expr
 }
@@ -79,10 +108,36 @@ func (b *Builder) AddFiatShamirStep(E []expr.Expr, out string) {
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  E,
-		Out:  out,
+		Outs: []string{out},
 		Step: FSStep,
 	}
 	b.Steps = append(b.Steps, pvStep)
+}
+
+func (b *Builder) addMakeEntriesPublicConstraint(module string, E expr.Expr, sel, out string) {
+	selExpr := expr.Col(sel)
+	outExpr := expr.Public(out)
+	rel := E.Mul(selExpr).Sub(outExpr)
+	m := b.Modules[module]
+	m.AssertZero(rel)
+	b.Modules[module] = m
+}
+
+func (b *Builder) AddMakeEntriesPublicStep(module string, E expr.Expr, selector, out string, idx []int) {
+	m := b.Modules[module]
+	ctx := MakeEntriesPublicCtx{Idx: idx, N: m.N}
+	pvStep := ProverStep{
+		Ctx:  ctx,
+		Ins:  []expr.Expr{E},
+		Outs: []string{out},
+		Step: MakeEntriesPublicStep,
+	}
+	b.Steps = append(b.Steps, pvStep)
+
+	genSel := SelectorGen{Idx: idx, Name: selector}
+	m.GenCol = append(m.GenCol, genSel)
+	b.Modules[module] = m
+	b.addMakeEntriesPublicConstraint(module, E, selector, out)
 }
 
 func (b *Builder) addMakeIthValuePublicConstraint(module string, E expr.Expr, output string, pos int) {
@@ -93,13 +148,32 @@ func (b *Builder) addMakeIthValuePublicConstraint(module string, E expr.Expr, ou
 
 // AddMakeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
 // the 1 entry column expr[pos] is registered in the trace
-func (b *Builder) AddMakeIthValuePublicStep(module string, E expr.Expr, out string, pos int) {
-	m := b.Modules[module]
-	ctx := MakeIthValuePublicCtx{Pos: pos, N: m.N}
+func (b *Builder) AddMakeRelativeIthValuePublicStep(module string, E expr.Expr, out string, pos int) {
+	ctx := MakeRelativeIthValuePublicCtx{Pos: pos, Module: module}
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  []expr.Expr{E},
-		Out:  out,
+		Outs: []string{out},
+		Step: MakeRelativeIthValuePublicStep,
+	}
+	b.Steps = append(b.Steps, pvStep)
+	b.addMakeRelativeIthValuePublicConstraint(module, E, out, pos)
+}
+
+func (b *Builder) addMakeRelativeIthValuePublicConstraint(module string, E expr.Expr, output string, pos int) {
+	m := b.Modules[module]
+	v := expr.Public(output)
+	m.AssertEqualRelativeAt(E, v, pos)
+}
+
+// AddMakeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
+// the 1 entry column expr[pos] is registered in the trace
+func (b *Builder) AddMakeIthValuePublicStep(module string, E expr.Expr, out string, pos int) {
+	ctx := MakeIthValuePublicCtx{Pos: pos}
+	pvStep := ProverStep{
+		Ctx:  ctx,
+		Ins:  []expr.Expr{E},
+		Outs: []string{out},
 		Step: MakeIthValuePublicStep,
 	}
 	b.Steps = append(b.Steps, pvStep)
@@ -107,8 +181,24 @@ func (b *Builder) AddMakeIthValuePublicStep(module string, E expr.Expr, out stri
 }
 
 // S ⊂ T, the ouptut is in T's module
-func (b *Builder) AddCountMultiplicityStep(S, T expr.Expr, output string) {
-	cmStep := NewProverStep([]expr.Expr{S, T}, output, CountMultiplicityStep, CMCtx{})
+func (b *Builder) AddCountWeightedMultiplicityStep(selS, S, T []expr.Expr, output string) {
+	ctx := CMWCtx{NbSources: len(S), NbTargets: len(T)}
+	outs := make([]string, len(T))
+	for i := range T {
+		outs[i] = constants.MultiplicityChunkName(output, i)
+	}
+	cmStep := NewProverStep(append(selS, append(S, T...)...), outs, CountWeightedMultiplicityStep, ctx)
+	b.Steps = append(b.Steps, cmStep)
+}
+
+// S ⊂ T, the ouptut is in T's module
+func (b *Builder) AddCountMultiplicityStep(S, T []expr.Expr, output string) {
+	ctx := CMCtx{NbSources: len(S), NbTargets: len(T)}
+	outs := make([]string, len(T))
+	for i := range T {
+		outs[i] = constants.MultiplicityChunkName(output, i)
+	}
+	cmStep := NewProverStep(append(S, T...), outs, CountMultiplicityStep, ctx)
 	b.Steps = append(b.Steps, cmStep)
 }
 
@@ -128,7 +218,7 @@ func (b *Builder) addLogupConstraint(module string, E, M expr.Expr, output strin
 // AddLogupStep register the action of computing the column interpolating the running sum
 // \Sigma_j<=i M[i]/E[i]
 func (b *Builder) AddLogupStep(module string, E, M expr.Expr, output string) {
-	logupStep := NewProverStep([]expr.Expr{E, M}, output, LogUpStep, LogUpCtx{})
+	logupStep := NewProverStep([]expr.Expr{E, M}, []string{output}, LogUpStep, LogUpCtx{})
 	b.Steps = append(b.Steps, logupStep)
 	b.addLogupConstraint(module, E, M, output)
 }
@@ -142,7 +232,7 @@ func (b *Builder) addGrandProductConstraint(module string, N, D expr.Expr, outpu
 }
 
 func (b *Builder) AddGrandProductStep(module string, N, D expr.Expr, output string) {
-	gpStep := NewProverStep([]expr.Expr{N, D}, output, GrandProductStep, GPCtx{})
+	gpStep := NewProverStep([]expr.Expr{N, D}, []string{output}, GrandProductStep, GPCtx{})
 	b.Steps = append(b.Steps, gpStep)
 	b.addGrandProductConstraint(module, N, D, output)
 }
@@ -153,9 +243,21 @@ type RoundInputs = map[string][]string
 // Program the double slice [][] means that the steps are scheduled
 type Program struct {
 	Modules               map[string]CompiledModule
+	PublicColumns         []string // known columns, precommitted (ex: ql, qr, etc in plonk)
 	FScolumnsDependencies [][]string
 	LogupBus              []LogupBus
 	Steps                 [][]ProverStep
+}
+
+func (pg *Program) SetSize(module string, size int) {
+	_, ok := pg.Modules[module]
+	if !ok {
+		panic(fmt.Errorf("module %s not found in the trace", module))
+	}
+	m := pg.Modules[module]
+	m.N = int(ecc.NextPowerOfTwo(uint64(size)))
+	m.D = fft.NewDomain(uint64(m.N))
+	pg.Modules[module] = m
 }
 
 func Compile(b *Builder) (Program, error) {
@@ -191,7 +293,9 @@ func Compile(b *Builder) (Program, error) {
 				stepLevel[i] = lvl
 				changed = true
 			}
-			varLevel[step.Out] = lvl
+			for _, o := range step.Outs {
+				varLevel[o] = lvl
+			}
 		}
 		if !changed {
 			break
@@ -206,7 +310,9 @@ func Compile(b *Builder) (Program, error) {
 	challengeProducer := map[string]int{} // challenge name → index of the FS step that outputs it
 	for i, step := range b.Steps {
 		if isFSStep[i] {
-			challengeProducer[step.Out] = i
+			for _, o := range step.Outs {
+				challengeProducer[o] = i
+			}
 		}
 	}
 
@@ -255,7 +361,42 @@ func Compile(b *Builder) (Program, error) {
 			continue
 		}
 		stepLevel[i] = maxLevelForRound[fsRound[i]]
-		varLevel[step.Out] = stepLevel[i]
+		for _, o := range step.Outs {
+			varLevel[o] = stepLevel[i]
+		}
+	}
+
+	// --- Phase 3.5: Enforce strictly increasing levels across rounds. ---
+	// Phase 3 syncs FS steps within each round to that round's max level, but
+	// does not propagate the change to later rounds. If round r is bumped up,
+	// round r+1 must also be bumped to at least round-r-level+1, and so on.
+	// Without this, two FS steps from different rounds can land on the same
+	// level and get merged into one canonical challenge — breaking arguments
+
+	// (like grand product) that need distinct fold/randomness challenges.
+	{
+		rounds := make([]int, 0, len(maxLevelForRound))
+		for r := range maxLevelForRound {
+			rounds = append(rounds, r)
+		}
+		sort.Ints(rounds)
+		minLevel := -1
+		for _, r := range rounds {
+			if maxLevelForRound[r] <= minLevel {
+				maxLevelForRound[r] = minLevel + 1
+			}
+			minLevel = maxLevelForRound[r]
+		}
+		// Re-apply updated levels to FS steps and varLevel.
+		for i, step := range b.Steps {
+			if !isFSStep[i] {
+				continue
+			}
+			stepLevel[i] = maxLevelForRound[fsRound[i]]
+			for _, o := range step.Outs {
+				varLevel[o] = stepLevel[i]
+			}
+		}
 	}
 
 	// --- Phase 4: Re-propagate non-FS levels, skipping over FS levels. ---
@@ -290,7 +431,9 @@ func Compile(b *Builder) (Program, error) {
 				stepLevel[i] = lvl
 				changed = true
 			}
-			varLevel[step.Out] = lvl
+			for _, o := range step.Outs {
+				varLevel[o] = lvl
+			}
 		}
 		if !changed {
 			break
@@ -319,7 +462,7 @@ func Compile(b *Builder) (Program, error) {
 	if err != nil {
 		return res, err
 	}
-	res.Steps[maxLevel+1][0] = NewProverStep(nil, foldingChallenge, FSStep, FSCtx{})
+	res.Steps[maxLevel+1][0] = NewProverStep(nil, []string{foldingChallenge}, FSStep, FSCtx{})
 
 	// --- Phase 7: Collapse FS steps of the same round (level) into one canonical step. ---
 
@@ -347,7 +490,9 @@ func Compile(b *Builder) (Program, error) {
 		canonical := constants.CanonicalChallengeName(round)
 		for _, step := range res.Steps[lvl] {
 			if _, ok := step.Ctx.(FSCtx); ok {
-				renameExprs[step.Out] = expr.Challenge(canonical)
+				for _, o := range step.Outs {
+					renameExprs[o] = expr.Challenge(canonical)
+				}
 			}
 		}
 	}
@@ -375,8 +520,13 @@ func Compile(b *Builder) (Program, error) {
 	}
 
 	// Step 7e: Build res.FiatShamir and replace per-round FS steps with a single canonical one.
+	res.PublicColumns = make([]string, len(b.PublicColumns))
+	copy(res.PublicColumns, b.PublicColumns)
 	res.FScolumnsDependencies = make([][]string, numRounds)
 	prevCovered := map[string]bool{}
+	for _, n := range res.PublicColumns {
+		prevCovered[n] = true
+	}
 	for lvl := 0; lvl < len(res.Steps); lvl++ {
 		round, ok := levelToRound[lvl]
 		if !ok {
@@ -407,7 +557,7 @@ func Compile(b *Builder) (Program, error) {
 				newSteps = append(newSteps, step)
 			}
 		}
-		newSteps = append(newSteps, NewProverStep(nil, canonical, FSStep, FSCtx{}))
+		newSteps = append(newSteps, NewProverStep(nil, []string{canonical}, FSStep, FSCtx{}))
 		res.Steps[lvl] = newSteps
 	}
 
@@ -433,6 +583,7 @@ func Compile(b *Builder) (Program, error) {
 	lastChallenge := expr.Challenge(fmt.Sprintf("challenge@loom_%d", lastRound))
 	for k, m := range b.Modules {
 		var cm CompiledModule
+		cm.Name = m.Name
 		cm.GenCol = make([]Gen, len(m.GenCol))
 		copy(cm.GenCol, m.GenCol)
 		cm.N = m.N

@@ -1,0 +1,5 @@
+(defcolumns (A :i16) (B :i16))
+(defconstraint c1 ()
+  (let ((C A) (D B))
+    (if (== 0 C)
+        (== 0 D))))

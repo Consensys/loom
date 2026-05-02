@@ -1,3 +1,16 @@
+// Copyright Consensys Software Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+// the License. You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package board
 
 import (
@@ -14,19 +27,22 @@ import (
 type Relation = expr.Expr
 
 type Module struct {
+	Name      string
 	Relations []Relation
 	GenCol    []Gen // public columns generator (lagrange, permutation columns, selectors, etc)
 	N         int
 }
 
-func NewModule() Module {
+func NewModule(name string) Module {
 	var res Module
+	res.Name = name
 	res.Relations = make([]Relation, 0)
 	res.GenCol = make([]Gen, 0)
 	return res
 }
 
 type CompiledModule struct {
+	Name              string
 	GenCol            []Gen // public columns generator (lagrange, permutation columns, etc)
 	N                 int
 	VanishingRelation *dag.DAG
@@ -34,26 +50,84 @@ type CompiledModule struct {
 }
 
 type Gen interface {
-	Gen(t trace.Trace, m *CompiledModule)
+	Gen(t trace.Trace, m *CompiledModule) error
+}
+
+type RangeColumnGen struct {
+	Bound uint64
+}
+
+func (rc RangeColumnGen) Gen(t trace.Trace, m *CompiledModule) error {
+	res := make([]koalabear.Element, m.N)
+	for i := 0; i < int(rc.Bound); i++ {
+		res[i].SetUint64(uint64(i))
+	}
+	name := constants.RangeColName(rc.Bound)
+	if _, ok := t[name]; ok {
+		return nil
+	}
+	t[name] = res
+	return nil
+}
+
+type LagrangeRelativeGen struct {
+	i int // <- real position: module.N-i
+}
+
+func (p LagrangeRelativeGen) Gen(t trace.Trace, m *CompiledModule) error {
+	res := make([]koalabear.Element, m.N)
+	res[m.N-1-p.i].SetOne()
+	name := constants.LagrangeNameRelative(m.Name, p.i)
+	if _, ok := t[name]; ok {
+		return nil
+	}
+	t[name] = res
+	return nil
 }
 
 type LagrangeGen struct {
-	i, N int
+	i int
 }
 
-func (p LagrangeGen) Gen(t trace.Trace, m *CompiledModule) {
-	res := make([]koalabear.Element, p.N)
+func (p LagrangeGen) Gen(t trace.Trace, m *CompiledModule) error {
+	res := make([]koalabear.Element, m.N)
 	res[p.i].SetOne()
-	name := constants.LagrangeName(p.i, p.N)
+	name := constants.LagrangeName(m.Name, p.i)
 	if _, ok := t[name]; ok {
-		return
+		return nil
 	}
 	t[name] = res
+	return nil
+}
+
+// NameIthIDSupport returns the name of the i-th chunk of the support of a permutation
+// (common to every permutation within a module)
+func (m *Module) NameIthIDSupport(i int) string {
+	return fmt.Sprintf("%s.ID_%d_%d", m.Name, i, m.N)
+}
+
+// NameIthIDSupport returns the name of the i-th chunk of the support of a permutation
+// (common to every permutation within a CompiledModule)
+func (m *CompiledModule) NameIthIDSupport(i int) string {
+	return fmt.Sprintf("%s.ID_%d_%d", m.Name, i, m.N)
+}
+
+func (m *Module) LagrangeColRelative(i int) expr.Expr {
+	m.GenCol = append(m.GenCol, LagrangeRelativeGen{i: i})
+	name := constants.LagrangeNameRelative(m.Name, i)
+	return &expr.Leaf{Type: expr.LagrangeColumn, Name: name}
+}
+
+// asserts that A[m.N-1-i]=B[m.N-1-i]
+func (m *Module) AssertEqualRelativeAt(A, B expr.Expr, i int) {
+	relation := A.Sub(B)
+	relation = relation.Mul(m.LagrangeColRelative(i))
+	m.AssertZero(relation)
 }
 
 func (m *Module) LagrangeCol(i int) expr.Expr {
-	m.GenCol = append(m.GenCol, LagrangeGen{i: i, N: m.N})
-	name := constants.LagrangeName(i, m.N)
+	m.GenCol = append(m.GenCol, LagrangeGen{i: i})
+	name := constants.LagrangeName(m.Name, i)
 	return &expr.Leaf{Type: expr.LagrangeColumn, Name: name}
 }
 
@@ -78,6 +152,15 @@ func (m *Module) AssertZeroExceptAt(relation expr.Expr, i ...int) {
 	m.AssertZero(_relation)
 }
 
+func (m *Module) AssertZeroRelativeAt(relation expr.Expr, i ...int) {
+	disj := expr.Expr(m.LagrangeColRelative(i[0]))
+	for k := 1; k < len(i); k++ {
+		disj = disj.Add(m.LagrangeColRelative(i[k]))
+	}
+	_relation := relation.Mul(disj)
+	m.AssertZero(_relation)
+}
+
 func (m *Module) AssertZeroAt(relation expr.Expr, i ...int) {
 	disj := expr.Expr(m.LagrangeCol(i[0]))
 	for k := 1; k < len(i); k++ {
@@ -92,7 +175,7 @@ type SelectorGen struct {
 	Name string
 }
 
-func (s SelectorGen) Gen(t trace.Trace, m *Module) error {
+func (s SelectorGen) Gen(t trace.Trace, m *CompiledModule) error {
 	res := make([]koalabear.Element, m.N)
 	for _, idx := range s.Idx {
 		res[idx].SetOne()
@@ -105,11 +188,22 @@ func (s SelectorGen) Gen(t trace.Trace, m *Module) error {
 }
 
 type PermutationGen struct {
-	S    []int64
-	Name string
+	S               []int64
+	PermutationName string
 }
 
-func (p PermutationGen) Gen(t trace.Trace, m *Module) error {
+func (p PermutationGen) NameIthPermutationChunk(i int) string {
+	return fmt.Sprintf("%s_%d", p.PermutationName, i)
+}
+
+func NewPermutationGen(S []int64, permutationName string) PermutationGen {
+	return PermutationGen{
+		S:               S,
+		PermutationName: permutationName,
+	}
+}
+
+func (p PermutationGen) Gen(t trace.Trace, m *CompiledModule) error {
 
 	// 1 - gen permutation support
 	if len(p.S)%m.N != 0 {
@@ -121,7 +215,7 @@ func (p PermutationGen) Gen(t trace.Trace, m *Module) error {
 		return err
 	}
 	for i := 0; i < nbChunks; i++ {
-		err := trace.RegisterColumn(t, fmt.Sprintf("ID_%d", i), support[i])
+		err := trace.RegisterColumn(t, m.NameIthIDSupport(i), support[i])
 		if err != nil {
 			return err
 		}
@@ -130,7 +224,7 @@ func (p PermutationGen) Gen(t trace.Trace, m *Module) error {
 	// 2 - register permutation columns
 	perm := generatePermutation(support, p.S)
 	for i := 0; i < nbChunks; i++ {
-		err := trace.RegisterColumn(t, fmt.Sprintf("%s_%d", p.Name, i), perm[i])
+		err := trace.RegisterColumn(t, p.NameIthPermutationChunk(i), perm[i])
 		if err != nil {
 			return err
 		}

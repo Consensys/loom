@@ -1,3 +1,16 @@
+// Copyright Consensys Software Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+// the License. You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package prover
 
 import (
@@ -7,29 +20,16 @@ import (
 	"github.com/consensys/loom/arguments"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
-	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/trace"
 	"github.com/consensys/loom/viz"
 )
-
-func checkVanishingRelation(t *testing.T, tr trace.Trace, md board.CompiledModule) {
-	ev, err := poly.Eval(tr, *md.VanishingRelation, md.N)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i, v := range ev {
-		if !v.IsZero() {
-			t.Errorf("vanishing relation doesn hold at %d, got %s", i, v.String())
-		}
-	}
-}
 
 func TestVanishingRelationsAndLogupBus(t *testing.T) {
 
 	builder := board.NewBuilder()
 
-	fibonacciModule := board.NewModule()
-	rangeModule := board.NewModule()
+	fibonacciModule := board.NewModule("fibo")
+	rangeModule := board.NewModule("range")
 
 	N := 4
 	fibonacciModule.N = N
@@ -45,13 +45,13 @@ func TestVanishingRelationsAndLogupBus(t *testing.T) {
 	builder.AddModule("fibonacci", fibonacciModule)
 	builder.AddModule("range", rangeModule)
 
-	T := board.Input{
+	T := board.Column{
 		Module: "range",
 		In:     expr.Col("Lookup"),
 	}
 	columnsFibonacci := []string{"A", "B", "C"}
 	for _, c := range columnsFibonacci {
-		S := board.Input{
+		S := board.Column{
 			Module: "fibonacci",
 			In:     expr.Col(c),
 		}
@@ -75,15 +75,15 @@ func TestVanishingRelationsAndLogupBus(t *testing.T) {
 	traceRange := TraceRange(N)
 	tr := MergeTrace(traceFrob, traceRange)
 
-	proof, err := Prove(tr, nil, program, EmulateFS())
+	proof, err := Prove(tr, nil, nil, program, EmulateFS())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	viz.WriteRawTraceToCSV("trace.csv", tr)
-
 	for _, m := range program.Modules {
-		checkVanishingRelation(t, tr, m)
+		if err := CheckVanishingRelation(tr, m); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// check the values of the bus
@@ -116,7 +116,7 @@ func TestVanishingRelationsAndLogupBus(t *testing.T) {
 func TestFRICommitPhaseRecordsExpandedOracleMetadata(t *testing.T) {
 	builder := board.NewBuilder()
 
-	module := board.NewModule()
+	module := board.NewModule("main")
 	module.N = 4
 	// Keep the module trivial so the proof only exercises the commitment flow.
 	module.AssertZero(expr.Col("A").Sub(expr.Col("A")))
@@ -134,7 +134,7 @@ func TestFRICommitPhaseRecordsExpandedOracleMetadata(t *testing.T) {
 		"A": []koalabear.Element{zero, zero, zero, zero},
 	}
 
-	prf, err := Prove(tr, nil, program, EmulateFS())
+	prf, err := Prove(tr, nil, nil, program, EmulateFS())
 	if err != nil {
 		t.Fatal(err)
 	}

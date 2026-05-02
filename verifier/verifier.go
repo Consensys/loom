@@ -1,3 +1,16 @@
+// Copyright Consensys Software Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+// the License. You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package verifier
 
 import (
@@ -13,15 +26,19 @@ import (
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/commitment/fri"
 	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
 )
+
+type PublicKey = merkle.Tree
 
 type verifierRunTime struct {
 	proof        proof.Proof
 	publicInputs map[string]proof.PublicInput
 	program      board.Program
 	zeta         koalabear.Element
+	setup        *PublicKey
 	fs           *fiatshamir.Transcript
 	friVerifier  fri.Verifier
 	vars         map[string]koalabear.Element
@@ -46,12 +63,13 @@ func WithFRIGrindingBits(n int) Option {
 	}
 }
 
-func newVerifierRuntime(program board.Program, publicInputs map[string]proof.PublicInput, proof proof.Proof, config Config) verifierRunTime {
+func newVerifierRuntime(program board.Program, setup *PublicKey, publicInputs map[string]proof.PublicInput, proof proof.Proof, config Config) verifierRunTime {
 
 	res := verifierRunTime{
 		proof:        proof,
 		publicInputs: publicInputs,
 		program:      program,
+		setup:        setup,
 		vars:         make(map[string]koalabear.Element),
 	}
 
@@ -59,7 +77,21 @@ func newVerifierRuntime(program board.Program, publicInputs map[string]proof.Pub
 	res.friVerifier = fri.NewVerifier(res.fs)
 	res.friVerifier.GrindingBits = config.FRIGrindingBits
 
+	if setup != nil {
+		res.fs.Bind(constants.CanonicalChallengeName(0), res.setup.Root())
+	}
+
 	return res
+}
+
+func (vr *verifierRunTime) finalCommitmentIndex() int {
+	commitmentI := 0
+	for i := range vr.program.FScolumnsDependencies {
+		if len(vr.program.FScolumnsDependencies[i]) > 0 {
+			commitmentI++
+		}
+	}
+	return commitmentI
 }
 
 // deriveChallenges re-derives all Fiat-Shamir challenges, advances the FRI
@@ -68,14 +100,22 @@ func newVerifierRuntime(program board.Program, publicInputs map[string]proof.Pub
 // DEEP-quotient structure.
 func (vr *verifierRunTime) deriveChallenges() error {
 	numRounds := len(vr.program.FScolumnsDependencies)
+	commitmentI := 0
 
 	for i := range numRounds {
 		challengeName := constants.CanonicalChallengeName(i)
-		if i >= len(vr.proof.CommitmentOpenings.Commitments) {
-			return fmt.Errorf("missing commitment transcript entry for %s", challengeName)
-		}
-		if err := vr.friVerifier.Bind(challengeName, vr.proof.CommitmentOpenings.Commitments[i]); err != nil {
-			return err
+		if len(vr.program.FScolumnsDependencies[i]) > 0 {
+			if commitmentI >= len(vr.proof.CommitmentOpenings.Commitments) {
+				return fmt.Errorf("missing commitment transcript entry for %s", challengeName)
+			}
+			if err := vr.friVerifier.Bind(challengeName, vr.proof.CommitmentOpenings.Commitments[commitmentI]); err != nil {
+				return err
+			}
+			commitmentI++
+		} else {
+			if err := vr.fs.NewChallenge(challengeName); err != nil {
+				return err
+			}
 		}
 		bChallenge, err := vr.fs.ComputeChallenge((challengeName))
 		if err != nil {
@@ -86,7 +126,7 @@ func (vr *verifierRunTime) deriveChallenges() error {
 		vr.vars[challengeName] = c
 	}
 
-	finalCommitmentIndex := numRounds
+	finalCommitmentIndex := commitmentI
 	if finalCommitmentIndex >= len(vr.proof.CommitmentOpenings.Commitments) {
 		return fmt.Errorf("missing commitment for final evaluation point binding")
 	}
@@ -127,7 +167,7 @@ func (vr *verifierRunTime) registerAIROpens(finalCommitmentIndex int) error {
 	// 1. AIR quotient chunks: (moduleName, i) in sorted module × ascending i order.
 	for _, moduleName := range sortedModuleNames {
 		for i := 0; ; i++ {
-			chunkName := fmt.Sprintf("%s_%d", moduleName, i)
+			chunkName := constants.QuotientChunkName(moduleName, i)
 			if !finalPolyNames[chunkName] {
 				break
 			}
@@ -195,8 +235,14 @@ func (vr *verifierRunTime) computeLagrange() error {
 			if _, ok := vr.vars[lag]; ok {
 				continue
 			}
-			i, N := constants.ParseLagrangeName(lag)
-			v := poly.LagrangeAtZeta(vr.zeta, N, i)
+			var i int
+			i = constants.ParseLagrangeName(lag)
+			if i < 0 {
+				// relative column: stored as -(k+1) where k is the offset from
+				// the last row, so absolute position = N-1-k = N + i.
+				i = m.N + i
+			}
+			v := poly.LagrangeAtZeta(vr.zeta, m.N, i)
 			vr.vars[lag] = v
 		}
 	}
@@ -232,7 +278,7 @@ func (vr *verifierRunTime) checkLogupBus() error {
 // AIR-relevant polynomials (quotient chunks and committed/rotated leaves) from
 // the opening proof into vr.vars. Must be called after VerifyOpening succeeds.
 func (vr *verifierRunTime) populateAIREvaluations() error {
-	finalCommitmentIndex := len(vr.program.FScolumnsDependencies)
+	finalCommitmentIndex := vr.finalCommitmentIndex()
 	finalPolyNames := make(map[string]bool)
 	for _, name := range vr.proof.CommitmentOpenings.Commitments[finalCommitmentIndex].PolynomialNames {
 		finalPolyNames[name] = true
@@ -247,7 +293,7 @@ func (vr *verifierRunTime) populateAIREvaluations() error {
 	// Populate AIR quotient chunk values.
 	for _, moduleName := range sortedModuleNames {
 		for i := 0; ; i++ {
-			chunkName := fmt.Sprintf("%s_%d", moduleName, i)
+			chunkName := constants.QuotientChunkName(moduleName, i)
 			if !finalPolyNames[chunkName] {
 				break
 			}
@@ -309,7 +355,7 @@ func (vr *verifierRunTime) checkAIRRelations() error {
 		var zetaN koalabear.Element
 		zetaN.Exp(vr.zeta, big.NewInt(int64(m.N)))
 		for i := 0; ; i++ {
-			chunkName := fmt.Sprintf("%s_%d", moduleName, i)
+			chunkName := constants.QuotientChunkName(moduleName, i)
 			chunkVal, ok := vr.vars[chunkName]
 			if !ok {
 				break
@@ -338,7 +384,7 @@ func (vr *verifierRunTime) checkAIRRelations() error {
 	return nil
 }
 
-func Verify(publicInputs map[string]proof.PublicInput, program board.Program, proof proof.Proof, opts ...Option) error {
+func Verify(publicInputs map[string]proof.PublicInput, setup *PublicKey, program board.Program, proof proof.Proof, opts ...Option) error {
 
 	var config Config
 	for _, opt := range opts {
@@ -347,7 +393,7 @@ func Verify(publicInputs map[string]proof.PublicInput, program board.Program, pr
 		}
 	}
 
-	vr := newVerifierRuntime(program, publicInputs, proof, config)
+	vr := newVerifierRuntime(program, setup, publicInputs, proof, config)
 
 	// 1 - Re-derive FS challenges; register AIR FRI opens in deterministic order.
 	if err := vr.deriveChallenges(); err != nil {
