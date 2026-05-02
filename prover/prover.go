@@ -3,6 +3,7 @@ package prover
 import (
 	"crypto/sha256"
 	"fmt"
+	"slices"
 	"sync"
 
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
@@ -161,9 +162,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	// 1 - Compute the AIR quotient for each module in the Program.
 	// The quotient is written in canonical (coefficient) form, split into chunks
 	// of size n, and stored as Lagrange-normal polynomials in a dedicated trace.
-	// We also keep a map from chunk name to its domain for later evaluation at zeta.
 	airTrace := make(trace.Trace)
-	chunkDomains := make(map[string]*fft.Domain)
 
 	for moduleName, module := range pr.program.Modules {
 		// compute quotient: VanishingRelation / (X^n - 1), returned in coset-Lagrange form
@@ -192,7 +191,6 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 			utils.BitReverse(chunk)
 			chunkName := fmt.Sprintf("%s_%d", moduleName, i)
 			airTrace[chunkName] = chunk
-			chunkDomains[chunkName] = module.D
 		}
 	}
 
@@ -219,22 +217,55 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	}
 	pr.zeta = zetaVal
 
-	// evaluate each quotient chunk at zeta and store in ValuesAtZeta
-	for chunkName, chunkPoly := range airTrace {
-		pr.Proof.ValuesAtZeta[chunkName] = poly.Evaluate(chunkPoly, chunkDomains[chunkName], pr.zeta)
+	// Register FRI opens for each chunk at zeta. Iterate in (module name,
+	// chunk index) order so the registration sequence is deterministic and
+	// matches the verifier's RegisterOpenAt calls.
+	sortedModuleNames := make([]string, 0, len(pr.program.Modules))
+	for name := range pr.program.Modules {
+		sortedModuleNames = append(sortedModuleNames, name)
+	}
+	slices.Sort(sortedModuleNames)
+
+	for _, moduleName := range sortedModuleNames {
+		for i := 0; ; i++ {
+			chunkName := fmt.Sprintf("%s_%d", moduleName, i)
+			if _, ok := airTrace[chunkName]; !ok {
+				break
+			}
+			if err := pr.Committer.Open(chunkName, pr.zeta); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
 }
 
-// ComputeEvaluationsAtZeta computes the evaluations at zeta of every polynomial
-// appearing in every vanishing relation of every module.
+// ComputeEvaluationsAtZeta registers FRI open requests for every committed and
+// rotated column appearing in every module's vanishing relation. Iteration is
+// in sorted module-name order; duplicate (name, evalPoint) pairs are skipped.
+// This makes the Open registration sequence deterministic and identical to the
+// verifier's RegisterOpenAt sequence.
 func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 
 	// only CommittedColumn and RotatedColumn leaves need to be opened
 	config := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutPublicColumns())
 
-	for _, module := range pr.program.Modules {
+	// sort module names for deterministic Open ordering
+	moduleNames := make([]string, 0, len(pr.program.Modules))
+	for name := range pr.program.Modules {
+		moduleNames = append(moduleNames, name)
+	}
+	slices.Sort(moduleNames)
+
+	type evalKey struct {
+		name  string
+		point koalabear.Element
+	}
+	seen := make(map[evalKey]bool)
+
+	for _, moduleName := range moduleNames {
+		module := pr.program.Modules[moduleName]
 		leaves := module.VanishingRelation.LeavesFull(config)
 		for _, leaf := range leaves {
 			// compute the evaluation point: zeta for committed columns,
@@ -250,17 +281,16 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 				evalPoint.Mul(&evalPoint, &omegaPow)
 			}
 
-			// fetch the polynomial from the trace using the leaf's bare name
-			p, ok := pr.t[leaf.Name]
-			if !ok {
-				return fmt.Errorf("ComputeEvaluationsAtZeta: column %q not found in trace", leaf.Name)
+			key := evalKey{leaf.Name, evalPoint}
+			if seen[key] {
+				continue
 			}
+			seen[key] = true
 
-			// evaluate using poly.Evaluate (Lagrange interpolation on module.D)
-			val := poly.Evaluate(p, module.D, evalPoint)
-
-			// store result using leaf.String() as key
-			pr.Proof.ValuesAtZeta[leaf.String()] = val
+			// register the open request; FRI will evaluate and bind the claim
+			if err := pr.Committer.Open(leaf.Name, evalPoint); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

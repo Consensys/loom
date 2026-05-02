@@ -1,8 +1,10 @@
 package fri
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
@@ -76,6 +78,14 @@ func buildDEEPCombiner(
 		}
 		groups[k] = append(groups[k], r)
 	}
+
+	// Sort order canonically so β-powers are independent of Open call ordering.
+	slices.SortFunc(order, func(a, b polyKey) int {
+		if a.oracleI != b.oracleI {
+			return cmp.Compare(a.oracleI, b.oracleI)
+		}
+		return cmp.Compare(a.name, b.name)
+	})
 
 	var betaPow koalabear.Element
 	betaPow.SetOne()
@@ -180,10 +190,10 @@ func accumulateDEEP(
 	R int,
 ) {
 	var term, polesum, scratch koalabear.Element
-	for i := 0; i < N; i++ {
+	for i := range N {
 		term.Mul(&codeword[i], &invProdDenoms[i])
 		polesum.SetZero()
-		for j := 0; j < R; j++ {
+		for j := range R {
 			scratch.Mul(&weights[j], &invPoleDenoms[j*N+i])
 			polesum.Add(&polesum, &scratch)
 		}

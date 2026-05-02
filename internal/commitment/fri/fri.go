@@ -480,6 +480,38 @@ func (v *Verifier) Bind(challengeName string, commitment Commitment) error {
 	return nil
 }
 
+// RegisterOpenAt records an additional open request (prover-side
+// Committer.Open call) so that VerifyOpening reconstructs the same
+// DEEP-quotient structure. The name must have been committed in a prior
+// Bind call. Does NOT touch the transcript.
+func (v *Verifier) RegisterOpenAt(name string, point koalabear.Element) error {
+	// Find which oracle holds this polynomial by scanning deepPoints that
+	// were populated by Bind (auto-DEEP opens).
+	for _, dp := range v.deepPoints {
+		if dp.name == name {
+			v.deepPoints = append(v.deepPoints, deepPoint{oracleI: dp.oracleI, name: name, point: point})
+			return nil
+		}
+	}
+	return fmt.Errorf("fri: RegisterOpenAt: polynomial %q not found in any committed oracle", name)
+}
+
+// ClaimedValueAt returns the prover's claimed evaluation of the polynomial
+// named name at point from a verified OpeningProof. The (name, point) pair
+// must have been registered via Bind (auto-DEEP) or RegisterOpenAt before
+// VerifyOpening was called. Registration order matches ClaimedValues indexing.
+func (v *Verifier) ClaimedValueAt(proof OpeningProof, name string, point koalabear.Element) (koalabear.Element, error) {
+	for r, dp := range v.deepPoints {
+		if dp.name == name && dp.point.Equal(&point) {
+			if r >= len(proof.ClaimedValues) {
+				return koalabear.Element{}, fmt.Errorf("fri: ClaimedValueAt: index %d out of range", r)
+			}
+			return proof.ClaimedValues[r], nil
+		}
+	}
+	return koalabear.Element{}, fmt.Errorf("fri: ClaimedValueAt: polynomial %q at requested point not found", name)
+}
+
 func deepChallengeName(commitmentChallengeName, polynomialName string) string {
 	return fmt.Sprintf("%s@deep_%s", commitmentChallengeName, polynomialName)
 }

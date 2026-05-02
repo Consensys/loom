@@ -1,7 +1,9 @@
 package fri
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
@@ -131,44 +133,103 @@ func (v *Verifier) VerifyOpening(proof OpeningProof, lh merkle.LeafHasher, nh me
 	for qi, j64 := range proof.QueryIndices {
 		j := int(j64)
 
-		// 5a. Compute the DEEP quotient values from oracle coset data and claimed values.
-		// q_combined[t] = Σ_r β^r · (f_r(ω^{j+t·(N/k)}) − y_r) / (ω^{j+t·(N/k)} − z_r)
+		// 5a. Reconstruct the DEEP-combined codeword values at this coset using
+		// the same merged per-polynomial partial-fractions form as the prover.
+		//
+		// For polynomial p with R opens at {x_1,…,x_R} and claimed values
+		// {y_1,…,y_R}, and coset positions ω^{j+t·nLeaves} for t = 0..k-1:
+		//
+		//   Q_p(ω^{j+t·nLeaves}) = f_p(ω^{j+t·nLeaves}) · [Π_s(ω^{j+t·nLeaves}−x_s)]^{-1}
+		//                         − Σ_s w_s · (ω^{j+t·nLeaves}−x_s)^{-1}
+		//
+		// where w_s = y_s / Π_{u≠s}(x_s−x_u) (barycentric weights).
+		//
+		// qCheck[t] = Σ_p β^p · Q_p(ω^{j+t·nLeaves}).
 		qCheck := make([]koalabear.Element, k)
+
+		// Group deepPoints by (oracleI, name) preserving first-open order.
+		type dpKey struct{ oracleI int; name string }
+		dpOrder := make([]dpKey, 0, len(v.deepPoints))
+		dpGroups := make(map[dpKey][]int) // key → indices into v.deepPoints
+		for r, dp := range v.deepPoints {
+			key := dpKey{dp.oracleI, dp.name}
+			if _, ok := dpGroups[key]; !ok {
+				dpOrder = append(dpOrder, key)
+			}
+			dpGroups[key] = append(dpGroups[key], r)
+		}
+
+		// Sort canonically so β-powers match the prover regardless of
+		// RegisterOpenAt call order.
+		slices.SortFunc(dpOrder, func(a, b dpKey) int {
+			if a.oracleI != b.oracleI {
+				return cmp.Compare(a.oracleI, b.oracleI)
+			}
+			return cmp.Compare(a.name, b.name)
+		})
+
 		var betaPow koalabear.Element
 		betaPow.SetOne()
-		for r, dp := range v.deepPoints {
-			oi := dp.oracleI
-			comm := proof.Commitments[oi]
+		for _, key := range dpOrder {
+			rs := dpGroups[key]
+			R := len(rs)
+			xs := make([]koalabear.Element, R)
+			ys := make([]koalabear.Element, R)
+			for jx, r := range rs {
+				xs[jx] = v.deepPoints[r].point
+				ys[jx] = proof.ClaimedValues[r]
+			}
 
+			weights, err := computeBarycentricWeights(xs, ys)
+			if err != nil {
+				return fmt.Errorf("fri: barycentric weights for %q: %w", key.name, err)
+			}
+
+			// Locate the polynomial index within its oracle.
+			comm := proof.Commitments[key.oracleI]
 			polyIdx := -1
 			for pi, name := range comm.PolynomialNames {
-				if name == dp.name {
+				if name == key.name {
 					polyIdx = pi
 					break
 				}
 			}
 			if polyIdx < 0 {
-				return fmt.Errorf("fri: polynomial %q not found in oracle %d", dp.name, oi)
+				return fmt.Errorf("fri: polynomial %q not found in oracle %d", key.name, key.oracleI)
 			}
 
-			claimedY := proof.ClaimedValues[r]
-			z := dp.point
-
+			// Build denominator vectors for the k coset positions; batch-invert.
+			// prodDenoms[t] = Π_s (ω^{j+t·nLeaves} − x_s)
+			// poleDenoms[s·k+t] = ω^{j+t·nLeaves} − x_s
+			prodDenoms := make([]koalabear.Element, k)
+			poleDenoms := make([]koalabear.Element, R*k)
 			for t := range k {
 				pos := j + t*nLeaves
-				fVal := proof.OracleCosetData[qi][oi][polyIdx*k+t]
-				denom := omegaPows[pos]
-				denom.Sub(&denom, &z)
-				if denom.IsZero() {
-					return fmt.Errorf("fri: DEEP point lands on evaluation domain at query %d", qi)
+				prodDenoms[t].SetOne()
+				for s := range R {
+					var d koalabear.Element
+					d.Sub(&omegaPows[pos], &xs[s])
+					if d.IsZero() {
+						return fmt.Errorf("fri: DEEP point lands on evaluation domain at query %d", qi)
+					}
+					prodDenoms[t].Mul(&prodDenoms[t], &d)
+					poleDenoms[s*k+t] = d
 				}
-				var invDenom koalabear.Element
-				invDenom.Inverse(&denom)
-				var term koalabear.Element
-				term.Sub(&fVal, &claimedY)
-				term.Mul(&term, &invDenom)
-				term.Mul(&term, &betaPow)
-				qCheck[t].Add(&qCheck[t], &term)
+			}
+			invProd := koalabear.BatchInvert(prodDenoms)
+			invPole := koalabear.BatchInvert(poleDenoms)
+
+			for t := range k {
+				fVal := proof.OracleCosetData[qi][key.oracleI][polyIdx*k+t]
+				var qVal, polesum, scratch koalabear.Element
+				qVal.Mul(&fVal, &invProd[t])
+				for s := range R {
+					scratch.Mul(&weights[s], &invPole[s*k+t])
+					polesum.Add(&polesum, &scratch)
+				}
+				qVal.Sub(&qVal, &polesum)
+				qVal.Mul(&qVal, &betaPow)
+				qCheck[t].Add(&qCheck[t], &qVal)
 			}
 			betaPow.Mul(&betaPow, &beta)
 		}

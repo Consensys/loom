@@ -360,7 +360,10 @@ func TestRoundTripNoLayers(t *testing.T) {
 
 // TestNoLayersTamperedFinalPolynomial confirms tampering is still detected
 // in the 0-layer branch (where the DEEP quotient check goes directly against
-// FinalPolynomial).
+// FinalPolynomial). To keep the test deterministic, every entry of
+// FinalPolynomial is tampered so any query position will trigger rejection
+// (a single-position tamper is only caught when a query lands on that
+// position, which is probabilistic).
 func TestNoLayersTamperedFinalPolynomial(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
@@ -383,7 +386,9 @@ func TestNoLayersTamperedFinalPolynomial(t *testing.T) {
 
 	var one koalabear.Element
 	one.SetOne()
-	proof.FinalPolynomial[0].Add(&proof.FinalPolynomial[0], &one)
+	for i := range proof.FinalPolynomial {
+		proof.FinalPolynomial[i].Add(&proof.FinalPolynomial[i], &one)
+	}
 
 	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -730,5 +735,81 @@ func TestHasLeadingZeroBitsBoundary(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestRoundTripMultiPointSamePolynomial opens one polynomial at two points
+// (auto-DEEP from Commit plus one explicit Open), exercises the merged
+// partial-fractions DEEP-combiner path with R=2.
+func TestRoundTripMultiPointSamePolynomial(t *testing.T) {
+	proverFS, verifierFS := newTestTranscripts()
+
+	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
+	verifier := fri.NewVerifier(verifierFS)
+
+	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": randomPoly(16)}); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	// Add a second explicit open at a random out-of-domain point.
+	var z2 koalabear.Element
+	z2.MustSetRandom()
+	if err := committer.Open("f", z2); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	proof, err := committer.Prove()
+	if err != nil {
+		t.Fatalf("Prove: %v", err)
+	}
+
+	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	// Mirror the explicit Open on the verifier side.
+	if err := verifier.RegisterOpenAt("f", z2); err != nil {
+		t.Fatalf("RegisterOpenAt: %v", err)
+	}
+	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err != nil {
+		t.Fatalf("VerifyOpening: %v", err)
+	}
+}
+
+// TestTamperedClaimedValueMultiPoint opens one polynomial at two points and
+// mutates the claimed value for the second opening — verifier must reject.
+func TestTamperedClaimedValueMultiPoint(t *testing.T) {
+	proverFS, verifierFS := newTestTranscripts()
+
+	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
+	verifier := fri.NewVerifier(verifierFS)
+
+	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": randomPoly(16)}); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	var z2 koalabear.Element
+	z2.MustSetRandom()
+	if err := committer.Open("f", z2); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	proof, err := committer.Prove()
+	if err != nil {
+		t.Fatalf("Prove: %v", err)
+	}
+
+	// Tamper the second claimed value (index 1 = the explicit Open).
+	var one koalabear.Element
+	one.SetOne()
+	proof.ClaimedValues[1].Add(&proof.ClaimedValues[1], &one)
+
+	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if err := verifier.RegisterOpenAt("f", z2); err != nil {
+		t.Fatalf("RegisterOpenAt: %v", err)
+	}
+	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err == nil {
+		t.Fatal("VerifyOpening: expected rejection for tampered claimed value")
 	}
 }

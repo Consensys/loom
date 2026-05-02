@@ -1,7 +1,6 @@
 package prover
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -79,10 +78,6 @@ func TestVanishingRelationsAndLogupBus(t *testing.T) {
 	proof, err := Prove(tr, nil, program, EmulateFS())
 	if err != nil {
 		t.Fatal(err)
-	}
-
-	for k, _ := range proof.ValuesAtZeta {
-		fmt.Println(k)
 	}
 
 	viz.WriteRawTraceToCSV("trace.csv", tr)

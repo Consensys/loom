@@ -92,6 +92,33 @@ func TestVerifierWithGrinding(t *testing.T) {
 	}
 }
 
+// TestVerifierTamperedClaimedValue proves a valid trace, mutates one element of
+// the commitment opening's ClaimedValues (corresponding to an AIR column
+// evaluation), and confirms that verification rejects. This guards against the
+// former soundness gap where ValuesAtZeta was not bound to the FRI commitment.
+func TestVerifierTamperedClaimedValue(t *testing.T) {
+	program, tr := buildFibTrace(t)
+
+	prf, err := prover.Prove(tr, nil, program)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Tamper with the last claimed value — regardless of which polynomial it
+	// belongs to, a random field element is overwhelmingly unlikely to be valid.
+	cv := prf.CommitmentOpenings.ClaimedValues
+	if len(cv) == 0 {
+		t.Fatal("proof has no claimed values")
+	}
+	var junk koalabear.Element
+	junk.SetOne() // anything different from the genuine value works
+	cv[len(cv)-1].Add(&cv[len(cv)-1], &junk)
+
+	if err := Verify(nil, program, prf); err == nil {
+		t.Fatal("Verify: expected rejection after claimed value tamper")
+	}
+}
+
 // TestVerifierGrindingMismatch — prover used grinding, verifier didn't
 // configure it. The resulting Fiat-Shamir state diverges and verification
 // fails.
