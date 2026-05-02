@@ -1,3 +1,16 @@
+// Copyright Consensys Software Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+// the License. You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package fri_test
 
 import (
@@ -14,7 +27,7 @@ import (
 // testConfig uses small parameters so tests run quickly.
 // FoldingFactor=2 keeps test polynomials small enough.
 var testConfig = fri.Config{
-	BlowupFactor:          2,
+	MinBlowupFactor:       2,
 	FoldingFactor:         2,
 	FinalPolynomialMaxLen: 4,
 	NumQueries:            4,
@@ -327,7 +340,7 @@ func TestRoundTripNoLayers(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	cfg := fri.Config{
-		BlowupFactor:          2,
+		MinBlowupFactor:       2,
 		FoldingFactor:         2,
 		FinalPolynomialMaxLen: 8, // base=4 → N=8 → fold guard 8>8 is false
 		NumQueries:            2,
@@ -368,7 +381,7 @@ func TestNoLayersTamperedFinalPolynomial(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	cfg := fri.Config{
-		BlowupFactor:          2,
+		MinBlowupFactor:       2,
 		FoldingFactor:         2,
 		FinalPolynomialMaxLen: 8,
 		NumQueries:            2,
@@ -404,7 +417,7 @@ func TestFoldingFactor4(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	cfg := fri.Config{
-		BlowupFactor:          2,
+		MinBlowupFactor:       2,
 		FoldingFactor:         4,
 		FinalPolynomialMaxLen: 4,
 		NumQueries:            4,
@@ -434,7 +447,7 @@ func TestFoldingFactor4(t *testing.T) {
 
 // TestMixedPolySizes commits two polynomials of different base sizes within a
 // single Commit call. The encoder pads each to the same codeword domain
-// (BlowupFactor · max base size) so the batched Merkle tree is well-formed.
+// (MinBlowupFactor · max base size) so the batched Merkle tree is well-formed.
 func TestMixedPolySizes(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
@@ -464,14 +477,14 @@ func TestMixedPolySizes(t *testing.T) {
 	}
 }
 
-// TestMaxCodewordDomainSize tests the cross-Commit codeword-size unification:
+// TestCodewordDomainSize tests the cross-Commit codeword-size unification:
 // two Commit calls with different max polynomial sizes can share one FRI run
-// when MaxCodewordDomainSize is set on the Config.
-func TestMaxCodewordDomainSize(t *testing.T) {
+// when CodewordDomainSize is set on the Config.
+func TestCodewordDomainSize(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	cfg := testConfig
-	cfg.MaxCodewordDomainSize = 32 // base 16 · BlowupFactor 2
+	cfg.CodewordDomainSize = 32 // base 16 · MinBlowupFactor 2
 
 	committer := fri.NewCommitter(proverFS, cfg, commitment.LeafHash, commitment.NodeHash)
 	verifier := fri.NewVerifier(verifierFS)
@@ -503,21 +516,55 @@ func TestMaxCodewordDomainSize(t *testing.T) {
 	}
 }
 
-// TestDifferentDomainSizesError checks Prove rejects a session where the
-// committed oracles disagree on codeword domain size and no override was set.
-func TestDifferentDomainSizesError(t *testing.T) {
+// TestCommitRejectsUndersizedDomain checks Commit rejects an explicit
+// CodewordDomainSize that violates the MinBlowupFactor·n floor.
+func TestCommitRejectsUndersizedDomain(t *testing.T) {
 	proverFS, _ := newTestTranscripts()
 
+	cfg := testConfig
+	cfg.CodewordDomainSize = 16 // < MinBlowupFactor(2) · n(16) = 32
+
+	committer := fri.NewCommitter(proverFS, cfg, commitment.LeafHash, commitment.NodeHash)
+	err := committer.Commit("round0", map[string]poly.Polynomial{"a": randomPoly(16)})
+	if err == nil {
+		t.Fatal("Commit: expected error for codeword domain below MinBlowupFactor·n")
+	}
+}
+
+// TestMultiCommitAutoPin verifies the new auto-pin semantics: when
+// CodewordDomainSize is left unset, the first Commit pins it to
+// MinBlowupFactor·max(n_i), and subsequent Commits with smaller polynomials
+// reuse the same N (encoded with extra blowup) rather than picking their own.
+func TestMultiCommitAutoPin(t *testing.T) {
+	proverFS, verifierFS := newTestTranscripts()
+
 	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
+	verifier := fri.NewVerifier(verifierFS)
+
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"a": randomPoly(16)}); err != nil {
 		t.Fatalf("Commit round0: %v", err)
 	}
 	if err := committer.Commit("round1", map[string]poly.Polynomial{"b": randomPoly(8)}); err != nil {
 		t.Fatalf("Commit round1: %v", err)
 	}
+	proof, err := committer.Prove()
+	if err != nil {
+		t.Fatalf("Prove: %v", err)
+	}
+	for i, c := range proof.Commitments {
+		if c.CodewordDomainSize != 32 {
+			t.Fatalf("oracle %d CodewordDomainSize: want 32, got %d", i, c.CodewordDomainSize)
+		}
+	}
 
-	if _, err := committer.Prove(); err == nil {
-		t.Fatal("Prove: expected error for mismatched codeword domains")
+	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+		t.Fatalf("Bind round0: %v", err)
+	}
+	if err := verifier.Bind("round1", proof.Commitments[1]); err != nil {
+		t.Fatalf("Bind round1: %v", err)
+	}
+	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err != nil {
+		t.Fatalf("VerifyOpening: %v", err)
 	}
 }
 
@@ -534,6 +581,48 @@ func TestOpenUnknownPolynomial(t *testing.T) {
 	z.MustSetRandom()
 	if err := committer.Open("ghost", z); err == nil {
 		t.Fatal("Open(\"ghost\"): expected error for unregistered polynomial")
+	}
+}
+
+// TestCommitRejectsDuplicateName guards against the silent-aliasing soundness
+// gap where a second Commit reuses a polynomial name from a prior Commit. The
+// prover-side polynomials map[name]oracleI would silently overwrite, while
+// the verifier-side deepPoints lookup matches by name and returns the first
+// (older) oracle — so the two sides target different oracles. Both Committer
+// and Verifier must reject duplicate names at registration time.
+func TestCommitRejectsDuplicateName(t *testing.T) {
+	proverFS, verifierFS := newTestTranscripts()
+
+	cfg := testConfig
+	cfg.CodewordDomainSize = 32 // shared N so both Commits would otherwise be valid
+
+	// Committer rejects the duplicate.
+	committer := fri.NewCommitter(proverFS, cfg, commitment.LeafHash, commitment.NodeHash)
+	if err := committer.Commit("round0", map[string]poly.Polynomial{"a": randomPoly(16)}); err != nil {
+		t.Fatalf("Commit round0: %v", err)
+	}
+	err := committer.Commit("round1", map[string]poly.Polynomial{"a": randomPoly(16)})
+	if err == nil {
+		t.Fatal("Commit round1 with duplicate name: expected error, got nil")
+	}
+
+	// Verifier rejects the duplicate too.
+	verifier := fri.NewVerifier(verifierFS)
+	c0 := fri.Commitment{
+		Root:               []byte("dummy-root-0"),
+		BaseDomainSize:     16,
+		CodewordDomainSize: 32,
+		NumPolynomials:     1,
+		PolynomialNames:    []string{"a"},
+		PolynomialSizes:    []uint64{16},
+	}
+	if err := verifier.Bind("round0", c0); err != nil {
+		t.Fatalf("Bind round0: %v", err)
+	}
+	c1 := c0
+	c1.Root = []byte("dummy-root-1")
+	if err := verifier.Bind("round1", c1); err == nil {
+		t.Fatal("Bind round1 with duplicate name: expected error, got nil")
 	}
 }
 

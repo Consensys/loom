@@ -7,7 +7,7 @@ Merkle layout, and optional **proof-of-work grinding** for soundness
 amplification.
 
 The implementation is configurable but the defaults follow the recipe used by
-ethSTARK / Plonky-3: `BlowupFactor = 2`, `FoldingFactor = 8`,
+ethSTARK / Plonky-3: `MinBlowupFactor = 2`, `FoldingFactor = 8`,
 `FinalPolynomialMaxLen = 16`, `NumQueries = 20`. The protocol parameters live
 on `fri.Config` and can be overridden per-application.
 
@@ -22,8 +22,8 @@ file references.
 |---|---|
 | $\mathbb{F}$ | the prime field (`gnark-crypto/koalabear`) |
 | $n$ | base-domain size of an input polynomial (must be a power of two) |
-| $\rho$ | Reed–Solomon **rate** = 1 / `BlowupFactor` (default 1/2) |
-| $N$ | codeword-domain size, $N = n / \rho = \text{BlowupFactor} \cdot n$ |
+| $\rho$ | Reed–Solomon **rate** = 1 / `MinBlowupFactor` (default 1/2) |
+| $N$ | codeword-domain size, `CodewordDomainSize`; required to satisfy $N \ge \text{MinBlowupFactor} \cdot n$ |
 | $L$ | the codeword domain $\langle\omega\rangle \subset \mathbb{F}^*$ (order $N$) |
 | $\omega$ | a primitive $N$-th root of unity, generator of $L$ |
 | $k$ | the **folding factor** (`FoldingFactor`, default 8) |
@@ -107,11 +107,11 @@ Reused infrastructure (not in this package):
 
 ```go
 type Config struct {
-    BlowupFactor          int     // ρ⁻¹; default 2
+    MinBlowupFactor       int     // ρ⁻¹ floor; default 2 (sanity-check + fallback)
     FoldingFactor         int     // k;   default 8
     FinalPolynomialMaxLen int     // stop folding when |g| ≤ this; default 16
     NumQueries            int     // m;   default 20
-    MaxCodewordDomainSize uint64  // unify codeword domains across Commits
+    CodewordDomainSize    uint64  // actual N every oracle is encoded at
     GrindingBits          int     // PoW bits; default 0 = off
 }
 ```
@@ -119,9 +119,10 @@ type Config struct {
 `applyDefaults` ([fri.go:60-73](./fri.go)) fills zero fields with the defaults
 declared as `DefaultFRI*` constants ([fri.go:21-25](./fri.go)).
 
-`MaxCodewordDomainSize` exists because the codeword size $N$ must be known at
-the **first** `Commit` call. `Commit` immediately RS-encodes, builds the
-Merkle tree, and binds the root to the transcript; the next round's challenge
+`CodewordDomainSize` is the **actual** codeword domain size $N$ every oracle
+in the Committer is encoded at — not a maximum. It must be known at the
+**first** `Commit` call: `Commit` immediately RS-encodes, builds the Merkle
+tree, and binds the root to the transcript; the next round's challenge
 derivation depends on the bound root, so we cannot defer encoding to `Prove`
 time and then auto-derive $N$ from the largest oracle seen. Committing only
 over the un-encoded base domain (size $n_i$) would eliminate redundancy and
@@ -129,17 +130,31 @@ break proximity testing, so encoding must happen up front.
 
 When multiple `Commit` calls cover polynomials of different base sizes, the
 FRI protocol requires every oracle share **one** codeword domain so that a
-single $q$ can combine all DEEP quotients. Setting
-`MaxCodewordDomainSize = BlowupFactor · max(n_i)` forces the encoder to lift
-all oracles to that size. The check in [`Commit`](./fri.go) is
+single $q$ can combine all DEEP quotients. The caller therefore picks $N$
+once (typically `MinBlowupFactor · max(n_i)` across all planned commits) and
+sets `CodewordDomainSize` accordingly.
+
+`MinBlowupFactor` plays two roles:
+
+1. **Fallback.** When `CodewordDomainSize == 0`, the first `Commit` derives
+   $N = \text{MinBlowupFactor} \cdot \max_i n_i$ and pins that value for
+   subsequent Commits. Single-oracle callers can rely on this default.
+2. **Sanity check.** When `CodewordDomainSize` is set explicitly, every
+   `Commit` enforces $N \ge \text{MinBlowupFactor} \cdot \max_i n_i$ and
+   rejects undersized oracles with `ErrInvalidPolynomial`.
+
+The check in [`Commit`](./fri.go) is
 
 ```go
-if c.config.MaxCodewordDomainSize > codewordDomainSize {
-    codewordDomainSize = c.config.MaxCodewordDomainSize
+if c.config.CodewordDomainSize == 0 {
+    c.config.CodewordDomainSize = uint64(c.config.MinBlowupFactor) * maxBaseDomain
+}
+if c.config.CodewordDomainSize < uint64(c.config.MinBlowupFactor)*maxBaseDomain {
+    return fmt.Errorf("%w: codeword domain %d below MinBlowupFactor·n = %d", …)
 }
 ```
-([fri.go:188-190](./fri.go)). The reverse check — that all oracles agree on
-$N$ — is enforced at the start of [`Prove`](./fri.go:285-300).
+The reverse check — that all oracles agree on $N$ — is enforced at the start
+of [`Prove`](./fri.go:285-300).
 
 `GrindingBits` is the only parameter the verifier needs to know externally
 (it's not encoded in the proof — see §11).
@@ -151,7 +166,7 @@ $N$ — is enforced at the start of [`Prove`](./fri.go:285-300).
 ### 5.1 Reed-Solomon encoding
 
 A polynomial $p$ given in Lagrange form on a domain of size $n$ is encoded on
-$L$ of size $N = \text{BlowupFactor} \cdot n$ by going through canonical form:
+$L$ of size $N = \text{CodewordDomainSize}$ (which must satisfy $N \ge \text{MinBlowupFactor} \cdot n$) by going through canonical form:
 
 $$\text{Lagrange}[n] \xrightarrow{\text{IFFT}_n} \text{canonical}[n] \xrightarrow{\text{zero-pad}} \text{canonical}[N] \xrightarrow{\text{FFT}_N} \text{Lagrange}[N]$$
 
@@ -163,12 +178,15 @@ batch don't repeatedly rebuild domains.
 ### 5.2 Coset-per-leaf Merkle layout
 
 For folding factor $k$, the next layer's domain is the image of $L$ under
-$x \mapsto x^k$. The $k$ preimages of a single next-layer point form an
-**arithmetic progression** of indices in $L$:
+$x \mapsto x^k$. The kernel of this map on $L$ is the cyclic multiplicative
+subgroup $\langle \omega^{N/k} \rangle = \{1,\, \omega^{N/k},\, \omega^{2N/k},\, \ldots,\, \omega^{(k-1)N/k}\}$,
+so the $k$ preimages of any next-layer point form a multiplicative coset of
+this kernel — a **geometric progression** in $L$ with ratio $\omega^{N/k}$.
 
-If $i = j + t \cdot (N/k)$ for any $t \in \{0,\ldots,k-1\}$ and fixed
-$j \in [0, N/k)$, then $(\omega^i)^k = \omega^{kj + tN} = \omega^{kj}$ (because
-$\omega^N = 1$). So all $k$ preimages share the same $k$-th power.
+Concretely, if $i = j + t \cdot (N/k)$ for any $t \in \{0,\ldots,k-1\}$ and
+fixed $j \in [0, N/k)$, then $(\omega^i)^k = \omega^{kj + tN} = \omega^{kj}$
+(because $\omega^N = 1$). So all $k$ preimages share the same $k$-th power,
+and on the *index* axis they form an arithmetic progression with step $N/k$.
 
 A naive Merkle tree that puts one codeword position per leaf would force $k$
 separate Merkle proofs per query (one per preimage). Putting all $k$ preimages
@@ -263,8 +281,7 @@ zero on $L$ (the codeword domain).
 **Partial-fractions identity.** Rather than computing $I_i$ explicitly and
 performing an interpolation FFT, we use
 
-$$\frac{I_i(X)}{\prod_k (X - x_{ik})} = \sum_j \frac{w_{ij}}{X - x_{ij}},
-\qquad w_{ij} = \frac{y_{ij}}{\prod_{k \ne j}(x_{ij} - x_{ik})}.$$
+$$\frac{I_i(X)}{\prod_k (X - x_{ik})} = \sum_j \frac{w_{ij}}{X - x_{ij}}, \qquad w_{ij} = \frac{y_{ij}}{\prod_{k \ne j}(x_{ij} - x_{ik})}.$$
 
 This gives a pointwise formula for $Q_i$ at any $\omega^m \in L$:
 
@@ -322,8 +339,7 @@ expects to commit many small chunks (one per AIR-quotient piece) and method
 Any polynomial $f$ of degree $< d$ can be uniquely decomposed by powers of $X$
 modulo $k$:
 
-$$f(X) = f_0(X^k) + X \cdot f_1(X^k) + \cdots + X^{k-1} \cdot f_{k-1}(X^k),
-\quad \deg(f_j) < d/k.$$
+$$f(X) = f_0(X^k) + X \cdot f_1(X^k) + \cdots + X^{k-1} \cdot f_{k-1}(X^k), \quad \deg(f_j) < d/k.$$
 
 For a folding challenge $\alpha$, define the $k$-way fold
 
@@ -337,8 +353,7 @@ Fix $x_0 \in L$. The $k$ preimages of $Y := x_0^k$ under $x \mapsto x^k$ are
 $\{\zeta^t \cdot x_0 : t = 0,\ldots,k-1\}$ where $\zeta$ is a primitive $k$-th
 root of unity. Then:
 
-$$f(\zeta^t \cdot x_0) = \sum_j (\zeta^t \cdot x_0)^j \cdot f_j(Y)
-= \sum_j \zeta^{tj} \cdot (x_0^j \cdot f_j(Y)).$$
+$$f(\zeta^t \cdot x_0) = \sum_j (\zeta^t \cdot x_0)^j \cdot f_j(Y) = \sum_j \zeta^{tj} \cdot (x_0^j \cdot f_j(Y)).$$
 
 Reading the right-hand side as a function of $t$: `cosetValues[t]` are the DFT
 of $(x_0^j \cdot f_j(Y))_j$ over the $k$-th roots of unity. Inverting the DFT
@@ -486,8 +501,7 @@ $$\mathrm{qCheck}[t] = \sum_i \beta^i \cdot Q_i(\omega^{j + t \cdot N/k}),$$
 where each $Q_i$ is evaluated using the same partial-fractions formula as the
 prover:
 
-$$Q_i(\omega^m) = \frac{f_i(\omega^m)}{\prod_k(\omega^m - x_{ik})}
-- \sum_j \frac{w_{ij}}{\omega^m - x_{ij}}.$$
+$$Q_i(\omega^m) = \frac{f_i(\omega^m)}{\prod_k(\omega^m - x_{ik})} - \sum_j \frac{w_{ij}}{\omega^m - x_{ij}}.$$
 
 The values $f_i(\omega^m)$ come from `OracleCosetData`; the $y_{ij}$ needed to
 form weights $w_{ij}$ come from `ClaimedValues` (in registration order).
@@ -663,7 +677,7 @@ of this surface.
 
 ```go
 const (
-    DefaultFRIBlowupFactor          = 2  // ρ⁻¹
+    DefaultFRIMinBlowupFactor       = 2  // ρ⁻¹ floor
     DefaultFRIFoldingFactor         = 8  // k
     DefaultFRIFinalPolynomialMaxLen = 16
     DefaultFRINumQueries            = 20
@@ -674,19 +688,21 @@ var ErrInvalidPolynomial = errors.New("fri commitment: invalid polynomial")
 
 `ErrInvalidPolynomial` is the only exported sentinel; it wraps every malformed
 input rejection from `Commit` (empty polynomial name, zero-length polynomial,
-zero codeword domain, codeword domain smaller than the folding factor).
-Domain-mismatch errors from `Prove` and DEEP precondition failures from
-`buildDEEPCombiner` are returned as plain `fmt.Errorf` strings.
+zero codeword domain, codeword domain smaller than the folding factor,
+codeword domain below `MinBlowupFactor · n`, or a polynomial name that was
+already committed in a prior `Commit` call). Domain-mismatch errors from
+`Prove` and DEEP precondition failures from `buildDEEPCombiner` are returned
+as plain `fmt.Errorf` strings.
 
 ### 12.2 `Config`
 
 ```go
 type Config struct {
-    BlowupFactor          int    // ρ⁻¹; default 2
+    MinBlowupFactor       int    // ρ⁻¹ floor; default 2 (sanity-check + fallback)
     FoldingFactor         int    // k;   default 8
     FinalPolynomialMaxLen int    // stop folding when |g| ≤ this; default 16
     NumQueries            int    // m;   default 20
-    MaxCodewordDomainSize uint64 // unify codeword domains across Commits
+    CodewordDomainSize    uint64 // actual N every oracle is encoded at
     GrindingBits          int    // PoW bits; default 0 = off
 }
 ```
@@ -757,7 +773,11 @@ func (c *Committer) Commit(challengeName string, polys map[string]poly.Polynomia
 RS-encodes every polynomial in `polys`, builds the coset-per-leaf Merkle tree,
 binds the root to the transcript under `challengeName`, and registers one
 auto-DEEP open per polynomial. Polynomial names within `polys` must be unique
-and non-empty.
+and non-empty. **Polynomial names are also globally unique across a Committer**:
+calling `Commit` with a name already used by a prior `Commit` returns
+`ErrInvalidPolynomial`. The verifier enforces the mirror check on `Bind` —
+without this, the prover-side `polynomials` map and the verifier-side
+`deepPoints` lookup would silently target different oracles.
 
 ```go
 func (c *Committer) Open(name string, point koalabear.Element) error
@@ -809,7 +829,10 @@ func (v *Verifier) Bind(challengeName string, commitment Commitment) error
 Mirrors the prover's `Commit` transcript operations exactly — see §5.3 for
 the four-step enumeration. Each `Bind` call records one auto-DEEP point per
 polynomial in `commitment.PolynomialNames` into `v.deepPoints`, in the same
-order the prover registered them.
+order the prover registered them. Polynomial names must be globally unique
+across all `Bind` calls on a single `Verifier`; binding a name already used
+by a prior commitment returns an error (mirroring the prover-side
+`Commit`-time check).
 
 ```go
 func (v *Verifier) RegisterOpenAt(name string, point koalabear.Element) error
@@ -885,8 +908,8 @@ derived from the program ([prover/prover.go](../../../prover/prover.go)):
 
 ```go
 friCfg := fri.Config{
-    MaxCodewordDomainSize: fri.DefaultFRIBlowupFactor * maxModuleN,
-    GrindingBits:          config.FRIGrindingBits,
+    CodewordDomainSize: fri.DefaultFRIMinBlowupFactor * maxModuleN,
+    GrindingBits:       config.FRIGrindingBits,
 }
 ```
 
@@ -949,6 +972,15 @@ analyses.
   `VerifyOpening`. `OpeningProof.ClaimedValues` is the **only** channel from
   which the verifier reads these values; there is no parallel un-bound data
   path.
+- **Polynomial-name aliasing** is rejected at the source: `Committer.Commit`
+  and `Verifier.Bind` both reject a name that was committed/bound in a prior
+  call. This closes a silent soundness gap where `Committer.polynomials` (a
+  `map[name]oracleI`) would have been overwritten on the prover side while
+  the verifier's `deepPoints` lookup matched the *first* registration —
+  causing `Open` / `RegisterOpenAt` / `ClaimedValueAt` to target different
+  oracles on the two sides. Names must therefore be globally unique within
+  a single Committer/Verifier session. Test:
+  [`TestCommitRejectsDuplicateName`](./fri_test.go).
 - **Pre-existing `vet` warning** in `prover/prover.go`
   (`return copies lock value`) is unrelated to FRI and not introduced by
   this work; flagged separately.

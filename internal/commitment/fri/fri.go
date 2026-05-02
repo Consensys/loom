@@ -1,3 +1,16 @@
+// Copyright Consensys Software Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+// the License. You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package fri
 
 import (
@@ -16,7 +29,7 @@ import (
 
 var ErrInvalidPolynomial = errors.New("fri commitment: invalid polynomial")
 
-const DefaultFRIBlowupFactor = 2
+const DefaultFRIMinBlowupFactor = 2
 const DefaultFRIFoldingFactor = 8
 const DefaultFRIFinalPolynomialMaxLen = 16
 const DefaultFRINumQueries = 20
@@ -33,9 +46,13 @@ const (
 
 // Config collects parameters governing the FRI protocol.
 type Config struct {
-	// BlowupFactor is the Reed-Solomon rate expansion factor (ρ = 1/BlowupFactor).
-	// Default: 2.
-	BlowupFactor int
+	// MinBlowupFactor is the minimum acceptable Reed-Solomon rate expansion
+	// factor (ρ = 1/MinBlowupFactor). It is a sanity-check floor: every Commit
+	// requires CodewordDomainSize ≥ MinBlowupFactor · max(n_i). When
+	// CodewordDomainSize is left at zero, the first Commit also uses
+	// MinBlowupFactor to derive the codeword domain size from the input
+	// polynomial sizes. Default: 2.
+	MinBlowupFactor int
 	// FoldingFactor k: each FRI round reduces the domain size by k.
 	// Must be a power of two. Default: 8.
 	FoldingFactor int
@@ -44,13 +61,13 @@ type Config struct {
 	FinalPolynomialMaxLen int
 	// NumQueries is the number of random spot-check positions. Default: 20.
 	NumQueries int
-	// MaxCodewordDomainSize, when non-zero, overrides the per-Commit codeword domain
-	// so that every oracle is encoded at this common size. This is required when
-	// multiple Commit calls cover polynomials of different degrees; all oracles
-	// must share the same codeword domain for the DEEP combiner to operate on a
-	// single joint domain. Should be set to BlowupFactor · max(poly sizes across
-	// all commits).
-	MaxCodewordDomainSize uint64
+	// CodewordDomainSize is the actual codeword domain size N every oracle is
+	// encoded at. All oracles in a single Committer share this N (required for
+	// the DEEP combiner to operate on a single joint domain). When zero, the
+	// first Commit pins it to MinBlowupFactor · max(poly sizes in that Commit);
+	// subsequent Commits reuse the same value. When set explicitly, it must
+	// satisfy CodewordDomainSize ≥ MinBlowupFactor · max(n_i) for every Commit.
+	CodewordDomainSize uint64
 	// GrindingBits is the number of leading zero bits required from the
 	// SHA256 hash of (transcript-derived seed ‖ nonce) before query indices
 	// are drawn. Each bit halves the per-bit query soundness cost. Default 0
@@ -59,8 +76,8 @@ type Config struct {
 }
 
 func (c *Config) applyDefaults() {
-	if c.BlowupFactor == 0 {
-		c.BlowupFactor = DefaultFRIBlowupFactor
+	if c.MinBlowupFactor == 0 {
+		c.MinBlowupFactor = DefaultFRIMinBlowupFactor
 	}
 	if c.FoldingFactor == 0 {
 		c.FoldingFactor = DefaultFRIFoldingFactor
@@ -171,6 +188,16 @@ func (c *Committer) Commit(challengeName string, polys map[string]poly.Polynomia
 	}
 	sort.Strings(names)
 
+	// Polynomial names are globally unique across a Committer. Re-using a name
+	// across Commit calls would alias the prover's name → oracle map and the
+	// verifier's deepPoints lookup to different oracles — a soundness gap.
+	for _, name := range names {
+		if _, exists := c.polynomials[name]; exists {
+			return fmt.Errorf("%w: polynomial name %q already committed in a prior Commit call",
+				ErrInvalidPolynomial, name)
+		}
+	}
+
 	orderedPolys := make([]poly.Polynomial, len(names))
 	var maxBaseDomain uint64
 	for i, name := range names {
@@ -184,10 +211,15 @@ func (c *Committer) Commit(challengeName string, polys map[string]poly.Polynomia
 			maxBaseDomain = size
 		}
 	}
-	codewordDomainSize := uint64(c.config.BlowupFactor) * maxBaseDomain
-	if c.config.MaxCodewordDomainSize > 0 && c.config.MaxCodewordDomainSize > codewordDomainSize {
-		codewordDomainSize = c.config.MaxCodewordDomainSize
+	if c.config.CodewordDomainSize == 0 {
+		c.config.CodewordDomainSize = uint64(c.config.MinBlowupFactor) * maxBaseDomain
 	}
+	if c.config.CodewordDomainSize < uint64(c.config.MinBlowupFactor)*maxBaseDomain {
+		return fmt.Errorf("%w: codeword domain %d below MinBlowupFactor·n = %d",
+			ErrInvalidPolynomial, c.config.CodewordDomainSize,
+			uint64(c.config.MinBlowupFactor)*maxBaseDomain)
+	}
+	codewordDomainSize := c.config.CodewordDomainSize
 	if codewordDomainSize == 0 {
 		return fmt.Errorf("%w: zero codeword domain", ErrInvalidPolynomial)
 	}
@@ -447,6 +479,20 @@ func (v *Verifier) Bind(challengeName string, commitment Commitment) error {
 	if v.Transcript == nil {
 		return nil
 	}
+
+	// Mirror the prover-side check: polynomial names must be globally unique
+	// across all Bind calls. Otherwise RegisterOpenAt and ClaimedValueAt — which
+	// match by name — would silently target the wrong oracle.
+	seen := make(map[string]bool, len(v.deepPoints))
+	for _, dp := range v.deepPoints {
+		seen[dp.name] = true
+	}
+	for _, name := range commitment.PolynomialNames {
+		if seen[name] {
+			return fmt.Errorf("fri: Bind: polynomial name %q already bound in a prior commitment", name)
+		}
+	}
+
 	oracleI := v.oracleCount
 	v.oracleCount++
 

@@ -98,12 +98,12 @@ func newProverRuntime(t trace.Trace, setup *PublicKey, publicInputs proof.Public
 		}
 	}
 	friCfg := fri.Config{
-		MaxCodewordDomainSize: fri.DefaultFRIBlowupFactor * maxModuleN,
-		GrindingBits:          config.FRIGrindingBits,
+		CodewordDomainSize: fri.DefaultFRIMinBlowupFactor * maxModuleN,
+		GrindingBits:       config.FRIGrindingBits,
 	}
 
 	// Initialize the FRI committer against the same transcript used by the rest
-	// of the prover. All oracles are encoded at MaxCodewordDomainSize.
+	// of the prover. All oracles are encoded at CodewordDomainSize.
 	res.Committer = fri.NewCommitter(res.fs, friCfg, commitment.LeafHash, commitment.NodeHash)
 
 	if setup != nil {
