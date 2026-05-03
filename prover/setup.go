@@ -37,7 +37,7 @@ func Setup(t trace.Trace, program board.Program) (*PublicKey, error) {
 	for i, name := range program.PublicColumns {
 		polys[i] = t[name]
 	}
-	tree, err := committer.Commit(polys, &committer.Encoder)
+	tree, err := committer.Commit(polys)
 	if err != nil {
 		return nil, err
 	}

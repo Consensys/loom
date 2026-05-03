@@ -54,7 +54,7 @@ func NodeHash(left, right []byte) []byte {
 
 // Commit to the polynomials p. The polynomials in p are assumed to be in Lagrange form, and might be of
 // different sizes. It is assumed that the maximum size is < rs.N
-func (rs *RSCommit) Commit(p []poly.Polynomial, rsEncoder *reedsolomon.Encoder) (*merkle.Tree, error) {
+func (rs *RSCommit) Commit(p []poly.Polynomial) (*merkle.Tree, error) {
 
 	domainsPool := map[int]*fft.Domain{}
 

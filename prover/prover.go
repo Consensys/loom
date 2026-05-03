@@ -125,7 +125,7 @@ func (pr *proverRuntime) ExecuteSteps() error {
 				pr.mu.Unlock()
 
 				// commit to them using RSCommit
-				tree, err := pr.Committer.Commit(polys, &pr.Committer.Encoder)
+				tree, err := pr.Committer.Commit(polys)
 				if err != nil {
 					return err
 				}
@@ -217,7 +217,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	for _, p := range pr.airTrace {
 		polysToCommit = append(polysToCommit, p)
 	}
-	tree, err := pr.Committer.Commit(polysToCommit, &pr.Committer.Encoder)
+	tree, err := pr.Committer.Commit(polysToCommit)
 	if err != nil {
 		return err
 	}
