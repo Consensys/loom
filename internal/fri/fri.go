@@ -77,12 +77,13 @@ func NewParams(N, D, numQueries int, lh merkle.LeafHasher, nh merkle.NodeHasher)
 	}, nil
 }
 
-// QueryLayer holds the two opened values and their Merkle proofs for one folding level.
+// QueryLayer holds the two opened values and a single Merkle proof for one folding level.
+// LeafP = layer[base], LeafQ = layer[base + Nⱼ/2] where base = s % (Nⱼ/2).
+// The pair is committed as a single leaf: hash(encode(LeafP) || encode(LeafQ)).
 type QueryLayer struct {
-	LeafP  koalabear.Element // aⱼ[ s mod Nⱼ ]
-	LeafQ  koalabear.Element // aⱼ[ (s mod Nⱼ + Nⱼ/2) mod Nⱼ ]
-	ProofP merkle.Proof
-	ProofQ merkle.Proof
+	LeafP koalabear.Element // layer[base], lower-index element of the sibling pair
+	LeafQ koalabear.Element // layer[base + Nⱼ/2], upper-index element
+	Path  merkle.Proof      // authenticates the pair; depth = log₂(Nⱼ/2)
 }
 
 // Query holds the opening data for one full query path across all r levels.
@@ -281,16 +282,18 @@ func log2(n int) int {
 	return k
 }
 
-// buildTree builds a Merkle tree where leaf i = LeafHasher(aⱼ[i].Marshal()).
+// buildTree builds a Merkle tree of Nⱼ/2 leaves where
+// leaf k = LeafHasher(encode(layer[k]) || encode(layer[k + Nⱼ/2])).
+// A single proof of depth log₂(Nⱼ/2) authenticates both elements of the pair.
 func buildTree(layer []koalabear.Element, lh merkle.LeafHasher, nh merkle.NodeHasher) (*merkle.Tree, error) {
-	n := len(layer)
-	tree, err := merkle.New(n, lh, nh)
+	half := len(layer) / 2
+	tree, err := merkle.New(half, lh, nh)
 	if err != nil {
 		return nil, err
 	}
-	leaves := make([][]byte, n)
-	for i, e := range layer {
-		leaves[i] = e.Marshal()
+	leaves := make([][]byte, half)
+	for k := 0; k < half; k++ {
+		leaves[k] = append(layer[k].Marshal(), layer[k+half].Marshal()...)
 	}
 	return tree, tree.Build(leaves)
 }
@@ -336,76 +339,72 @@ func serialise(poly []koalabear.Element) []byte {
 }
 
 // openQuery builds the Merkle opening data for query index s across all r levels.
+// base = s % (Nⱼ/2) is always in the lower half; the pair is (layer[base], layer[base+Nⱼ/2]).
 func openQuery(s int, layers [][]koalabear.Element, trees []*merkle.Tree, numRounds int) (Query, error) {
 	q := Query{Layers: make([]QueryLayer, numRounds)}
 	for j := 0; j < numRounds; j++ {
 		Nj := len(layers[j])
-		idx := s % Nj // -> if idx >= Nj/2, the folding relation (p+q)/2 + alpha*(p-q)/2w^idx becomes (p+q)/2 - alpha*(p-q)/2w^[idx%(Nj%2)]=p+q)/2 + alpha*(q-p)/2w^[idx%(Nj%2)] so the arithmetic holds
-		sibIdx := (idx + Nj/2) % Nj
+		base := s % (Nj / 2)
 
-		proofP, err := trees[j].OpenProof(idx)
+		path, err := trees[j].OpenProof(base)
 		if err != nil {
-			return Query{}, fmt.Errorf("layer %d OpenProof idx=%d: %w", j, idx, err)
-		}
-		proofQ, err := trees[j].OpenProof(sibIdx)
-		if err != nil {
-			return Query{}, fmt.Errorf("layer %d OpenProof sibIdx=%d: %w", j, sibIdx, err)
+			return Query{}, fmt.Errorf("layer %d OpenProof base=%d: %w", j, base, err)
 		}
 
 		q.Layers[j] = QueryLayer{
-			LeafP:  layers[j][idx],
-			LeafQ:  layers[j][sibIdx],
-			ProofP: proofP,
-			ProofQ: proofQ,
+			LeafP: layers[j][base],
+			LeafQ: layers[j][base+Nj/2],
+			Path:  path,
 		}
 	}
 	return q, nil
 }
 
-// checkQuery verifies one query: Merkle proofs at each level + folding consistency.
+// checkQuery verifies one query: Merkle proof at each level + folding consistency.
 func checkQuery(s int, q Query, roots [][]byte, finalPoly []koalabear.Element,
 	alphas []koalabear.Element, p Params) error {
 
-	numRounds := p.numRounds
-
-	for j := 0; j < numRounds; j++ {
+	for j := 0; j < p.numRounds; j++ {
 		Nj := int(p.domains[j].Cardinality)
-		idx := s % Nj
-		sibIdx := (idx + Nj/2) % Nj
+		base := s % (Nj / 2) // canonical lower-half index; always in {0..Nⱼ/2-1}
 		layer := q.Layers[j]
 
-		// Verify Merkle proofs.
-		if !merkle.Verify(roots[j], layer.ProofP, layer.LeafP.Marshal(), p.LeafHasher, p.NodeHasher) {
-			return fmt.Errorf("level %d: LeafP Merkle proof invalid (idx=%d)", j, idx)
-		}
-		if !merkle.Verify(roots[j], layer.ProofQ, layer.LeafQ.Marshal(), p.LeafHasher, p.NodeHasher) {
-			return fmt.Errorf("level %d: LeafQ Merkle proof invalid (idx=%d)", j, sibIdx)
+		// Single Merkle proof: leaf data is always encode(LeafP) || encode(LeafQ).
+		leafData := append(layer.LeafP.Marshal(), layer.LeafQ.Marshal()...)
+		if !merkle.Verify(roots[j], layer.Path, leafData, p.LeafHasher, p.NodeHasher) {
+			return fmt.Errorf("level %d: pair Merkle proof invalid (base=%d)", j, base)
 		}
 
-		// Compute yⱼ = ωⱼ^idx and fold: expected = (LeafP+LeafQ)/2 + α*(LeafP-LeafQ)/(2·yⱼ).
-		var yj, yjInv, sum, diff, expected koalabear.Element
-		yj.Exp(p.domains[j].Generator, big.NewInt(int64(idx)))
-		yjInv.Inverse(&yj)
-
+		// Fold: expected = (LeafP+LeafQ)/2 + α*(LeafP-LeafQ)/(2·ωⱼ^base).
+		// ωⱼ^{-base} = ωⱼ^{Nⱼ-base} avoids a field inverse.
+		var xInv, sum, diff, expected koalabear.Element
+		xInv.Exp(p.domains[j].Generator, big.NewInt(int64(Nj-base)))
 		sum.Add(&layer.LeafP, &layer.LeafQ)
 		sum.Mul(&sum, &p.invTwo)
-
 		diff.Sub(&layer.LeafP, &layer.LeafQ)
 		diff.Mul(&diff, &p.invTwo)
-		diff.Mul(&diff, &yjInv)
+		diff.Mul(&diff, &xInv)
 		diff.Mul(&diff, &alphas[j])
-
 		expected.Add(&sum, &diff)
 
-		// Check consistency with the next level.
-		if j < numRounds-1 {
-			nextLeafP := q.Layers[j+1].LeafP
-			if !expected.Equal(&nextLeafP) {
-				return fmt.Errorf("level %d: folded value does not match layer %d LeafP", j, j+1)
+		// expected = aⱼ₊₁[base] where base = s % Nⱼ₊₁.
+		// Depending on whether base falls in the lower or upper half of layer j+1,
+		// it corresponds to LeafP or LeafQ of the next QueryLayer.
+		if j < p.numRounds-1 {
+			Nj1 := Nj / 2 // = Nⱼ₊₁
+			if base < Nj1/2 {
+				// base = base_{j+1} → aⱼ₊₁[base] = Layers[j+1].LeafP
+				if !expected.Equal(&q.Layers[j+1].LeafP) {
+					return fmt.Errorf("level %d: folded value does not match layer %d LeafP", j, j+1)
+				}
+			} else {
+				// base = base_{j+1} + Nⱼ₊₁/2 → aⱼ₊₁[base] = Layers[j+1].LeafQ
+				if !expected.Equal(&q.Layers[j+1].LeafQ) {
+					return fmt.Errorf("level %d: folded value does not match layer %d LeafQ", j, j+1)
+				}
 			}
 		} else {
-			Nr := len(finalPoly)
-			finalVal := finalPoly[s%Nr]
+			finalVal := finalPoly[s%len(finalPoly)]
 			if !expected.Equal(&finalVal) {
 				return fmt.Errorf("level %d (final): folded value does not match FinalPoly", j)
 			}

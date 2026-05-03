@@ -38,16 +38,18 @@ func randomPoly(n int) []koalabear.Element {
 	return elems
 }
 
-// buildRoot re-derives root0 by building the same Merkle tree as Prove does.
+// buildRoot re-derives root0 by building the same paired Merkle tree as Prove does:
+// nLeaves = N/2, leaf k = LeafHasher(encode(layer[k]) || encode(layer[k+N/2])).
 func buildRoot(t *testing.T, layer []koalabear.Element) []byte {
 	t.Helper()
-	tree, err := merkle.New(len(layer), commitment.LeafHash, commitment.NodeHash)
+	half := len(layer) / 2
+	tree, err := merkle.New(half, commitment.LeafHash, commitment.NodeHash)
 	if err != nil {
 		t.Fatalf("merkle.New: %v", err)
 	}
-	leaves := make([][]byte, len(layer))
-	for i, e := range layer {
-		leaves[i] = e.Marshal()
+	leaves := make([][]byte, half)
+	for k := 0; k < half; k++ {
+		leaves[k] = append(layer[k].Marshal(), layer[k+half].Marshal()...)
 	}
 	if err := tree.Build(leaves); err != nil {
 		t.Fatalf("tree.Build: %v", err)
