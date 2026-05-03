@@ -54,6 +54,8 @@ func NodeHash(left, right []byte) []byte {
 
 // Commit to the polynomials p. The polynomials in p are assumed to be in Lagrange form, and might be of
 // different sizes. It is assumed that the maximum size is < rs.N
+// the number of leaves is rs.N/2, the i-th leaf is
+// ( .., {p_j(w^i), p_j(-w^i)}, {p_j+1(w^i), p_j+1(-w^i)}.. ) that is the concatenation of pairs {p_j(w^i), p_j(-w^i)} for j form 1 to len(p)
 func (rs *RSCommit) Commit(p []poly.Polynomial) (*merkle.Tree, error) {
 
 	domainsPool := map[int]*fft.Domain{}
@@ -71,16 +73,19 @@ func (rs *RSCommit) Commit(p []poly.Polynomial) (*merkle.Tree, error) {
 		_p[i] = rs.Encoder.Encode(pol, d)
 	}
 
-	// 2- build the merkle tree, whose i-th leaf is the vector of the i-th entries of the encoded polynomials
+	// 2- build the merkle tree, with rs.N/2 leafs
+	// the i-th leaf is ( .., {p_j(w^i), p_j(-w^i)}, {p_j+1(w^i), p_j+1(-w^i)}.. )
 	N := rs.Encoder.Domain.Cardinality
-	tree, err := merkle.New(int(N), LeafHash, NodeHash)
+	halfN := int(N >> 1)
+	tree, err := merkle.New(halfN, LeafHash, NodeHash)
 	if err != nil {
 		return nil, err
 	}
-	buf := make([]byte, koalabear.Bytes*len(_p))
-	for i := 0; i < int(N); i++ {
+	buf := make([]byte, 2*koalabear.Bytes*len(_p))
+	for i := 0; i < halfN; i++ {
 		for j := 0; j < len(_p); j++ {
-			copy(buf[j*koalabear.Bytes:], _p[j][i].Marshal())
+			copy(buf[2*j*koalabear.Bytes:], _p[j][i].Marshal())
+			copy(buf[(2*j+1)*koalabear.Bytes:], _p[j][i+halfN].Marshal())
 		}
 		tree.BuildIthLeaf(buf, i)
 	}
