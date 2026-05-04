@@ -87,7 +87,7 @@ func TestProveVerify(t *testing.T) {
 			}
 
 			tsP := freshTS()
-			prf, err := fri.Prove(p, evals, tsP)
+			prf, _, err := fri.Prove(p, evals, tsP)
 			if err != nil {
 				t.Fatalf("Prove: %v", err)
 			}
@@ -108,7 +108,7 @@ func TestVerifyRejectsWrongRoot(t *testing.T) {
 	evals, _ := p.Encode(randomPoly(p.D))
 
 	tsP := freshTS()
-	prf, _ := fri.Prove(p, evals, tsP)
+	prf, _, _ := fri.Prove(p, evals, tsP)
 
 	badRoot := make([]byte, 32)
 	rand.Read(badRoot) //nolint:gosec
@@ -126,7 +126,7 @@ func TestVerifyRejectsFlippedLeaf(t *testing.T) {
 	root0 := buildRoot(t, evals)
 
 	tsP := freshTS()
-	prf, err := fri.Prove(p, evals, tsP)
+	prf, _, err := fri.Prove(p, evals, tsP)
 	if err != nil {
 		t.Fatalf("Prove: %v", err)
 	}

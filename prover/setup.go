@@ -16,6 +16,7 @@ package prover
 import (
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/internal/commitment"
+	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/trace"
@@ -31,7 +32,7 @@ func Setup(t trace.Trace, program board.Program) (*PublicKey, error) {
 			maxN = m.N
 		}
 	}
-	committer := commitment.NewRSCommit(uint64(maxN), commitment.LeafHash, commitment.NodeHash)
+	committer := commitment.NewRSCommit(uint64(maxN), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
 
 	polys := make([]poly.Polynomial, len(program.PublicColumns))
 	for i, name := range program.PublicColumns {

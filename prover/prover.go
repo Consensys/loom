@@ -27,6 +27,7 @@ import (
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/internal/fri"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/trace"
@@ -47,6 +48,7 @@ func EmulateFS() Option {
 
 type proverRuntime struct {
 	Committer    commitment.RSCommit
+	friParams    fri.Params
 	Proof        proof.Proof
 	config       Config
 	t            trace.Trace
@@ -56,6 +58,7 @@ type proverRuntime struct {
 	zeta         koalabear.Element
 	mu           sync.Mutex
 	setup        *PublicKey
+	deepQuotient []koalabear.Element
 	fs           *fiatshamir.Transcript
 }
 
@@ -79,7 +82,8 @@ func newProverRuntime(t trace.Trace, setup *PublicKey, publicInputs proof.Public
 			maxN = m.N
 		}
 	}
-	res.Committer = commitment.NewRSCommit(uint64(maxN), commitment.LeafHash, commitment.NodeHash)
+
+	res.Committer = commitment.NewRSCommit(uint64(maxN), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
 
 	// initialize FS transcript and pre-register all challenges (challenge@loom_0..n-1 and zeta)
 	res.fs = fiatshamir.NewTranscript(sha256.New())
@@ -459,7 +463,7 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 	}
 
 	// for the moment, stop here, the deepQuotient will be used later for FRI
-	_ = deepQuotient
+	pr.deepQuotient = deepQuotient
 
 	return nil
 }
@@ -488,6 +492,11 @@ func Prove(t trace.Trace, setup *PublicKey, publicInputs proof.PublicInputs, pro
 
 	// run ComputeEvaluationsAtZeta
 	if err := pr.ComputeEvaluationsAtZeta(); err != nil {
+		return proof.Proof{}, err
+	}
+
+	// Compute DEEP quotient and FRI-prove that it is the evaluation of a polynomial of degree N
+	if err := pr.ComputeDeepQuotient(); err != nil {
 		return proof.Proof{}, err
 	}
 

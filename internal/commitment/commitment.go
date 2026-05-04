@@ -29,8 +29,8 @@ type RSCommit struct {
 	NodeHasher merkle.NodeHasher
 }
 
-func NewRSCommit(N uint64, leafHasher merkle.LeafHasher, nodehasher merkle.NodeHasher) RSCommit {
-	d := fft.NewDomain(N)
+func NewRSCommit(N uint64, rate uint64, leafHasher merkle.LeafHasher, nodehasher merkle.NodeHasher) RSCommit {
+	d := fft.NewDomain(rate * N)
 	rsEncoder := reedsolomon.Encoder{Domain: d}
 	return RSCommit{
 		Encoder:    rsEncoder,

@@ -22,6 +22,9 @@ import (
 	"strings"
 )
 
+// TODO the rate should be a parameter
+const RATE = 4
+
 const RANGE_MODULE = "range"
 const FINAL_EVALUATION_POINT = "__zeta"
 const SUFFIX_SHIFT_SPLIT = "_"

@@ -13,7 +13,10 @@
 
 package proof
 
-import "github.com/consensys/gnark-crypto/field/koalabear"
+import (
+	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/internal/fri"
+)
 
 type Commitment struct {
 	// Digest  commitment.Digest
@@ -25,6 +28,7 @@ type Proof struct {
 	PublicColumns          map[string]PublicInput       // extracted values from columns of the trace, those values are passed as public inputs
 	FSInputs               [][]byte                     // rounds of FS, entry i stores the data to hash at round i to derive 'challenge@loom_<i>'
 	AIRQuotientsCommitment []byte
+	FriProof               fri.Proof
 }
 
 func NewProof() Proof {

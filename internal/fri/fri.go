@@ -110,12 +110,12 @@ func (p Params) Encode(poly []koalabear.Element) ([]koalabear.Element, error) {
 	return enc.Encode(poly, domainD), nil
 }
 
-// Prove runs the full FRI protocol (commit phase + query phase) and returns a Proof.
+// Prove runs the full FRI protocol (commit phase + query phase) and returns a Proof, as well as the query positions.
 // evals must be the evaluations of f on the domain of size N (= a₀, output of Encode).
 // ts must already have been initialised with any prior-round context.
-func Prove(p Params, evals []koalabear.Element, ts *fiatshamir.Transcript) (Proof, error) {
+func Prove(p Params, evals []koalabear.Element, ts *fiatshamir.Transcript) (Proof, []int, error) {
 	if len(evals) != p.N {
-		return Proof{}, fmt.Errorf("fri: Prove: evals length %d != N=%d", len(evals), p.N)
+		return Proof{}, nil, fmt.Errorf("fri: Prove: evals length %d != N=%d", len(evals), p.N)
 	}
 
 	// Register all challenge names up front.
@@ -141,18 +141,18 @@ func Prove(p Params, evals []koalabear.Element, ts *fiatshamir.Transcript) (Proo
 	for j := 0; j < p.numRounds; j++ {
 		tree, err := buildTree(layers[j], p.LeafHasher, p.NodeHasher)
 		if err != nil {
-			return Proof{}, fmt.Errorf("fri: build tree layer %d: %w", j, err)
+			return Proof{}, nil, fmt.Errorf("fri: build tree layer %d: %w", j, err)
 		}
 		trees[j] = tree
 		root := tree.Root()
 
 		name := foldName(j)
 		if err := ts.Bind(name, root); err != nil {
-			return Proof{}, fmt.Errorf("fri: bind fold %d: %w", j, err)
+			return Proof{}, nil, fmt.Errorf("fri: bind fold %d: %w", j, err)
 		}
 		b, err := ts.ComputeChallenge(name)
 		if err != nil {
-			return Proof{}, fmt.Errorf("fri: compute fold challenge %d: %w", j, err)
+			return Proof{}, nil, fmt.Errorf("fri: compute fold challenge %d: %w", j, err)
 		}
 		alphas[j].SetBytes(b)
 
@@ -168,33 +168,35 @@ func Prove(p Params, evals []koalabear.Element, ts *fiatshamir.Transcript) (Proo
 
 	// Bind FinalPoly to seed the first query challenge.
 	if err := ts.Bind(queryName(0), serialise(prf.FinalPoly)); err != nil {
-		return Proof{}, fmt.Errorf("fri: bind final poly: %w", err)
+		return Proof{}, nil, fmt.Errorf("fri: bind final poly: %w", err)
 	}
 
 	// ── Query phase ──────────────────────────────────────────────────────────
 
 	prf.Queries = make([]Query, p.NumQueries)
+	queryPositions := make([]int, p.NumQueries)
 	for k := 0; k < p.NumQueries; k++ {
 		b, err := ts.ComputeChallenge(queryName(k))
 		if err != nil {
-			return Proof{}, fmt.Errorf("fri: compute query challenge %d: %w", k, err)
+			return Proof{}, nil, fmt.Errorf("fri: compute query challenge %d: %w", k, err)
 		}
 		s := int(binary.BigEndian.Uint64(b[:8]) % uint64(p.N/2))
+		queryPositions[k] = s
 
 		if k < p.NumQueries-1 {
 			if err := ts.Bind(queryName(k+1), b); err != nil {
-				return Proof{}, fmt.Errorf("fri: bind query chain %d: %w", k+1, err)
+				return Proof{}, nil, fmt.Errorf("fri: bind query chain %d: %w", k+1, err)
 			}
 		}
 
 		q, err := openQuery(s, layers, trees, p.numRounds)
 		if err != nil {
-			return Proof{}, fmt.Errorf("fri: open query %d: %w", k, err)
+			return Proof{}, nil, fmt.Errorf("fri: open query %d: %w", k, err)
 		}
 		prf.Queries[k] = q
 	}
 
-	return prf, nil
+	return prf, queryPositions, nil
 }
 
 // Verify checks a FRI proof.
