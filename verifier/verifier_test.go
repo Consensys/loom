@@ -146,7 +146,7 @@ func TestVerifierTamperedClaimedValue(t *testing.T) {
 	}
 }
 
-func TestVerifierGrindingMismatch(t *testing.T) {
+func TestVerifierGrindingOptional(t *testing.T) {
 	program, tr := buildFibTrace(t)
 
 	proof, err := prover.Prove(tr, nil, nil, program, prover.WithFRIGrindingBits(8))
@@ -154,8 +154,8 @@ func TestVerifierGrindingMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Verify(nil, nil, program, proof); err == nil {
-		t.Fatal("Verify: expected rejection when verifier ignores prover grinding")
+	if err := Verify(nil, nil, program, proof); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }
 

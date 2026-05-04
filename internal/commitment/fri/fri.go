@@ -150,8 +150,8 @@ type deepPoint struct {
 // check happens in Verify.
 type Verifier struct {
 	Transcript *fiatshamir.Transcript
-	// Config holds the verifier's expected protocol parameters. Verify rejects
-	// any proof whose self-described parameters fall below this floor.
+	// Config holds the verifier's expected protocol policy. Verify checks the
+	// proof's inferred structure against any non-zero constraints here.
 	Config Config
 
 	proof Proof
@@ -201,11 +201,10 @@ func NewCommitter(transcript *fiatshamir.Transcript, config Config, leafHasher m
 // read claimed values from the embedded proof; Verify cross-checks each
 // against the FRI proximity argument.
 //
-// Each non-zero field of config acts as a floor: Verify rejects proofs whose
-// self-described parameters fall below the configured value. A zero field
-// means "no floor for this parameter". The verifier infers all protocol
-// parameters (folding factor, final polynomial length, etc.) from the proof
-// data itself and does not need config defaults for operational correctness.
+// Config acts as verifier policy, not as proof metadata. Verify derives the
+// effective protocol parameters from the proof structure itself (query count,
+// folding factor, blowup, final polynomial length) and compares those
+// structural facts against any non-zero constraints in config.
 func NewVerifier(transcript *fiatshamir.Transcript, config Config, proof Proof) Verifier {
 	return Verifier{
 		Transcript:   transcript,
@@ -496,12 +495,17 @@ func (c *Committer) Prove() (Proof, error) {
 		return Proof{}, err
 	}
 
-	// 6. Optional proof-of-work grinding. Find a nonce so SHA256(seed ‖ nonce)
-	// has at least GrindingBits leading zeros, then bind it.
+	// 6. Bind a nonce before query sampling so the transcript shape is uniform.
+	// When GrindingBits > 0, search for a nonce whose SHA256(seed ‖ nonce) has
+	// enough leading zero bits; otherwise bind nonce 0 directly.
 	var grindingNonce uint64
 	if c.config.GrindingBits > 0 {
 		grindingNonce, err = grindAndBind(c.transcript, c.config.GrindingBits)
 		if err != nil {
+			return Proof{}, err
+		}
+	} else {
+		if err := replayAndBindGrinding(c.transcript, 0); err != nil {
 			return Proof{}, err
 		}
 	}
@@ -520,30 +524,17 @@ func (c *Committer) Prove() (Proof, error) {
 		return Proof{}, err
 	}
 
-	// BlowupFactor is computed from the actual ratio of codeword to base
-	// domain. This may exceed Config.MinBlowupFactor when small polynomials
-	// were lifted to the FoldingFactor floor.
-	var blowup int
-	if base := c.committedOracles[0].BaseDomainSize; base > 0 {
-		blowup = int(c.committedOracles[0].CodewordDomainSize / base)
-	}
-
 	return Proof{
-		Commitments:           commitments,
-		LayerCommitments:      layerRoots,
-		FinalPolynomial:       finalCodeword,
-		OpenedValues:          openedValues,
-		QueryIndices:          queryIndices,
-		OracleOpenings:        oracleOpenings,
-		OracleCosetData:       oracleCosetData,
-		LayerOpenings:         layerOpenings,
-		LayerCosetData:        layerCosetData,
-		GrindingNonce:         grindingNonce,
-		NumQueries:            c.config.NumQueries,
-		FoldingFactor:         c.config.FoldingFactor,
-		FinalPolynomialMaxLen: c.config.FinalPolynomialMaxLen,
-		BlowupFactor:          blowup,
-		GrindingBits:          c.config.GrindingBits,
+		Commitments:      commitments,
+		LayerCommitments: layerRoots,
+		FinalPolynomial:  finalCodeword,
+		OpenedValues:     openedValues,
+		QueryIndices:     queryIndices,
+		OracleOpenings:   oracleOpenings,
+		OracleCosetData:  oracleCosetData,
+		LayerOpenings:    layerOpenings,
+		LayerCosetData:   layerCosetData,
+		GrindingNonce:    grindingNonce,
 	}, nil
 }
 
@@ -838,9 +829,10 @@ func deriveQueryIndices(transcript *fiatshamir.Transcript, m, nLeaves int) ([]ui
 }
 
 // Proof is the full FRI proximity proof covering all registered openings.
-// It is self-describing: the verifier extracts every protocol parameter from
-// the proof and checks each against its own configured floor (see
-// Verifier.Verify) before performing the cryptographic checks.
+// The verifier derives the effective protocol parameters from this structure
+// itself (for example the query count, folding factor, and blowup visible in
+// the commitment metadata) instead of trusting separately reported config
+// fields.
 type Proof struct {
 	// Commitments are the oracle commitments sent by the prover before the FRI
 	// query phase.
@@ -885,30 +877,9 @@ type Proof struct {
 	// LayerCosetData[q][l][t] = g_l(ω^{j_l + t·(N_l/k)}) for t ∈ [0,k).
 	LayerCosetData [][][]koalabear.Element
 
-	// GrindingNonce is the proof-of-work nonce. Meaningful only when the
-	// prover's Config.GrindingBits > 0; otherwise it is left at zero and the
-	// verifier ignores it.
+	// GrindingNonce is the transcript-bound nonce mixed in immediately before
+	// query sampling. It is always replayed by the verifier; when the verifier
+	// requires proof-of-work, it additionally checks that this nonce satisfies
+	// the configured leading-zero-bit target.
 	GrindingNonce uint64
-
-	// NumQueries records the number of spot checks the prover ran.
-	// The verifier rejects the proof if NumQueries < its configured floor.
-	NumQueries int
-
-	// FoldingFactor records the k used during the FRI commit phase.
-	// The verifier requires an exact match against its configured FoldingFactor.
-	FoldingFactor int
-
-	// FinalPolynomialMaxLen records the prover's stop threshold for the fold
-	// loop. The verifier rejects if the prover's threshold exceeds the
-	// verifier's configured ceiling.
-	FinalPolynomialMaxLen int
-
-	// BlowupFactor records the Reed-Solomon rate inverse N/n used by the
-	// prover. The verifier rejects if it is below MinBlowupFactor.
-	BlowupFactor int
-
-	// GrindingBits records the proof-of-work bit count the prover used.
-	// The verifier rejects if the configured floor is non-zero and
-	// GrindingBits < that floor.
-	GrindingBits int
 }

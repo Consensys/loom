@@ -25,29 +25,22 @@ import (
 
 // Verify checks the embedded Proof against the verifier's transcript state
 // (which must have been advanced by all BindCommitment + Open calls before
-// this is invoked) and against the Verifier's configured parameter floor.
+// this is invoked) and against the Verifier's configured structural policy.
 //
 // lh and nh must be the same leaf and node hashers used during commitment.
 func (v *Verifier) Verify(lh merkle.LeafHasher, nh merkle.NodeHasher) error {
 	proof := v.proof
 
-	// Reject any proof whose self-described protocol parameters are weaker
-	// than the verifier's configured floor. This catches a malicious prover
-	// that, for example, chose NumQueries=1.
-	if proof.NumQueries < v.Config.NumQueries {
-		return fmt.Errorf("fri: proof claims NumQueries=%d, want >= %d", proof.NumQueries, v.Config.NumQueries)
+	if v.cursor != len(proof.OpenedValues) {
+		return fmt.Errorf("fri: verifier consumed %d opened values, but proof carries %d",
+			v.cursor, len(proof.OpenedValues))
 	}
-	if v.Config.FoldingFactor != 0 && proof.FoldingFactor != v.Config.FoldingFactor {
-		return fmt.Errorf("fri: proof FoldingFactor=%d, want %d", proof.FoldingFactor, v.Config.FoldingFactor)
+	if len(proof.QueryIndices) < v.Config.NumQueries {
+		return fmt.Errorf("fri: proof has %d queries, want >= %d", len(proof.QueryIndices), v.Config.NumQueries)
 	}
-	if v.Config.FinalPolynomialMaxLen != 0 && proof.FinalPolynomialMaxLen > v.Config.FinalPolynomialMaxLen {
-		return fmt.Errorf("fri: proof FinalPolynomialMaxLen=%d, want <= %d", proof.FinalPolynomialMaxLen, v.Config.FinalPolynomialMaxLen)
-	}
-	if v.Config.MinBlowupFactor != 0 && proof.BlowupFactor < v.Config.MinBlowupFactor {
-		return fmt.Errorf("fri: proof BlowupFactor=%d, want >= %d", proof.BlowupFactor, v.Config.MinBlowupFactor)
-	}
-	if v.Config.GrindingBits > 0 && proof.GrindingBits < v.Config.GrindingBits {
-		return fmt.Errorf("fri: proof GrindingBits=%d, want >= %d", proof.GrindingBits, v.Config.GrindingBits)
+	if v.Config.FinalPolynomialMaxLen != 0 && len(proof.FinalPolynomial) > v.Config.FinalPolynomialMaxLen {
+		return fmt.Errorf("fri: final polynomial has length %d, want <= %d",
+			len(proof.FinalPolynomial), v.Config.FinalPolynomialMaxLen)
 	}
 
 	if len(v.deepPoints) == 0 {
@@ -63,11 +56,21 @@ func (v *Verifier) Verify(lh merkle.LeafHasher, nh merkle.NodeHasher) error {
 		if int(c.CodewordDomainSize) != N {
 			return fmt.Errorf("fri: commitment %d has domain %d, want %d", i, c.CodewordDomainSize, N)
 		}
+		if len(c.PolynomialNames) != len(c.PolynomialSizes) {
+			return fmt.Errorf("fri: commitment %d has %d polynomial names but %d sizes",
+				i, len(c.PolynomialNames), len(c.PolynomialSizes))
+		}
+		if v.Config.MinBlowupFactor != 0 &&
+			c.CodewordDomainSize < uint64(v.Config.MinBlowupFactor)*c.BaseDomainSize {
+			return fmt.Errorf("fri: commitment %d has codeword domain %d, want at least %d",
+				i, c.CodewordDomainSize, uint64(v.Config.MinBlowupFactor)*c.BaseDomainSize)
+		}
 	}
 
 	// Infer folding factor k from the layer coset data when layers exist;
 	// otherwise recover k from the oracle coset data (K·k entries per leaf).
-	if len(v.proof.QueryIndices) == 0 {
+	numQueries := len(v.proof.QueryIndices)
+	if numQueries == 0 {
 		// No queries in proof; skip.
 		return nil
 	}
@@ -88,8 +91,41 @@ func (v *Verifier) Verify(lh merkle.LeafHasher, nh merkle.NodeHasher) error {
 	if k == 0 {
 		return fmt.Errorf("fri: inferred folding factor is zero")
 	}
-	numQueries := len(v.proof.QueryIndices)
+	if v.Config.FoldingFactor != 0 && k != v.Config.FoldingFactor {
+		return fmt.Errorf("fri: inferred folding factor %d, want %d", k, v.Config.FoldingFactor)
+	}
+	if N%k != 0 {
+		return fmt.Errorf("fri: codeword domain %d not divisible by folding factor %d", N, k)
+	}
 	nLeaves := N / k
+	if len(v.proof.OracleOpenings) != numQueries || len(v.proof.OracleCosetData) != numQueries ||
+		len(v.proof.LayerOpenings) != numQueries || len(v.proof.LayerCosetData) != numQueries {
+		return fmt.Errorf("fri: inconsistent per-query proof dimensions")
+	}
+	for qi := range numQueries {
+		if len(v.proof.OracleOpenings[qi]) != len(v.proof.Commitments) ||
+			len(v.proof.OracleCosetData[qi]) != len(v.proof.Commitments) {
+			return fmt.Errorf("fri: query %d has oracle data for %d/%d commitments",
+				qi, len(v.proof.OracleOpenings[qi]), len(v.proof.Commitments))
+		}
+		if len(v.proof.LayerOpenings[qi]) != numLayers || len(v.proof.LayerCosetData[qi]) != numLayers {
+			return fmt.Errorf("fri: query %d has layer data for %d/%d layers",
+				qi, len(v.proof.LayerOpenings[qi]), numLayers)
+		}
+		for oi, comm := range v.proof.Commitments {
+			want := len(comm.PolynomialNames) * k
+			if len(v.proof.OracleCosetData[qi][oi]) != want {
+				return fmt.Errorf("fri: query %d oracle %d coset has %d entries, want %d",
+					qi, oi, len(v.proof.OracleCosetData[qi][oi]), want)
+			}
+		}
+		for li := range numLayers {
+			if len(v.proof.LayerCosetData[qi][li]) != k {
+				return fmt.Errorf("fri: query %d layer %d coset has %d entries, want %d",
+					qi, li, len(v.proof.LayerCosetData[qi][li]), k)
+			}
+		}
+	}
 
 	// 1. Re-derive combiner challenge β.
 	if err := v.Transcript.NewChallenge(friCombineChallenge); err != nil {
@@ -130,9 +166,15 @@ func (v *Verifier) Verify(lh merkle.LeafHasher, nh merkle.NodeHasher) error {
 		return err
 	}
 
-	// 3a. Optional proof-of-work grinding check.
+	// 3a. Replay the nonce binding unconditionally so transcript state does not
+	// depend on whether the verifier enforces a PoW target. When GrindingBits is
+	// non-zero, also check the nonce satisfies that target.
 	if v.Config.GrindingBits > 0 {
 		if err := verifyAndBindGrinding(v.Transcript, v.Config.GrindingBits, v.proof.GrindingNonce); err != nil {
+			return err
+		}
+	} else {
+		if err := replayAndBindGrinding(v.Transcript, v.proof.GrindingNonce); err != nil {
 			return err
 		}
 	}

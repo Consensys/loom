@@ -44,28 +44,26 @@ type verifierRunTime struct {
 	vars         map[string]koalabear.Element
 }
 
-// Config collects verifier-side protocol parameters. The FRI parameters
-// surface as a config floor that the proof's self-described parameters must
-// meet (a malicious prover otherwise could lower NumQueries to trivially
-// pass the proximity check).
+// Config collects verifier-side protocol parameters. The FRI parameters act as
+// external policy constraints on the proof's inferred structure.
 type Config struct {
-	// FRIGrindingBits must equal the prover's WithFRIGrindingBits value
-	// (default 0 = no grinding).
+	// FRIGrindingBits is the minimum PoW target the verifier enforces.
+	// Zero means "replay the nonce binding but do not require any leading-zero bits".
 	FRIGrindingBits int
 	// FRIFoldingFactor matches the prover's FoldingFactor (default 8).
 	// Tiny modules can use a smaller k; the integration-test wrapper picks
 	// k=2 when the largest module's base domain is below the default.
 	FRIFoldingFactor int
-	// FRIFinalPolynomialMaxLen is an upper bound on the prover's final
-	// polynomial size (default 16). The verifier rejects proofs whose
-	// FinalPolynomialMaxLen exceeds this.
+	// FRIFinalPolynomialMaxLen is an upper bound on the transmitted final
+	// polynomial size (default 16).
 	FRIFinalPolynomialMaxLen int
 }
 
 type Option func(c *Config) error
 
 // WithFRIGrindingBits configures the verifier to require this many leading
-// zero bits in the proof's grinding nonce. Must match the prover-side value.
+// zero bits in the proof's grinding nonce. Zero disables the PoW check while
+// still replaying the nonce binding into the transcript.
 func WithFRIGrindingBits(n int) Option {
 	return func(c *Config) error {
 		c.FRIGrindingBits = n

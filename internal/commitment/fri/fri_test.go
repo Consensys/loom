@@ -748,7 +748,7 @@ func TestTamperedQueryIndex(t *testing.T) {
 }
 
 // TestVerifierConfigRejection confirms the verifier rejects a proof whose
-// self-described NumQueries is below the configured floor.
+// structural query count is below the configured floor.
 func TestVerifierConfigRejection(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
@@ -773,7 +773,7 @@ func TestVerifierConfigRejection(t *testing.T) {
 		t.Fatalf("Bind: %v", err)
 	}
 	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
-		t.Fatal("Verify: expected rejection when proof NumQueries < verifier floor")
+		t.Fatal("Verify: expected rejection when proof has fewer queries than verifier floor")
 	}
 }
 
@@ -807,9 +807,10 @@ func TestVerifierGrindingMismatch(t *testing.T) {
 	}
 }
 
-// TestVerifierMissingGrinding — prover used grinding, verifier didn't enable
-// it. The transcripts diverge (prover absorbed seed+nonce; verifier didn't),
-// and proof validation fails.
+// TestVerifierMissingGrinding confirms that the nonce is always replayed into
+// the transcript, even when the verifier does not enforce a grinding target.
+// A verifier with GrindingBits=0 should still accept a proof produced with
+// non-zero grinding.
 func TestVerifierMissingGrinding(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
@@ -826,13 +827,14 @@ func TestVerifierMissingGrinding(t *testing.T) {
 		t.Fatalf("Prove: %v", err)
 	}
 
-	// Verifier has GrindingBits=0; transcripts diverge because prover bound the nonce.
+	// Verifier has GrindingBits=0 but still replays the nonce binding, so the
+	// transcript remains in sync.
 	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
 	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
-		t.Fatal("Verify: expected rejection when verifier ignores prover grinding")
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }
 

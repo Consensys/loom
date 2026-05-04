@@ -66,10 +66,12 @@ The protocol does this in five phases:
   using transcript-derived challenges $\alpha_\ell$, until the codeword length
   drops to $\le$ `FinalPolynomialMaxLen`. The remaining short codeword is sent
   in full.
-- **Phase D — Optional grinding + queries.** After binding the final
-  polynomial, the prover finds a 64-bit nonce that hashes (with the
-  transcript state) to a value with `Config.GrindingBits` leading zero bits.
-  Then $m$ query indices are drawn from the transcript.
+- **Phase D — Nonce binding, optional grinding, and queries.** After binding
+  the final polynomial, the prover always binds a 64-bit nonce into the
+  transcript. When `Config.GrindingBits > 0`, it first searches for a nonce
+  whose hash (with the transcript-derived seed) has enough leading zero bits;
+  otherwise it binds nonce `0`. Then $m$ query indices are drawn from the
+  transcript.
 - **Phase E — Verification.** The verifier replays Fiat-Shamir, re-derives
   every challenge, and per query checks (i) every Merkle path; (ii) that the
   locally reconstructed $q$-coset matches the layer-0 coset; and (iii) that
@@ -156,8 +158,10 @@ if c.config.CodewordDomainSize < uint64(c.config.MinBlowupFactor)*maxBaseDomain 
 The reverse check — that all oracles agree on $N$ — is enforced at the start
 of [`Prove`](./fri.go:285-300).
 
-`GrindingBits` is the only parameter the verifier needs to know externally
-(it's not encoded in the proof — see §11).
+The verifier's `Config` is external policy, not proof metadata: the proof
+does **not** embed copied config scalars like `NumQueries` or `FoldingFactor`.
+Instead the verifier infers those properties from the proof structure itself
+(see §11) and compares them against any non-zero constraints in its config.
 
 ---
 
@@ -429,9 +433,10 @@ depends on all previous ones:
 
 1. **Bind the final polynomial.** [fri.go:340-348](./fri.go) — the small
    `finalCodeword` is serialised and bound under `"fri@final"`.
-2. **Grinding (optional, §10).** [fri.go:350-358](./fri.go) — when
-   `GrindingBits > 0`, find a nonce satisfying the PoW constraint and bind
-   it.
+2. **Nonce binding / optional grinding (§10).** [fri.go:350-358](./fri.go) —
+   when `GrindingBits > 0`, find a nonce satisfying the PoW constraint and
+   bind it; otherwise bind nonce `0`. Either way, the nonce becomes part of
+   the transcript before query derivation.
 3. **Derive query indices.** [fri.go:361-366](./fri.go) —
    [`deriveQueryIndices`](./fri.go:561-580) draws $m$ challenges
    `"fri@query_<i>"` and masks each into $[0, N/k)$.
@@ -454,9 +459,11 @@ implemented in [query.go:106-110](./query.go) as `jEll = jEll % nLeavesNext`.
 
 ## 9. Phase E — Verification
 
-[`Verifier.VerifyOpening`](./verify.go:20-313) replays every Fiat-Shamir
-operation the prover did, then runs per-query checks. It is **self-describing**
-about every protocol parameter except `GrindingBits` (see §11).
+[`Verifier.Verify`](./verify.go:20-313) replays every Fiat-Shamir operation
+the prover did, then runs per-query checks. It derives the effective protocol
+shape from the proof itself (query count, folding factor, blowup visible in
+the commitment metadata, final polynomial length, and array dimensions) and
+checks those structural facts against the verifier's configured policy (§11).
 
 ### 9.1 Replay
 
@@ -467,10 +474,12 @@ used:
 2. $\alpha_\ell$ (one per `LayerCommitment`, by binding the root and computing
    `"fri@layer_<ℓ>"`) — [verify.go:64-79](./verify.go).
 3. The final-polynomial bind under `"fri@final"` — [verify.go:81-99](./verify.go).
-4. Grinding (if `GrindingBits > 0`): replay the same seed/nonce dance as the
-   prover via [`verifyAndBindGrinding`](./grind.go:90-101); this both
-   verifies the PoW *and* keeps the transcript in sync —
-   [verify.go:101-106](./verify.go).
+4. Nonce replay / grinding: always replay the same seed/nonce transcript
+   operations as the prover. When `GrindingBits > 0`, also check the nonce
+   satisfies the required leading-zero-bit target via
+   [`verifyAndBindGrinding`](./grind.go:90-101); otherwise
+   [`replayAndBindGrinding`](./grind.go) keeps the transcript in sync without
+   imposing a PoW target — [verify.go:101-106](./verify.go).
 5. Query indices via [`deriveQueryIndices`](./fri.go:561-580); the verifier
    compares them byte-for-byte against `proof.QueryIndices` —
    [verify.go:108-118](./verify.go).
@@ -481,7 +490,7 @@ single-line failure rather than a downstream Merkle failure.
 
 ### 9.2 Inferring k
 
-The proof is **self-describing** about $k$:
+The verifier infers $k$ structurally from the proof:
 
 ```go
 switch {
@@ -494,8 +503,9 @@ default:
     return error
 }
 ```
-([verify.go](./verify.go)). The verifier infers $k$ from proof data; it does
-not rely on `Config.FoldingFactor` for protocol operations.
+([verify.go](./verify.go)). The verifier uses the inferred $k$ for protocol
+operations and, when `Config.FoldingFactor` is non-zero, checks that the
+inferred value matches policy.
 
 ### 9.3 Per-query check (layered path)
 
@@ -514,7 +524,7 @@ prover:
 $$Q_i(\omega^m) = \frac{f_i(\omega^m)}{\prod_k(\omega^m - x_{ik})} - \sum_j \frac{w_{ij}}{\omega^m - x_{ij}}.$$
 
 The values $f_i(\omega^m)$ come from `OracleCosetData`; the $y_{ij}$ needed to
-form weights $w_{ij}$ come from `ClaimedValues` (in registration order).
+form weights $w_{ij}$ come from `OpenedValues` (in registration order).
 [verify.go:131-235](./verify.go).
 
 **b. Oracle Merkle paths.** Each oracle's path is verified once per query
@@ -637,30 +647,37 @@ in parallel.
 | [`grindAndBind`](./grind.go:73-87) | Prover-side: search nonce, bind it |
 | [`verifyAndBindGrinding`](./grind.go:90-101) | Verifier-side: check the supplied nonce satisfies the bit threshold, then bind |
 
-The default `GrindingBits = 0` short-circuits both sides — neither prover
-nor verifier touches the grinding transcript names, and existing proofs are
-unaffected.
+When `GrindingBits = 0`, the prover and verifier still derive the grinding
+seed and bind a nonce — specifically nonce `0` — so the transcript shape is
+uniform regardless of whether PoW is enabled. The only thing disabled is the
+search / verification of a leading-zero-bit target.
 
-### 10.4 Verifier floor enforcement
+### 10.4 Structural verifier policy checks
 
-The proof is **self-describing** about its protocol parameters (see §11).
-However, a malicious prover could claim `NumQueries=1` in a well-formed proof
-to trivially pass the proximity check. `Verifier.Verify` therefore enforces
-a parameter floor from `Verifier.Config`: each non-zero field acts as a
-minimum. Specifically, `Verify` rejects if `proof.NumQueries < Config.NumQueries`,
-if `Config.FoldingFactor != 0 && proof.FoldingFactor != Config.FoldingFactor`,
-if `proof.FinalPolynomialMaxLen > Config.FinalPolynomialMaxLen` (when non-zero),
-if `proof.BlowupFactor < Config.MinBlowupFactor` (when non-zero), or if
-`proof.GrindingBits < Config.GrindingBits` (when non-zero). A zero field means
-"no floor for this parameter". `NewVerifier` does not apply defaults to the
-verifier config so that zero fields are preserved as "don't care".
+`Verifier.Verify` does not trust prover-reported config values, because the
+proof no longer carries any. Instead it derives the relevant facts from the
+proof structure and checks them against `Verifier.Config`:
+
+- `len(QueryIndices) >= Config.NumQueries`
+- inferred `k == Config.FoldingFactor` (when non-zero)
+- `len(FinalPolynomial) <= Config.FinalPolynomialMaxLen` (when non-zero)
+- for every commitment, `CodewordDomainSize >= Config.MinBlowupFactor · BaseDomainSize`
+  (when non-zero)
+- if `Config.GrindingBits > 0`, the bound nonce must satisfy that many
+  leading zero bits; otherwise the nonce is only replayed, not checked
+
+In addition to these policy checks, `Verify` now performs structural
+consistency checks on the proof arrays themselves: per-query dimensions must
+match `len(QueryIndices)`, oracle coset rows must have `len(PolynomialNames) · k`
+entries, layer cosets must have `k` entries, and the verifier must have
+consumed exactly `len(OpenedValues)` claims before verification starts.
 
 ---
 
-## 11. Self-describing proof: what the verifier doesn't need
+## 11. What the verifier infers structurally
 
 The proof carries enough information that the verifier infers all of these
-without external configuration:
+without trusting copied config scalars:
 
 | Quantity | Inferred from |
 |---|---|
@@ -670,17 +687,14 @@ without external configuration:
 | numQueries | `len(QueryIndices)` |
 | $k$ (folding factor) | layer coset length, or oracle coset length / $K$ |
 | `FinalPolynomial` size | `len(FinalPolynomial)` |
-| `NumQueries`, `FoldingFactor`, etc. | embedded scalars in `Proof` |
-
-The proof also embeds the config scalars `NumQueries`, `FoldingFactor`,
-`FinalPolynomialMaxLen`, `BlowupFactor`, and `GrindingBits` so the verifier
-can apply floor checks (§10.4) without trusting the prover's claimed values.
+| blowup floor | `Commitments[oi].CodewordDomainSize / BaseDomainSize` |
 
 `OpenedValues` lists one entry per `Open` call, in the order they were made:
 the first $\sum_i |\text{PolynomialNames}(i)|$ entries are auto-DEEP values
 bound by `BindCommitment`; the remainder are user `Open` calls in registration
-order. `Verifier.Open` advances a cursor over the user portion (past the
-auto-DEEP entries).
+order. `Verifier.Open` and `Verifier.BindCommitment` advance one shared cursor
+through this sequence, and `Verify` rejects if the cursor does not land
+exactly at `len(OpenedValues)`.
 
 ---
 
@@ -759,11 +773,6 @@ type Proof struct {
     LayerOpenings           [][]merkle.Proof
     LayerCosetData          [][][]koalabear.Element
     GrindingNonce           uint64
-    NumQueries              int
-    FoldingFactor           int
-    FinalPolynomialMaxLen   int
-    BlowupFactor            int
-    GrindingBits            int
 }
 ```
 
@@ -771,10 +780,8 @@ This is the wire format. `OpenedValues[r]` is the prover-claimed evaluation
 for the $r$-th registered open request. The first
 $\sum_i |\text{PolynomialNames}(i)|$ entries are auto-DEEP values bound by
 `BindCommitment`; the remainder are user `Open` calls in registration order
-(see §11). The five config scalars (`NumQueries`, `FoldingFactor`,
-`FinalPolynomialMaxLen`, `BlowupFactor`, `GrindingBits`) are embedded so the
-verifier can apply floor checks (§10.4) without trusting the prover's
-claimed values.
+(see §11). No config scalars are embedded in the wire format; the verifier
+derives every protocol parameter it needs from the structure above.
 
 ### 12.5 Prover side: `Committer`
 
@@ -844,9 +851,9 @@ func NewVerifier(
 
 Constructs a verifier. The proof is embedded; the verifier reads
 `proof.Commitments` during `BindCommitment` and `proof.OpenedValues` during
-`Open`. `Config` fields are enforcement floors (§10.4); zero means "no floor".
-`NewVerifier` does **not** call `applyDefaults` on the config — zero fields
-are preserved as "don't care".
+`Open`. `Config` fields are external policy constraints (§10.4); zero means
+"do not constrain this parameter". `NewVerifier` does **not** call
+`applyDefaults` on the config so zero fields remain meaningful.
 
 ```go
 func (v *Verifier) BindCommitment(oracleName string) error
@@ -878,10 +885,11 @@ func (v *Verifier) Verify(lh merkle.LeafHasher, nh merkle.NodeHasher) error
 ```
 
 Runs the full per-query check (§9) against the embedded proof, first applying
-Config floor checks (§10.4). The `lh`/`nh` hashers must match those passed to
-`NewCommitter`. Returns nil on success; on failure returns a descriptive error
-pinpointing the failure surface (config floor violated, Merkle mismatch,
-qCheck mismatch, fold mismatch, query-index divergence, etc. — see §9.5).
+the structural policy checks from §10.4. The `lh`/`nh` hashers must match
+those passed to `NewCommitter`. Returns nil on success; on failure returns a
+descriptive error pinpointing the failure surface (policy violation, Merkle
+mismatch, qCheck mismatch, fold mismatch, query-index divergence, malformed
+array dimensions, etc. — see §9.5).
 
 ### 12.7 Typical usage flow
 
@@ -891,7 +899,7 @@ committer := fri.NewCommitter(transcript, cfg, leafHash, nodeHash)
 committer.Commit("round_0", polysRound0)
 // (more rounds, more Commits…)
 yA,    _ := committer.Open("colA", zeta)
-yArot, _ := committer.Open("colA_rot1", omegaZeta)
+yArot, _ := committer.Open("colA", omegaZeta)
 proof, _ := committer.Prove()
 
 // Verifier (sharing a separately-built transcript)
@@ -899,7 +907,7 @@ v := fri.NewVerifier(verifierTranscript, verifierCfg, proof)
 v.BindCommitment("round_0")
 // (more BindCommitments in matching order…)
 yA,    _ = v.Open("colA", zeta)
-yArot, _ = v.Open("colA_rot1", omegaZeta)
+yArot, _ = v.Open("colA", omegaZeta)
 if err := v.Verify(leafHash, nodeHash); err != nil { /* reject */ }
 // yA and yArot are now FRI-certified and can be used directly.
 ```
@@ -940,15 +948,19 @@ rejects, the entire proof fails and `vr.vars` is moot.
 The `config.FRIGrindingBits` value comes from the caller-supplied
 `prover.WithFRIGrindingBits(n)` option; `prover.WithFRIFoldingFactor(n)` sets
 a smaller folding factor for modules whose codeword domain is too small for
-the default. The verifier mirrors grinding via `verifier.WithFRIGrindingBits(n)`;
-other parameters are read from the embedded proof. Both sides default to 0
-(no grinding, default folding factor).
+the default. The verifier mirrors these as policy constraints via
+`verifier.WithFRIGrindingBits(n)`,
+`verifier.WithFRIFoldingFactor(n)`, and
+`verifier.WithFRIFinalPolynomialMaxLen(n)`. With zero values, the verifier
+still replays the nonce binding and the inferred FRI shape, but does not
+enforce additional policy beyond well-formedness.
 Tests:
 
 - [`TestVerifierWithGrinding`](../../../verifier/verifier_test.go) — full
   prove/verify round-trip with 8-bit PoW.
-- [`TestVerifierGrindingMismatch`](../../../verifier/verifier_test.go) —
-  prover grinds, verifier doesn't, must reject.
+- [`TestVerifierGrindingOptional`](../../../verifier/verifier_test.go) —
+  prover grinds, verifier does not enforce a PoW target, and verification
+  still succeeds because nonce replay is unconditional.
 - [`TestVerifierTamperedClaimedValue`](../../../verifier/verifier_test.go) —
   a claimed value is mutated after proving; FRI verification must reject.
 

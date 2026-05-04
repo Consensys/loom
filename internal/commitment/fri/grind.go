@@ -81,6 +81,17 @@ func bindGrindingNonce(t *fiatshamir.Transcript, nonce uint64) error {
 	return nil
 }
 
+// replayAndBindGrinding replays the transcript operations for grinding without
+// enforcing any proof-of-work target. The verifier uses this when grinding is
+// not part of its policy but still needs to stay in transcript sync with the
+// prover.
+func replayAndBindGrinding(t *fiatshamir.Transcript, nonce uint64) error {
+	if _, err := deriveGrindingSeed(t); err != nil {
+		return err
+	}
+	return bindGrindingNonce(t, nonce)
+}
+
 // grindAndBind searches for a nonce satisfying the leading-zero-bit
 // requirement and binds it to the transcript. Returns the nonce.
 func grindAndBind(t *fiatshamir.Transcript, bits int) (uint64, error) {
