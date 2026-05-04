@@ -23,26 +23,43 @@ import (
 	"github.com/consensys/loom/internal/merkle"
 )
 
-// VerifyOpening checks the OpeningProof against the verifier's transcript state
-// (which must have been advanced by all Bind calls before this is called).
+// Verify checks the embedded Proof against the verifier's transcript state
+// (which must have been advanced by all BindCommitment + Open calls before
+// this is invoked) and against the Verifier's configured parameter floor.
 //
 // lh and nh must be the same leaf and node hashers used during commitment.
-//
-// Protocol parameters (k, NumQueries) are inferred from the proof itself: k is
-// the number of elements in the layer coset data, and NumQueries is the length
-// of QueryIndices. This makes the proof self-describing and removes the need to
-// pass a Config.
-func (v *Verifier) VerifyOpening(proof OpeningProof, lh merkle.LeafHasher, nh merkle.NodeHasher) error {
+func (v *Verifier) Verify(lh merkle.LeafHasher, nh merkle.NodeHasher) error {
+	proof := v.proof
+
+	// Reject any proof whose self-described protocol parameters are weaker
+	// than the verifier's configured floor. This catches a malicious prover
+	// that, for example, chose NumQueries=1.
+	if proof.NumQueries < v.Config.NumQueries {
+		return fmt.Errorf("fri: proof claims NumQueries=%d, want >= %d", proof.NumQueries, v.Config.NumQueries)
+	}
+	if v.Config.FoldingFactor != 0 && proof.FoldingFactor != v.Config.FoldingFactor {
+		return fmt.Errorf("fri: proof FoldingFactor=%d, want %d", proof.FoldingFactor, v.Config.FoldingFactor)
+	}
+	if v.Config.FinalPolynomialMaxLen != 0 && proof.FinalPolynomialMaxLen > v.Config.FinalPolynomialMaxLen {
+		return fmt.Errorf("fri: proof FinalPolynomialMaxLen=%d, want <= %d", proof.FinalPolynomialMaxLen, v.Config.FinalPolynomialMaxLen)
+	}
+	if v.Config.MinBlowupFactor != 0 && proof.BlowupFactor < v.Config.MinBlowupFactor {
+		return fmt.Errorf("fri: proof BlowupFactor=%d, want >= %d", proof.BlowupFactor, v.Config.MinBlowupFactor)
+	}
+	if v.Config.GrindingBits > 0 && proof.GrindingBits < v.Config.GrindingBits {
+		return fmt.Errorf("fri: proof GrindingBits=%d, want >= %d", proof.GrindingBits, v.Config.GrindingBits)
+	}
+
 	if len(v.deepPoints) == 0 {
 		// Nothing was committed; nothing to verify.
 		return nil
 	}
 
-	if len(proof.Commitments) == 0 {
+	if len(v.proof.Commitments) == 0 {
 		return fmt.Errorf("fri: no commitments in proof")
 	}
-	N := int(proof.Commitments[0].CodewordDomainSize)
-	for i, c := range proof.Commitments {
+	N := int(v.proof.Commitments[0].CodewordDomainSize)
+	for i, c := range v.proof.Commitments {
 		if int(c.CodewordDomainSize) != N {
 			return fmt.Errorf("fri: commitment %d has domain %d, want %d", i, c.CodewordDomainSize, N)
 		}
@@ -50,28 +67,28 @@ func (v *Verifier) VerifyOpening(proof OpeningProof, lh merkle.LeafHasher, nh me
 
 	// Infer folding factor k from the layer coset data when layers exist;
 	// otherwise recover k from the oracle coset data (K·k entries per leaf).
-	if len(proof.QueryIndices) == 0 {
+	if len(v.proof.QueryIndices) == 0 {
 		// No queries in proof; skip.
 		return nil
 	}
-	numLayers := len(proof.LayerCommitments)
+	numLayers := len(v.proof.LayerCommitments)
 	var k int
 	switch {
-	case numLayers > 0 && len(proof.LayerCosetData) > 0 && len(proof.LayerCosetData[0]) > 0:
-		k = len(proof.LayerCosetData[0][0])
-	case len(proof.OracleCosetData) > 0 && len(proof.OracleCosetData[0]) > 0:
-		K := proof.Commitments[0].NumPolynomials
+	case numLayers > 0 && len(v.proof.LayerCosetData) > 0 && len(v.proof.LayerCosetData[0]) > 0:
+		k = len(v.proof.LayerCosetData[0][0])
+	case len(v.proof.OracleCosetData) > 0 && len(v.proof.OracleCosetData[0]) > 0:
+		K := len(v.proof.Commitments[0].PolynomialNames)
 		if K == 0 {
 			return fmt.Errorf("fri: oracle has no polynomials")
 		}
-		k = len(proof.OracleCosetData[0][0]) / K
+		k = len(v.proof.OracleCosetData[0][0]) / K
 	default:
 		return fmt.Errorf("fri: proof has queries but no oracle or layer data")
 	}
 	if k == 0 {
 		return fmt.Errorf("fri: inferred folding factor is zero")
 	}
-	numQueries := len(proof.QueryIndices)
+	numQueries := len(v.proof.QueryIndices)
 	nLeaves := N / k
 
 	// 1. Re-derive combiner challenge β.
@@ -87,7 +104,7 @@ func (v *Verifier) VerifyOpening(proof OpeningProof, lh merkle.LeafHasher, nh me
 
 	// 2. Re-derive layer folding challenges by binding each LayerCommitment.
 	alphas := make([]koalabear.Element, numLayers)
-	for li, root := range proof.LayerCommitments {
+	for li, root := range v.proof.LayerCommitments {
 		challengeName := fmt.Sprintf(friLayerChallengeFmt, li)
 		if err := v.Transcript.NewChallenge(challengeName); err != nil {
 			return err
@@ -106,7 +123,7 @@ func (v *Verifier) VerifyOpening(proof OpeningProof, lh merkle.LeafHasher, nh me
 	if err := v.Transcript.NewChallenge(friFinalChallenge); err != nil {
 		return err
 	}
-	if err := v.Transcript.Bind(friFinalChallenge, marshalElements(proof.FinalPolynomial)); err != nil {
+	if err := v.Transcript.Bind(friFinalChallenge, marshalElements(v.proof.FinalPolynomial)); err != nil {
 		return err
 	}
 	if _, err := v.Transcript.ComputeChallenge(friFinalChallenge); err != nil {
@@ -114,21 +131,21 @@ func (v *Verifier) VerifyOpening(proof OpeningProof, lh merkle.LeafHasher, nh me
 	}
 
 	// 3a. Optional proof-of-work grinding check.
-	if v.GrindingBits > 0 {
-		if err := verifyAndBindGrinding(v.Transcript, v.GrindingBits, proof.GrindingNonce); err != nil {
+	if v.Config.GrindingBits > 0 {
+		if err := verifyAndBindGrinding(v.Transcript, v.Config.GrindingBits, v.proof.GrindingNonce); err != nil {
 			return err
 		}
 	}
 
-	// 4. Re-derive query indices and check they match the proof.
+	// 4. Re-derive query indices and check they match the v.proof.
 	derivedIndices, err := deriveQueryIndices(v.Transcript, numQueries, nLeaves)
 	if err != nil {
 		return err
 	}
 	for i, di := range derivedIndices {
-		if di != proof.QueryIndices[i] {
+		if di != v.proof.QueryIndices[i] {
 			return fmt.Errorf("fri: query index %d mismatch: proof has %d, transcript gives %d",
-				i, proof.QueryIndices[i], di)
+				i, v.proof.QueryIndices[i], di)
 		}
 	}
 
@@ -143,7 +160,7 @@ func (v *Verifier) VerifyOpening(proof OpeningProof, lh merkle.LeafHasher, nh me
 	kDomain := fft.NewDomain(uint64(k))
 
 	// 5. Verify each query.
-	for qi, j64 := range proof.QueryIndices {
+	for qi, j64 := range v.proof.QueryIndices {
 		j := int(j64)
 
 		// 5a. Reconstruct the DEEP-combined codeword values at this coset using
@@ -193,7 +210,7 @@ func (v *Verifier) VerifyOpening(proof OpeningProof, lh merkle.LeafHasher, nh me
 			ys := make([]koalabear.Element, R)
 			for jx, r := range rs {
 				xs[jx] = v.deepPoints[r].point
-				ys[jx] = proof.ClaimedValues[r]
+				ys[jx] = v.proof.OpenedValues[r]
 			}
 
 			weights, err := computeBarycentricWeights(xs, ys)
@@ -202,7 +219,7 @@ func (v *Verifier) VerifyOpening(proof OpeningProof, lh merkle.LeafHasher, nh me
 			}
 
 			// Locate the polynomial index within its oracle.
-			comm := proof.Commitments[key.oracleI]
+			comm := v.proof.Commitments[key.oracleI]
 			polyIdx := -1
 			for pi, name := range comm.PolynomialNames {
 				if name == key.name {
@@ -236,7 +253,7 @@ func (v *Verifier) VerifyOpening(proof OpeningProof, lh merkle.LeafHasher, nh me
 			invPole := koalabear.BatchInvert(poleDenoms)
 
 			for t := range k {
-				fVal := proof.OracleCosetData[qi][key.oracleI][polyIdx*k+t]
+				fVal := v.proof.OracleCosetData[qi][key.oracleI][polyIdx*k+t]
 				var qVal, polesum, scratch koalabear.Element
 				qVal.Mul(&fVal, &invProd[t])
 				for s := range R {
@@ -251,14 +268,14 @@ func (v *Verifier) VerifyOpening(proof OpeningProof, lh merkle.LeafHasher, nh me
 		}
 
 		// Verify oracle Merkle proofs (one per oracle, not per request).
-		oracleVerified := make([]bool, len(proof.Commitments))
+		oracleVerified := make([]bool, len(v.proof.Commitments))
 		for _, dp := range v.deepPoints {
 			oi := dp.oracleI
 			if oracleVerified[oi] {
 				continue
 			}
-			leafData := cosetLeafBytes(proof.OracleCosetData[qi][oi])
-			if !merkle.Verify(proof.Commitments[oi].Root, proof.OracleOpenings[qi][oi], leafData, lh, nh) {
+			leafData := cosetLeafBytes(v.proof.OracleCosetData[qi][oi])
+			if !merkle.Verify(v.proof.Commitments[oi].Root, v.proof.OracleOpenings[qi][oi], leafData, lh, nh) {
 				return fmt.Errorf("fri: oracle %d Merkle proof failed at query %d", oi, qi)
 			}
 			oracleVerified[oi] = true
@@ -272,11 +289,11 @@ func (v *Verifier) VerifyOpening(proof OpeningProof, lh merkle.LeafHasher, nh me
 		if numLayers == 0 {
 			for t := range k {
 				pos := j + t*nLeaves
-				if pos >= len(proof.FinalPolynomial) {
+				if pos >= len(v.proof.FinalPolynomial) {
 					return fmt.Errorf("fri: final polynomial index %d out of range (len=%d)",
-						pos, len(proof.FinalPolynomial))
+						pos, len(v.proof.FinalPolynomial))
 				}
-				if !qCheck[t].Equal(&proof.FinalPolynomial[pos]) {
+				if !qCheck[t].Equal(&v.proof.FinalPolynomial[pos]) {
 					return fmt.Errorf("fri: DEEP quotient mismatch against final polynomial at query %d coset offset %d", qi, t)
 				}
 			}
@@ -284,7 +301,7 @@ func (v *Verifier) VerifyOpening(proof OpeningProof, lh merkle.LeafHasher, nh me
 		}
 
 		for t := range k {
-			if !qCheck[t].Equal(&proof.LayerCosetData[qi][0][t]) {
+			if !qCheck[t].Equal(&v.proof.LayerCosetData[qi][0][t]) {
 				return fmt.Errorf("fri: DEEP quotient mismatch at query %d coset offset %d", qi, t)
 			}
 		}
@@ -295,27 +312,27 @@ func (v *Verifier) VerifyOpening(proof OpeningProof, lh merkle.LeafHasher, nh me
 		NellLeaves := nLeaves
 
 		for li := range numLayers {
-			leafData := cosetLeafBytes(proof.LayerCosetData[qi][li])
-			if !merkle.Verify(proof.LayerCommitments[li], proof.LayerOpenings[qi][li], leafData, lh, nh) {
+			leafData := cosetLeafBytes(v.proof.LayerCosetData[qi][li])
+			if !merkle.Verify(v.proof.LayerCommitments[li], v.proof.LayerOpenings[qi][li], leafData, lh, nh) {
 				return fmt.Errorf("fri: layer %d Merkle proof failed at query %d", li, qi)
 			}
 
 			cosetBase := elementPow(omegaEll, jEll)
-			foldOutput := foldCoset(proof.LayerCosetData[qi][li], alphas[li], cosetBase, kDomain)
+			foldOutput := foldCoset(v.proof.LayerCosetData[qi][li], alphas[li], cosetBase, kDomain)
 
 			if li == numLayers-1 {
-				if jEll >= len(proof.FinalPolynomial) {
+				if jEll >= len(v.proof.FinalPolynomial) {
 					return fmt.Errorf("fri: final polynomial index %d out of range (len=%d)",
-						jEll, len(proof.FinalPolynomial))
+						jEll, len(v.proof.FinalPolynomial))
 				}
-				if !foldOutput.Equal(&proof.FinalPolynomial[jEll]) {
+				if !foldOutput.Equal(&v.proof.FinalPolynomial[jEll]) {
 					return fmt.Errorf("fri: fold mismatch against final polynomial at query %d", qi)
 				}
 			} else {
 				NellNext := NellLeaves / k
 				jNext := jEll % NellNext
 				tNext := jEll / NellNext
-				if !foldOutput.Equal(&proof.LayerCosetData[qi][li+1][tNext]) {
+				if !foldOutput.Equal(&v.proof.LayerCosetData[qi][li+1][tNext]) {
 					return fmt.Errorf("fri: fold mismatch at query %d layer %d", qi, li)
 				}
 				jEll = jNext

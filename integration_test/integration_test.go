@@ -20,9 +20,35 @@ import (
 	"testing"
 
 	"github.com/consensys/loom/board"
+	"github.com/consensys/loom/internal/commitment/fri"
 	"github.com/consensys/loom/prover"
 	"github.com/consensys/loom/verifier"
 )
+
+// smallModuleOpts returns FRI prover options for programs whose largest module
+// base domain is too small for the default folding factor. When all modules
+// are large enough to use the library default (k=8), returns nil.
+func smallModuleOpts(pg *board.Program) []prover.Option {
+	var maxN uint64
+	for _, m := range pg.Modules {
+		if n := uint64(m.N); n > maxN {
+			maxN = n
+		}
+	}
+	if maxN == 0 {
+		return nil
+	}
+	codewordSize := fri.DefaultFRIMinBlowupFactor * maxN
+	if codewordSize >= uint64(fri.DefaultFRIFoldingFactor) {
+		return nil
+	}
+	// Largest power of 2 that fits inside the codeword domain.
+	k := uint64(2)
+	for k*2 <= codewordSize {
+		k *= 2
+	}
+	return []prover.Option{prover.WithFRIFoldingFactor(int(k))}
+}
 
 func TestIntegration(t *testing.T) {
 
@@ -82,8 +108,9 @@ func TestIntegration(t *testing.T) {
 
 				for i, tr := range traces {
 					setSizes(&pg, tr)
+					opts := smallModuleOpts(&pg)
 
-					prf, proveErr := prover.Prove(tr, nil, nil, pg)
+					prf, proveErr := prover.Prove(tr, nil, nil, pg, opts...)
 					if proveErr != nil {
 						if expectOK {
 							t.Errorf("%s[%d] prove: %v", filepath.Base(path), i, proveErr)

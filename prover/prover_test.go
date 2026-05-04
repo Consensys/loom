@@ -150,11 +150,11 @@ func TestFRICommitPhaseRecordsExpandedOracleMetadata(t *testing.T) {
 	if got.CodewordDomainSize != 8 {
 		t.Fatalf("got codeword domain size %d, want 8", got.CodewordDomainSize)
 	}
-	if got.NumPolynomials != 1 {
-		t.Fatalf("got %d committed polynomials, want 1", got.NumPolynomials)
+	if len(got.PolynomialNames) != 1 {
+		t.Fatalf("got %d committed polynomials, want 1", len(got.PolynomialNames))
 	}
 	last := prf.CommitmentOpenings.Commitments[len(prf.CommitmentOpenings.Commitments)-1]
-	if last.NumPolynomials == 0 {
+	if len(last.PolynomialNames) == 0 {
 		t.Fatal("expected the AIR quotient commitment to contain committed polynomials")
 	}
 }

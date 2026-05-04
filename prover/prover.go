@@ -38,6 +38,14 @@ type Config struct {
 	// nonce inside the FRI commitment must satisfy. 0 disables grinding.
 	// The verifier must be configured with the same value to accept the proof.
 	FRIGrindingBits int
+	// FRIFoldingFactor overrides the FRI folding factor k. Default 0 leaves
+	// the FRI library default (8) in place. Tiny modules can drop to k=2 or
+	// 4 to keep the codeword domain at or above the folding factor without
+	// excessive blowup.
+	FRIFoldingFactor int
+	// FRIFinalPolynomialMaxLen overrides the FRI fold-loop stop threshold.
+	// Default 0 leaves the FRI library default (16) in place.
+	FRIFinalPolynomialMaxLen int
 }
 
 type Option func(c *Config) error
@@ -45,6 +53,24 @@ type Option func(c *Config) error
 func EmulateFS() Option {
 	return func(c *Config) error {
 		c.EmulateFS = true
+		return nil
+	}
+}
+
+// WithFRIFoldingFactor overrides the FRI folding factor k (default 8).
+// The verifier must be invoked with the matching verifier.WithFRIFoldingFactor.
+func WithFRIFoldingFactor(k int) Option {
+	return func(c *Config) error {
+		c.FRIFoldingFactor = k
+		return nil
+	}
+}
+
+// WithFRIFinalPolynomialMaxLen overrides the FRI fold-loop stop threshold
+// (default 16). The verifier must be invoked with a matching ceiling.
+func WithFRIFinalPolynomialMaxLen(n int) Option {
+	return func(c *Config) error {
+		c.FRIFinalPolynomialMaxLen = n
 		return nil
 	}
 }
@@ -98,8 +124,10 @@ func newProverRuntime(t trace.Trace, setup *PublicKey, publicInputs proof.Public
 		}
 	}
 	friCfg := fri.Config{
-		CodewordDomainSize: fri.DefaultFRIMinBlowupFactor * maxModuleN,
-		GrindingBits:       config.FRIGrindingBits,
+		CodewordDomainSize:    fri.DefaultFRIMinBlowupFactor * maxModuleN,
+		GrindingBits:          config.FRIGrindingBits,
+		FoldingFactor:         config.FRIFoldingFactor,
+		FinalPolynomialMaxLen: config.FRIFinalPolynomialMaxLen,
 	}
 
 	// Initialize the FRI committer against the same transcript used by the rest
@@ -263,7 +291,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 			if _, ok := pr.airTrace[chunkName]; !ok {
 				break
 			}
-			if err := pr.Committer.Open(chunkName, pr.zeta); err != nil {
+			if _, err := pr.Committer.Open(chunkName, pr.zeta); err != nil {
 				return err
 			}
 		}
@@ -318,8 +346,10 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 			}
 			seen[key] = true
 
-			// register the open request; FRI will evaluate and bind the claim
-			if err := pr.Committer.Open(leaf.Name, evalPoint); err != nil {
+			// Open eagerly evaluates, binds the claim to the transcript, and
+			// returns the value (which we discard here — the loom verifier
+			// reads the matching claim from the proof).
+			if _, err := pr.Committer.Open(leaf.Name, evalPoint); err != nil {
 				return err
 			}
 		}

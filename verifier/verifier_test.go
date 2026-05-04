@@ -133,7 +133,7 @@ func TestVerifierTamperedClaimedValue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cv := prf.CommitmentOpenings.ClaimedValues
+	cv := prf.CommitmentOpenings.OpenedValues
 	if len(cv) == 0 {
 		t.Fatal("proof has no claimed values")
 	}

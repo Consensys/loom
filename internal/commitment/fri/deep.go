@@ -30,12 +30,6 @@ var deepCombineErr = errors.New("fri: DEEP evaluation point is on the codeword d
 // deepDuplicateErr is returned when a single polynomial is opened at the same point twice.
 var deepDuplicateErr = errors.New("fri: duplicate DEEP evaluation point on the same polynomial")
 
-// computeClaimedValue evaluates the polynomial committed in oracle at point z
-// using Lagrange interpolation over the codeword domain.
-func computeClaimedValue(codeword poly.Polynomial, codewordDomain *fft.Domain, z koalabear.Element) koalabear.Element {
-	return poly.Evaluate(codeword, codewordDomain, z)
-}
-
 // buildDEEPCombiner constructs the combined DEEP quotient codeword q on L of
 // size N. Open requests are grouped per polynomial: for a polynomial f opened
 // at points {x_1,…,x_R} with claimed values {y_1,…,y_R}, the per-polynomial

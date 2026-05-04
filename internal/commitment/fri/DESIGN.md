@@ -84,11 +84,11 @@ soundness; see §10.
 
 | File | Role |
 |---|---|
-| [`fri.go`](./fri.go) | `Config`, `Commitment`, `OpeningProof`, `Committer` (commit phase), `Verifier`, `Bind`, `RegisterOpenAt`, `ClaimedValueAt`, `Prove`, coset-Merkle helpers |
+| [`fri.go`](./fri.go) | `Config`, `Commitment`, `Proof`, `Committer` (commit + open + prove), `Verifier` (bind + open + verify), coset-Merkle helpers |
 | [`fold.go`](./fold.go) | k-way FRI fold (`foldCoset`, `foldLayer`, `elementPow`) |
-| [`deep.go`](./deep.go) | DEEP combiner (`computeClaimedValue`, `buildDEEPCombiner`, `computeBarycentricWeights`, `accumulateDEEP`) |
+| [`deep.go`](./deep.go) | DEEP combiner (`buildDEEPCombiner`, `computeBarycentricWeights`, `accumulateDEEP`) |
 | [`query.go`](./query.go) | Building per-query Merkle openings + coset data |
-| [`verify.go`](./verify.go) | `Verifier.VerifyOpening` — full proof check |
+| [`verify.go`](./verify.go) | `Verifier.Verify` — full proof check |
 | [`grind.go`](./grind.go) | Proof-of-work helpers (`grindAndBind`, `verifyAndBindGrinding`) |
 | [`fri_test.go`](./fri_test.go) | Unit tests; see also [`export_test.go`](./export_test.go) for test exports |
 
@@ -214,35 +214,39 @@ The verifier reconstructs leaf bytes via [`cosetLeafBytes`](./query.go:117-119)
 
 ### 5.3 Auto-DEEP open per oracle
 
-After the Merkle commitment is bound to the transcript, [`Commit`](./fri.go:144-249)
-draws one DEEP point $z$ per polynomial in the batch, by computing a separate
-challenge `<challengeName>@deep_<polyName>`:
+After the Merkle commitment is bound to the transcript, [`Commit`](./fri.go)
+draws one DEEP point $z$ per polynomial in the batch. The transcript operations
+must be registered and computed in strict positional order (gnark-crypto's
+Fiat-Shamir transcript requires each challenge to be computed before the next
+can be registered). The order for one oracle is:
 
-```go
-deepBytes, _ := c.transcript.ComputeChallenge(deepChallengeName(challengeName, name))
-deepPt.SetBytes(deepBytes)
-c.Open(name, deepPt)
 ```
-([fri.go:235-247](./fri.go)). This populates `c.openRequests` (one per
-polynomial per Commit).
+for each polynomial p (alphabetical order):
+    NewChallenge("oracleName@deep_p")
+    Bind("oracleName@deep_p", root)
+    ComputeChallenge("oracleName@deep_p")  → deepPt
+    c.Open(p, deepPt)                       → registers fri@open_<i>
+NewChallenge("oracleName")
+Bind("oracleName", root)
+ComputeChallenge("oracleName")             → post-commitment FS challenge
+```
 
-`Verifier.Bind(challengeName, commitment)` mirrors `Committer.Commit`'s
-transcript operations in this exact order ([fri.go:443-481](./fri.go)):
+`c.Open(p, deepPt)` eagerly evaluates $f_p$ at `deepPt` via Horner on the
+cached canonical coefficients (see §5.1), binds the claim to the transcript
+under `fri@open_<callIdx>`, and appends to `c.openRequests`.
 
-1. `NewChallenge` once per polynomial in the commitment (for each polynomial's
-   auto-DEEP point) and once for the commitment itself.
-2. `Bind(challengeName, root)` — Merkle root of the coset-per-leaf tree.
-3. For each polynomial: `Bind(deepChallengeName, root)`, then
-   `ComputeChallenge(deepChallengeName)` → DEEP point $z$, recorded in
-   `v.deepPoints`.
-4. `ComputeChallenge(challengeName)` — derives the post-commitment Fiat-Shamir
-   challenge value consumed by the next round of the loom prover.
+`Verifier.BindCommitment(oracleName)` mirrors this in lockstep: it reads the
+next `Commitment` from the embedded proof, registers the same challenge names
+in the same order, and for each auto-DEEP open reads the matching claimed
+value from `proof.OpenedValues[v.cursor]` via `bindOpenClaim`. After all
+auto-DEEP opens, it advances the transcript past the oracle-level challenge.
 
-Callers may also register additional evaluation claims via
-`Verifier.RegisterOpenAt(name, point)` (see §12 for the full API and §13 for
-the loom integration); these must be called in the
-same order as the corresponding prover-side `Committer.Open` calls so that
-`deepPoints` indices line up with `ClaimedValues`.
+Callers may add further evaluation claims via `Verifier.Open(name, point)`
+(see §12 for the full API and §13 for the loom integration); these must be
+called in the same order as the corresponding prover-side `Committer.Open`
+calls. Each `Open` both binds the claim to the transcript and returns the
+(still-unverified) value, so outer protocols may safely use it to derive
+subsequent Fiat-Shamir challenges.
 
 ---
 
@@ -262,33 +266,38 @@ into a single FRI proximity test.
 
 ### 6.1 Math — per-oracle merged form
 
-For oracle $i$ opened at $R_i$ points $\{x_{i1},\ldots,x_{iR_i}\}$ with
-claimed values $\{y_{i1},\ldots,y_{iR_i}\}$, define the per-oracle DEEP
+An **oracle** batches one or more polynomials sharing a single Merkle
+commitment. Each polynomial within an oracle has its own DEEP quotient $Q_p$;
+the $\beta$-power index $p$ ranges over the global polynomial sequence in
+`(oracleI, name)` registration order, not over oracles.
+
+For polynomial $p$ opened at $R_p$ points $\{x_{p1},\ldots,x_{pR_p}\}$ with
+claimed values $\{y_{p1},\ldots,y_{pR_p}\}$, define the per-polynomial DEEP
 quotient
 
-$$Q_i(X) = \frac{f_i(X) - I_i(X)}{\prod_j (X - x_{ij})},$$
+$$Q_p(X) = \frac{f_p(X) - I_p(X)}{\prod_j (X - x_{pj})},$$
 
-where $I_i$ is the unique polynomial of degree $< R_i$ satisfying
-$I_i(x_{ij}) = y_{ij}$ for all $j$. Because $f_i(x_{ij}) - I_i(x_{ij}) = 0$,
-the numerator vanishes at every $x_{ij}$, so $Q_i$ is a polynomial (no
+where $I_p$ is the unique polynomial of degree $< R_p$ satisfying
+$I_p(x_{pj}) = y_{pj}$ for all $j$. Because $f_p(x_{pj}) - I_p(x_{pj}) = 0$,
+the numerator vanishes at every $x_{pj}$, so $Q_p$ is a polynomial (no
 remainder). The combined DEEP codeword is
 
-$$q(X) = \sum_i \beta^i \, Q_i(X).$$
+$$q(X) = \sum_p \beta^p \, Q_p(X).$$
 
-The requirement $z \notin L$ for every $x_{ij}$ ensures no denominator is
+The requirement $z \notin L$ for every $x_{pj}$ ensures no denominator is
 zero on $L$ (the codeword domain).
 
-**Partial-fractions identity.** Rather than computing $I_i$ explicitly and
+**Partial-fractions identity.** Rather than computing $I_p$ explicitly and
 performing an interpolation FFT, we use
 
-$$\frac{I_i(X)}{\prod_k (X - x_{ik})} = \sum_j \frac{w_{ij}}{X - x_{ij}}, \qquad w_{ij} = \frac{y_{ij}}{\prod_{k \ne j}(x_{ij} - x_{ik})}.$$
+$$\frac{I_p(X)}{\prod_k (X - x_{pk})} = \sum_j \frac{w_{pj}}{X - x_{pj}}, \qquad w_{pj} = \frac{y_{pj}}{\prod_{k \ne j}(x_{pj} - x_{pk})}.$$
 
-This gives a pointwise formula for $Q_i$ at any $\omega^m \in L$:
+This gives a pointwise formula for $Q_p$ at any $\omega^m \in L$:
 
-$$Q_i(\omega^m) = \frac{f_i(\omega^m)}{\prod_k(\omega^m - x_{ik})} - \sum_j \frac{w_{ij}}{\omega^m - x_{ij}}.$$
+$$Q_p(\omega^m) = \frac{f_p(\omega^m)}{\prod_k(\omega^m - x_{pk})} - \sum_j \frac{w_{pj}}{\omega^m - x_{pj}}.$$
 
-Computing $Q_i(\omega^m)$ for all $m = 0,\ldots,N-1$ costs $O(R_i^2 + R_i N)$
-field operations per oracle, with all inversions batched via
+Computing $Q_p(\omega^m)$ for all $m = 0,\ldots,N-1$ costs $O(R_p^2 + R_p N)$
+field operations per polynomial, with all inversions batched via
 `koalabear.BatchInvert`.
 
 ### 6.2 Code walk-through
@@ -310,19 +319,19 @@ field operations per oracle, with all inversions batched via
 Edge cases: `deepCombineErr` if any $x_{ij} \in L$; `deepDuplicateErr` if the
 same polynomial is opened twice at the same point.
 
-The claimed values $y_{ij} = f_i(x_{ij})$ are computed by
-[`computeClaimedValue`](./deep.go:22-24) (Lagrange interpolation on the
-codeword domain) and stored in `OpeningProof.ClaimedValues` in registration
-order, matching `openRequests`.
+The claimed values $y_{pj} = f_p(x_{pj})$ are computed eagerly at
+`Committer.Open` time via Horner evaluation on the canonical-form coefficients
+cached during `Commit` (§5.1). They are stored in `Proof.OpenedValues` in
+registration order.
 
-### 6.3 Why one β suffices for many oracles
+### 6.3 Why one β suffices for many polynomials
 
-`Prove` enforces a single shared codeword domain via the size check at
-[fri.go:285-298](./fri.go). Once every oracle lives on the same $L$, the
+`Prove` enforces a single shared codeword domain via the size check at the
+start of [`Prove`](./fri.go). Once every polynomial lives on the same $L$, the
 $\beta$-combination is a single proximity statement — there is no soundness
 penalty from batching, only one extra Schwartz-Zippel factor in $\beta$. The
-$\beta$-powers now index **oracles** (not individual open requests), so one
-β-exponent covers all of a polynomial's evaluation claims at once.
+$\beta$-powers index **polynomials** in `(oracleI, name)` registration order,
+so one β-exponent covers all of a polynomial's evaluation claims at once.
 
 This is **method 1 (degree padding)** from Boneh's whiteboard treatment:
 extend everyone to a common degree before combining. We chose this over
@@ -479,13 +488,14 @@ switch {
 case numLayers > 0 && len(LayerCosetData) > 0:
     k = len(LayerCosetData[0][0])
 case len(OracleCosetData) > 0:
-    K := Commitments[0].NumPolynomials
+    K := len(Commitments[0].PolynomialNames)
     k = len(OracleCosetData[0][0]) / K
 default:
     return error
 }
 ```
-([verify.go:36-58](./verify.go)). The verifier never reads `Config.FoldingFactor`.
+([verify.go](./verify.go)). The verifier infers $k$ from proof data; it does
+not rely on `Config.FoldingFactor` for protocol operations.
 
 ### 9.3 Per-query check (layered path)
 
@@ -554,7 +564,7 @@ This branch is exercised by [`TestRoundTripNoLayers`](./fri_test.go) and
 | Tamper class | Failure surface |
 |---|---|
 | Flipped oracle codeword value | `qCheck` mismatch *and* Merkle path mismatch (steps a/b). |
-| Tampered claimed value | `qCheck` mismatch (step a). |
+| Tampered claimed value | Transcript diverges at `fri@open_<i>` → query-index mismatch; or `qCheck` mismatch (step a). |
 | Tampered final polynomial | Fold mismatch at last layer or 0-layer direct check. |
 | Tampered `LayerCommitment` root | Re-derived $\alpha_\ell$ differs → Merkle/qCheck cascade fails. |
 | Tampered Merkle sibling | `merkle.Verify` returns false. |
@@ -631,14 +641,19 @@ The default `GrindingBits = 0` short-circuits both sides — neither prover
 nor verifier touches the grinding transcript names, and existing proofs are
 unaffected.
 
-### 10.4 Verifier requirement
+### 10.4 Verifier floor enforcement
 
-`GrindingBits` is the **only** parameter the verifier needs externally —
-unlike $k$, `NumQueries`, etc., it is **not encoded in the proof**. Otherwise
-a malicious prover could grind 0 bits and claim a strong PoW. The verifier
-must therefore be configured by its caller via the public field
-`Verifier.GrindingBits` (or, at the loom integration level,
-`verifier.WithFRIGrindingBits(n)`).
+The proof is **self-describing** about its protocol parameters (see §11).
+However, a malicious prover could claim `NumQueries=1` in a well-formed proof
+to trivially pass the proximity check. `Verifier.Verify` therefore enforces
+a parameter floor from `Verifier.Config`: each non-zero field acts as a
+minimum. Specifically, `Verify` rejects if `proof.NumQueries < Config.NumQueries`,
+if `Config.FoldingFactor != 0 && proof.FoldingFactor != Config.FoldingFactor`,
+if `proof.FinalPolynomialMaxLen > Config.FinalPolynomialMaxLen` (when non-zero),
+if `proof.BlowupFactor < Config.MinBlowupFactor` (when non-zero), or if
+`proof.GrindingBits < Config.GrindingBits` (when non-zero). A zero field means
+"no floor for this parameter". `NewVerifier` does not apply defaults to the
+verifier config so that zero fields are preserved as "don't care".
 
 ---
 
@@ -650,19 +665,22 @@ without external configuration:
 | Quantity | Inferred from |
 |---|---|
 | $N$ (codeword size) | `Commitments[0].CodewordDomainSize` |
-| $K$ (polys per oracle) | `Commitments[oi].NumPolynomials` |
+| $K$ (polys per oracle) | `len(Commitments[oi].PolynomialNames)` |
 | numLayers | `len(LayerCommitments)` |
 | numQueries | `len(QueryIndices)` |
 | $k$ (folding factor) | layer coset length, or oracle coset length / $K$ |
 | `FinalPolynomial` size | `len(FinalPolynomial)` |
+| `NumQueries`, `FoldingFactor`, etc. | embedded scalars in `Proof` |
 
-Only `GrindingBits` must be agreed externally (§10.4).
+The proof also embeds the config scalars `NumQueries`, `FoldingFactor`,
+`FinalPolynomialMaxLen`, `BlowupFactor`, and `GrindingBits` so the verifier
+can apply floor checks (§10.4) without trusting the prover's claimed values.
 
-`ClaimedValues` lists one entry per registered open request, in the same
-order that `Committer.Open` was called (auto-DEEP points from `Commit` first,
-then any additional `Open` calls). The verifier accesses these through
-`Verifier.ClaimedValueAt(proof, name, point)` after `VerifyOpening` has
-validated the proof.
+`OpenedValues` lists one entry per `Open` call, in the order they were made:
+the first $\sum_i |\text{PolynomialNames}(i)|$ entries are auto-DEEP values
+bound by `BindCommitment`; the remainder are user `Open` calls in registration
+order. `Verifier.Open` advances a cursor over the user portion (past the
+auto-DEEP entries).
 
 ---
 
@@ -717,39 +735,46 @@ type Commitment struct {
     Root               []byte
     BaseDomainSize     uint64
     CodewordDomainSize uint64
-    NumPolynomials     int
     PolynomialNames    []string  // sorted alphabetically
     PolynomialSizes    []uint64
 }
 ```
 
-One `Commitment` is produced per `Committer.Commit` call. The verifier feeds
-the matching `Commitment` to `Verifier.Bind` to advance its transcript.
-`PolynomialNames` is the sort order used to lay out the Merkle leaves and
-order the coset data — the verifier never needs to recompute it, only read it.
+One `Commitment` is produced per `Committer.Commit` call and embedded in
+`Proof.Commitments`. `PolynomialNames` is the sort order used to lay out the
+Merkle leaves and order the coset data. The number of polynomials per oracle
+is `len(PolynomialNames)` — the redundant `NumPolynomials` field was removed.
 
-### 12.4 `OpeningProof`
+### 12.4 `Proof`
 
 ```go
-type OpeningProof struct {
-    Commitments      []Commitment
-    LayerCommitments [][]byte
-    FinalPolynomial  []koalabear.Element
-    ClaimedValues    []koalabear.Element
-    QueryIndices     []uint64
-    OracleOpenings   [][]merkle.Proof
-    OracleCosetData  [][][]koalabear.Element
-    LayerOpenings    [][]merkle.Proof
-    LayerCosetData   [][][]koalabear.Element
-    GrindingNonce    uint64
+type Proof struct {
+    Commitments             []Commitment
+    LayerCommitments        [][]byte
+    FinalPolynomial         []koalabear.Element
+    OpenedValues            []koalabear.Element
+    QueryIndices            []uint64
+    OracleOpenings          [][]merkle.Proof
+    OracleCosetData         [][][]koalabear.Element
+    LayerOpenings           [][]merkle.Proof
+    LayerCosetData          [][][]koalabear.Element
+    GrindingNonce           uint64
+    NumQueries              int
+    FoldingFactor           int
+    FinalPolynomialMaxLen   int
+    BlowupFactor            int
+    GrindingBits            int
 }
 ```
 
-This is the wire format. `ClaimedValues[r]` is the prover-claimed evaluation
-$f_r(x_r)$ for the $r$-th registered open request, in the order the prover
-called `Commit` (auto-DEEP first) and `Open` (manual opens after). After
-`VerifyOpening` returns, callers read individual values back through
-`Verifier.ClaimedValueAt`.
+This is the wire format. `OpenedValues[r]` is the prover-claimed evaluation
+for the $r$-th registered open request. The first
+$\sum_i |\text{PolynomialNames}(i)|$ entries are auto-DEEP values bound by
+`BindCommitment`; the remainder are user `Open` calls in registration order
+(see §11). The five config scalars (`NumQueries`, `FoldingFactor`,
+`FinalPolynomialMaxLen`, `BlowupFactor`, `GrindingBits`) are embedded so the
+verifier can apply floor checks (§10.4) without trusting the prover's
+claimed values.
 
 ### 12.5 Prover side: `Committer`
 
@@ -762,117 +787,101 @@ func NewCommitter(
 ) Committer
 ```
 
-Constructs a fresh committer. `transcript` may be nil for a transcript-less
-mode (used in low-level tests); in normal use, callers share one transcript
-across the FRI committer and any outer protocol.
+Constructs a fresh committer. `transcript` is required; callers share one
+transcript across the FRI committer and any outer protocol.
 
 ```go
-func (c *Committer) Commit(challengeName string, polys map[string]poly.Polynomial) error
+func (c *Committer) Commit(oracleName string, polys map[string]poly.Polynomial) error
 ```
 
 RS-encodes every polynomial in `polys`, builds the coset-per-leaf Merkle tree,
-binds the root to the transcript under `challengeName`, and registers one
-auto-DEEP open per polynomial. Polynomial names within `polys` must be unique
-and non-empty. **Polynomial names are also globally unique across a Committer**:
+binds the root to the transcript under `oracleName`, and registers one
+auto-DEEP open per polynomial (eagerly computing and binding each claimed
+value to the transcript). Polynomial names within `polys` must be unique and
+non-empty. **Polynomial names are also globally unique across a Committer**:
 calling `Commit` with a name already used by a prior `Commit` returns
-`ErrInvalidPolynomial`. The verifier enforces the mirror check on `Bind` —
-without this, the prover-side `polynomials` map and the verifier-side
-`deepPoints` lookup would silently target different oracles.
+`ErrInvalidPolynomial`. The verifier enforces the mirror check on
+`BindCommitment` — without this, the prover-side `polynomials` map and the
+verifier-side `deepPoints` lookup would silently target different oracles.
 
 ```go
-func (c *Committer) Open(name string, point koalabear.Element) error
+func (c *Committer) Open(name string, point koalabear.Element) (koalabear.Element, error)
 ```
 
-Records an additional out-of-domain evaluation claim. `name` must have been
-committed by a prior `Commit` call; `point` must lie outside the codeword
-domain $L$. The actual evaluation $y = f(\text{point})$ is computed lazily
-inside `Prove`. Calling `Open` twice with the same `(name, point)` is rejected
-by `Prove` with `deepDuplicateErr` semantics, so callers should deduplicate.
+Evaluates the named polynomial at `point`, binds `(oracleI, polyI, point, y)`
+to the transcript under a sequential challenge name `fri@open_<callIdx>`, and
+registers the claim for the DEEP combiner. Returns the evaluation `y`. `name`
+must have been committed by a prior `Commit` call; `point` must lie outside
+the codeword domain $L$ (returns an error otherwise). Calling `Open` twice
+with the same `(name, point)` is rejected with `deepDuplicateErr` semantics.
+Evaluation uses Horner's method on the cached canonical-form coefficients
+(computed during `Commit`).
 
 ```go
-func (c *Committer) Commitment(name string) Commitment
+func (c *Committer) Prove() (Proof, error)
 ```
 
-Returns the `Commitment` metadata of the oracle that holds `name`. Useful for
-callers that pass commitments to a separate verifier component.
-
-```go
-func (c *Committer) Prove() (OpeningProof, error)
-```
-
-Closes the protocol: computes claimed values for every registered open,
-derives the DEEP combiner challenge $\beta$, builds $q$, runs the FRI commit
-phase (folds, layer Merkle trees), optionally grinds, derives query indices,
-and assembles per-query Merkle openings. After `Prove` returns the committer
-is spent — callers should not reuse it.
+Closes the protocol: derives the DEEP combiner challenge $\beta$, builds $q$,
+runs the FRI commit phase (folds, layer Merkle trees), optionally grinds,
+derives query indices, and assembles per-query Merkle openings. After `Prove`
+returns the committer is spent — callers should not reuse it.
 
 ### 12.6 Verifier side: `Verifier`
 
 ```go
 type Verifier struct {
-    Transcript   *fiatshamir.Transcript
-    GrindingBits int
-    // unexported: deepPoints, oracleCount
+    Transcript *fiatshamir.Transcript
+    Config     Config
+    // unexported: proof, deepPoints, oracleCount, userCursor
 }
 
-func NewVerifier(transcript *fiatshamir.Transcript) Verifier
+func NewVerifier(
+    transcript *fiatshamir.Transcript,
+    config     Config,
+    proof      Proof,
+) Verifier
 ```
 
-`GrindingBits` must be set by the caller to match the prover-side
-`Config.GrindingBits`; it is the only protocol parameter not encoded in the
-proof (§10.4).
+Constructs a verifier. The proof is embedded; the verifier reads
+`proof.Commitments` during `BindCommitment` and `proof.OpenedValues` during
+`Open`. `Config` fields are enforcement floors (§10.4); zero means "no floor".
+`NewVerifier` does **not** call `applyDefaults` on the config — zero fields
+are preserved as "don't care".
 
 ```go
-func (v *Verifier) Bind(challengeName string, commitment Commitment) error
+func (v *Verifier) BindCommitment(oracleName string) error
 ```
 
 Mirrors the prover's `Commit` transcript operations exactly — see §5.3 for
-the four-step enumeration. Each `Bind` call records one auto-DEEP point per
-polynomial in `commitment.PolynomialNames` into `v.deepPoints`, in the same
-order the prover registered them. Polynomial names must be globally unique
-across all `Bind` calls on a single `Verifier`; binding a name already used
-by a prior commitment returns an error (mirroring the prover-side
-`Commit`-time check).
+the four-step enumeration. Reads the next commitment from the embedded proof
+(`proof.Commitments[v.oracleCount]`), binds the root and all auto-DEEP claims
+to the transcript, and advances the internal oracle counter. `oracleName` is
+used as the transcript challenge name (must match the prover's `Commit`
+argument). Polynomial names must be globally unique across all `BindCommitment`
+calls on a single `Verifier`; binding a name already used by a prior oracle
+returns an error (mirroring the prover-side `Commit`-time check).
 
 ```go
-func (v *Verifier) RegisterOpenAt(name string, point koalabear.Element) error
+func (v *Verifier) Open(name string, point koalabear.Element) (koalabear.Element, error)
 ```
 
-Mirrors a prover-side `Committer.Open(name, point)` call. **Does not touch
-the transcript** (the prover-side `Open` is also transcript-silent). The name
-must already appear in some bound oracle. Registration order **must match**
-the prover's `Open` call order so that `deepPoints` indices line up with
-`OpeningProof.ClaimedValues`.
+Advances the verifier's user-Open cursor through `proof.OpenedValues`, binds
+`(oracleI, polyI, point, y)` to the transcript under `fri@open_<callIdx>`
+(mirroring the prover-side `Open` transcript operation), and returns the
+prover-claimed value `y`. Calls must occur in the same `(name, point)`
+sequence as the prover's `Open` calls; any divergence causes a transcript
+mismatch at the next challenge, surfacing as a `Verify` failure rather than a
+silent wrong value.
 
 ```go
-func (v *Verifier) ClaimedValueAt(
-    proof OpeningProof,
-    name  string,
-    point koalabear.Element,
-) (koalabear.Element, error)
+func (v *Verifier) Verify(lh merkle.LeafHasher, nh merkle.NodeHasher) error
 ```
 
-Looks up the prover-claimed evaluation of `name` at `point`. The
-`(name, point)` pair must have been registered (auto-DEEP via `Bind`, or
-manual via `RegisterOpenAt`) before `VerifyOpening` was called. Returns an
-error if the pair is unknown or its registration index is out of range.
-
-Best practice: only call this **after** `VerifyOpening` succeeds — the
-returned value is only as trustworthy as the FRI verification that bound it.
-
-```go
-func (v *Verifier) VerifyOpening(
-    proof OpeningProof,
-    lh    merkle.LeafHasher,
-    nh    merkle.NodeHasher,
-) error
-```
-
-Runs the full per-query check (§9). The `lh`/`nh` hashers must match the
-prover-side hashers passed to `NewCommitter`. Returns nil on success; on
-failure returns a descriptive error pinpointing the failure surface (Merkle
-mismatch, qCheck mismatch, fold mismatch, query-index divergence, etc. — see
-§9.5).
+Runs the full per-query check (§9) against the embedded proof, first applying
+Config floor checks (§10.4). The `lh`/`nh` hashers must match those passed to
+`NewCommitter`. Returns nil on success; on failure returns a descriptive error
+pinpointing the failure surface (config floor violated, Merkle mismatch,
+qCheck mismatch, fold mismatch, query-index divergence, etc. — see §9.5).
 
 ### 12.7 Typical usage flow
 
@@ -881,23 +890,24 @@ mismatch, qCheck mismatch, fold mismatch, query-index divergence, etc. — see
 committer := fri.NewCommitter(transcript, cfg, leafHash, nodeHash)
 committer.Commit("round_0", polysRound0)
 // (more rounds, more Commits…)
-committer.Open("colA", zeta)
-committer.Open("colA_rot1", omegaZeta)
+yA,    _ := committer.Open("colA", zeta)
+yArot, _ := committer.Open("colA_rot1", omegaZeta)
 proof, _ := committer.Prove()
 
 // Verifier (sharing a separately-built transcript)
-v := fri.NewVerifier(transcript)
-v.GrindingBits = cfg.GrindingBits
-v.Bind("round_0", proof.Commitments[0])
-// (more Binds in matching order…)
-v.RegisterOpenAt("colA", zeta)
-v.RegisterOpenAt("colA_rot1", omegaZeta)
-if err := v.VerifyOpening(proof, leafHash, nodeHash); err != nil { /* reject */ }
-yA,    _ := v.ClaimedValueAt(proof, "colA",      zeta)
-yArot, _ := v.ClaimedValueAt(proof, "colA_rot1", omegaZeta)
+v := fri.NewVerifier(verifierTranscript, verifierCfg, proof)
+v.BindCommitment("round_0")
+// (more BindCommitments in matching order…)
+yA,    _ = v.Open("colA", zeta)
+yArot, _ = v.Open("colA_rot1", omegaZeta)
+if err := v.Verify(leafHash, nodeHash); err != nil { /* reject */ }
+// yA and yArot are now FRI-certified and can be used directly.
 ```
 
-§13 walks through the same flow as embedded inside the loom prover/verifier.
+`Open` on both sides binds the claim to the shared transcript immediately;
+`Verify` performs the final cryptographic check that every opened value is
+consistent with the FRI commitment. §13 walks through the same flow as
+embedded inside the loom prover/verifier.
 
 ---
 
@@ -910,25 +920,29 @@ derived from the program ([prover/prover.go](../../../prover/prover.go)):
 friCfg := fri.Config{
     CodewordDomainSize: fri.DefaultFRIMinBlowupFactor * maxModuleN,
     GrindingBits:       config.FRIGrindingBits,
+    FoldingFactor:      config.FRIFoldingFactor,  // 0 → default
 }
 ```
 
-After deriving $\zeta$, the prover calls `Committer.Open(name, evalPoint)` for
-every AIR-relevant evaluation: first all AIR-quotient chunks (in sorted module
-name and chunk-index order), then all committed and rotated columns from each
-module's vanishing relation (same sorted order, duplicate `(name, evalPoint)`
-pairs skipped). `Prove()` computes and bundles the resulting claimed values in
-`OpeningProof.ClaimedValues`.
+After deriving $\zeta$, the prover calls `committer.Open(name, evalPoint)` for
+every AIR-relevant evaluation (AIR-quotient chunks first, then committed and
+rotated columns from each module's vanishing relation, in sorted order;
+duplicate `(name, evalPoint)` pairs are skipped). The return value is stored
+directly in `pr.vars` — no separate post-`Prove` lookup is needed.
 
-The loom verifier mirrors this in `deriveChallenges` via
-`Verifier.RegisterOpenAt` (in the identical deterministic order), and then
-reads the FRI-verified claimed values back via `ClaimedValueAt` in
-`populateAIREvaluations` — which runs **after** `VerifyOpening` so that the
-AIR check only uses values the FRI proof has already certified.
+The loom verifier mirrors this in the same deterministic order by calling
+`friVerifier.Open(name, evalPoint)` before `friVerifier.Verify`. The returned
+values are stored in `vr.vars` and used for the AIR relation check. Because
+`Open` binds each value to the transcript immediately, `vr.vars` entries are
+safe to use once `Verify` confirms the proof is consistent — if `Verify`
+rejects, the entire proof fails and `vr.vars` is moot.
 
 The `config.FRIGrindingBits` value comes from the caller-supplied
-`prover.WithFRIGrindingBits(n)` option. The verifier mirrors this with
-`verifier.WithFRIGrindingBits(n)`; both sides default to 0 (no grinding).
+`prover.WithFRIGrindingBits(n)` option; `prover.WithFRIFoldingFactor(n)` sets
+a smaller folding factor for modules whose codeword domain is too small for
+the default. The verifier mirrors grinding via `verifier.WithFRIGrindingBits(n)`;
+other parameters are read from the embedded proof. Both sides default to 0
+(no grinding, default folding factor).
 Tests:
 
 - [`TestVerifierWithGrinding`](../../../verifier/verifier_test.go) — full
@@ -966,21 +980,36 @@ analyses.
 
 - **AIR-side openings** (committed columns at $\zeta$, rotated columns at
   $\omega^{\text{shift}} \cdot \zeta$, AIR-quotient chunks at $\zeta$) are
-  wired through FRI's `Open`/`RegisterOpenAt` API. The loom prover calls
-  `Committer.Open` for every AIR-relevant evaluation after deriving $\zeta$;
-  the loom verifier mirrors each call with `Verifier.RegisterOpenAt` before
-  `VerifyOpening`. `OpeningProof.ClaimedValues` is the **only** channel from
-  which the verifier reads these values; there is no parallel un-bound data
-  path.
+  wired through FRI's `Open` API. The loom prover calls `Committer.Open` for
+  every AIR-relevant evaluation after deriving $\zeta$ and uses the returned
+  value directly; the loom verifier mirrors each call with `Verifier.Open`
+  (before `Verify`) and stores the returned values for the AIR relation check.
+  `Proof.OpenedValues` is the **only** channel from which the verifier reads
+  these values; there is no parallel un-bound data path.
+- **Transcript binding of opened values.** Merkle leaves are transitively
+  bound to the transcript via their committed root, so leaf revelations during
+  the query phase need no additional binding. Off-codeword DEEP claims
+  ($z \notin L$) are not leaves of any committed tree and therefore need
+  explicit binding — which `Open` provides at call time (§5.3, §12.5). This
+  means outer protocols can safely derive subsequent Fiat-Shamir challenges
+  from values returned by `Open`; any attempt by the prover to change a
+  value after the fact will cause a transcript divergence.
+- **Per-query Merkle proofs are not batched.** Each query currently ships its
+  own Merkle path for the oracle layer and each FRI fold layer. Many of those
+  paths share sibling nodes near the root; standard STARK implementations
+  (Plonky-3, ethSTARK) collapse them into a single Merkle multi-proof per
+  layer per query, cutting proof size for high-`NumQueries` configurations.
+  Implementing this is invasive — it touches `merkle.Proof`, the per-query
+  serialization in `Proof`, and verifier-side path reconstruction. Tracked as
+  future work; the current single-path-per-query layout favours simplicity.
 - **Polynomial-name aliasing** is rejected at the source: `Committer.Commit`
-  and `Verifier.Bind` both reject a name that was committed/bound in a prior
-  call. This closes a silent soundness gap where `Committer.polynomials` (a
-  `map[name]oracleI`) would have been overwritten on the prover side while
+  and `Verifier.BindCommitment` both reject a name that was committed/bound in
+  a prior call. This closes a silent soundness gap where `Committer.polynomials`
+  (a `map[name]oracleI`) would have been overwritten on the prover side while
   the verifier's `deepPoints` lookup matched the *first* registration —
-  causing `Open` / `RegisterOpenAt` / `ClaimedValueAt` to target different
-  oracles on the two sides. Names must therefore be globally unique within
-  a single Committer/Verifier session. Test:
-  [`TestCommitRejectsDuplicateName`](./fri_test.go).
+  causing `Open` to target different oracles on the two sides. Names must
+  therefore be globally unique within a single Committer/Verifier session.
+  Test: [`TestCommitRejectsDuplicateName`](./fri_test.go).
 - **Pre-existing `vet` warning** in `prover/prover.go`
   (`return copies lock value`) is unrelated to FRI and not introduced by
   this work; flagged separately.

@@ -44,12 +44,22 @@ type verifierRunTime struct {
 	vars         map[string]koalabear.Element
 }
 
-// Config collects verifier-side protocol parameters that must agree with the
-// prover's. Mismatches surface as proof rejections.
+// Config collects verifier-side protocol parameters. The FRI parameters
+// surface as a config floor that the proof's self-described parameters must
+// meet (a malicious prover otherwise could lower NumQueries to trivially
+// pass the proximity check).
 type Config struct {
 	// FRIGrindingBits must equal the prover's WithFRIGrindingBits value
 	// (default 0 = no grinding).
 	FRIGrindingBits int
+	// FRIFoldingFactor matches the prover's FoldingFactor (default 8).
+	// Tiny modules can use a smaller k; the integration-test wrapper picks
+	// k=2 when the largest module's base domain is below the default.
+	FRIFoldingFactor int
+	// FRIFinalPolynomialMaxLen is an upper bound on the prover's final
+	// polynomial size (default 16). The verifier rejects proofs whose
+	// FinalPolynomialMaxLen exceeds this.
+	FRIFinalPolynomialMaxLen int
 }
 
 type Option func(c *Config) error
@@ -59,6 +69,24 @@ type Option func(c *Config) error
 func WithFRIGrindingBits(n int) Option {
 	return func(c *Config) error {
 		c.FRIGrindingBits = n
+		return nil
+	}
+}
+
+// WithFRIFoldingFactor configures the verifier's expected FRI folding factor.
+// Must match the prover-side value.
+func WithFRIFoldingFactor(k int) Option {
+	return func(c *Config) error {
+		c.FRIFoldingFactor = k
+		return nil
+	}
+}
+
+// WithFRIFinalPolynomialMaxLen sets the verifier's ceiling on the prover's
+// final polynomial length. Must equal the prover-side value (or be larger).
+func WithFRIFinalPolynomialMaxLen(n int) Option {
+	return func(c *Config) error {
+		c.FRIFinalPolynomialMaxLen = n
 		return nil
 	}
 }
@@ -74,8 +102,12 @@ func newVerifierRuntime(program board.Program, setup *PublicKey, publicInputs ma
 	}
 
 	res.fs = fiatshamir.NewTranscript(sha256.New())
-	res.friVerifier = fri.NewVerifier(res.fs)
-	res.friVerifier.GrindingBits = config.FRIGrindingBits
+	friCfg := fri.Config{
+		GrindingBits:          config.FRIGrindingBits,
+		FoldingFactor:         config.FRIFoldingFactor,
+		FinalPolynomialMaxLen: config.FRIFinalPolynomialMaxLen,
+	}
+	res.friVerifier = fri.NewVerifier(res.fs, friCfg, proof.CommitmentOpenings)
 
 	if setup != nil {
 		res.fs.Bind(constants.CanonicalChallengeName(0), res.setup.Root())
@@ -95,9 +127,10 @@ func (vr *verifierRunTime) finalCommitmentIndex() int {
 }
 
 // deriveChallenges re-derives all Fiat-Shamir challenges, advances the FRI
-// verifier transcript to match the prover's, derives ζ, and registers all
-// AIR-relevant FRI open requests so that VerifyOpening can reconstruct the
-// DEEP-quotient structure.
+// verifier transcript to match the prover's, derives ζ, and reads all
+// AIR-relevant FRI opens via friVerifier.Open in the same deterministic
+// order the prover used. Each Open both transcript-binds the claim and
+// stores the value in vr.vars for later use by checkAIRRelations.
 func (vr *verifierRunTime) deriveChallenges() error {
 	numRounds := len(vr.program.FScolumnsDependencies)
 	commitmentI := 0
@@ -108,7 +141,7 @@ func (vr *verifierRunTime) deriveChallenges() error {
 			if commitmentI >= len(vr.proof.CommitmentOpenings.Commitments) {
 				return fmt.Errorf("missing commitment transcript entry for %s", challengeName)
 			}
-			if err := vr.friVerifier.Bind(challengeName, vr.proof.CommitmentOpenings.Commitments[commitmentI]); err != nil {
+			if err := vr.friVerifier.BindCommitment(challengeName); err != nil {
 				return err
 			}
 			commitmentI++
@@ -130,7 +163,7 @@ func (vr *verifierRunTime) deriveChallenges() error {
 	if finalCommitmentIndex >= len(vr.proof.CommitmentOpenings.Commitments) {
 		return fmt.Errorf("missing commitment for final evaluation point binding")
 	}
-	if err := vr.friVerifier.Bind(constants.FINAL_EVALUATION_POINT, vr.proof.CommitmentOpenings.Commitments[finalCommitmentIndex]); err != nil {
+	if err := vr.friVerifier.BindCommitment(constants.FINAL_EVALUATION_POINT); err != nil {
 		return err
 	}
 	bzeta, err := vr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
@@ -139,19 +172,23 @@ func (vr *verifierRunTime) deriveChallenges() error {
 	}
 	vr.zeta.SetBytes(bzeta)
 
-	// Register all AIR-relevant FRI opens in the same deterministic order the
-	// prover used, so that deepPoints indices line up with ClaimedValues.
-	if err := vr.registerAIROpens(finalCommitmentIndex); err != nil {
+	// Open every AIR-relevant polynomial in the same deterministic order the
+	// prover used, transcript-binding the claim and stashing the value for
+	// checkAIRRelations.
+	if err := vr.openAIRClaims(finalCommitmentIndex); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-// registerAIROpens calls friVerifier.RegisterOpenAt for every open request the
-// prover made in ComputeAIRQuotients and ComputeEvaluationsAtZeta, in the same
-// deterministic order (sorted module names, chunk index, then leaf DAG order).
-func (vr *verifierRunTime) registerAIROpens(finalCommitmentIndex int) error {
+// openAIRClaims walks the prover's deterministic Open sequence in lockstep:
+// AIR quotient chunks first (sorted module × ascending chunk index), then
+// committed/rotated column leaves (sorted module × LeavesFull DAG order,
+// duplicate (name, point) pairs skipped). Each friVerifier.Open both binds
+// the claim to the transcript and returns the (still-unverified) value,
+// which is stored in vr.vars under the appropriate key.
+func (vr *verifierRunTime) openAIRClaims(finalCommitmentIndex int) error {
 	// Build a lookup set of the AIR-quotient oracle's polynomial names.
 	finalPolyNames := make(map[string]bool)
 	for _, name := range vr.proof.CommitmentOpenings.Commitments[finalCommitmentIndex].PolynomialNames {
@@ -164,27 +201,28 @@ func (vr *verifierRunTime) registerAIROpens(finalCommitmentIndex int) error {
 	}
 	slices.Sort(sortedModuleNames)
 
-	// 1. AIR quotient chunks: (moduleName, i) in sorted module × ascending i order.
+	// 1. AIR quotient chunks at ζ.
 	for _, moduleName := range sortedModuleNames {
 		for i := 0; ; i++ {
 			chunkName := constants.QuotientChunkName(moduleName, i)
 			if !finalPolyNames[chunkName] {
 				break
 			}
-			if err := vr.friVerifier.RegisterOpenAt(chunkName, vr.zeta); err != nil {
+			y, err := vr.friVerifier.Open(chunkName, vr.zeta)
+			if err != nil {
 				return err
 			}
+			vr.vars[chunkName] = y
 		}
 	}
 
-	// 2. Committed and rotated column leaves: sorted module names, LeavesFull DAG
-	//    order, duplicate (name, evalPoint) pairs skipped.
+	// 2. Committed and rotated column leaves.
 	leafConfig := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutPublicColumns())
 	type evalKey struct {
 		name  string
 		point koalabear.Element
 	}
-	seen := make(map[evalKey]bool)
+	seen := make(map[evalKey]koalabear.Element) // value cached per (name, point) for duplicate leaves
 
 	for _, moduleName := range sortedModuleNames {
 		module := vr.program.Modules[moduleName]
@@ -201,13 +239,16 @@ func (vr *verifierRunTime) registerAIROpens(finalCommitmentIndex int) error {
 				evalPoint.Mul(&evalPoint, &omegaPow)
 			}
 			key := evalKey{leaf.Name, evalPoint}
-			if seen[key] {
-				continue
+			y, hit := seen[key]
+			if !hit {
+				var err error
+				y, err = vr.friVerifier.Open(leaf.Name, evalPoint)
+				if err != nil {
+					return err
+				}
+				seen[key] = y
 			}
-			seen[key] = true
-			if err := vr.friVerifier.RegisterOpenAt(leaf.Name, evalPoint); err != nil {
-				return err
-			}
+			vr.vars[leaf.String()] = y
 		}
 	}
 
@@ -274,75 +315,6 @@ func (vr *verifierRunTime) checkLogupBus() error {
 	return nil
 }
 
-// populateAIREvaluations reads the FRI-verified claimed values for all
-// AIR-relevant polynomials (quotient chunks and committed/rotated leaves) from
-// the opening proof into vr.vars. Must be called after VerifyOpening succeeds.
-func (vr *verifierRunTime) populateAIREvaluations() error {
-	finalCommitmentIndex := vr.finalCommitmentIndex()
-	finalPolyNames := make(map[string]bool)
-	for _, name := range vr.proof.CommitmentOpenings.Commitments[finalCommitmentIndex].PolynomialNames {
-		finalPolyNames[name] = true
-	}
-
-	sortedModuleNames := make([]string, 0, len(vr.program.Modules))
-	for name := range vr.program.Modules {
-		sortedModuleNames = append(sortedModuleNames, name)
-	}
-	slices.Sort(sortedModuleNames)
-
-	// Populate AIR quotient chunk values.
-	for _, moduleName := range sortedModuleNames {
-		for i := 0; ; i++ {
-			chunkName := constants.QuotientChunkName(moduleName, i)
-			if !finalPolyNames[chunkName] {
-				break
-			}
-			val, err := vr.friVerifier.ClaimedValueAt(vr.proof.CommitmentOpenings, chunkName, vr.zeta)
-			if err != nil {
-				return err
-			}
-			vr.vars[chunkName] = val
-		}
-	}
-
-	// Populate committed and rotated column values.
-	leafConfig := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutPublicColumns())
-	type evalKey struct {
-		name  string
-		point koalabear.Element
-	}
-	seen := make(map[evalKey]bool)
-
-	for _, moduleName := range sortedModuleNames {
-		module := vr.program.Modules[moduleName]
-		leaves := module.VanishingRelation.LeavesFull(leafConfig)
-		for _, leaf := range leaves {
-			evalPoint := vr.zeta
-			if leaf.Type == expr.RotatedColumn {
-				shift := ((leaf.Shift % module.N) + module.N) % module.N
-				var omegaPow koalabear.Element
-				omegaPow.SetOne()
-				for range shift {
-					omegaPow.Mul(&omegaPow, &module.D.Generator)
-				}
-				evalPoint.Mul(&evalPoint, &omegaPow)
-			}
-			key := evalKey{leaf.Name, evalPoint}
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			val, err := vr.friVerifier.ClaimedValueAt(vr.proof.CommitmentOpenings, leaf.Name, evalPoint)
-			if err != nil {
-				return err
-			}
-			vr.vars[leaf.String()] = val
-		}
-	}
-
-	return nil
-}
-
 // checkAIRRelations checks the AIR relations per module using values from vr.vars.
 func (vr *verifierRunTime) checkAIRRelations() error {
 
@@ -395,7 +367,8 @@ func Verify(publicInputs map[string]proof.PublicInput, setup *PublicKey, program
 
 	vr := newVerifierRuntime(program, setup, publicInputs, proof, config)
 
-	// 1 - Re-derive FS challenges; register AIR FRI opens in deterministic order.
+	// 1 - Re-derive FS challenges; Open every AIR-relevant claim, transcript-
+	// binding it and reading its (still-unverified) value into vr.vars.
 	if err := vr.deriveChallenges(); err != nil {
 		return err
 	}
@@ -408,23 +381,18 @@ func Verify(publicInputs map[string]proof.PublicInput, setup *PublicKey, program
 		return err
 	}
 
-	// 3 - Check bus values.
+	// 3 - Check bus values (uses public columns only — no opened values).
 	if err := vr.checkLogupBus(); err != nil {
 		return err
 	}
 
-	// 4 - Verify FRI opening proofs. This must succeed before we trust any
-	// claimed values for the AIR check.
-	if err := vr.friVerifier.VerifyOpening(vr.proof.CommitmentOpenings, commitment.LeafHash, commitment.NodeHash); err != nil {
+	// 4 - Cryptographically verify the FRI commitment. Any opened value
+	// inconsistent with the committed codeword causes rejection here.
+	if err := vr.friVerifier.Verify(commitment.LeafHash, commitment.NodeHash); err != nil {
 		return err
 	}
 
-	// 5 - Read FRI-verified claimed values into vr.vars for AIR checking.
-	if err := vr.populateAIREvaluations(); err != nil {
-		return err
-	}
-
-	// 6 - Check AIR algebraic relations using the now-populated vr.vars.
+	// 5 - Check AIR algebraic relations using vr.vars (now FRI-certified).
 	if err := vr.checkAIRRelations(); err != nil {
 		return err
 	}

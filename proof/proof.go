@@ -22,7 +22,7 @@ type Commitment struct {
 
 type Proof struct {
 	PublicColumns      map[string]PublicInput // extracted values from columns of the trace, those values are passed as public inputs
-	CommitmentOpenings fri.OpeningProof
+	CommitmentOpenings fri.Proof
 }
 
 func NewProof() Proof {

@@ -169,6 +169,18 @@ func accumulateProducts(P Polynomial, N int) (Polynomial, error) {
 	return result, nil
 }
 
+// EvaluateCanonical evaluates a polynomial given by its canonical-form
+// coefficients (p[i] is the coefficient of X^i) at the point x via Horner's
+// rule. O(len(p)) field operations.
+func EvaluateCanonical(p Polynomial, x koalabear.Element) koalabear.Element {
+	var res koalabear.Element
+	for i := len(p) - 1; i >= 0; i-- {
+		res.Mul(&res, &x)
+		res.Add(&res, &p[i])
+	}
+	return res
+}
+
 // Evaluate evaluates a polynomial p in Lagrange form at zeta
 // the domain d is assumed to be correctly formed
 func Evaluate(p Polynomial, d *fft.Domain, zeta koalabear.Element) koalabear.Element {

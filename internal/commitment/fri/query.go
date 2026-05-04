@@ -73,7 +73,7 @@ func buildQueryProofs(
 			oracleOpenings[qi][oi] = pf
 
 			// Coset data: K·k elements, poly_polyIdx at coset offset t.
-			K := oracle.NumPolynomials
+			K := len(oracle.PolynomialNames)
 			data := make([]koalabear.Element, K*k)
 			for polyIdx, name := range oracle.PolynomialNames {
 				codeword := oracle.Codewords[name]

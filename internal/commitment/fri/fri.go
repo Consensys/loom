@@ -22,6 +22,7 @@ import (
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
+	"github.com/consensys/gnark-crypto/utils"
 	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/internal/reedsolomon"
@@ -42,6 +43,7 @@ const (
 	friQueryChallengeFmt     = "fri@query_%d"
 	friGrindingSeedChallenge = "fri@grinding_seed"
 	friGrindingNonceName     = "fri@grinding_nonce"
+	friOpenChallengeFmt      = "fri@open_%d"
 )
 
 // Config collects parameters governing the FRI protocol.
@@ -99,10 +101,9 @@ type Commitment struct {
 	BaseDomainSize uint64
 	// CodewordDomainSize is N = blowup · n, the size of the evaluation domain.
 	CodewordDomainSize uint64
-	// NumPolynomials is the number of polynomials batched into this oracle.
-	NumPolynomials int
 	// PolynomialNames records the committed polynomials in the deterministic
-	// order used to build the batched codeword Merkle tree.
+	// order used to build the batched codeword Merkle tree. The number of
+	// polynomials is len(PolynomialNames).
 	PolynomialNames []string
 	// PolynomialSizes records each batched polynomial's base-domain size before
 	// Reed-Solomon extension.
@@ -113,35 +114,62 @@ type committedOracle struct {
 	Commitment
 	// Codewords holds the RS codewords (Lagrange on codeword domain) for each poly.
 	Codewords map[string]poly.Polynomial
-	Tree      *merkle.Tree
+	// Coefficients holds the canonical-form coefficient vector (length n_i) for
+	// each polynomial, retained from RS encoding so that Open can evaluate at
+	// arbitrary points via Horner in O(n) instead of O(N) barycentric on the
+	// codeword.
+	Coefficients map[string]poly.Polynomial
+	Tree         *merkle.Tree
 }
 
-// openRequest records a request to open a named polynomial at a point.
+// openRequest records an opening claim. The y value is computed eagerly
+// at Open time (Horner on the canonical coefficients) so that the claim
+// can be transcript-bound immediately and returned to the caller.
 type openRequest struct {
 	oracleI int
+	polyI   int // index into committedOracle.PolynomialNames
 	name    string
 	point   koalabear.Element
+	y       koalabear.Element
 }
 
-// deepPoint is collected by Verifier.Bind so VerifyOpening can reconstruct
-// the same DEEP-quotient structure the prover used.
+// deepPoint is collected by Verifier.BindCommitment (auto-DEEP) and
+// Verifier.Open (user opens) so Verify can reconstruct the same
+// per-polynomial DEEP-quotient structure the prover built.
 type deepPoint struct {
 	oracleI int
 	name    string
 	point   koalabear.Element
 }
 
-// Verifier mirrors the prover's Fiat-Shamir transcript replaying and can
-// subsequently verify an OpeningProof.
+// Verifier mirrors the prover's Fiat-Shamir transcript replaying and acts
+// as a cursored reader over the proof's opened values. The caller drives it
+// with BindCommitment + Open (in lockstep with the prover's Commit + Open
+// calls); each Open binds the claim to the transcript and returns the
+// (still-unverified) value the prover supplied. The final cryptographic
+// check happens in Verify.
 type Verifier struct {
 	Transcript *fiatshamir.Transcript
-	// GrindingBits, if non-zero, requires that the proof's GrindingNonce
-	// produces at least this many leading zero bits when hashed against the
-	// grinding seed derived from the transcript. Must be set to the same
-	// value used by the prover-side Config.
-	GrindingBits int
-	deepPoints   []deepPoint
-	oracleCount  int
+	// Config holds the verifier's expected protocol parameters. Verify rejects
+	// any proof whose self-described parameters fall below this floor.
+	Config Config
+
+	proof Proof
+
+	// deepPoints accumulates BindCommitment-derived auto-DEEP claims and
+	// user Open claims in registration order — exactly mirroring the
+	// prover-side openRequests sequence.
+	deepPoints []deepPoint
+	// cursor is the next OpenedValues index a BindCommitment auto-DEEP
+	// entry (during transcript replay) or a user Open call will consume.
+	// It also doubles as the index used to derive the transcript challenge
+	// name "fri@open_<cursor>" inside bindOpenClaim.
+	cursor int
+	// oracleByPoly maps a polynomial name to its oracle index, used by Open
+	// to look up (oracleI, polyI) for index-form transcript binding.
+	oracleByPoly map[string]int
+
+	oracleCount int
 }
 
 // Committer is a FRI-backed commitment scheme.
@@ -168,8 +196,23 @@ func NewCommitter(transcript *fiatshamir.Transcript, config Config, leafHasher m
 	}
 }
 
-func NewVerifier(transcript *fiatshamir.Transcript) Verifier {
-	return Verifier{Transcript: transcript}
+// NewVerifier constructs a fresh verifier bound to a transcript, the proof
+// to be checked, and the verifier's expected Config. Open and BindCommitment
+// read claimed values from the embedded proof; Verify cross-checks each
+// against the FRI proximity argument.
+//
+// Each non-zero field of config acts as a floor: Verify rejects proofs whose
+// self-described parameters fall below the configured value. A zero field
+// means "no floor for this parameter". The verifier infers all protocol
+// parameters (folding factor, final polynomial length, etc.) from the proof
+// data itself and does not need config defaults for operational correctness.
+func NewVerifier(transcript *fiatshamir.Transcript, config Config, proof Proof) Verifier {
+	return Verifier{
+		Transcript:   transcript,
+		Config:       config,
+		proof:        proof,
+		oracleByPoly: make(map[string]int),
+	}
 }
 
 // Commit encodes the named polynomials via Reed-Solomon and builds one Merkle
@@ -229,7 +272,7 @@ func (c *Committer) Commit(challengeName string, polys map[string]poly.Polynomia
 	}
 	encoder := reedsolomon.Encoder{Domain: fft.NewDomain(codewordDomainSize)}
 
-	codewords := c.encode(orderedPolys, &encoder)
+	codewords, canonicals := c.encode(orderedPolys, &encoder)
 	k := c.config.FoldingFactor
 	tree, err := buildCosetMerkleTree(codewords, k, c.leafHasher, c.nodeHasher)
 	if err != nil {
@@ -239,7 +282,6 @@ func (c *Committer) Commit(challengeName string, polys map[string]poly.Polynomia
 	meta := Commitment{
 		Root:               tree.Root(),
 		CodewordDomainSize: codewordDomainSize,
-		NumPolynomials:     len(orderedPolys),
 		PolynomialNames:    append([]string(nil), names...),
 		PolynomialSizes:    make([]uint64, len(orderedPolys)),
 		BaseDomainSize:     maxBaseDomain,
@@ -250,33 +292,35 @@ func (c *Committer) Commit(challengeName string, polys map[string]poly.Polynomia
 
 	oracleI := len(c.committedOracles)
 	codewordsByName := make(map[string]poly.Polynomial, len(names))
+	coeffsByName := make(map[string]poly.Polynomial, len(names))
 	for i, name := range names {
 		codewordsByName[name] = codewords[i]
+		coeffsByName[name] = canonicals[i]
 	}
 	c.committedOracles = append(c.committedOracles, committedOracle{
-		Commitment: meta,
-		Codewords:  codewordsByName,
-		Tree:       tree,
+		Commitment:   meta,
+		Codewords:    codewordsByName,
+		Coefficients: coeffsByName,
+		Tree:         tree,
 	})
 	for _, name := range names {
 		c.polynomials[name] = oracleI
 	}
-	if c.transcript == nil {
-		return nil
-	}
-	for _, name := range names {
-		if err := c.transcript.NewChallenge(deepChallengeName(challengeName, name)); err != nil {
-			return err
-		}
-	}
-	if err := c.transcript.NewChallenge(challengeName); err != nil {
-		return err
-	}
-	if err := c.transcript.Bind(challengeName, meta.Root); err != nil {
-		return err
-	}
+	// Transcript registration order is strict (each ComputeChallenge requires
+	// the immediately-preceding registered challenge to have been computed
+	// first), so we register and compute every challenge in lockstep — no
+	// upfront batch declaration. Order:
+	//   for each polynomial p:
+	//     NewChallenge(deepName(p))
+	//     Bind(deepName(p), root); ComputeChallenge(deepName(p))
+	//     Open(p, deepPt) registers + binds + computes fri@open_<i>
+	//   NewChallenge(challengeName)
+	//   Bind(challengeName, root); ComputeChallenge(challengeName)
 	for _, name := range names {
 		dcn := deepChallengeName(challengeName, name)
+		if err := c.transcript.NewChallenge(dcn); err != nil {
+			return err
+		}
 		if err := c.transcript.Bind(dcn, meta.Root); err != nil {
 			return err
 		}
@@ -286,9 +330,15 @@ func (c *Committer) Commit(challengeName string, polys map[string]poly.Polynomia
 		}
 		var deepPt koalabear.Element
 		deepPt.SetBytes(deepBytes)
-		if err := c.Open(name, deepPt); err != nil {
+		if _, err := c.Open(name, deepPt); err != nil {
 			return err
 		}
+	}
+	if err := c.transcript.NewChallenge(challengeName); err != nil {
+		return err
+	}
+	if err := c.transcript.Bind(challengeName, meta.Root); err != nil {
+		return err
 	}
 	if _, err := c.transcript.ComputeChallenge(challengeName); err != nil {
 		return err
@@ -296,87 +346,154 @@ func (c *Committer) Commit(challengeName string, polys map[string]poly.Polynomia
 	return nil
 }
 
-// Commitment returns the commitment metadata for the oracle containing name.
-func (c *Committer) Commitment(name string) Commitment {
-	oracleI := c.polynomials[name]
-	return c.committedOracles[oracleI].Commitment
-}
-
-// Open registers a request to open the named polynomial at point.
-// The actual opening proof is produced by Prove.
-func (c *Committer) Open(name string, point koalabear.Element) error {
+// Open evaluates the named polynomial at point, binds the claim
+// (oracleI, polyI, point, y) to the transcript under a sequential
+// challenge name, registers the claim for the eventual FRI proximity
+// proof, and returns y. The point must lie outside the codeword domain L
+// (the rejection check is point^N == 1).
+//
+// Unlike Commit, Open is transcript-noisy: every open immediately enters
+// the Fiat-Shamir state, so outer protocols may safely use the returned
+// value to derive subsequent challenges. The final FRI proximity check
+// in Prove cross-validates that y is consistent with the committed
+// codeword.
+func (c *Committer) Open(name string, point koalabear.Element) (koalabear.Element, error) {
 	oracleI, ok := c.polynomials[name]
 	if !ok {
-		return errors.New("fri: invalid polynomial reference")
+		return koalabear.Element{}, errors.New("fri: invalid polynomial reference")
 	}
-	c.openRequests = append(c.openRequests, openRequest{oracleI: oracleI, name: name, point: point})
+	oracle := &c.committedOracles[oracleI]
+	if isInDomain(point, oracle.CodewordDomainSize) {
+		return koalabear.Element{}, fmt.Errorf("fri: Open: point lies in the codeword domain L")
+	}
+	polyI := -1
+	for i, n := range oracle.PolynomialNames {
+		if n == name {
+			polyI = i
+			break
+		}
+	}
+	if polyI < 0 {
+		// Unreachable: c.polynomials[name] === oracleI implies the name
+		// is in oracle.PolynomialNames.
+		return koalabear.Element{}, fmt.Errorf("fri: Open: %q not in oracle %d", name, oracleI)
+	}
+
+	// Eager Horner evaluation on the cached canonical coefficients.
+	y := poly.EvaluateCanonical(oracle.Coefficients[name], point)
+
+	// Bind the claim to the transcript: index-form (oracleI, polyI, point, y).
+	if err := bindOpenClaim(c.transcript, len(c.openRequests), oracleI, polyI, point, y); err != nil {
+		return koalabear.Element{}, err
+	}
+
+	c.openRequests = append(c.openRequests, openRequest{
+		oracleI: oracleI,
+		polyI:   polyI,
+		name:    name,
+		point:   point,
+		y:       y,
+	})
+	return y, nil
+}
+
+// isInDomain reports whether x is a power of the primitive N-th root of
+// unity that generates the codeword domain L (i.e., x^N == 1).
+func isInDomain(x koalabear.Element, N uint64) bool {
+	if N == 0 {
+		return false
+	}
+	xN := elementPow(x, int(N))
+	return xN.IsOne()
+}
+
+// bindOpenClaim is shared between prover-side Open and verifier-side Open
+// to keep the transcript binding format identical. The challenge name is
+// fri@open_<callIdx>; the bound bytes are
+// [oracleI uint64 LE][polyI uint64 LE][point.Marshal()][y.Marshal()].
+func bindOpenClaim(transcript *fiatshamir.Transcript, callIdx, oracleI, polyI int, point, y koalabear.Element) error {
+	name := fmt.Sprintf(friOpenChallengeFmt, callIdx)
+	if err := transcript.NewChallenge(name); err != nil {
+		return err
+	}
+	buf := make([]byte, 16+2*koalabear.Bytes)
+	binary.LittleEndian.PutUint64(buf[0:8], uint64(oracleI))
+	binary.LittleEndian.PutUint64(buf[8:16], uint64(polyI))
+	copy(buf[16:16+koalabear.Bytes], point.Marshal())
+	copy(buf[16+koalabear.Bytes:], y.Marshal())
+	if err := transcript.Bind(name, buf); err != nil {
+		return err
+	}
+	if _, err := transcript.ComputeChallenge(name); err != nil {
+		return err
+	}
 	return nil
 }
 
-// Prove produces a full OpeningProof covering all registered Open requests.
+// Prove produces a full Proof covering all registered Open requests.
 // All committed oracles must have the same CodewordDomainSize.
-func (c *Committer) Prove() (OpeningProof, error) {
+func (c *Committer) Prove() (Proof, error) {
 	commitments := make([]Commitment, len(c.committedOracles))
 	for i, oracle := range c.committedOracles {
 		commitments[i] = oracle.Commitment
 	}
 
-	if len(c.openRequests) == 0 || c.transcript == nil {
-		return OpeningProof{Commitments: commitments}, nil
+	if len(c.openRequests) == 0 {
+		return Proof{Commitments: commitments}, nil
 	}
 
 	// All oracles must share the same codeword domain.
 	N := int(c.committedOracles[0].CodewordDomainSize)
 	for i, oracle := range c.committedOracles {
 		if int(oracle.CodewordDomainSize) != N {
-			return OpeningProof{}, fmt.Errorf("fri: oracle %d has codeword domain %d, want %d",
+			return Proof{}, fmt.Errorf("fri: oracle %d has codeword domain %d, want %d",
 				i, oracle.CodewordDomainSize, N)
 		}
 	}
 
 	k := c.config.FoldingFactor
 
-	// 1. Compute claimed values: y_r = f_r(z_r) for each open request.
+	// 1. Read claimed values directly from openRequests — they were computed
+	// (and transcript-bound) at Open time.
 	bigDomain := fft.NewDomain(uint64(N))
-	claimedValues := make([]koalabear.Element, len(c.openRequests))
+	openedValues := make([]koalabear.Element, len(c.openRequests))
 	for r, req := range c.openRequests {
-		codeword := c.committedOracles[req.oracleI].Codewords[req.name]
-		claimedValues[r] = computeClaimedValue(codeword, bigDomain, req.point)
+		openedValues[r] = req.y
 	}
 
 	// 2. Derive combiner challenge β from the transcript.
 	if err := c.transcript.NewChallenge(friCombineChallenge); err != nil {
-		return OpeningProof{}, err
+		return Proof{}, err
 	}
 	betaBytes, err := c.transcript.ComputeChallenge(friCombineChallenge)
 	if err != nil {
-		return OpeningProof{}, err
+		return Proof{}, err
 	}
 	var beta koalabear.Element
 	beta.SetBytes(betaBytes)
 
 	// 3. Build DEEP-combined codeword q.
-	q, err := buildDEEPCombiner(c.openRequests, claimedValues, c.committedOracles, beta, N)
+	q, err := buildDEEPCombiner(c.openRequests, openedValues, c.committedOracles, beta, N)
 	if err != nil {
-		return OpeningProof{}, err
+		return Proof{}, err
 	}
 
 	// 4. FRI commit phase: fold q repeatedly, committing each layer.
 	layerTrees, layerCodewords, layerRoots, finalCodeword, err :=
 		runFRICommitPhase(q, c.transcript, c.config, bigDomain.Generator, c.leafHasher, c.nodeHasher)
 	if err != nil {
-		return OpeningProof{}, err
+		return Proof{}, err
 	}
 
 	// 5. Bind final polynomial to the transcript so query indices depend on it.
 	if err := c.transcript.NewChallenge(friFinalChallenge); err != nil {
-		return OpeningProof{}, err
+		return Proof{}, err
 	}
 	if err := c.transcript.Bind(friFinalChallenge, marshalElements(finalCodeword)); err != nil {
-		return OpeningProof{}, err
+		return Proof{}, err
 	}
 	if _, err := c.transcript.ComputeChallenge(friFinalChallenge); err != nil {
-		return OpeningProof{}, err
+		return Proof{}, err
 	}
 
 	// 6. Optional proof-of-work grinding. Find a nonce so SHA256(seed ‖ nonce)
@@ -385,7 +502,7 @@ func (c *Committer) Prove() (OpeningProof, error) {
 	if c.config.GrindingBits > 0 {
 		grindingNonce, err = grindAndBind(c.transcript, c.config.GrindingBits)
 		if err != nil {
-			return OpeningProof{}, err
+			return Proof{}, err
 		}
 	}
 
@@ -393,27 +510,40 @@ func (c *Committer) Prove() (OpeningProof, error) {
 	nLeaves := N / k
 	queryIndices, err := deriveQueryIndices(c.transcript, c.config.NumQueries, nLeaves)
 	if err != nil {
-		return OpeningProof{}, err
+		return Proof{}, err
 	}
 
 	// 7. Build query proofs (Merkle paths + coset data).
 	oracleOpenings, oracleCosetData, layerOpenings, layerCosetData, err :=
 		buildQueryProofs(queryIndices, c.committedOracles, layerTrees, layerCodewords, k)
 	if err != nil {
-		return OpeningProof{}, err
+		return Proof{}, err
 	}
 
-	return OpeningProof{
-		Commitments:      commitments,
-		LayerCommitments: layerRoots,
-		FinalPolynomial:  finalCodeword,
-		ClaimedValues:    claimedValues,
-		QueryIndices:     queryIndices,
-		OracleOpenings:   oracleOpenings,
-		OracleCosetData:  oracleCosetData,
-		LayerOpenings:    layerOpenings,
-		LayerCosetData:   layerCosetData,
-		GrindingNonce:    grindingNonce,
+	// BlowupFactor is computed from the actual ratio of codeword to base
+	// domain. This may exceed Config.MinBlowupFactor when small polynomials
+	// were lifted to the FoldingFactor floor.
+	var blowup int
+	if base := c.committedOracles[0].BaseDomainSize; base > 0 {
+		blowup = int(c.committedOracles[0].CodewordDomainSize / base)
+	}
+
+	return Proof{
+		Commitments:           commitments,
+		LayerCommitments:      layerRoots,
+		FinalPolynomial:       finalCodeword,
+		OpenedValues:          openedValues,
+		QueryIndices:          queryIndices,
+		OracleOpenings:        oracleOpenings,
+		OracleCosetData:       oracleCosetData,
+		LayerOpenings:         layerOpenings,
+		LayerCosetData:        layerCosetData,
+		GrindingNonce:         grindingNonce,
+		NumQueries:            c.config.NumQueries,
+		FoldingFactor:         c.config.FoldingFactor,
+		FinalPolynomialMaxLen: c.config.FinalPolynomialMaxLen,
+		BlowupFactor:          blowup,
+		GrindingBits:          c.config.GrindingBits,
 	}, nil
 }
 
@@ -472,43 +602,39 @@ func runFRICommitPhase(
 	return
 }
 
-// Bind mirrors the prover's Commit transcript operations so the verifier's
-// Fiat-Shamir state stays in sync. It also collects the DEEP evaluation points
-// for use in VerifyOpening.
-func (v *Verifier) Bind(challengeName string, commitment Commitment) error {
-	if v.Transcript == nil {
-		return nil
+// BindCommitment mirrors a prover-side Committer.Commit call: it advances the
+// transcript past the next oracle's Merkle root and per-polynomial auto-DEEP
+// challenges, derives each auto-DEEP point, and binds the corresponding
+// claimed value (read from the embedded proof) to the transcript via the
+// same index-form scheme used by Open. The oracle index is the order of
+// BindCommitment calls (same as the order of prover-side Commit calls).
+func (v *Verifier) BindCommitment(oracleName string) error {
+	if v.oracleCount >= len(v.proof.Commitments) {
+		return fmt.Errorf("fri: BindCommitment(%q): no more commitments in proof (have %d)", oracleName, len(v.proof.Commitments))
 	}
-
-	// Mirror the prover-side check: polynomial names must be globally unique
-	// across all Bind calls. Otherwise RegisterOpenAt and ClaimedValueAt — which
-	// match by name — would silently target the wrong oracle.
-	seen := make(map[string]bool, len(v.deepPoints))
-	for _, dp := range v.deepPoints {
-		seen[dp.name] = true
-	}
-	for _, name := range commitment.PolynomialNames {
-		if seen[name] {
-			return fmt.Errorf("fri: Bind: polynomial name %q already bound in a prior commitment", name)
-		}
-	}
-
+	commitment := v.proof.Commitments[v.oracleCount]
 	oracleI := v.oracleCount
 	v.oracleCount++
 
+	// Mirror the prover-side check: polynomial names must be globally unique
+	// across all BindCommitment calls. Otherwise Open — which matches by
+	// name — could silently target the wrong oracle.
 	for _, name := range commitment.PolynomialNames {
-		if err := v.Transcript.NewChallenge(deepChallengeName(challengeName, name)); err != nil {
-			return err
+		if _, dup := v.oracleByPoly[name]; dup {
+			return fmt.Errorf("fri: BindCommitment: polynomial name %q already bound in a prior commitment", name)
 		}
 	}
-	if err := v.Transcript.NewChallenge(challengeName); err != nil {
-		return err
-	}
-	if err := v.Transcript.Bind(challengeName, commitment.Root); err != nil {
-		return err
-	}
 	for _, name := range commitment.PolynomialNames {
-		dcn := deepChallengeName(challengeName, name)
+		v.oracleByPoly[name] = oracleI
+	}
+
+	// Strict positional Fiat-Shamir order — see the matching comment in
+	// Committer.Commit for the required registration sequence.
+	for polyI, name := range commitment.PolynomialNames {
+		dcn := deepChallengeName(oracleName, name)
+		if err := v.Transcript.NewChallenge(dcn); err != nil {
+			return err
+		}
 		if err := v.Transcript.Bind(dcn, commitment.Root); err != nil {
 			return err
 		}
@@ -518,53 +644,88 @@ func (v *Verifier) Bind(challengeName string, commitment Commitment) error {
 		}
 		var pt koalabear.Element
 		pt.SetBytes(deepBytes)
+
+		if v.cursor >= len(v.proof.OpenedValues) {
+			return fmt.Errorf("fri: BindCommitment: proof.OpenedValues exhausted (cursor=%d, len=%d)",
+				v.cursor, len(v.proof.OpenedValues))
+		}
+		y := v.proof.OpenedValues[v.cursor]
+		if err := bindOpenClaim(v.Transcript, v.cursor, oracleI, polyI, pt, y); err != nil {
+			return err
+		}
 		v.deepPoints = append(v.deepPoints, deepPoint{oracleI: oracleI, name: name, point: pt})
+		v.cursor++
 	}
-	if _, err := v.Transcript.ComputeChallenge(challengeName); err != nil {
+	if err := v.Transcript.NewChallenge(oracleName); err != nil {
+		return err
+	}
+	if err := v.Transcript.Bind(oracleName, commitment.Root); err != nil {
+		return err
+	}
+	if _, err := v.Transcript.ComputeChallenge(oracleName); err != nil {
 		return err
 	}
 	return nil
 }
 
-// RegisterOpenAt records an additional open request (prover-side
-// Committer.Open call) so that VerifyOpening reconstructs the same
-// DEEP-quotient structure. The name must have been committed in a prior
-// Bind call. Does NOT touch the transcript.
-func (v *Verifier) RegisterOpenAt(name string, point koalabear.Element) error {
-	// Find which oracle holds this polynomial by scanning deepPoints that
-	// were populated by Bind (auto-DEEP opens).
-	for _, dp := range v.deepPoints {
-		if dp.name == name {
-			v.deepPoints = append(v.deepPoints, deepPoint{oracleI: dp.oracleI, name: name, point: point})
-			return nil
+// Open consumes the next opened value from the proof's OpenedValues queue,
+// binds the claim (oracleI, polyI, point, value) to the transcript, and
+// returns the (still-unverified) value. Callers may safely use the returned
+// value to derive subsequent Fiat-Shamir challenges in an outer protocol;
+// the transcript binding ensures the prover cannot change a value after the
+// fact, and the final Verify call rejects the proof if any opened value is
+// inconsistent with the FRI commitment.
+//
+// Open calls must occur in the same (name, point) sequence as the prover's
+// Committer.Open calls. Divergence is detected at the next ComputeChallenge
+// boundary as a transcript mismatch.
+func (v *Verifier) Open(name string, point koalabear.Element) (koalabear.Element, error) {
+	oracleI, ok := v.oracleByPoly[name]
+	if !ok {
+		return koalabear.Element{}, fmt.Errorf("fri: Open: polynomial %q not bound to any oracle", name)
+	}
+	commitment := v.proof.Commitments[oracleI]
+	if isInDomain(point, commitment.CodewordDomainSize) {
+		return koalabear.Element{}, fmt.Errorf("fri: Open: point lies in the codeword domain L")
+	}
+	polyI := -1
+	for i, n := range commitment.PolynomialNames {
+		if n == name {
+			polyI = i
+			break
 		}
 	}
-	return fmt.Errorf("fri: RegisterOpenAt: polynomial %q not found in any committed oracle", name)
-}
-
-// ClaimedValueAt returns the prover's claimed evaluation of the polynomial
-// named name at point from a verified OpeningProof. The (name, point) pair
-// must have been registered via Bind (auto-DEEP) or RegisterOpenAt before
-// VerifyOpening was called. Registration order matches ClaimedValues indexing.
-func (v *Verifier) ClaimedValueAt(proof OpeningProof, name string, point koalabear.Element) (koalabear.Element, error) {
-	for r, dp := range v.deepPoints {
-		if dp.name == name && dp.point.Equal(&point) {
-			if r >= len(proof.ClaimedValues) {
-				return koalabear.Element{}, fmt.Errorf("fri: ClaimedValueAt: index %d out of range", r)
-			}
-			return proof.ClaimedValues[r], nil
-		}
+	if polyI < 0 {
+		return koalabear.Element{}, fmt.Errorf("fri: Open: %q not in oracle %d", name, oracleI)
 	}
-	return koalabear.Element{}, fmt.Errorf("fri: ClaimedValueAt: polynomial %q at requested point not found", name)
+	if v.cursor >= len(v.proof.OpenedValues) {
+		return koalabear.Element{}, fmt.Errorf("fri: Open: proof.OpenedValues exhausted (cursor=%d, len=%d)",
+			v.cursor, len(v.proof.OpenedValues))
+	}
+	y := v.proof.OpenedValues[v.cursor]
+	if err := bindOpenClaim(v.Transcript, v.cursor, oracleI, polyI, point, y); err != nil {
+		return koalabear.Element{}, err
+	}
+	v.deepPoints = append(v.deepPoints, deepPoint{oracleI: oracleI, name: name, point: point})
+	v.cursor++
+	return y, nil
 }
 
 func deepChallengeName(commitmentChallengeName, polynomialName string) string {
 	return fmt.Sprintf("%s@deep_%s", commitmentChallengeName, polynomialName)
 }
 
-func (c *Committer) encode(polys []poly.Polynomial, encoder *reedsolomon.Encoder) []poly.Polynomial {
+// encode RS-encodes each input polynomial and returns the codewords alongside
+// their canonical-form coefficient vectors (length n_i, kept for fast Horner
+// evaluation in Open). The Lagrange-form input → canonical[n] → zero-pad →
+// Lagrange-form codeword pipeline already computes the canonical form
+// transiently inside reedsolomon.Encoder.Encode; this version inlines the
+// pipeline so we can capture the canonical step.
+func (c *Committer) encode(polys []poly.Polynomial, encoder *reedsolomon.Encoder) (codewords, canonicals []poly.Polynomial) {
 	domainsPool := map[int]*fft.Domain{}
-	encoded := make([]poly.Polynomial, len(polys))
+	N := encoder.Domain.Cardinality
+	codewords = make([]poly.Polynomial, len(polys))
+	canonicals = make([]poly.Polynomial, len(polys))
 	for i, pol := range polys {
 		n := len(pol)
 		d, ok := domainsPool[n]
@@ -572,9 +733,24 @@ func (c *Committer) encode(polys []poly.Polynomial, encoder *reedsolomon.Encoder
 			d = fft.NewDomain(uint64(n))
 			domainsPool[n] = d
 		}
-		encoded[i] = encoder.Encode(pol, d)
+		// Lagrange[n] → canonical[n] (bit-reversed) → un-reverse → canonical normal.
+		buf := make(poly.Polynomial, N)
+		copy(buf, pol)
+		d.FFTInverse(buf[:n], fft.DIF)
+		utils.BitReverse(buf[:n])
+
+		// Snapshot the canonical-form coefficients before the FFT step
+		// destroys them by overwriting the buffer with codeword values.
+		canon := make(poly.Polynomial, n)
+		copy(canon, buf[:n])
+		canonicals[i] = canon
+
+		// canonical[n] (zero-padded to N) → Lagrange[N] (bit-reversed) → normal.
+		encoder.Domain.FFT(buf, fft.DIF)
+		utils.BitReverse(buf)
+		codewords[i] = buf
 	}
-	return encoded
+	return
 }
 
 // buildCosetMerkleTree builds a Merkle tree with N/k leaves over the batched
@@ -661,8 +837,11 @@ func deriveQueryIndices(transcript *fiatshamir.Transcript, m, nLeaves int) ([]ui
 	return indices, nil
 }
 
-// OpeningProof is the full FRI proximity proof covering all registered openings.
-type OpeningProof struct {
+// Proof is the full FRI proximity proof covering all registered openings.
+// It is self-describing: the verifier extracts every protocol parameter from
+// the proof and checks each against its own configured floor (see
+// Verifier.Verify) before performing the cryptographic checks.
+type Proof struct {
 	// Commitments are the oracle commitments sent by the prover before the FRI
 	// query phase.
 	Commitments []Commitment
@@ -676,10 +855,16 @@ type OpeningProof struct {
 	// foldings. Its length is ≤ Config.FinalPolynomialMaxLen.
 	FinalPolynomial []koalabear.Element
 
-	// ClaimedValues[r] is the claimed evaluation f_r(z_r) for the r-th open
-	// request, in the same registration order as the deepPoints collected by
-	// Verifier.Bind.
-	ClaimedValues []koalabear.Element
+	// OpenedValues[r] is the claimed evaluation f_r(z_r) for the r-th open
+	// request, in registration order.
+	//
+	// The first `Σᵢ |PolynomialNames(Commitments[i])|` entries are the
+	// auto-DEEP values bound by Verifier.BindCommitment; the remaining entries
+	// are user Open calls in their registration order. Any divergence between
+	// prover and verifier Open order causes the transcript to diverge at the
+	// next ComputeChallenge call, so failures surface as a transcript mismatch
+	// rather than as a downstream FRI rejection.
+	OpenedValues []koalabear.Element
 
 	// QueryIndices are the leaf indices used for spot checks, each in [0, N/k).
 	// The verifier re-derives these from the transcript and checks they match.
@@ -689,9 +874,9 @@ type OpeningProof struct {
 	// the leaf corresponding to query q.
 	OracleOpenings [][]merkle.Proof
 
-	// OracleCosetData[q][i] has NumPolynomials_i · k elements: for polynomial
-	// polyIdx (in PolynomialNames order) and coset offset t ∈ [0,k),
-	// data[polyIdx·k + t] = f_{polyIdx}(ω^{j + t·(N/k)}).
+	// OracleCosetData[q][i] has len(PolynomialNames_i) · k elements: for
+	// polynomial polyIdx (in PolynomialNames order) and coset offset
+	// t ∈ [0,k), data[polyIdx·k + t] = f_{polyIdx}(ω^{j + t·(N/k)}).
 	OracleCosetData [][][]koalabear.Element
 
 	// LayerOpenings[q][l] is the Merkle opening proof from FRI layer l's tree.
@@ -704,4 +889,26 @@ type OpeningProof struct {
 	// prover's Config.GrindingBits > 0; otherwise it is left at zero and the
 	// verifier ignores it.
 	GrindingNonce uint64
+
+	// NumQueries records the number of spot checks the prover ran.
+	// The verifier rejects the proof if NumQueries < its configured floor.
+	NumQueries int
+
+	// FoldingFactor records the k used during the FRI commit phase.
+	// The verifier requires an exact match against its configured FoldingFactor.
+	FoldingFactor int
+
+	// FinalPolynomialMaxLen records the prover's stop threshold for the fold
+	// loop. The verifier rejects if the prover's threshold exceeds the
+	// verifier's configured ceiling.
+	FinalPolynomialMaxLen int
+
+	// BlowupFactor records the Reed-Solomon rate inverse N/n used by the
+	// prover. The verifier rejects if it is below MinBlowupFactor.
+	BlowupFactor int
+
+	// GrindingBits records the proof-of-work bit count the prover used.
+	// The verifier rejects if the configured floor is non-zero and
+	// GrindingBits < that floor.
+	GrindingBits int
 }

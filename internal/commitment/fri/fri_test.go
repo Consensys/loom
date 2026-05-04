@@ -46,7 +46,7 @@ func randomPoly(n int) poly.Polynomial {
 	return p
 }
 
-// constantPoly returns a constant polynomial (all zeros except first coefficient).
+// zeroPoly returns a zero polynomial of length n.
 func zeroPoly(n int) poly.Polynomial {
 	return make(poly.Polynomial, n)
 }
@@ -56,7 +56,6 @@ func TestRoundTrip(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	p := randomPoly(16) // base domain 16, codeword 32, 2-way → 4 layers → stops at 2
 	polys := map[string]poly.Polynomial{"f": p}
@@ -70,11 +69,12 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatalf("Prove: %v", err)
 	}
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err != nil {
-		t.Fatalf("VerifyOpening: %v", err)
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }
 
@@ -83,7 +83,6 @@ func TestMultiOracle(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	batch1 := map[string]poly.Polynomial{
 		"a": randomPoly(16),
@@ -105,14 +104,15 @@ func TestMultiOracle(t *testing.T) {
 		t.Fatalf("Prove: %v", err)
 	}
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind round0: %v", err)
 	}
-	if err := verifier.Bind("round1", proof.Commitments[1]); err != nil {
+	if err := verifier.BindCommitment("round1"); err != nil {
 		t.Fatalf("Bind round1: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err != nil {
-		t.Fatalf("VerifyOpening: %v", err)
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }
 
@@ -121,7 +121,6 @@ func TestTamperedOracleData(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	p := randomPoly(16)
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": p}); err != nil {
@@ -140,12 +139,12 @@ func TestTamperedOracleData(t *testing.T) {
 		proof.OracleCosetData[0][0][0].Add(&proof.OracleCosetData[0][0][0], &one)
 	}
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	err = verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash)
-	if err == nil {
-		t.Fatal("VerifyOpening: expected rejection for tampered oracle data, got nil")
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
+		t.Fatal("Verify: expected rejection for tampered oracle data, got nil")
 	}
 }
 
@@ -154,7 +153,6 @@ func TestTamperedClaimedValue(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	p := randomPoly(16)
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": p}); err != nil {
@@ -167,18 +165,18 @@ func TestTamperedClaimedValue(t *testing.T) {
 	}
 
 	// Tamper with the first claimed value.
-	if len(proof.ClaimedValues) > 0 {
+	if len(proof.OpenedValues) > 0 {
 		var one koalabear.Element
 		one.SetOne()
-		proof.ClaimedValues[0].Add(&proof.ClaimedValues[0], &one)
+		proof.OpenedValues[0].Add(&proof.OpenedValues[0], &one)
 	}
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	err = verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash)
-	if err == nil {
-		t.Fatal("VerifyOpening: expected rejection for tampered claimed value, got nil")
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
+		t.Fatal("Verify: expected rejection for tampered claimed value, got nil")
 	}
 }
 
@@ -187,7 +185,6 @@ func TestTamperedFinalPolynomial(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	p := randomPoly(16)
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": p}); err != nil {
@@ -206,12 +203,12 @@ func TestTamperedFinalPolynomial(t *testing.T) {
 		proof.FinalPolynomial[0].Add(&proof.FinalPolynomial[0], &one)
 	}
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	err = verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash)
-	if err == nil {
-		t.Fatal("VerifyOpening: expected rejection for tampered final polynomial, got nil")
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
+		t.Fatal("Verify: expected rejection for tampered final polynomial, got nil")
 	}
 }
 
@@ -224,8 +221,6 @@ func TestGrindingRoundTrip(t *testing.T) {
 	cfg.GrindingBits = 8 // small enough to find quickly (~256 trials expected)
 
 	committer := fri.NewCommitter(proverFS, cfg, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
-	verifier.GrindingBits = cfg.GrindingBits
 
 	p := randomPoly(16)
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": p}); err != nil {
@@ -236,11 +231,12 @@ func TestGrindingRoundTrip(t *testing.T) {
 		t.Fatalf("Prove: %v", err)
 	}
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, cfg, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err != nil {
-		t.Fatalf("VerifyOpening: %v", err)
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }
 
@@ -254,8 +250,6 @@ func TestGrindingTamperedNonce(t *testing.T) {
 	cfg.GrindingBits = 8
 
 	committer := fri.NewCommitter(proverFS, cfg, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
-	verifier.GrindingBits = cfg.GrindingBits
 
 	p := randomPoly(16)
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": p}); err != nil {
@@ -271,11 +265,12 @@ func TestGrindingTamperedNonce(t *testing.T) {
 	// be the one that's GrindingNonce+1.
 	proof.GrindingNonce++
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, cfg, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err == nil {
-		t.Fatal("VerifyOpening: expected rejection for tampered grinding nonce, got nil")
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
+		t.Fatal("Verify: expected rejection for tampered grinding nonce, got nil")
 	}
 }
 
@@ -285,7 +280,6 @@ func TestGrindingDisabled(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	p := randomPoly(16)
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": p}); err != nil {
@@ -300,11 +294,12 @@ func TestGrindingDisabled(t *testing.T) {
 		t.Fatalf("GrindingNonce should be 0 when grinding is disabled, got %d", proof.GrindingNonce)
 	}
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err != nil {
-		t.Fatalf("VerifyOpening: %v", err)
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }
 
@@ -313,7 +308,6 @@ func TestZeroPolynomial(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	p := zeroPoly(16)
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"zero": p}); err != nil {
@@ -325,11 +319,12 @@ func TestZeroPolynomial(t *testing.T) {
 		t.Fatalf("Prove: %v", err)
 	}
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err != nil {
-		t.Fatalf("VerifyOpening: %v", err)
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }
 
@@ -346,7 +341,6 @@ func TestRoundTripNoLayers(t *testing.T) {
 		NumQueries:            2,
 	}
 	committer := fri.NewCommitter(proverFS, cfg, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	p := randomPoly(4)
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": p}); err != nil {
@@ -363,11 +357,12 @@ func TestRoundTripNoLayers(t *testing.T) {
 		t.Fatalf("FinalPolynomial size: want 8, got %d", len(proof.FinalPolynomial))
 	}
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, cfg, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err != nil {
-		t.Fatalf("VerifyOpening: %v", err)
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }
 
@@ -387,7 +382,6 @@ func TestNoLayersTamperedFinalPolynomial(t *testing.T) {
 		NumQueries:            2,
 	}
 	committer := fri.NewCommitter(proverFS, cfg, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": randomPoly(4)}); err != nil {
 		t.Fatalf("Commit: %v", err)
@@ -403,11 +397,12 @@ func TestNoLayersTamperedFinalPolynomial(t *testing.T) {
 		proof.FinalPolynomial[i].Add(&proof.FinalPolynomial[i], &one)
 	}
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, cfg, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err == nil {
-		t.Fatal("VerifyOpening: expected rejection for tampered final polynomial in 0-layer mode")
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
+		t.Fatal("Verify: expected rejection for tampered final polynomial in 0-layer mode")
 	}
 }
 
@@ -423,7 +418,6 @@ func TestFoldingFactor4(t *testing.T) {
 		NumQueries:            4,
 	}
 	committer := fri.NewCommitter(proverFS, cfg, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	p := randomPoly(16) // N=32 → fold to 8 → fold to 2 (stops, 2 < FinalMaxLen=4)
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": p}); err != nil {
@@ -437,11 +431,12 @@ func TestFoldingFactor4(t *testing.T) {
 		t.Fatalf("expected at least one FRI layer with k=4, got %d", len(proof.LayerCommitments))
 	}
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, cfg, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err != nil {
-		t.Fatalf("VerifyOpening: %v", err)
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }
 
@@ -452,7 +447,6 @@ func TestMixedPolySizes(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	polys := map[string]poly.Polynomial{
 		"small": randomPoly(8),
@@ -469,11 +463,12 @@ func TestMixedPolySizes(t *testing.T) {
 		t.Fatalf("CodewordDomainSize: want 32, got %d", proof.Commitments[0].CodewordDomainSize)
 	}
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err != nil {
-		t.Fatalf("VerifyOpening: %v", err)
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }
 
@@ -487,7 +482,6 @@ func TestCodewordDomainSize(t *testing.T) {
 	cfg.CodewordDomainSize = 32 // base 16 · MinBlowupFactor 2
 
 	committer := fri.NewCommitter(proverFS, cfg, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"a": randomPoly(16)}); err != nil {
 		t.Fatalf("Commit round0: %v", err)
@@ -505,14 +499,15 @@ func TestCodewordDomainSize(t *testing.T) {
 		}
 	}
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, cfg, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind round0: %v", err)
 	}
-	if err := verifier.Bind("round1", proof.Commitments[1]); err != nil {
+	if err := verifier.BindCommitment("round1"); err != nil {
 		t.Fatalf("Bind round1: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err != nil {
-		t.Fatalf("VerifyOpening: %v", err)
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }
 
@@ -539,7 +534,6 @@ func TestMultiCommitAutoPin(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"a": randomPoly(16)}); err != nil {
 		t.Fatalf("Commit round0: %v", err)
@@ -557,14 +551,15 @@ func TestMultiCommitAutoPin(t *testing.T) {
 		}
 	}
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind round0: %v", err)
 	}
-	if err := verifier.Bind("round1", proof.Commitments[1]); err != nil {
+	if err := verifier.BindCommitment("round1"); err != nil {
 		t.Fatalf("Bind round1: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err != nil {
-		t.Fatalf("VerifyOpening: %v", err)
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }
 
@@ -579,7 +574,7 @@ func TestOpenUnknownPolynomial(t *testing.T) {
 	}
 	var z koalabear.Element
 	z.MustSetRandom()
-	if err := committer.Open("ghost", z); err == nil {
+	if _, err := committer.Open("ghost", z); err == nil {
 		t.Fatal("Open(\"ghost\"): expected error for unregistered polynomial")
 	}
 }
@@ -606,23 +601,29 @@ func TestCommitRejectsDuplicateName(t *testing.T) {
 		t.Fatal("Commit round1 with duplicate name: expected error, got nil")
 	}
 
-	// Verifier rejects the duplicate too.
-	verifier := fri.NewVerifier(verifierFS)
+	// Verifier rejects the duplicate too. Build a fake proof with two
+	// commitments sharing polynomial name "a" and confirm BindCommitment
+	// rejects the second one.
 	c0 := fri.Commitment{
 		Root:               []byte("dummy-root-0"),
 		BaseDomainSize:     16,
 		CodewordDomainSize: 32,
-		NumPolynomials:     1,
 		PolynomialNames:    []string{"a"},
 		PolynomialSizes:    []uint64{16},
 	}
-	if err := verifier.Bind("round0", c0); err != nil {
-		t.Fatalf("Bind round0: %v", err)
-	}
 	c1 := c0
 	c1.Root = []byte("dummy-root-1")
-	if err := verifier.Bind("round1", c1); err == nil {
-		t.Fatal("Bind round1 with duplicate name: expected error, got nil")
+	// One OpenedValue per auto-DEEP open (one polynomial per oracle × two oracles).
+	fakeProof := fri.Proof{
+		Commitments:  []fri.Commitment{c0, c1},
+		OpenedValues: make([]koalabear.Element, 2),
+	}
+	verifier := fri.NewVerifier(verifierFS, cfg, fakeProof)
+	if err := verifier.BindCommitment("round0"); err != nil {
+		t.Fatalf("BindCommitment round0: %v", err)
+	}
+	if err := verifier.BindCommitment("round1"); err == nil {
+		t.Fatal("BindCommitment round1 with duplicate name: expected error, got nil")
 	}
 }
 
@@ -632,7 +633,6 @@ func TestTamperedOracleMerkleSibling(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": randomPoly(16)}); err != nil {
 		t.Fatalf("Commit: %v", err)
@@ -649,11 +649,12 @@ func TestTamperedOracleMerkleSibling(t *testing.T) {
 	}
 	proof.OracleOpenings[0][0].Siblings[0][0] ^= 0xFF
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err == nil {
-		t.Fatal("VerifyOpening: expected rejection for tampered oracle sibling")
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
+		t.Fatal("Verify: expected rejection for tampered oracle sibling")
 	}
 }
 
@@ -662,7 +663,6 @@ func TestTamperedLayerMerkleSibling(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": randomPoly(16)}); err != nil {
 		t.Fatalf("Commit: %v", err)
@@ -679,11 +679,12 @@ func TestTamperedLayerMerkleSibling(t *testing.T) {
 	}
 	proof.LayerOpenings[0][0].Siblings[0][0] ^= 0xFF
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err == nil {
-		t.Fatal("VerifyOpening: expected rejection for tampered layer sibling")
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
+		t.Fatal("Verify: expected rejection for tampered layer sibling")
 	}
 }
 
@@ -694,7 +695,6 @@ func TestTamperedLayerCommitment(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": randomPoly(16)}); err != nil {
 		t.Fatalf("Commit: %v", err)
@@ -709,11 +709,12 @@ func TestTamperedLayerCommitment(t *testing.T) {
 	}
 	proof.LayerCommitments[0][0] ^= 0xFF
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err == nil {
-		t.Fatal("VerifyOpening: expected rejection for tampered layer commitment")
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
+		t.Fatal("Verify: expected rejection for tampered layer commitment")
 	}
 }
 
@@ -723,7 +724,6 @@ func TestTamperedQueryIndex(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": randomPoly(16)}); err != nil {
 		t.Fatalf("Commit: %v", err)
@@ -738,25 +738,24 @@ func TestTamperedQueryIndex(t *testing.T) {
 	}
 	proof.QueryIndices[0] ^= 1 // flip the lowest bit; toggles the leaf
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err == nil {
-		t.Fatal("VerifyOpening: expected rejection for tampered query index")
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
+		t.Fatal("Verify: expected rejection for tampered query index")
 	}
 }
 
-// TestVerifierGrindingMismatch — verifier requires more PoW bits than the
-// prover did, so the supplied nonce fails the leading-zero check.
-func TestVerifierGrindingMismatch(t *testing.T) {
+// TestVerifierConfigRejection confirms the verifier rejects a proof whose
+// self-described NumQueries is below the configured floor.
+func TestVerifierConfigRejection(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
-	cfg := testConfig
-	cfg.GrindingBits = 4 // small target the prover finds easily
-
-	committer := fri.NewCommitter(proverFS, cfg, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
-	verifier.GrindingBits = 24 // far harder than what the prover satisfied
+	// Prover uses a minimal NumQueries.
+	proverCfg := testConfig
+	proverCfg.NumQueries = 2
+	committer := fri.NewCommitter(proverFS, proverCfg, commitment.LeafHash, commitment.NodeHash)
 
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": randomPoly(16)}); err != nil {
 		t.Fatalf("Commit: %v", err)
@@ -766,11 +765,45 @@ func TestVerifierGrindingMismatch(t *testing.T) {
 		t.Fatalf("Prove: %v", err)
 	}
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	// Verifier requires more queries than the prover provided.
+	verifierCfg := testConfig
+	verifierCfg.NumQueries = 10
+	verifier := fri.NewVerifier(verifierFS, verifierCfg, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err == nil {
-		t.Fatal("VerifyOpening: expected rejection when verifier requires more grinding bits than prover")
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
+		t.Fatal("Verify: expected rejection when proof NumQueries < verifier floor")
+	}
+}
+
+// TestVerifierGrindingMismatch — verifier requires more PoW bits than the
+// prover did, so the supplied nonce fails the leading-zero check.
+func TestVerifierGrindingMismatch(t *testing.T) {
+	proverFS, verifierFS := newTestTranscripts()
+
+	proverCfg := testConfig
+	proverCfg.GrindingBits = 4 // small target the prover finds easily
+
+	committer := fri.NewCommitter(proverFS, proverCfg, commitment.LeafHash, commitment.NodeHash)
+
+	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": randomPoly(16)}); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	proof, err := committer.Prove()
+	if err != nil {
+		t.Fatalf("Prove: %v", err)
+	}
+
+	// Verifier floor is far harder than what the prover satisfied.
+	verifierCfg := testConfig
+	verifierCfg.GrindingBits = 24
+	verifier := fri.NewVerifier(verifierFS, verifierCfg, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
+		t.Fatal("Verify: expected rejection when verifier requires more grinding bits than prover")
 	}
 }
 
@@ -780,11 +813,10 @@ func TestVerifierGrindingMismatch(t *testing.T) {
 func TestVerifierMissingGrinding(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
-	cfg := testConfig
-	cfg.GrindingBits = 4
+	proverCfg := testConfig
+	proverCfg.GrindingBits = 4
 
-	committer := fri.NewCommitter(proverFS, cfg, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS) // GrindingBits = 0
+	committer := fri.NewCommitter(proverFS, proverCfg, commitment.LeafHash, commitment.NodeHash)
 
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": randomPoly(16)}); err != nil {
 		t.Fatalf("Commit: %v", err)
@@ -794,11 +826,13 @@ func TestVerifierMissingGrinding(t *testing.T) {
 		t.Fatalf("Prove: %v", err)
 	}
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	// Verifier has GrindingBits=0; transcripts diverge because prover bound the nonce.
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err == nil {
-		t.Fatal("VerifyOpening: expected rejection when verifier ignores prover grinding")
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
+		t.Fatal("Verify: expected rejection when verifier ignores prover grinding")
 	}
 }
 
@@ -827,23 +861,87 @@ func TestHasLeadingZeroBitsBoundary(t *testing.T) {
 	}
 }
 
-// TestRoundTripMultiPointSamePolynomial opens one polynomial at two points
-// (auto-DEEP from Commit plus one explicit Open), exercises the merged
-// partial-fractions DEEP-combiner path with R=2.
-func TestRoundTripMultiPointSamePolynomial(t *testing.T) {
-	proverFS, verifierFS := newTestTranscripts()
+// TestOpenInDomainRejection confirms Open rejects a point that lies in the
+// codeword domain (point^N == 1).
+func TestOpenInDomainRejection(t *testing.T) {
+	proverFS, _ := newTestTranscripts()
 
 	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
-
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": randomPoly(16)}); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 
-	// Add a second explicit open at a random out-of-domain point.
-	var z2 koalabear.Element
+	// The codeword domain has size N = MinBlowupFactor · n = 2 · 16 = 32.
+	// ω is the primitive 32nd root of unity; ω^0 = 1 is in the domain.
+	var one koalabear.Element
+	one.SetOne()
+	if _, err := committer.Open("f", one); err == nil {
+		t.Fatal("Open: expected rejection for in-domain point (1 is in L), got nil")
+	}
+}
+
+// TestOpenOrderDivergence confirms that when the verifier calls Open in a
+// different order than the prover, the transcript diverges and Verify rejects.
+func TestOpenOrderDivergence(t *testing.T) {
+	proverFS, verifierFS := newTestTranscripts()
+
+	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
+
+	p1 := randomPoly(16)
+	p2 := randomPoly(16)
+	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": p1, "g": p2}); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	var z1, z2 koalabear.Element
+	z1.MustSetRandom()
 	z2.MustSetRandom()
-	if err := committer.Open("f", z2); err != nil {
+	// Prover opens f then g.
+	if _, err := committer.Open("f", z1); err != nil {
+		t.Fatalf("Open f: %v", err)
+	}
+	if _, err := committer.Open("g", z2); err != nil {
+		t.Fatalf("Open g: %v", err)
+	}
+
+	proof, err := committer.Prove()
+	if err != nil {
+		t.Fatalf("Prove: %v", err)
+	}
+
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	// Verifier opens g then f — reversed order.
+	if _, err := verifier.Open("g", z2); err != nil {
+		t.Fatalf("Open g: %v", err)
+	}
+	if _, err := verifier.Open("f", z1); err != nil {
+		t.Fatalf("Open f: %v", err)
+	}
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
+		t.Fatal("Verify: expected rejection for diverged Open order, got nil")
+	}
+}
+
+// TestOpenReturnedValueIsBound verifies that the values returned by prover-side
+// Open and verifier-side Open are identical, and match the OpenedValues slice
+// in the proof for the user-visible portion.
+func TestOpenReturnedValueIsBound(t *testing.T) {
+	proverFS, verifierFS := newTestTranscripts()
+
+	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
+
+	p := randomPoly(16)
+	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": p}); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	var z koalabear.Element
+	z.MustSetRandom()
+	proverY, err := committer.Open("f", z)
+	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 
@@ -852,15 +950,64 @@ func TestRoundTripMultiPointSamePolynomial(t *testing.T) {
 		t.Fatalf("Prove: %v", err)
 	}
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	// The user Open is at index 1 in OpenedValues (index 0 is the auto-DEEP).
+	if len(proof.OpenedValues) < 2 {
+		t.Fatalf("expected at least 2 OpenedValues, got %d", len(proof.OpenedValues))
+	}
+	if !proverY.Equal(&proof.OpenedValues[1]) {
+		t.Fatal("prover-side Open returned value does not match proof.OpenedValues[1]")
+	}
+
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	verifierY, err := verifier.Open("f", z)
+	if err != nil {
+		t.Fatalf("verifier.Open: %v", err)
+	}
+	if !verifierY.Equal(&proverY) {
+		t.Fatalf("verifier.Open returned %s, want %s", verifierY.String(), proverY.String())
+	}
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+}
+
+// TestRoundTripMultiPointSamePolynomial opens one polynomial at two points
+// (auto-DEEP from Commit plus one explicit Open), exercises the merged
+// partial-fractions DEEP-combiner path with R=2.
+func TestRoundTripMultiPointSamePolynomial(t *testing.T) {
+	proverFS, verifierFS := newTestTranscripts()
+
+	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
+
+	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": randomPoly(16)}); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	// Add a second explicit open at a random out-of-domain point.
+	var z2 koalabear.Element
+	z2.MustSetRandom()
+	if _, err := committer.Open("f", z2); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	proof, err := committer.Prove()
+	if err != nil {
+		t.Fatalf("Prove: %v", err)
+	}
+
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 	// Mirror the explicit Open on the verifier side.
-	if err := verifier.RegisterOpenAt("f", z2); err != nil {
-		t.Fatalf("RegisterOpenAt: %v", err)
+	if _, err := verifier.Open("f", z2); err != nil {
+		t.Fatalf("Open: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err != nil {
-		t.Fatalf("VerifyOpening: %v", err)
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }
 
@@ -870,7 +1017,6 @@ func TestTamperedClaimedValueMultiPoint(t *testing.T) {
 	proverFS, verifierFS := newTestTranscripts()
 
 	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
-	verifier := fri.NewVerifier(verifierFS)
 
 	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": randomPoly(16)}); err != nil {
 		t.Fatalf("Commit: %v", err)
@@ -878,7 +1024,7 @@ func TestTamperedClaimedValueMultiPoint(t *testing.T) {
 
 	var z2 koalabear.Element
 	z2.MustSetRandom()
-	if err := committer.Open("f", z2); err != nil {
+	if _, err := committer.Open("f", z2); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 
@@ -887,18 +1033,19 @@ func TestTamperedClaimedValueMultiPoint(t *testing.T) {
 		t.Fatalf("Prove: %v", err)
 	}
 
-	// Tamper the second claimed value (index 1 = the explicit Open).
+	// Tamper the second claimed value (index 1 = the explicit user Open).
 	var one koalabear.Element
 	one.SetOne()
-	proof.ClaimedValues[1].Add(&proof.ClaimedValues[1], &one)
+	proof.OpenedValues[1].Add(&proof.OpenedValues[1], &one)
 
-	if err := verifier.Bind("round0", proof.Commitments[0]); err != nil {
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	if err := verifier.RegisterOpenAt("f", z2); err != nil {
-		t.Fatalf("RegisterOpenAt: %v", err)
+	if _, err := verifier.Open("f", z2); err != nil {
+		t.Fatalf("Open: %v", err)
 	}
-	if err := verifier.VerifyOpening(proof, commitment.LeafHash, commitment.NodeHash); err == nil {
-		t.Fatal("VerifyOpening: expected rejection for tampered claimed value")
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
+		t.Fatal("Verify: expected rejection for tampered claimed value")
 	}
 }
