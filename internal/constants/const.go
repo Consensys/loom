@@ -22,8 +22,9 @@ import (
 	"strings"
 )
 
-// TODO the rate should be a parameter
+// TODO make those constants parameters
 const RATE = 4
+const NUM_QUERIES = 4
 
 const RANGE_MODULE = "range"
 const FINAL_EVALUATION_POINT = "__zeta"

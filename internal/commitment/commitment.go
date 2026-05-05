@@ -29,6 +29,17 @@ type RSCommit struct {
 	NodeHasher merkle.NodeHasher
 }
 
+type WMerkleTree struct {
+	Tree     *merkle.Tree
+	RawLeafs [][]Pair // RawLeafs[i] = { .. {f_k(w^i), f_k(-w^i)}, .. }
+}
+
+func (wt WMerkleTree) Root() []byte {
+	return wt.Tree.Root()
+}
+
+type Pair = [2]koalabear.Element // used to store the pairs {f_k(w^i), f_k(-w^i)}
+
 func NewRSCommit(N uint64, rate uint64, leafHasher merkle.LeafHasher, nodehasher merkle.NodeHasher) RSCommit {
 	d := fft.NewDomain(rate * N)
 	rsEncoder := reedsolomon.Encoder{Domain: d}
@@ -56,7 +67,7 @@ func NodeHash(left, right []byte) []byte {
 // different sizes. It is assumed that the maximum size is < rs.N
 // the number of leaves is rs.N/2, the i-th leaf is
 // ( .., {p_j(w^i), p_j(-w^i)}, {p_j+1(w^i), p_j+1(-w^i)}.. ) that is the concatenation of pairs {p_j(w^i), p_j(-w^i)} for j form 1 to len(p)
-func (rs *RSCommit) Commit(p []poly.Polynomial) (*merkle.Tree, error) {
+func (rs *RSCommit) Commit(p []poly.Polynomial) (WMerkleTree, error) {
 
 	domainsPool := map[int]*fft.Domain{}
 
@@ -79,11 +90,15 @@ func (rs *RSCommit) Commit(p []poly.Polynomial) (*merkle.Tree, error) {
 	halfN := int(N >> 1)
 	tree, err := merkle.New(halfN, LeafHash, NodeHash)
 	if err != nil {
-		return nil, err
+		return WMerkleTree{}, err
 	}
+	wTree := WMerkleTree{Tree: tree, RawLeafs: make([][]Pair, halfN)}
 	buf := make([]byte, 2*koalabear.Bytes*len(_p))
 	for i := 0; i < halfN; i++ {
+		wTree.RawLeafs[i] = make([]Pair, len(_p))
 		for j := 0; j < len(_p); j++ {
+			wTree.RawLeafs[i][j][0].Set(&_p[j][i])
+			wTree.RawLeafs[i][j][0].Set(&_p[j][i+halfN])
 			copy(buf[2*j*koalabear.Bytes:], _p[j][i].Marshal())
 			copy(buf[(2*j+1)*koalabear.Bytes:], _p[j][i+halfN].Marshal())
 		}
@@ -91,5 +106,5 @@ func (rs *RSCommit) Commit(p []poly.Polynomial) (*merkle.Tree, error) {
 	}
 	tree.BuildNodes()
 
-	return tree, nil
+	return wTree, nil
 }

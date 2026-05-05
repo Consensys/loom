@@ -47,22 +47,25 @@ func EmulateFS() Option {
 }
 
 type proverRuntime struct {
-	Committer    commitment.RSCommit
-	friParams    fri.Params
-	Proof        proof.Proof
-	config       Config
-	t            trace.Trace
-	airTrace     trace.Trace
-	publicInputs proof.PublicInputs
-	program      board.Program
-	zeta         koalabear.Element
-	mu           sync.Mutex
-	setup        *PublicKey
-	deepQuotient []koalabear.Element
-	fs           *fiatshamir.Transcript
+	Committer      commitment.RSCommit
+	friParams      fri.Params
+	Proof          proof.Proof
+	config         Config
+	tTrees         []commitment.WMerkleTree
+	airTree        commitment.WMerkleTree
+	t              trace.Trace
+	airTrace       trace.Trace
+	publicInputs   proof.PublicInputs
+	program        board.Program
+	zeta           koalabear.Element
+	mu             sync.Mutex
+	setup          *PublicKey
+	deepQuotient   []koalabear.Element
+	queryPositions []int
+	fs             *fiatshamir.Transcript
 }
 
-func newProverRuntime(t trace.Trace, setup *PublicKey, publicInputs proof.PublicInputs, program board.Program, config Config) proverRuntime {
+func newProverRuntime(t trace.Trace, setup *PublicKey, publicInputs proof.PublicInputs, program board.Program, config Config) (proverRuntime, error) {
 
 	res := proverRuntime{
 		Proof:        proof.NewProof(),
@@ -71,8 +74,14 @@ func newProverRuntime(t trace.Trace, setup *PublicKey, publicInputs proof.Public
 		publicInputs: publicInputs,
 		program:      program,
 		setup:        setup,
+		tTrees:       make([]commitment.WMerkleTree, 0, len(program.FScolumnsDependencies)),
 		airTrace:     make(trace.Trace),
 		mu:           sync.Mutex{}, // mutex to protect the trace when reading/writing (in case of parallelisation)
+	}
+
+	res.Proof.PointSamplings = make([][]proof.PointSampling, constants.NUM_QUERIES)
+	for i := 0; i < constants.NUM_QUERIES; i++ {
+		res.Proof.PointSamplings[i] = make([]proof.PointSampling, 0, len(program.FScolumnsDependencies)+2) // setup + air quotients + FScolumnsDependencies
 	}
 
 	// find the largest module size N in program and populate the Committer
@@ -82,6 +91,14 @@ func newProverRuntime(t trace.Trace, setup *PublicKey, publicInputs proof.Public
 			maxN = m.N
 		}
 	}
+
+	var err error
+	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, commitment.LeafHash, commitment.NodeHash)
+	if err != nil {
+		return res, err
+	}
+
+	res.queryPositions = make([]int, constants.NUM_QUERIES)
 
 	res.Committer = commitment.NewRSCommit(uint64(maxN), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
 
@@ -97,7 +114,7 @@ func newProverRuntime(t trace.Trace, setup *PublicKey, publicInputs proof.Public
 		res.fs.Bind(constants.CanonicalChallengeName(0), res.setup.Root())
 	}
 
-	return res
+	return res, nil
 }
 
 func (pr *proverRuntime) ExecuteSteps() error {
@@ -134,6 +151,7 @@ func (pr *proverRuntime) ExecuteSteps() error {
 					return err
 				}
 				commitRoot := tree.Root()
+				pr.tTrees = append(pr.tTrees, tree)
 
 				// store the commitment in proof.FSInputs[roundIdx], bind it to challengeName in fs
 				pr.Proof.FSInputs = append(pr.Proof.FSInputs, commitRoot)
@@ -226,6 +244,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 		return err
 	}
 	pr.Proof.AIRQuotientsCommitment = tree.Root()
+	pr.airTree = tree
 
 	// 3 - derive zeta using FS (or emulate), bind to the AIR quotient commitment
 	if err := pr.fs.Bind(constants.FINAL_EVALUATION_POINT, pr.Proof.AIRQuotientsCommitment); err != nil {
@@ -468,6 +487,53 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 	return nil
 }
 
+// SampleEvaluations builds
+func (pr *proverRuntime) SampleEvaluations() error {
+
+	// for each query position, open the list of polynomial evaluations at {f(w^i),f(-w^i)}
+	// the relevant polynomials, that the verifier need to connec to the DEEP quotient,
+	// are already stored in the setup tree, the trace trees, and the air trees
+	for k, pos := range pr.queryPositions {
+
+		treeIdx := 0
+		var err error
+
+		// setup
+		if pr.setup.Tree != nil {
+			pr.Proof.PointSamplings[k][treeIdx].Leafs = make([]commitment.Pair, len(pr.setup.RawLeafs[pos]))
+			copy(pr.Proof.PointSamplings[k][treeIdx].Leafs, pr.setup.RawLeafs[pos])
+			pr.Proof.PointSamplings[k][treeIdx].Proof, err = pr.setup.Tree.OpenProof(pos)
+			if err != nil {
+				return err
+			}
+			treeIdx++
+		}
+
+		// trace polynomials
+		for _, tree := range pr.tTrees {
+			pr.Proof.PointSamplings[k][treeIdx].Leafs = make([]commitment.Pair, len(tree.RawLeafs[pos]))
+			copy(pr.Proof.PointSamplings[k][treeIdx].Leafs, tree.RawLeafs[pos])
+			pr.Proof.PointSamplings[k][treeIdx].Proof, err = tree.Tree.OpenProof(pos)
+			if err != nil {
+				return err
+			}
+			treeIdx++
+		}
+
+		// air quotients
+		pr.Proof.PointSamplings[k][treeIdx].Leafs = make([]commitment.Pair, len(pr.airTree.RawLeafs[pos]))
+		copy(pr.Proof.PointSamplings[k][treeIdx].Leafs, pr.airTree.RawLeafs[pos])
+		pr.Proof.PointSamplings[k][treeIdx].Proof, err = pr.airTree.Tree.OpenProof(pos)
+		if err != nil {
+			return err
+		}
+
+	}
+
+	return nil
+}
+
+// TODO publicInputs are not used
 func Prove(t trace.Trace, setup *PublicKey, publicInputs proof.PublicInputs, program board.Program, opts ...Option) (proof.Proof, error) {
 
 	var config Config
@@ -478,7 +544,10 @@ func Prove(t trace.Trace, setup *PublicKey, publicInputs proof.PublicInputs, pro
 		}
 	}
 
-	pr := newProverRuntime(t, setup, publicInputs, program, config)
+	pr, err := newProverRuntime(t, setup, publicInputs, program, config)
+	if err != nil {
+		return proof.Proof{}, err
+	}
 
 	// run ExecuteSteps
 	if err := pr.ExecuteSteps(); err != nil {
@@ -497,6 +566,12 @@ func Prove(t trace.Trace, setup *PublicKey, publicInputs proof.PublicInputs, pro
 
 	// Compute DEEP quotient and FRI-prove that it is the evaluation of a polynomial of degree N
 	if err := pr.ComputeDeepQuotient(); err != nil {
+		return proof.Proof{}, err
+	}
+	pr.Proof.FriProof, pr.queryPositions, err = fri.Prove(pr.friParams, pr.deepQuotient, pr.fs)
+
+	// Brige FRI <-> polynomial commitments, using sample at queryPositions
+	if err := pr.SampleEvaluations(); err != nil {
 		return proof.Proof{}, err
 	}
 

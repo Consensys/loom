@@ -17,14 +17,13 @@ import (
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
-	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/trace"
 )
 
-type PublicKey = merkle.Tree
+type PublicKey = commitment.WMerkleTree
 
-func Setup(t trace.Trace, program board.Program) (*PublicKey, error) {
+func Setup(t trace.Trace, program board.Program) (PublicKey, error) {
 
 	maxN := 0
 	for _, m := range program.Modules {
@@ -40,7 +39,7 @@ func Setup(t trace.Trace, program board.Program) (*PublicKey, error) {
 	}
 	tree, err := committer.Commit(polys)
 	if err != nil {
-		return nil, err
+		return PublicKey{}, err
 	}
 
 	return tree, nil
