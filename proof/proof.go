@@ -17,7 +17,6 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/fri"
-	"github.com/consensys/loom/internal/merkle"
 )
 
 type Commitment struct {
@@ -25,27 +24,21 @@ type Commitment struct {
 	Columns []string
 }
 
-// PointSampling contains the pair evaluation {f(w^i),f(-w^i)} for batch of polynomials f,
-// and a given point w^i, where the i is Proof.LeafIdx
-type PointSampling struct {
-	Leafs []commitment.Pair
-	Proof merkle.Proof
-}
-
 type Proof struct {
 	ValuesAtZeta           map[string]koalabear.Element // map string -> evaluation of the column whose String() is the key at zeta
 	PublicColumns          map[string]PublicInput       // extracted values from columns of the trace, those values are passed as public inputs
-	FSInputs               [][]byte                     // rounds of FS, entry i stores the data to hash at round i to derive 'challenge@loom_<i>'
+	TraceCommitments       [][]byte                     // rounds of FS, entry i stores the data to hash at round i to derive 'challenge@loom_<i>'
 	AIRQuotientsCommitment []byte
-	FriProof               fri.Proof
-	PointSamplings         [][]PointSampling // list of values {f(w^i),f(-w^i)} for the trace polynomials and the air polynomials, for some i. One entry per query position, entry i stores the Merkle proofs of the trees storing the relevant polynomials
+	DeepQuotientFriProof   fri.Proof
+	DeepQuotientCommitment []byte
+	PointSamplings         [][]commitment.WMerkleProof // list of values {f(w^i),f(-w^i)} for the trace polynomials and the air polynomials, for some i. One entry per query position, entry i stores the Merkle proofs of the trees storing the relevant polynomials
 }
 
 func NewProof() Proof {
 	var res Proof
 	res.ValuesAtZeta = make(map[string]koalabear.Element)
 	res.PublicColumns = make(map[string]PublicInput)
-	res.FSInputs = make([][]byte, 0)
-	res.PointSamplings = make([][]PointSampling, 0)
+	res.TraceCommitments = make([][]byte, 0)
+	res.PointSamplings = make([][]commitment.WMerkleProof, 0)
 	return res
 }

@@ -34,6 +34,13 @@ type WMerkleTree struct {
 	RawLeafs [][]Pair // RawLeafs[i] = { .. {f_k(w^i), f_k(-w^i)}, .. }
 }
 
+// PointSampling contains the pair evaluation {f(w^i),f(-w^i)} for batch of polynomials f,
+// and a given point w^i, where the i is Proof.LeafIdx
+type WMerkleProof struct {
+	Leafs []Pair
+	Proof merkle.Proof
+}
+
 func (wt WMerkleTree) Root() []byte {
 	return wt.Tree.Root()
 }

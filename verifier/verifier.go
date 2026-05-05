@@ -22,7 +22,9 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/internal/fri"
 	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
@@ -32,6 +34,7 @@ type PublicKey = merkle.Tree
 
 type verifierRunTime struct {
 	proof        proof.Proof
+	friParams    fri.Params
 	publicInputs map[string]proof.PublicInput
 	program      board.Program
 	zeta         koalabear.Element
@@ -39,7 +42,7 @@ type verifierRunTime struct {
 	fs           *fiatshamir.Transcript
 }
 
-func newVerifierRuntime(program board.Program, setup *PublicKey, publicInputs map[string]proof.PublicInput, proof proof.Proof) verifierRunTime {
+func newVerifierRuntime(program board.Program, setup *PublicKey, publicInputs map[string]proof.PublicInput, proof proof.Proof) (verifierRunTime, error) {
 
 	res := verifierRunTime{
 		proof:        proof,
@@ -58,15 +61,29 @@ func newVerifierRuntime(program board.Program, setup *PublicKey, publicInputs ma
 		res.fs.Bind(constants.CanonicalChallengeName(0), res.setup.Root())
 	}
 
-	return res
+	// find the largest module size N in program and populate the Committer
+	maxN := 0
+	for _, m := range program.Modules {
+		if m.N > maxN {
+			maxN = m.N
+		}
+	}
+
+	var err error
+	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, commitment.LeafHash, commitment.NodeHash)
+	if err != nil {
+		return res, err
+	}
+
+	return res, nil
 }
 
 func (vr *verifierRunTime) deriveChallenges() error {
 
 	// populate proof.ValuesAtZeta with the challenges
-	for i, fsi := range vr.proof.FSInputs {
+	for i, tc := range vr.proof.TraceCommitments {
 		challengeName := constants.CanonicalChallengeName(i)
-		vr.fs.Bind(challengeName, fsi)
+		vr.fs.Bind(challengeName, tc)
 		bChallenge, err := vr.fs.ComputeChallenge((challengeName))
 		if err != nil {
 			return err
@@ -188,12 +205,28 @@ func (vr *verifierRunTime) checkAIRRelations() error {
 	return nil
 }
 
+func (vr *verifierRunTime) checkFRIProof() error {
+
+	// check FRI <-> trace commitments bridge
+
+	// check FRI proof
+	err := fri.Verify(vr.friParams, vr.proof.DeepQuotientCommitment, vr.proof.DeepQuotientFriProof, vr.fs)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func Verify(publicInputs map[string]proof.PublicInput, setup *PublicKey, program board.Program, proof proof.Proof) error {
 
-	vr := newVerifierRuntime(program, setup, publicInputs, proof)
+	vr, err := newVerifierRuntime(program, setup, publicInputs, proof)
+	if err != nil {
+		return err
+	}
 
 	// 1 - derive the challenges, and populate proof.ValuesAtZeta with those challenges
-	err := vr.deriveChallenges()
+	err = vr.deriveChallenges()
 	if err != nil {
 		return err
 	}
@@ -216,6 +249,12 @@ func Verify(publicInputs map[string]proof.PublicInput, setup *PublicKey, program
 
 	// 4 - check the AIR relations
 	err = vr.checkAIRRelations()
+	if err != nil {
+		return err
+	}
+
+	// 5 - check FRI proof
+	err = vr.checkFRIProof()
 	if err != nil {
 		return err
 	}

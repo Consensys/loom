@@ -20,6 +20,7 @@ import (
 	"github.com/consensys/loom/arguments"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/prover"
 	"github.com/consensys/loom/viz"
 )
@@ -92,7 +93,7 @@ func TestVerifierFibo(t *testing.T) {
 	traceRange := prover.TraceRange(N)
 	tr := prover.MergeTrace(traceFrob, traceRange)
 
-	proof, err := prover.Prove(tr, nil, nil, program)
+	proof, err := prover.Prove(tr, commitment.WMerkleTree{Tree: nil}, nil, program)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +131,7 @@ func TestVerifierPlonk(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	proof, err := prover.Prove(tr, nil, nil, program)
+	proof, err := prover.Prove(tr, commitment.WMerkleTree{Tree: nil}, nil, program)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +205,7 @@ func TestFiboPlonk(t *testing.T) {
 	fullTrace := prover.MergeTrace(traceFrob, traceRange, tr)
 
 	// prover, verify
-	proof, err := prover.Prove(fullTrace, nil, nil, program)
+	proof, err := prover.Prove(fullTrace, commitment.WMerkleTree{Tree: nil}, nil, program)
 	if err != nil {
 		t.Fatal(err)
 	}
