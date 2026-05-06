@@ -56,9 +56,21 @@ func (v *Verifier) Verify(lh merkle.LeafHasher, nh merkle.NodeHasher) error {
 		if int(c.CodewordDomainSize) != N {
 			return fmt.Errorf("fri: commitment %d has domain %d, want %d", i, c.CodewordDomainSize, N)
 		}
+		if c.BaseDomainSize == 0 {
+			return fmt.Errorf("fri: commitment %d has zero base domain size", i)
+		}
 		if len(c.PolynomialNames) != len(c.PolynomialSizes) {
 			return fmt.Errorf("fri: commitment %d has %d polynomial names but %d sizes",
 				i, len(c.PolynomialNames), len(c.PolynomialSizes))
+		}
+		for j, size := range c.PolynomialSizes {
+			if size == 0 {
+				return fmt.Errorf("fri: commitment %d polynomial %d has zero base size", i, j)
+			}
+			if size > c.BaseDomainSize {
+				return fmt.Errorf("fri: commitment %d polynomial %d has base size %d above base domain %d",
+					i, j, size, c.BaseDomainSize)
+			}
 		}
 		if v.Config.MinBlowupFactor != 0 &&
 			c.CodewordDomainSize < uint64(v.Config.MinBlowupFactor)*c.BaseDomainSize {

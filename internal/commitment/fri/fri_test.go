@@ -777,6 +777,56 @@ func TestVerifierConfigRejection(t *testing.T) {
 	}
 }
 
+// TestVerifierRejectsZeroBaseDomain confirms the verifier rejects tampered
+// commitment metadata where the base domain size is zero.
+func TestVerifierRejectsZeroBaseDomain(t *testing.T) {
+	proverFS, verifierFS := newTestTranscripts()
+
+	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
+	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": randomPoly(16)}); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	proof, err := committer.Prove()
+	if err != nil {
+		t.Fatalf("Prove: %v", err)
+	}
+
+	proof.Commitments[0].BaseDomainSize = 0
+
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
+		t.Fatal("Verify: expected rejection for zero base domain size")
+	}
+}
+
+// TestVerifierRejectsOversizedPolynomialSize confirms the verifier rejects
+// commitment metadata claiming a polynomial larger than the base domain.
+func TestVerifierRejectsOversizedPolynomialSize(t *testing.T) {
+	proverFS, verifierFS := newTestTranscripts()
+
+	committer := fri.NewCommitter(proverFS, testConfig, commitment.LeafHash, commitment.NodeHash)
+	if err := committer.Commit("round0", map[string]poly.Polynomial{"f": randomPoly(16)}); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	proof, err := committer.Prove()
+	if err != nil {
+		t.Fatalf("Prove: %v", err)
+	}
+
+	proof.Commitments[0].PolynomialSizes[0] = proof.Commitments[0].BaseDomainSize + 1
+
+	verifier := fri.NewVerifier(verifierFS, testConfig, proof)
+	if err := verifier.BindCommitment("round0"); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if err := verifier.Verify(commitment.LeafHash, commitment.NodeHash); err == nil {
+		t.Fatal("Verify: expected rejection for oversized polynomial metadata")
+	}
+}
+
 // TestVerifierGrindingMismatch — verifier requires more PoW bits than the
 // prover did, so the supplied nonce fails the leading-zero check.
 func TestVerifierGrindingMismatch(t *testing.T) {

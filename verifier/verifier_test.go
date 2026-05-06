@@ -159,6 +159,32 @@ func TestVerifierGrindingOptional(t *testing.T) {
 	}
 }
 
+func TestVerifierQueryCountPolicy(t *testing.T) {
+	program, tr := buildFibTrace(t)
+
+	proof, err := prover.Prove(tr, nil, nil, program)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Verify(nil, nil, program, proof, WithFRINumQueries(len(proof.CommitmentOpenings.QueryIndices)+1)); err == nil {
+		t.Fatal("Verify: expected rejection when verifier requires more FRI queries than the proof carries")
+	}
+}
+
+func TestVerifierMinBlowupPolicy(t *testing.T) {
+	program, tr := buildFibTrace(t)
+
+	proof, err := prover.Prove(tr, nil, nil, program)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Verify(nil, nil, program, proof, WithFRIMinBlowupFactor(3)); err == nil {
+		t.Fatal("Verify: expected rejection when verifier requires a larger FRI blowup factor than the proof uses")
+	}
+}
+
 func TestVerifierPlonk(t *testing.T) {
 	builder := board.NewBuilder()
 

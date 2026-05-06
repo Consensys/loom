@@ -50,6 +50,12 @@ type Config struct {
 	// FRIGrindingBits is the minimum PoW target the verifier enforces.
 	// Zero means "replay the nonce binding but do not require any leading-zero bits".
 	FRIGrindingBits int
+	// FRIMinBlowupFactor is the minimum Reed-Solomon expansion factor the
+	// verifier accepts. Zero uses the FRI package default floor.
+	FRIMinBlowupFactor int
+	// FRINumQueries is the minimum number of FRI spot checks the verifier
+	// accepts. Zero uses the FRI package default floor.
+	FRINumQueries int
 	// FRIFoldingFactor matches the prover's FoldingFactor (default 8).
 	// Tiny modules can use a smaller k; the integration-test wrapper picks
 	// k=2 when the largest module's base domain is below the default.
@@ -67,6 +73,24 @@ type Option func(c *Config) error
 func WithFRIGrindingBits(n int) Option {
 	return func(c *Config) error {
 		c.FRIGrindingBits = n
+		return nil
+	}
+}
+
+// WithFRIMinBlowupFactor configures the verifier's minimum acceptable
+// Reed-Solomon expansion factor.
+func WithFRIMinBlowupFactor(n int) Option {
+	return func(c *Config) error {
+		c.FRIMinBlowupFactor = n
+		return nil
+	}
+}
+
+// WithFRINumQueries configures the verifier's minimum acceptable number of
+// FRI spot checks.
+func WithFRINumQueries(n int) Option {
+	return func(c *Config) error {
+		c.FRINumQueries = n
 		return nil
 	}
 }
@@ -100,7 +124,15 @@ func newVerifierRuntime(program board.Program, setup *PublicKey, publicInputs ma
 	}
 
 	res.fs = fiatshamir.NewTranscript(sha256.New())
+	if config.FRIMinBlowupFactor == 0 {
+		config.FRIMinBlowupFactor = fri.DefaultFRIMinBlowupFactor
+	}
+	if config.FRINumQueries == 0 {
+		config.FRINumQueries = fri.DefaultFRINumQueries
+	}
 	friCfg := fri.Config{
+		MinBlowupFactor:       config.FRIMinBlowupFactor,
+		NumQueries:            config.FRINumQueries,
 		GrindingBits:          config.FRIGrindingBits,
 		FoldingFactor:         config.FRIFoldingFactor,
 		FinalPolynomialMaxLen: config.FRIFinalPolynomialMaxLen,
