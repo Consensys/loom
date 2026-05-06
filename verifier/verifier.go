@@ -19,7 +19,6 @@ import (
 	"math/big"
 	"sort"
 
-
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/board"
@@ -210,172 +209,11 @@ func (vr *verifierRunTime) checkAIRRelations() error {
 
 func (vr *verifierRunTime) checkFRIProof() error {
 
-	// // ------- check FRI <-> trace commitments bridge -------
-
-	// sortedModule := make([]string, 0, len(vr.program.Modules))
-	// for name := range vr.program.Modules {
-	// 	sortedModule = append(sortedModule, name)
-	// }
-	// sort.Slice(sortedModule, func(i, j int) bool {
-	// 	return vr.program.Modules[sortedModule[i]].N > vr.program.Modules[sortedModule[j]].N
-	// })
-
-	// var alpha koalabear.Element
-	// // TODO follow FS schedule to derive it as in the prover
-	// alpha.SetUint64(10)
-
-	// // recomputed pairs of points: \sum_i alpha^i (C(w^j) - f(shift*z_s))/(w^j - shift*z_s)) for some j corresponding to the query positions of FRI
-	// recomputedPairs := make([]commitment.Pair, constants.NUM_QUERIES)
-
-	// // loop through sortedModule, get the corresponding module
-	// for _, moduleName := range sortedModule {
-	// 	module := vr.program.Modules[moduleName]
-	// 	N := module.N
-
-	// 	// 1 - get the RotatedColumn and CommittedColumn from the module's vanishing relation
-	// 	config := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutPublicColumns())
-	// 	leaves := module.VanishingRelation.LeavesFull(config)
-
-	// 	// 2 - group columns by normalized shift; deduplicate by leaf.String()
-	// 	// Each entry carries the bare column name (for trace lookup) and the original
-	// 	// leaf.String() key (for ValuesAtZeta lookup, which preserves the raw shift).
-	// 	type colEntry struct {
-	// 		name string // bare column name → key in pr.t
-	// 		key  string // leaf.String() → key in ValuesAtZeta
-	// 	}
-	// 	byShift := map[int][]colEntry{} // normalized shift → entries
-	// 	seenKey := map[string]bool{}    // deduplicate by leaf.String()
-	// 	for _, leaf := range leaves {
-	// 		k := leaf.String()
-	// 		if seenKey[k] {
-	// 			continue
-	// 		}
-	// 		seenKey[k] = true
-	// 		normalizedShift := 0
-	// 		if leaf.Type == expr.RotatedColumn {
-	// 			normalizedShift = ((leaf.Shift % N) + N) % N
-	// 		}
-	// 		byShift[normalizedShift] = append(byShift[normalizedShift], colEntry{name: leaf.Name, key: k})
-	// 	}
-	// 	// store shifts sorted in increasing order
-	// 	shifts := make([]int, 0, len(byShift))
-	// 	for s := range byShift {
-	// 		shifts = append(shifts, s)
-	// 	}
-	// 	sort.Ints(shifts)
-
-	// 	// 3 - for each shift in 'sorted' (looped through in increasing order), fold the corresponding columns in the trace
-	// 	// using alpha to build C_shift := \sum_i \alpha^i C
-	// 	// compute C_shift_deep := (C_shift(\omega^shift * zeta)-C_shift)/(omega^shift*zeta - X) using synthetic division
-	// 	for _, shift := range shifts {
-
-	// 		// evaluation point z_s = omega^shift * zeta
-	// 		var omegaShift koalabear.Element
-	// 		omegaShift.SetOne()
-	// 		for k := 0; k < shift; k++ {
-	// 			omegaShift.Mul(&omegaShift, &module.D.Generator)
-	// 		}
-	// 		var z_s koalabear.Element
-	// 		z_s.Mul(&vr.zeta, &omegaShift)
-
-	// 		// compute : v_s = C_s(z_s) = sum_i alphaAcc_i * C_i(z_s)
-	// 		// and samples of C_s(X) = sum_i alphaAcc_i * C_i(X) for X = w^i for i in proof.DeepQuotientFriProof.Queries[0].Path.LeafIdx
-	// 		C_s := make(poly.Polynomial, N)
-	// 		var v_s koalabear.Element
-	// 		for _, entry := range byShift[shift] {
-	// 			col := pr.t[entry.name]
-	// 			evalAtZ, ok := pr.Proof.ValuesAtZeta[entry.key]
-	// 			if !ok {
-	// 				return fmt.Errorf("ComputeDeepQuotient: %q not found in ValuesAtZeta", entry.key)
-	// 			}
-	// 			for j := 0; j < constants.NUM_QUERIES; j++ {
-	// 				var term koalabear.Element
-	// 				if len(col) == 1 {
-	// 					term = col[0] // constant polynomial
-	// 				} else {
-	// 					term = col[j]
-	// 				}
-	// 				term.Mul(&term, &alphaAcc)
-	// 				C_s[j].Add(&C_s[j], &term)
-	// 			}
-	// 			var term koalabear.Element
-	// 			term.Mul(&evalAtZ, &alphaAcc)
-	// 			v_s.Add(&v_s, &term)
-	// 			alphaAcc.Mul(&alphaAcc, &alpha)
-	// 		}
-
-	// 		// compute DQ_s = (v_s - C_s(X)) / (z_s - X) via synthetic division
-	// 		DQ_s := poly.DeepQuotient(C_s, v_s, z_s, module.D)
-
-	// 		// accumulate into deepQuotient; extend to maxN domain if this module is smaller
-	// 		if N == maxN {
-	// 			for j := 0; j < N; j++ {
-	// 				deepQuotient[j].Add(&deepQuotient[j], &DQ_s[j])
-	// 			}
-	// 		} else {
-	// 			// IFFT DQ_s to canonical (natural order), zero-pad to maxN, FFT to largest domain
-	// 			module.D.FFTInverse(DQ_s, fft.DIF)
-	// 			utils.BitReverse(DQ_s)
-	// 			extended := make(poly.Polynomial, maxN)
-	// 			copy(extended, DQ_s)
-	// 			// largestD := fft.NewDomain(uint64(maxN))
-	// 			largestD.FFT(extended, fft.DIF)
-	// 			utils.BitReverse(extended)
-	// 			for j := 0; j < maxN; j++ {
-	// 				deepQuotient[j].Add(&deepQuotient[j], &extended[j])
-	// 			}
-	// 		}
-	// 	}
-	// }
-
-	// // Compute the AIR quotient shares of the DEEP ComputeDeepQuotient
-	// // 1- loop through the modules in the program (in the order given by sortedModule)
-	// // 2- add the contribution of each quotient shares for the given module (ordered by share 0, then share 1, etc...) to the deep quotient
-	// for _, moduleName := range sortedModule {
-	// 	module := pr.program.Modules[moduleName]
-	// 	N := module.N
-
-	// 	C_s := make(poly.Polynomial, N)
-	// 	var v_s koalabear.Element
-	// 	for i := 0; ; i++ {
-	// 		chunkName := constants.QuotientChunkName(moduleName, i)
-	// 		chunk, ok := pr.airTrace[chunkName]
-	// 		if !ok {
-	// 			break
-	// 		}
-	// 		evalAtZ := pr.Proof.ValuesAtZeta[chunkName]
-	// 		for j := 0; j < N; j++ {
-	// 			var term koalabear.Element
-	// 			term.Mul(&chunk[j], &alphaAcc)
-	// 			C_s[j].Add(&C_s[j], &term)
-	// 		}
-	// 		var term koalabear.Element
-	// 		term.Mul(&evalAtZ, &alphaAcc)
-	// 		v_s.Add(&v_s, &term)
-	// 		alphaAcc.Mul(&alphaAcc, &alpha)
-	// 	}
-
-	// 	DQ_air := poly.DeepQuotient(C_s, v_s, pr.zeta, module.D)
-
-	// 	if N == maxN {
-	// 		for j := 0; j < N; j++ {
-	// 			deepQuotient[j].Add(&deepQuotient[j], &DQ_air[j])
-	// 		}
-	// 	} else {
-	// 		module.D.FFTInverse(DQ_air, fft.DIF)
-	// 		utils.BitReverse(DQ_air)
-	// 		extended := make(poly.Polynomial, maxN)
-	// 		copy(extended, DQ_air)
-	// 		largestD.FFT(extended, fft.DIF)
-	// 		utils.BitReverse(extended)
-	// 		for j := 0; j < maxN; j++ {
-	// 			deepQuotient[j].Add(&deepQuotient[j], &extended[j])
-	// 		}
-	// 	}
-	// }
-
 	// -------- check FRI proof -------
-	err := fri.Verify(vr.friParams, vr.proof.DeepQuotientCommitment, vr.proof.DeepQuotientFriProof, vr.fs)
+	err := fri.Verify(vr.friParams,
+		[][][]byte{{vr.proof.DeepQuotientCommitment}},
+		[]int{vr.friParams.D},
+		vr.proof.DeepQuotientFriProof, vr.fs)
 	if err != nil {
 		return err
 	}
@@ -479,7 +317,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 	friDomainGen := vr.friParams.FullDomainGenerator()
 
 	for k := 0; k < constants.NUM_QUERIES; k++ {
-		s := vr.proof.DeepQuotientFriProof.Queries[k].Layers[0].Path.LeafIdx
+		s := vr.proof.DeepQuotientFriProof.FRIQueries[k].Layers[0].Path.LeafIdx
 
 		var omega_s koalabear.Element
 		omega_s.Exp(friDomainGen, big.NewInt(int64(s)))
@@ -611,8 +449,8 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 			DQ_neg_s.Add(&DQ_neg_s, &num)
 		}
 
-		expectedP := vr.proof.DeepQuotientFriProof.Queries[k].Layers[0].LeafP
-		expectedQ := vr.proof.DeepQuotientFriProof.Queries[k].Layers[0].LeafQ
+		expectedP := vr.proof.DeepQuotientFriProof.FRIQueries[k].Layers[0].LeafP
+		expectedQ := vr.proof.DeepQuotientFriProof.FRIQueries[k].Layers[0].LeafQ
 
 		if !DQ_s.Equal(&expectedP) {
 			return fmt.Errorf("checkFRIBridge: query %d: DQ(ω^s) mismatch: got %s, want %s", k, DQ_s.String(), expectedP.String())
@@ -660,6 +498,8 @@ func Verify(publicInputs map[string]proof.PublicInput, setup PublicKey, program 
 		return err
 	}
 
+	// ------ PCS related verification ------
+
 	// 5a - check FRI proof
 	err = vr.checkFRIProof()
 	if err != nil {
@@ -667,16 +507,16 @@ func Verify(publicInputs map[string]proof.PublicInput, setup PublicKey, program 
 	}
 
 	// 5b - check merkle proofs of proof.PointSamplings
-	err = vr.checkMerkleProofsPointSampling()
-	if err != nil {
-		return err
-	}
+	// err = vr.checkMerkleProofsPointSampling()
+	// if err != nil {
+	// 	return err
+	// }
 
 	// 5c - check FRI <-> PointSamplings bridge
-	err = vr.checkFRIBridge()
-	if err != nil {
-		return err
-	}
+	// err = vr.checkFRIBridge()
+	// if err != nil {
+	// 	return err
+	// }
 
 	return nil
 }

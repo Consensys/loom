@@ -38,23 +38,15 @@ func randomPoly(n int) []koalabear.Element {
 	return elems
 }
 
-// buildRoot re-derives root0 by building the same paired Merkle tree as Prove does:
-// nLeaves = N/2, leaf k = LeafHasher(encode(layer[k]) || encode(layer[k+N/2])).
-func buildRoot(t *testing.T, layer []koalabear.Element) []byte {
+// buildLevelTree builds the paired-leaf Merkle tree expected by FRI for a
+// single-poly level (helper around p.BuildLevelTree).
+func buildLevelTree(t *testing.T, p fri.Params, layer []koalabear.Element) *merkle.Tree {
 	t.Helper()
-	half := len(layer) / 2
-	tree, err := merkle.New(half, commitment.LeafHash, commitment.NodeHash)
+	tree, err := p.BuildLevelTree(layer)
 	if err != nil {
-		t.Fatalf("merkle.New: %v", err)
+		t.Fatalf("BuildLevelTree: %v", err)
 	}
-	leaves := make([][]byte, half)
-	for k := 0; k < half; k++ {
-		leaves[k] = append(layer[k].Marshal(), layer[k+half].Marshal()...)
-	}
-	if err := tree.Build(leaves); err != nil {
-		t.Fatalf("tree.Build: %v", err)
-	}
-	return tree.Root()
+	return tree
 }
 
 func testParams(t *testing.T, N, D, queries int) fri.Params {
@@ -86,16 +78,19 @@ func TestProveVerify(t *testing.T) {
 				t.Fatalf("Encode: %v", err)
 			}
 
+			tree := buildLevelTree(t, p, evals)
 			tsP := freshTS()
-			prf, _, err := fri.Prove(p, evals, tsP)
+			prf, _, err := fri.Prove(p, []fri.Level{{
+				D:     p.D,
+				Evals: [][]koalabear.Element{evals},
+				Trees: []*merkle.Tree{tree},
+			}}, tsP)
 			if err != nil {
 				t.Fatalf("Prove: %v", err)
 			}
 
-			root0 := buildRoot(t, evals)
-
 			tsV := freshTS()
-			if err := fri.Verify(p, root0, prf, tsV); err != nil {
+			if err := fri.Verify(p, [][][]byte{{tree.Root()}}, []int{p.D}, prf, tsV); err != nil {
 				t.Fatalf("Verify: %v", err)
 			}
 		})
@@ -107,14 +102,19 @@ func TestVerifyRejectsWrongRoot(t *testing.T) {
 	p := testParams(t, 64, 4, 4)
 	evals, _ := p.Encode(randomPoly(p.D))
 
+	tree := buildLevelTree(t, p, evals)
 	tsP := freshTS()
-	prf, _, _ := fri.Prove(p, evals, tsP)
+	prf, _, _ := fri.Prove(p, []fri.Level{{
+		D:     p.D,
+		Evals: [][]koalabear.Element{evals},
+		Trees: []*merkle.Tree{tree},
+	}}, tsP)
 
 	badRoot := make([]byte, 32)
 	rand.Read(badRoot) //nolint:gosec
 
 	tsV := freshTS()
-	if err := fri.Verify(p, badRoot, prf, tsV); err == nil {
+	if err := fri.Verify(p, [][][]byte{{badRoot}}, []int{p.D}, prf, tsV); err == nil {
 		t.Fatal("Verify accepted a proof with a wrong root0")
 	}
 }
@@ -123,19 +123,23 @@ func TestVerifyRejectsWrongRoot(t *testing.T) {
 func TestVerifyRejectsFlippedLeaf(t *testing.T) {
 	p := testParams(t, 64, 4, 4)
 	evals, _ := p.Encode(randomPoly(p.D))
-	root0 := buildRoot(t, evals)
+	tree := buildLevelTree(t, p, evals)
 
 	tsP := freshTS()
-	prf, _, err := fri.Prove(p, evals, tsP)
+	prf, _, err := fri.Prove(p, []fri.Level{{
+		D:     p.D,
+		Evals: [][]koalabear.Element{evals},
+		Trees: []*merkle.Tree{tree},
+	}}, tsP)
 	if err != nil {
 		t.Fatalf("Prove: %v", err)
 	}
 
 	// Flip the first leaf of the first query, first layer.
-	prf.Queries[0].Layers[0].LeafP.SetRandom()
+	prf.FRIQueries[0].Layers[0].LeafP.SetRandom()
 
 	tsV := freshTS()
-	if err := fri.Verify(p, root0, prf, tsV); err == nil {
+	if err := fri.Verify(p, [][][]byte{{tree.Root()}}, []int{p.D}, prf, tsV); err == nil {
 		t.Fatal("Verify accepted a proof with a corrupted leaf")
 	}
 }

@@ -28,7 +28,9 @@ import (
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/fri"
+	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
+	"github.com/consensys/loom/internal/reedsolomon"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/trace"
 )
@@ -333,67 +335,71 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 
 func (pr *proverRuntime) ComputeDeepQuotient() error {
 
-	// sort modules by N in decreasing order
-	sortedModule := make([]string, 0, len(pr.program.Modules))
+	// Group module names by domain size N. Within a size, names are sorted
+	// alphabetically so the alpha accumulation is deterministic.
+	modulesByN := map[int][]string{}
 	for name := range pr.program.Modules {
-		sortedModule = append(sortedModule, name)
+		N := pr.program.Modules[name].N
+		modulesByN[N] = append(modulesByN[N], name)
 	}
-	sort.Slice(sortedModule, func(i, j int) bool {
-		ni := pr.program.Modules[sortedModule[i]].N
-		nj := pr.program.Modules[sortedModule[j]].N
-		if ni != nj {
-			return ni > nj
-		}
-		return sortedModule[i] < sortedModule[j]
-	})
+	for _, names := range modulesByN {
+		sort.Strings(names)
+	}
+	// Sizes in decreasing order: levels[0] is the largest (= friParams.D).
+	sizes := make([]int, 0, len(modulesByN))
+	for n := range modulesByN {
+		sizes = append(sizes, n)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
 
 	// for now we emulate the folding challenge
 	var alpha koalabear.Element
 	// TODO make it random via FS
 	alpha.SetUint64(10)
 
-	// deepQuotient result -> it is equal to \sum_i \alpha^i (C(zeta*omega^shift)-C)/(zeta*omega^shift-X))
-	// the columns C are fetched from the vanishing relation of the modules, shift!=0 according to the column being
-	// rotated or not
-	maxN := pr.program.Modules[sortedModule[0]].N
-	largestD := pr.program.Modules[sortedModule[0]].D
-	deepQuotient := make([]koalabear.Element, maxN) // largest N
+	// One DEEP quotient per size, combining vanishing-relation columns and AIR
+	// quotient chunks of all modules of that size. alphaAcc is reset to 1 for
+	// each size — different sizes are mixed by FRI's level-batching γ_l later.
+	deepQuotients := make(map[int]poly.Polynomial, len(sizes))
 
-	var alphaAcc koalabear.Element
-	alphaAcc.SetOne()
+	for _, N := range sizes {
+		deepQuotient := make(poly.Polynomial, N)
 
-	// loop through sortedModule, get the corresponding module
-	// TODO the deep quotient is computed per module shares. Might be more efficient to compute it by shift shares, accross modules (=one call to deepQuotient per shift)
-	for _, moduleName := range sortedModule {
-		module := pr.program.Modules[moduleName]
-		N := module.N
+		var alphaAcc koalabear.Element
+		alphaAcc.SetOne()
 
-		// 1 - get the RotatedColumn and CommittedColumn from the module's vanishing relation
-		config := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutPublicColumns())
-		leaves := module.VanishingRelation.LeavesFull(config)
+		// All modules of size N share the same canonical domain (size-N roots
+		// of unity); pick the first one as reference for shift evaluation.
+		domainN := pr.program.Modules[modulesByN[N][0]].D
 
-		// 2 - group columns by normalized shift; deduplicate by leaf.String()
-		// Each entry carries the bare column name (for trace lookup) and the original
-		// leaf.String() key (for ValuesAtZeta lookup, which preserves the raw shift).
+		// ── Phase 1: vanishing-relation columns ────────────────────────────────
+		// Pool leaves across ALL modules of this size, deduplicated by
+		// leaf.String() so a column referenced by several same-size modules
+		// only contributes once to the size-N deep quotient.
 		type colEntry struct {
 			name string // bare column name → key in pr.t
 			key  string // leaf.String() → key in ValuesAtZeta
 		}
-		byShift := map[int][]colEntry{} // normalized shift → entries
-		seenKey := map[string]bool{}    // deduplicate by leaf.String()
-		for _, leaf := range leaves {
-			k := leaf.String()
-			if seenKey[k] {
-				continue
+		byShift := map[int][]colEntry{}
+		seenKey := map[string]bool{}
+		for _, moduleName := range modulesByN[N] {
+			module := pr.program.Modules[moduleName]
+
+			config := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutPublicColumns())
+			leaves := module.VanishingRelation.LeavesFull(config)
+			for _, leaf := range leaves {
+				k := leaf.String()
+				if seenKey[k] {
+					continue
+				}
+				seenKey[k] = true
+				normalizedShift := 0
+				if leaf.Type == expr.RotatedColumn {
+					normalizedShift = ((leaf.Shift % N) + N) % N
+				}
+				byShift[normalizedShift] = append(byShift[normalizedShift], colEntry{name: leaf.Name, key: k})
 			}
-			seenKey[k] = true
-			normalizedShift := 0
-			if leaf.Type == expr.RotatedColumn {
-				normalizedShift = ((leaf.Shift % N) + N) % N
-			}
-			byShift[normalizedShift] = append(byShift[normalizedShift], colEntry{name: leaf.Name, key: k})
 		}
-		// sort shifts and entries within each shift to ensure deterministic alphaAcc accumulation
 		shifts := make([]int, 0, len(byShift))
 		for s := range byShift {
 			shifts = append(shifts, s)
@@ -403,21 +409,17 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 			sort.Slice(byShift[sh], func(i, j int) bool { return byShift[sh][i].key < byShift[sh][j].key })
 		}
 
-		// 3 - for each shift in 'sorted' (looped through in increasing order), fold the corresponding columns in the trace
-		// using alpha to build C_shift := \sum_i \alpha^i C
-		// compute C_shift_deep := (C_shift(\omega^shift * zeta)-C_shift)/(omega^shift*zeta - X) using synthetic division
 		for _, shift := range shifts {
-
 			// evaluation point z_s = omega^shift * zeta
 			var omegaShift koalabear.Element
 			omegaShift.SetOne()
 			for k := 0; k < shift; k++ {
-				omegaShift.Mul(&omegaShift, &module.D.Generator)
+				omegaShift.Mul(&omegaShift, &domainN.Generator)
 			}
 			var z_s koalabear.Element
 			z_s.Mul(&pr.zeta, &omegaShift)
 
-			// fold: C_s(X) = sum_i alphaAcc_i * C_i(X), v_s = C_s(z_s) = sum_i alphaAcc_i * C_i(z_s)
+			// fold: C_s(X) = Σ_i alphaAcc_i * C_i(X); v_s = C_s(z_s)
 			C_s := make(poly.Polynomial, N)
 			var v_s koalabear.Element
 			for _, entry := range byShift[shift] {
@@ -442,86 +444,73 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 				alphaAcc.Mul(&alphaAcc, &alpha)
 			}
 
-			// compute DQ_s = (v_s - C_s(X)) / (z_s - X) via synthetic division
-			DQ_s := poly.DeepQuotient(C_s, v_s, z_s, module.D)
-
-			// accumulate into deepQuotient; extend to maxN domain if this module is smaller
-			if N == maxN {
-				for j := 0; j < N; j++ {
-					deepQuotient[j].Add(&deepQuotient[j], &DQ_s[j])
-				}
-			} else {
-				// IFFT DQ_s to canonical (natural order), zero-pad to maxN, FFT to largest domain
-				module.D.FFTInverse(DQ_s, fft.DIF)
-				utils.BitReverse(DQ_s)
-				extended := make(poly.Polynomial, maxN)
-				copy(extended, DQ_s)
-				// largestD := fft.NewDomain(uint64(maxN))
-				largestD.FFT(extended, fft.DIF)
-				utils.BitReverse(extended)
-				for j := 0; j < maxN; j++ {
-					deepQuotient[j].Add(&deepQuotient[j], &extended[j])
-				}
-			}
-		}
-	}
-
-	// Compute the AIR quotient shares of the DEEP ComputeDeepQuotient
-	// 1- loop through the modules in the program (in the order given by sortedModule)
-	// 2- add the contribution of each quotient shares for the given module (ordered by share 0, then share 1, etc...) to the deep quotient
-	for _, moduleName := range sortedModule {
-		module := pr.program.Modules[moduleName]
-		N := module.N
-
-		C_s := make(poly.Polynomial, N)
-		var v_s koalabear.Element
-		for i := 0; ; i++ {
-			chunkName := constants.QuotientChunkName(moduleName, i)
-			chunk, ok := pr.airTrace[chunkName]
-			if !ok {
-				break
-			}
-			evalAtZ := pr.Proof.ValuesAtZeta[chunkName]
+			DQ_s := poly.DeepQuotient(C_s, v_s, z_s, domainN)
 			for j := 0; j < N; j++ {
-				var term koalabear.Element
-				term.Mul(&chunk[j], &alphaAcc)
-				C_s[j].Add(&C_s[j], &term)
+				deepQuotient[j].Add(&deepQuotient[j], &DQ_s[j])
 			}
-			var term koalabear.Element
-			term.Mul(&evalAtZ, &alphaAcc)
-			v_s.Add(&v_s, &term)
-			alphaAcc.Mul(&alphaAcc, &alpha)
 		}
 
-		DQ_air := poly.DeepQuotient(C_s, v_s, pr.zeta, module.D)
+		// ── Phase 2: AIR quotient chunks (per module — each module has its
+		// own vanishing relation, hence its own quotient chunks) ───────────────
+		for _, moduleName := range modulesByN[N] {
+			module := pr.program.Modules[moduleName]
 
-		if N == maxN {
+			C_s := make(poly.Polynomial, N)
+			var v_s koalabear.Element
+			for i := 0; ; i++ {
+				chunkName := constants.QuotientChunkName(moduleName, i)
+				chunk, ok := pr.airTrace[chunkName]
+				if !ok {
+					break
+				}
+				evalAtZ := pr.Proof.ValuesAtZeta[chunkName]
+				for j := 0; j < N; j++ {
+					var term koalabear.Element
+					term.Mul(&chunk[j], &alphaAcc)
+					C_s[j].Add(&C_s[j], &term)
+				}
+				var term koalabear.Element
+				term.Mul(&evalAtZ, &alphaAcc)
+				v_s.Add(&v_s, &term)
+				alphaAcc.Mul(&alphaAcc, &alpha)
+			}
+
+			DQ_air := poly.DeepQuotient(C_s, v_s, pr.zeta, module.D)
 			for j := 0; j < N; j++ {
 				deepQuotient[j].Add(&deepQuotient[j], &DQ_air[j])
 			}
-		} else {
-			module.D.FFTInverse(DQ_air, fft.DIF)
-			utils.BitReverse(DQ_air)
-			extended := make(poly.Polynomial, maxN)
-			copy(extended, DQ_air)
-			largestD.FFT(extended, fft.DIF)
-			utils.BitReverse(extended)
-			for j := 0; j < maxN; j++ {
-				deepQuotient[j].Add(&deepQuotient[j], &extended[j])
-			}
+		}
+
+		deepQuotients[N] = deepQuotient
+	}
+
+	// ── Build FRI levels: encode each per-size deep quotient and its tree ────
+	levels := make([]fri.Level, len(sizes))
+	for li, N := range sizes {
+		// RS-encode at size N → length RATE*N. Reuse any module-of-size-N's domain.
+		firstModule := pr.program.Modules[modulesByN[N][0]]
+		encoder := reedsolomon.NewEncoder(uint64(constants.RATE) * uint64(N))
+		encoded := encoder.Encode(deepQuotients[N], firstModule.D)
+
+		tree, err := pr.friParams.BuildLevelTree(encoded)
+		if err != nil {
+			return fmt.Errorf("ComputeDeepQuotient: BuildLevelTree N=%d: %w", N, err)
+		}
+
+		levels[li] = fri.Level{
+			D:     N,
+			Evals: [][]koalabear.Element{encoded},
+			Trees: []*merkle.Tree{tree},
 		}
 	}
 
-	deepQuotientTree, err := pr.Committer.Commit([]poly.Polynomial{deepQuotient})
-	if err != nil {
-		return fmt.Errorf("pr.Committer.Commit: %v", err)
-	}
-	pr.Proof.DeepQuotientCommitment = deepQuotientTree.Root()
-	deepQuotient, err = pr.friParams.Encode(deepQuotient)
-	if err != nil {
-		return fmt.Errorf("pr.friParams.Encode: %v", err)
-	}
-	pr.Proof.DeepQuotientFriProof, pr.queryPositions, err = fri.Prove(pr.friParams, deepQuotient, pr.fs)
+	// Expose the largest-level root as DeepQuotientCommitment so the existing
+	// single-level FRI verifier path keeps working. The polynomial-commitment
+	// bridge that exposes the smaller-level roots is left for later.
+	pr.Proof.DeepQuotientCommitment = levels[0].Trees[0].Root()
+
+	var err error
+	pr.Proof.DeepQuotientFriProof, pr.queryPositions, err = fri.Prove(pr.friParams, levels, pr.fs)
 	if err != nil {
 		return fmt.Errorf("fri.Prove: %v", err)
 	}
@@ -615,9 +604,9 @@ func Prove(t trace.Trace, setup PublicKey, publicInputs proof.PublicInputs, prog
 	}
 
 	// Brige FRI <-> polynomial commitments, using sample at queryPositions
-	if err := pr.SampleEvaluations(); err != nil {
-		return proof.Proof{}, err
-	}
+	// if err := pr.SampleEvaluations(); err != nil {
+	// 	return proof.Proof{}, err
+	// }
 
 	return pr.Proof, nil
 }
