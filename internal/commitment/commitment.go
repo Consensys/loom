@@ -37,8 +37,8 @@ type WMerkleTree struct {
 // PointSampling contains the pair evaluation {f(w^i),f(-w^i)} for batch of polynomials f,
 // and a given point w^i, where the i is Proof.LeafIdx
 type WMerkleProof struct {
-	Leafs []Pair
-	Proof merkle.Proof
+	RawLeaf []Pair
+	Proof   merkle.Proof
 }
 
 func (wt WMerkleTree) Root() []byte {
@@ -105,7 +105,7 @@ func (rs *RSCommit) Commit(p []poly.Polynomial) (WMerkleTree, error) {
 		wTree.RawLeafs[i] = make([]Pair, len(_p))
 		for j := 0; j < len(_p); j++ {
 			wTree.RawLeafs[i][j][0].Set(&_p[j][i])
-			wTree.RawLeafs[i][j][0].Set(&_p[j][i+halfN])
+			wTree.RawLeafs[i][j][1].Set(&_p[j][i+halfN])
 			copy(buf[2*j*koalabear.Bytes:], _p[j][i].Marshal())
 			copy(buf[(2*j+1)*koalabear.Bytes:], _p[j][i+halfN].Marshal())
 		}

@@ -98,7 +98,7 @@ func TestVerifierFibo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = Verify(nil, nil, program, proof)
+	err = Verify(nil, PublicKey{Tree: nil}, program, proof)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestVerifierPlonk(t *testing.T) {
 	}
 	viz.ViewDag(program, "dag_plonk.html")
 
-	err = Verify(nil, nil, program, proof)
+	err = Verify(nil, PublicKey{Tree: nil}, program, proof)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestFiboPlonk(t *testing.T) {
 
 	viz.WriteRawTraceToCSV("trace.csv", fullTrace)
 
-	err = Verify(nil, nil, program, proof)
+	err = Verify(nil, PublicKey{Tree: nil}, program, proof)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -31,7 +31,7 @@ type Proof struct {
 	AIRQuotientsCommitment []byte
 	DeepQuotientFriProof   fri.Proof
 	DeepQuotientCommitment []byte
-	PointSamplings         [][]commitment.WMerkleProof // list of values {f(w^i),f(-w^i)} for the trace polynomials and the air polynomials, for some i. One entry per query position, entry i stores the Merkle proofs of the trees storing the relevant polynomials
+	PointSamplings         [][]commitment.WMerkleProof // list of values {f(w^i),f(-w^i)} for the trace polynomials and the air polynomials, for some i. Each entry contains len(TraceCommitments)+1 (-> for the air commitments) (+1 if setup exists) entries
 }
 
 func NewProof() Proof {

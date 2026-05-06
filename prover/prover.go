@@ -91,7 +91,6 @@ func newProverRuntime(t trace.Trace, setup PublicKey, publicInputs proof.PublicI
 			maxN = m.N
 		}
 	}
-	fmt.Printf("[PROVER] %d\n", maxN)
 
 	var err error
 	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, commitment.LeafHash, commitment.NodeHash)
@@ -235,10 +234,31 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 		}
 	}
 
-	// 2 - commit to the AIR quotient trace
+	// 2 - commit to the AIR quotient trace in deterministic order: sortedModule × chunkIdx.
+	// Must match the ordering used in ComputeDeepQuotient so that airTree.RawLeafs indices
+	// are consistent with what the verifier expects when checking the FRI bridge.
+	sortedModuleAir := make([]string, 0, len(pr.program.Modules))
+	for name := range pr.program.Modules {
+		sortedModuleAir = append(sortedModuleAir, name)
+	}
+	sort.Slice(sortedModuleAir, func(i, j int) bool {
+		ni := pr.program.Modules[sortedModuleAir[i]].N
+		nj := pr.program.Modules[sortedModuleAir[j]].N
+		if ni != nj {
+			return ni > nj
+		}
+		return sortedModuleAir[i] < sortedModuleAir[j]
+	})
 	polysToCommit := make([]poly.Polynomial, 0, len(pr.airTrace))
-	for _, p := range pr.airTrace {
-		polysToCommit = append(polysToCommit, p)
+	for _, moduleName := range sortedModuleAir {
+		for i := 0; ; i++ {
+			chunkName := constants.QuotientChunkName(moduleName, i)
+			chunk, ok := pr.airTrace[chunkName]
+			if !ok {
+				break
+			}
+			polysToCommit = append(polysToCommit, chunk)
+		}
 	}
 	tree, err := pr.Committer.Commit(polysToCommit)
 	if err != nil {
@@ -319,12 +339,18 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 		sortedModule = append(sortedModule, name)
 	}
 	sort.Slice(sortedModule, func(i, j int) bool {
-		return pr.program.Modules[sortedModule[i]].N > pr.program.Modules[sortedModule[j]].N
+		ni := pr.program.Modules[sortedModule[i]].N
+		nj := pr.program.Modules[sortedModule[j]].N
+		if ni != nj {
+			return ni > nj
+		}
+		return sortedModule[i] < sortedModule[j]
 	})
 
 	// for now we emulate the folding challenge
 	var alpha koalabear.Element
-	alpha.MustSetRandom()
+	// TODO make it random via FS
+	alpha.SetUint64(10)
 
 	// deepQuotient result -> it is equal to \sum_i \alpha^i (C(zeta*omega^shift)-C)/(zeta*omega^shift-X))
 	// the columns C are fetched from the vanishing relation of the modules, shift!=0 according to the column being
@@ -337,6 +363,7 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 	alphaAcc.SetOne()
 
 	// loop through sortedModule, get the corresponding module
+	// TODO the deep quotient is computed per module shares. Might be more efficient to compute it by shift shares, accross modules (=one call to deepQuotient per shift)
 	for _, moduleName := range sortedModule {
 		module := pr.program.Modules[moduleName]
 		N := module.N
@@ -366,12 +393,15 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 			}
 			byShift[normalizedShift] = append(byShift[normalizedShift], colEntry{name: leaf.Name, key: k})
 		}
-		// store shifts sorted in increasing order
+		// sort shifts and entries within each shift to ensure deterministic alphaAcc accumulation
 		shifts := make([]int, 0, len(byShift))
 		for s := range byShift {
 			shifts = append(shifts, s)
 		}
 		sort.Ints(shifts)
+		for _, sh := range shifts {
+			sort.Slice(byShift[sh], func(i, j int) bool { return byShift[sh][i].key < byShift[sh][j].key })
+		}
 
 		// 3 - for each shift in 'sorted' (looped through in increasing order), fold the corresponding columns in the trace
 		// using alpha to build C_shift := \sum_i \alpha^i C
@@ -512,7 +542,8 @@ func (pr *proverRuntime) SampleEvaluations() error {
 		// setup
 		if pr.setup.Tree != nil {
 			var wproof commitment.WMerkleProof
-			wproof.Leafs = make([]commitment.Pair, len(pr.setup.RawLeafs[pos]))
+			wproof.RawLeaf = make([]commitment.Pair, len(pr.setup.RawLeafs[pos]))
+			copy(wproof.RawLeaf, pr.setup.RawLeafs[pos])
 			wproof.Proof, err = pr.setup.Tree.OpenProof(pos)
 			if err != nil {
 				return err
@@ -523,7 +554,8 @@ func (pr *proverRuntime) SampleEvaluations() error {
 		// trace polynomials
 		for _, tree := range pr.tTrees {
 			var wproof commitment.WMerkleProof
-			wproof.Leafs = make([]commitment.Pair, len(tree.RawLeafs[pos]))
+			wproof.RawLeaf = make([]commitment.Pair, len(tree.RawLeafs[pos]))
+			copy(wproof.RawLeaf, tree.RawLeafs[pos])
 			wproof.Proof, err = tree.Tree.OpenProof(pos)
 			if err != nil {
 				return err
@@ -533,7 +565,8 @@ func (pr *proverRuntime) SampleEvaluations() error {
 
 		// air quotients
 		var wproof commitment.WMerkleProof
-		wproof.Leafs = make([]commitment.Pair, len(pr.airTree.RawLeafs[pos]))
+		wproof.RawLeaf = make([]commitment.Pair, len(pr.airTree.RawLeafs[pos]))
+		copy(wproof.RawLeaf, pr.airTree.RawLeafs[pos])
 		wproof.Proof, err = pr.airTree.Tree.OpenProof(pos)
 		if err != nil {
 			return err

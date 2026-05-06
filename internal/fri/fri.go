@@ -99,6 +99,11 @@ type Proof struct {
 	Queries   []Query             // len = NumQueries
 }
 
+// FullDomainGenerator returns the generator of the full evaluation domain (layer 0, size N).
+func (p Params) FullDomainGenerator() koalabear.Element {
+	return p.domains[0].Generator
+}
+
 // Encode converts a polynomial from Lagrange form (size D) to its evaluation
 // on the full domain of size N. The result is a₀, ready to pass to Prove.
 func (p Params) Encode(poly []koalabear.Element) ([]koalabear.Element, error) {

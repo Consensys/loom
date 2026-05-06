@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/consensys/loom/board"
+	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/prover"
 	"github.com/consensys/loom/verifier"
 )
@@ -83,7 +84,7 @@ func TestIntegration(t *testing.T) {
 				for i, tr := range traces {
 					setSizes(&pg, tr)
 
-					prf, proveErr := prover.Prove(tr, nil, nil, pg)
+					prf, proveErr := prover.Prove(tr, commitment.WMerkleTree{Tree: nil}, nil, pg)
 					if proveErr != nil {
 						if expectOK {
 							t.Errorf("%s[%d] prove: %v", filepath.Base(path), i, proveErr)
@@ -91,7 +92,7 @@ func TestIntegration(t *testing.T) {
 						continue
 					}
 
-					verifyErr := verifier.Verify(nil, nil, pg, prf)
+					verifyErr := verifier.Verify(nil, commitment.WMerkleTree{Tree: nil}, pg, prf)
 					if expectOK && verifyErr != nil {
 						t.Errorf("%s[%d] verify: %v", filepath.Base(path), i, verifyErr)
 					}
