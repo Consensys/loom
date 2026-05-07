@@ -28,14 +28,11 @@ type Proof struct {
 	ValuesAtZeta  map[string]koalabear.Element // map string -> evaluation of the column whose String() is the key at zeta
 	PublicColumns map[string]PublicInput       // extracted values from columns of the trace, those values are passed as public inputs
 
-	// TraceCommitments[round][s] holds the Merkle root of the trace polynomials
-	// committed at round `round` whose size matches the s-th entry in the
-	// per-round size group (sizes ordered by decreasing N).
-	TraceCommitments [][][]byte
-
-	// AIRQuotientsCommitment[s] holds the Merkle root of all AIR-quotient
-	// chunks of size group s (decreasing N).
-	AIRQuotientsCommitment [][]byte
+	// Commitments holds the Merkle roots of every WMerkleTree the prover
+	// commits during the protocol, in canonical order:
+	//   trace-round-0 (decreasing N) → trace-round-1 → … → trace-round-{r-1} → AIR (decreasing N)
+	// Setup roots are NOT stored here — they live in the verifier's PublicKey.
+	Commitments [][]byte
 
 	DeepQuotientFriProof fri.Proof
 
@@ -44,23 +41,15 @@ type Proof struct {
 	// the levels passed to fri.Prove.
 	DeepQuotientCommitment [][]byte
 
-	// PointSamplingsSetup[q][s] holds the merkle proof for the list of values {f(w^i),f(-w^i)}
-	// for the setup polynomials of size s (decreasing order) used to bridge the q-th FRI query
-	PointSamplingsSetup [][]commitment.WMerkleProof
-
-	// PointSamplingsTrace[q][round][s] holds the merkle proof for the list of values {f(w^i),f(-w^i)}
-	// for the trace polynomials of size group s (decreasing N), round `round`, used to bridge the q-th FRI query
-	PointSamplingsTrace [][][]commitment.WMerkleProof
-
-	// PointSamplingsAIRQuotients[q][s] holds the merkle proof for the list of values {f(w^i),f(-w^i)}
-	// for the air quotients polynomials of size group s (decreasing N), used to bridge the q-th FRI query
-	PointSamplingsAIRQuotients [][]commitment.WMerkleProof
+	// PointSamplings[q][i] is the opening at FRI query position q of the i-th
+	// committed tree in the FULL canonical order, INCLUDING setup at the front:
+	//   setup (decreasing N) → trace-round-0 (decreasing N) → … → trace-round-{r-1} → AIR (decreasing N).
+	PointSamplings [][]commitment.WMerkleProof
 }
 
 func NewProof() Proof {
 	var res Proof
 	res.ValuesAtZeta = make(map[string]koalabear.Element)
 	res.PublicColumns = make(map[string]PublicInput)
-	res.TraceCommitments = make([][][]byte, 0)
 	return res
 }

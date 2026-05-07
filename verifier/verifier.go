@@ -21,6 +21,7 @@ import (
 
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/commitment"
@@ -29,6 +30,7 @@ import (
 	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
+	"github.com/consensys/loom/prover"
 )
 
 type PublicKey = []commitment.WMerkleTree
@@ -41,15 +43,44 @@ type verifierRunTime struct {
 	zeta         koalabear.Element
 	setup        PublicKey
 	fs           *fiatshamir.Transcript
+
+	// layout is the canonical commitment layout, shared with the prover side
+	// (built from program + len(setup) at the start of every Verify call).
+	layout prover.Layout
+	// roots is the flat sequence of Merkle roots in canonical order:
+	//   setup roots (from PublicKey) ++ proof.Commitments
+	// roots[i] aligns with proof.PointSamplings[q][i] for any query q.
+	roots [][]byte
 }
 
-func newVerifierRuntime(program board.Program, setup PublicKey, publicInputs map[string]proof.PublicInput, proof proof.Proof) (verifierRunTime, error) {
+func newVerifierRuntime(program board.Program, setup PublicKey, publicInputs map[string]proof.PublicInput, prf proof.Proof) (verifierRunTime, error) {
 
 	res := verifierRunTime{
-		proof:        proof,
+		proof:        prf,
 		publicInputs: publicInputs,
 		program:      program,
 		setup:        setup,
+	}
+
+	// Build the layout shared with the prover.
+	res.layout = prover.BuildLayout(program, len(setup))
+
+	// Validate proof.Commitments matches layout (trace + AIR section).
+	wantCommitments := res.layout.NumTrees - res.layout.SetupEnd
+	if len(prf.Commitments) != wantCommitments {
+		return res, fmt.Errorf("verifier: proof has %d commitments, layout expects %d", len(prf.Commitments), wantCommitments)
+	}
+
+	// Flatten setup roots ++ proof.Commitments into res.roots.
+	res.roots = make([][]byte, res.layout.NumTrees)
+	if len(setup) != res.layout.SetupEnd-res.layout.SetupBegin {
+		return res, fmt.Errorf("verifier: setup has %d trees, layout expects %d", len(setup), res.layout.SetupEnd-res.layout.SetupBegin)
+	}
+	for i, tree := range setup {
+		res.roots[res.layout.SetupBegin+i] = tree.Root()
+	}
+	for i, root := range prf.Commitments {
+		res.roots[res.layout.SetupEnd+i] = root
 	}
 
 	res.fs = fiatshamir.NewTranscript(sha256.New())
@@ -59,11 +90,12 @@ func newVerifierRuntime(program board.Program, setup PublicKey, publicInputs map
 	}
 	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
 
+	// Setup roots are bound to challenge_0 (alongside trace round 0 in deriveChallenges).
 	for _, tree := range setup {
 		res.fs.Bind(constants.CanonicalChallengeName(0), tree.Root())
 	}
 
-	// find the largest module size N in program and populate the Committer
+	// find the largest module size N in program (used to size FRI's outer domain)
 	maxN := 0
 	for _, m := range program.Modules {
 		if m.N > maxN {
@@ -83,11 +115,13 @@ func newVerifierRuntime(program board.Program, setup PublicKey, publicInputs map
 func (vr *verifierRunTime) deriveChallenges() error {
 
 	// For each FS round, bind every per-size trace root (decreasing N order,
-	// matching the prover) before computing the round challenge.
-	for i, roundRoots := range vr.proof.TraceCommitments {
-		challengeName := constants.CanonicalChallengeName(i)
-		for _, root := range roundRoots {
-			vr.fs.Bind(challengeName, root)
+	// matching the prover) before computing the round challenge. Setup roots
+	// were already bound to challenge_0 in newVerifierRuntime.
+	numRounds := len(vr.program.FScolumnsDependencies)
+	for r := 0; r < numRounds; r++ {
+		challengeName := constants.CanonicalChallengeName(r)
+		for i := vr.layout.TraceBegin[r]; i < vr.layout.TraceEnd[r]; i++ {
+			vr.fs.Bind(challengeName, vr.roots[i])
 		}
 		bChallenge, err := vr.fs.ComputeChallenge(challengeName)
 		if err != nil {
@@ -98,8 +132,8 @@ func (vr *verifierRunTime) deriveChallenges() error {
 		vr.proof.ValuesAtZeta[challengeName] = c
 	}
 	// Bind every per-size AIR-quotient root before computing zeta.
-	for _, root := range vr.proof.AIRQuotientsCommitment {
-		vr.fs.Bind(constants.FINAL_EVALUATION_POINT, root)
+	for i := vr.layout.AIRBegin; i < vr.layout.AIREnd; i++ {
+		vr.fs.Bind(constants.FINAL_EVALUATION_POINT, vr.roots[i])
 	}
 	bzeta, err := vr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
 	if err != nil {
@@ -252,105 +286,236 @@ func verifyWMerkleProof(root []byte, wp commitment.WMerkleProof) bool {
 }
 
 // checkMerkleProofsPointSampling verifies every WMerkleProof in
-// PointSamplingsSetup / PointSamplingsTrace / PointSamplingsAIRQuotients
-// against the corresponding committed root, ensuring the bridge inputs to
-// FRI are bound to data the prover committed to earlier in the protocol.
+// proof.PointSamplings against the corresponding root in vr.roots
+// (= setupRoots ++ proof.Commitments).
 func (vr *verifierRunTime) checkMerkleProofsPointSampling() error {
 	NQ := constants.NUM_QUERIES
-
-	// 1 - PointSamplingsSetup[q][i] against vr.setup[i].Root().
-	if len(vr.setup) > 0 {
-		if len(vr.proof.PointSamplingsSetup) != NQ {
-			return fmt.Errorf("checkMerkleProofs: PointSamplingsSetup has %d queries, want %d", len(vr.proof.PointSamplingsSetup), NQ)
-		}
-		for q, samplings := range vr.proof.PointSamplingsSetup {
-			if len(samplings) != len(vr.setup) {
-				return fmt.Errorf("checkMerkleProofs: PointSamplingsSetup[%d] has %d size groups, want %d", q, len(samplings), len(vr.setup))
-			}
-			for i, wp := range samplings {
-				if !verifyWMerkleProof(vr.setup[i].Root(), wp) {
-					return fmt.Errorf("checkMerkleProofs: setup query %d size %d: invalid Merkle proof", q, i)
-				}
-			}
-		}
+	if len(vr.proof.PointSamplings) != NQ {
+		return fmt.Errorf("checkMerkleProofs: PointSamplings has %d queries, want %d", len(vr.proof.PointSamplings), NQ)
 	}
-
-	// 2 - PointSamplingsTrace[q][round][i] against vr.proof.TraceCommitments[round][i].
-	if len(vr.proof.PointSamplingsTrace) != NQ {
-		return fmt.Errorf("checkMerkleProofs: PointSamplingsTrace has %d queries, want %d", len(vr.proof.PointSamplingsTrace), NQ)
-	}
-	for q, rounds := range vr.proof.PointSamplingsTrace {
-		if len(rounds) != len(vr.proof.TraceCommitments) {
-			return fmt.Errorf("checkMerkleProofs: PointSamplingsTrace[%d] has %d rounds, want %d", q, len(rounds), len(vr.proof.TraceCommitments))
-		}
-		for r, samplings := range rounds {
-			if len(samplings) != len(vr.proof.TraceCommitments[r]) {
-				return fmt.Errorf("checkMerkleProofs: PointSamplingsTrace[%d][%d] has %d size groups, want %d", q, r, len(samplings), len(vr.proof.TraceCommitments[r]))
-			}
-			for i, wp := range samplings {
-				if !verifyWMerkleProof(vr.proof.TraceCommitments[r][i], wp) {
-					return fmt.Errorf("checkMerkleProofs: trace query %d round %d size %d: invalid Merkle proof", q, r, i)
-				}
-			}
-		}
-	}
-
-	// 3 - PointSamplingsAIRQuotients[q][i] against vr.proof.AIRQuotientsCommitment[i].
-	if len(vr.proof.PointSamplingsAIRQuotients) != NQ {
-		return fmt.Errorf("checkMerkleProofs: PointSamplingsAIRQuotients has %d queries, want %d", len(vr.proof.PointSamplingsAIRQuotients), NQ)
-	}
-	for q, samplings := range vr.proof.PointSamplingsAIRQuotients {
-		if len(samplings) != len(vr.proof.AIRQuotientsCommitment) {
-			return fmt.Errorf("checkMerkleProofs: PointSamplingsAIRQuotients[%d] has %d size groups, want %d", q, len(samplings), len(vr.proof.AIRQuotientsCommitment))
+	for q, samplings := range vr.proof.PointSamplings {
+		if len(samplings) != vr.layout.NumTrees {
+			return fmt.Errorf("checkMerkleProofs: PointSamplings[%d] has %d entries, want %d", q, len(samplings), vr.layout.NumTrees)
 		}
 		for i, wp := range samplings {
-			if !verifyWMerkleProof(vr.proof.AIRQuotientsCommitment[i], wp) {
-				return fmt.Errorf("checkMerkleProofs: AIR query %d size %d: invalid Merkle proof", q, i)
+			if !verifyWMerkleProof(vr.roots[i], wp) {
+				return fmt.Errorf("checkMerkleProofs: query %d tree %d: invalid Merkle proof", q, i)
+			}
+		}
+	}
+	return nil
+}
+
+// checkFRIBridge verifies that the DEEP quotient (per size) evaluated at the
+// FRI sample points (using the column / AIR-chunk samples from
+// proof.PointSamplings) matches the FRI proof's level-0 layer values. It is
+// the prover-side ComputeDeepQuotient computed pointwise at the FRI query
+// positions instead of as a polynomial.
+func (vr *verifierRunTime) checkFRIBridge() error {
+	NQ := constants.NUM_QUERIES
+	leafConfig := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutPublicColumns())
+
+	// Folding challenge — must match the prover's hard-coded value.
+	// TODO derive from FS, same as prover.
+	var alpha koalabear.Element
+	alpha.SetUint64(10)
+
+	// Group modules by size N (decreasing N). Within a size, names sorted
+	// alphabetically — matches the prover's ComputeDeepQuotient ordering.
+	modulesByN := map[int][]string{}
+	for name := range vr.program.Modules {
+		N := vr.program.Modules[name].N
+		modulesByN[N] = append(modulesByN[N], name)
+	}
+	for _, names := range modulesByN {
+		sort.Strings(names)
+	}
+	sizes := make([]int, 0, len(modulesByN))
+	for n := range modulesByN {
+		sizes = append(sizes, n)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
+
+	// samplePair returns the (LeafP, LeafQ) pair for a given Slot at query q.
+	samplePair := func(slot prover.Slot, q int) (koalabear.Element, koalabear.Element, error) {
+		if slot.TreeIdx >= len(vr.proof.PointSamplings[q]) {
+			return koalabear.Element{}, koalabear.Element{}, fmt.Errorf("checkFRIBridge: tree index %d out of range", slot.TreeIdx)
+		}
+		wp := vr.proof.PointSamplings[q][slot.TreeIdx]
+		if slot.PolyIdx >= len(wp.RawLeaf) {
+			return koalabear.Element{}, koalabear.Element{}, fmt.Errorf("checkFRIBridge: poly index %d out of range (have %d)", slot.PolyIdx, len(wp.RawLeaf))
+		}
+		return wp.RawLeaf[slot.PolyIdx][0], wp.RawLeaf[slot.PolyIdx][1], nil
+	}
+
+	for q := 0; q < NQ; q++ {
+		// Full-domain FRI query position (the level-0 leaf index).
+		s_full := vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0].Path.LeafIdx
+
+		for li, N := range sizes {
+			domainSize := constants.RATE * N
+			halfDomain := domainSize / 2
+			s_l := s_full % halfDomain
+
+			// Sample point for this level: omega_l^{s_l}, where omega_l is
+			// the generator of the size-(RATE*N) FRI domain. fft.NewDomain
+			// is deterministic so this matches what the prover used.
+			domL := fft.NewDomain(uint64(domainSize))
+			var X, negX koalabear.Element
+			X.Exp(domL.Generator, big.NewInt(int64(s_l)))
+			negX.Neg(&X)
+
+			// Generator of the size-N domain (NOT RATE*N) — used for shift
+			// evaluation z_s = zeta · ω_N^shift.
+			domN := vr.program.Modules[modulesByN[N][0]].D
+
+			var DQ_P, DQ_Q koalabear.Element
+			var alphaAcc koalabear.Element
+			alphaAcc.SetOne()
+
+			// ── Phase 1: vanishing-relation columns (pool across modules of size N) ──
+			type colEntry struct {
+				name string // → trace ColSlot lookup
+				key  string // → ValuesAtZeta lookup
+			}
+			byShift := map[int][]colEntry{}
+			seenKey := map[string]bool{}
+			for _, moduleName := range modulesByN[N] {
+				module := vr.program.Modules[moduleName]
+				for _, leaf := range module.VanishingRelation.LeavesFull(leafConfig) {
+					k := leaf.String()
+					if seenKey[k] {
+						continue
+					}
+					seenKey[k] = true
+					normalizedShift := 0
+					if leaf.Type == expr.RotatedColumn {
+						normalizedShift = ((leaf.Shift % N) + N) % N
+					}
+					byShift[normalizedShift] = append(byShift[normalizedShift], colEntry{name: leaf.Name, key: k})
+				}
+			}
+			shifts := make([]int, 0, len(byShift))
+			for sh := range byShift {
+				shifts = append(shifts, sh)
+			}
+			sort.Ints(shifts)
+			for _, sh := range shifts {
+				sort.Slice(byShift[sh], func(i, j int) bool { return byShift[sh][i].key < byShift[sh][j].key })
+			}
+
+			for _, shift := range shifts {
+				// z_s = zeta · ω_N^shift
+				var omegaShift, z_s koalabear.Element
+				omegaShift.Exp(domN.Generator, big.NewInt(int64(shift)))
+				z_s.Mul(&vr.zeta, &omegaShift)
+
+				// Accumulate alphaAcc_i · column_i at zeta and at X / -X.
+				var v_s, C_at_X, C_at_negX koalabear.Element
+				for _, entry := range byShift[shift] {
+					evalAtZ, ok := vr.proof.ValuesAtZeta[entry.key]
+					if !ok {
+						return fmt.Errorf("checkFRIBridge: %q not in ValuesAtZeta", entry.key)
+					}
+					slot, ok := vr.layout.ColSlot[entry.name]
+					if !ok {
+						return fmt.Errorf("checkFRIBridge: column %q not in layout.ColSlot", entry.name)
+					}
+					leafP, leafQ, err := samplePair(slot, q)
+					if err != nil {
+						return err
+					}
+
+					var term koalabear.Element
+					term.Mul(&evalAtZ, &alphaAcc)
+					v_s.Add(&v_s, &term)
+					term.Mul(&leafP, &alphaAcc)
+					C_at_X.Add(&C_at_X, &term)
+					term.Mul(&leafQ, &alphaAcc)
+					C_at_negX.Add(&C_at_negX, &term)
+
+					alphaAcc.Mul(&alphaAcc, &alpha)
+				}
+
+				// DQ_shift(X) = (v_s - C_s(X)) / (z_s - X)
+				var num, denom koalabear.Element
+				num.Sub(&v_s, &C_at_X)
+				denom.Sub(&z_s, &X)
+				denom.Inverse(&denom)
+				num.Mul(&num, &denom)
+				DQ_P.Add(&DQ_P, &num)
+
+				num.Sub(&v_s, &C_at_negX)
+				denom.Sub(&z_s, &negX)
+				denom.Inverse(&denom)
+				num.Mul(&num, &denom)
+				DQ_Q.Add(&DQ_Q, &num)
+			}
+
+			// ── Phase 2: AIR-quotient chunks (per module; eval point = zeta) ──
+			for _, moduleName := range modulesByN[N] {
+				var v_air, C_at_X, C_at_negX koalabear.Element
+				for i := 0; ; i++ {
+					chunkName := constants.QuotientChunkName(moduleName, i)
+					evalAtZ, ok := vr.proof.ValuesAtZeta[chunkName]
+					if !ok {
+						break
+					}
+					slot, ok := vr.layout.AIRChunkSlot[chunkName]
+					if !ok {
+						return fmt.Errorf("checkFRIBridge: chunk %q not in layout.AIRChunkSlot", chunkName)
+					}
+					leafP, leafQ, err := samplePair(slot, q)
+					if err != nil {
+						return err
+					}
+
+					var term koalabear.Element
+					term.Mul(&evalAtZ, &alphaAcc)
+					v_air.Add(&v_air, &term)
+					term.Mul(&leafP, &alphaAcc)
+					C_at_X.Add(&C_at_X, &term)
+					term.Mul(&leafQ, &alphaAcc)
+					C_at_negX.Add(&C_at_negX, &term)
+
+					alphaAcc.Mul(&alphaAcc, &alpha)
+				}
+
+				var num, denom koalabear.Element
+				num.Sub(&v_air, &C_at_X)
+				denom.Sub(&vr.zeta, &X)
+				denom.Inverse(&denom)
+				num.Mul(&num, &denom)
+				DQ_P.Add(&DQ_P, &num)
+
+				num.Sub(&v_air, &C_at_negX)
+				denom.Sub(&vr.zeta, &negX)
+				denom.Inverse(&denom)
+				num.Mul(&num, &denom)
+				DQ_Q.Add(&DQ_Q, &num)
+			}
+
+			// Compare DQ_N at (X, -X) with the FRI level-l layer-0 leaves.
+			var actualP, actualQ koalabear.Element
+			if li == 0 {
+				actualP = vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0].LeafP
+				actualQ = vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0].LeafQ
+			} else {
+				lq := vr.proof.DeepQuotientFriProof.LevelQueries[li-1][q][0]
+				actualP = lq.LeafP
+				actualQ = lq.LeafQ
+			}
+			if !DQ_P.Equal(&actualP) {
+				return fmt.Errorf("checkFRIBridge: query %d level %d (N=%d): DQ(ω_l^s) mismatch: got %s, want %s", q, li, N, DQ_P.String(), actualP.String())
+			}
+			if !DQ_Q.Equal(&actualQ) {
+				return fmt.Errorf("checkFRIBridge: query %d level %d (N=%d): DQ(-ω_l^s) mismatch: got %s, want %s", q, li, N, DQ_Q.String(), actualQ.String())
 			}
 		}
 	}
 
 	return nil
 }
-
-// checkFRIBridge is part of the FRI ↔ polynomial-commitment bridge and is
-// disabled until the bridge is rewired for the multi-degree commitment scheme.
-// It is not called by Verify.
-//
-// func (vr *verifierRunTime) checkFRIBridge() error {
-//	// Sort modules by decreasing N — must match ComputeDeepQuotient in the prover.
-//	sortedModule := make([]string, 0, len(vr.program.Modules))
-//	for name := range vr.program.Modules {
-//		sortedModule = append(sortedModule, name)
-//	}
-//	sort.Slice(sortedModule, func(i, j int) bool {
-//		ni := vr.program.Modules[sortedModule[i]].N
-//		nj := vr.program.Modules[sortedModule[j]].N
-//		if ni != nj {
-//			return ni > nj
-//		}
-//		return sortedModule[i] < sortedModule[j]
-//	})
-//
-//	// colToSlot maps a bare column name to its position in PointSamplings[k]:
-//	// samplingIdx is the WMerkleProof index, leafIdx is the index within RawLeaf.
-//	// Order must match SampleEvaluations: [setup?] + tTrees[0..r-1] + airTree.
-//	type colSlot struct {
-//		samplingIdx int
-//		leafIdx     int
-//	}
-//	colToSlot := make(map[string]colSlot)
-//	offset := 0
-//	if vr.setup.Tree != nil {
-//		offset = 1
-//	}
-//	for roundIdx, deps := range vr.program.FScolumnsDependencies {
-//		for leafIdx, name := range deps {
-//			colToSlot[name] = colSlot{samplingIdx: offset + roundIdx, leafIdx: leafIdx}
-//		}
-//	}
-
-// (rest of checkFRIBridge body elided — see git history)
 
 func Verify(publicInputs map[string]proof.PublicInput, setup PublicKey, program board.Program, proof proof.Proof) error {
 
@@ -402,10 +567,10 @@ func Verify(publicInputs map[string]proof.PublicInput, setup PublicKey, program 
 	}
 
 	// 5c - check FRI <-> PointSamplings bridge
-	// err = vr.checkFRIBridge()
-	// if err != nil {
-	// 	return err
-	// }
+	err = vr.checkFRIBridge()
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
