@@ -25,20 +25,42 @@ type Commitment struct {
 }
 
 type Proof struct {
-	ValuesAtZeta           map[string]koalabear.Element // map string -> evaluation of the column whose String() is the key at zeta
-	PublicColumns          map[string]PublicInput       // extracted values from columns of the trace, those values are passed as public inputs
-	TraceCommitments       [][]byte                     // rounds of FS, entry i stores the data to hash at round i to derive 'challenge@loom_<i>'
-	AIRQuotientsCommitment []byte
-	DeepQuotientFriProof   fri.Proof
-	DeepQuotientCommitment []byte
-	PointSamplings         [][]commitment.WMerkleProof // list of values {f(w^i),f(-w^i)} for the trace polynomials and the air polynomials, for some i. Each entry contains len(TraceCommitments)+1 (-> for the air commitments) (+1 if setup exists) entries
+	ValuesAtZeta  map[string]koalabear.Element // map string -> evaluation of the column whose String() is the key at zeta
+	PublicColumns map[string]PublicInput       // extracted values from columns of the trace, those values are passed as public inputs
+
+	// TraceCommitments[round][s] holds the Merkle root of the trace polynomials
+	// committed at round `round` whose size matches the s-th entry in the
+	// per-round size group (sizes ordered by decreasing N).
+	TraceCommitments [][][]byte
+
+	// AIRQuotientsCommitment[s] holds the Merkle root of all AIR-quotient
+	// chunks of size group s (decreasing N).
+	AIRQuotientsCommitment [][]byte
+
+	DeepQuotientFriProof fri.Proof
+
+	// DeepQuotientCommitment[l] holds the Merkle root of the FRI level-l
+	// deep-quotient polynomial (level 0 = largest size). Same ordering as
+	// the levels passed to fri.Prove.
+	DeepQuotientCommitment [][]byte
+
+	// PointSamplingsSetup[q][s] holds the merkle proof for the list of values {f(w^i),f(-w^i)}
+	// for the setup polynomials of size s (decreasing order) used to bridge the q-th FRI query
+	PointSamplingsSetup [][]commitment.WMerkleProof
+
+	// PointSamplingsTrace[q][round][s] holds the merkle proof for the list of values {f(w^i),f(-w^i)}
+	// for the trace polynomials of size group s (decreasing N), round `round`, used to bridge the q-th FRI query
+	PointSamplingsTrace [][][]commitment.WMerkleProof
+
+	// PointSamplingsAIRQuotients[q][s] holds the merkle proof for the list of values {f(w^i),f(-w^i)}
+	// for the air quotients polynomials of size group s (decreasing N), used to bridge the q-th FRI query
+	PointSamplingsAIRQuotients [][]commitment.WMerkleProof
 }
 
 func NewProof() Proof {
 	var res Proof
 	res.ValuesAtZeta = make(map[string]koalabear.Element)
 	res.PublicColumns = make(map[string]PublicInput)
-	res.TraceCommitments = make([][]byte, 0)
-	res.PointSamplings = make([][]commitment.WMerkleProof, 0)
+	res.TraceCommitments = make([][][]byte, 0)
 	return res
 }

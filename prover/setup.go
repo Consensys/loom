@@ -14,6 +14,8 @@
 package prover
 
 import (
+	"sort"
+
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
@@ -21,26 +23,39 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-type PublicKey = commitment.WMerkleTree
+// PublicKey is the per-size set of WMerkleTrees over the program's public
+// columns: PublicKey[s] is the commitment for the s-th size group, sizes
+// ordered by decreasing N. An empty/nil PublicKey means "no setup".
+type PublicKey = []commitment.WMerkleTree
 
 func Setup(t trace.Trace, program board.Program) (PublicKey, error) {
+	if len(program.PublicColumns) == 0 {
+		return nil, nil
+	}
 
-	maxN := 0
-	for _, m := range program.Modules {
-		if m.N > maxN {
-			maxN = m.N
+	// Group public columns by their owning module's domain size.
+	colsByN := map[int][]poly.Polynomial{}
+	for _, c := range program.PublicColumns {
+		m, ok := program.Modules[c.Module]
+		if !ok {
+			continue
 		}
+		colsByN[m.N] = append(colsByN[m.N], t[c.Name])
 	}
-	committer := commitment.NewRSCommit(uint64(maxN), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
+	sizes := make([]int, 0, len(colsByN))
+	for n := range colsByN {
+		sizes = append(sizes, n)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
 
-	polys := make([]poly.Polynomial, len(program.PublicColumns))
-	for i, name := range program.PublicColumns {
-		polys[i] = t[name]
+	res := make(PublicKey, len(sizes))
+	for i, N := range sizes {
+		committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
+		tree, err := committer.Commit(colsByN[N])
+		if err != nil {
+			return nil, err
+		}
+		res[i] = tree
 	}
-	tree, err := committer.Commit(polys)
-	if err != nil {
-		return PublicKey{}, err
-	}
-
-	return tree, nil
+	return res, nil
 }

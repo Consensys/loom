@@ -111,14 +111,14 @@ func stepDagHTML(program board.Program) string {
 				var round int
 				fmt.Sscanf(step.Outs[0], "challenge@loom_%d", &round)
 				if round < len(program.FScolumnsDependencies) {
-					for _, name := range program.FScolumnsDependencies[round] {
-						if seen[name] {
+					for _, dep := range program.FScolumnsDependencies[round] {
+						if seen[dep.Name] {
 							continue
 						}
-						seen[name] = true
-						cid := getColID(name)
-						if _, ok := colVisLvl[name]; !ok {
-							colVisLvl[name] = 0
+						seen[dep.Name] = true
+						cid := getColID(dep.Name)
+						if _, ok := colVisLvl[dep.Name]; !ok {
+							colVisLvl[dep.Name] = 0
 						}
 						edges = append(edges, visEdge{From: cid, To: stepNodeID})
 					}

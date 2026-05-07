@@ -74,7 +74,7 @@ func TestVanishingRelationsAndLogupBus(t *testing.T) {
 	traceRange := TraceRange(N)
 	tr := MergeTrace(traceFrob, traceRange)
 
-	proof, err := Prove(tr, PublicKey{Tree: nil}, nil, program, EmulateFS())
+	proof, err := Prove(tr, nil, nil, program, EmulateFS())
 	if err != nil {
 		t.Fatal(err)
 	}

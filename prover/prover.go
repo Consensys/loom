@@ -49,13 +49,16 @@ func EmulateFS() Option {
 }
 
 type proverRuntime struct {
-	Committer      commitment.RSCommit
-	friParams      fri.Params
-	Proof          proof.Proof
-	config         Config
-	tTrees         []commitment.WMerkleTree
-	airTree        commitment.WMerkleTree
-	deepTree       commitment.WMerkleTree
+	friParams fri.Params
+	Proof     proof.Proof
+	config    Config
+	// tTrees[round][s] holds the WMerkle tree for the s-th size group of the
+	// trace polynomials committed at FS round `round`. Sizes are ordered by
+	// decreasing N within each round.
+	tTrees [][]commitment.WMerkleTree
+	// airTrees[s] is the AIR-quotient WMerkle tree for the s-th size group
+	// (decreasing N).
+	airTrees       []commitment.WMerkleTree
 	t              trace.Trace
 	airTrace       trace.Trace
 	publicInputs   proof.PublicInputs
@@ -76,17 +79,17 @@ func newProverRuntime(t trace.Trace, setup PublicKey, publicInputs proof.PublicI
 		publicInputs: publicInputs,
 		program:      program,
 		setup:        setup,
-		tTrees:       make([]commitment.WMerkleTree, 0, len(program.FScolumnsDependencies)),
+		tTrees:       make([][]commitment.WMerkleTree, 0, len(program.FScolumnsDependencies)),
 		airTrace:     make(trace.Trace),
 		mu:           sync.Mutex{}, // mutex to protect the trace when reading/writing (in case of parallelisation)
 	}
 
-	res.Proof.PointSamplings = make([][]commitment.WMerkleProof, constants.NUM_QUERIES)
-	for i := 0; i < constants.NUM_QUERIES; i++ {
-		res.Proof.PointSamplings[i] = make([]commitment.WMerkleProof, 0, len(program.FScolumnsDependencies)+2) // setup + air quotients + FScolumnsDependencies
-	}
+	// res.Proof.PointSamplings = make([][]commitment.WMerkleProof, constants.NUM_QUERIES)
+	// for i := 0; i < constants.NUM_QUERIES; i++ {
+	// 	res.Proof.PointSamplings[i] = make([]commitment.WMerkleProof, 0, len(program.FScolumnsDependencies)+2) // setup + air quotients + FScolumnsDependencies
+	// }
 
-	// find the largest module size N in program and populate the Committer
+	// find the largest module size N in program (used to size FRI's outer domain)
 	maxN := 0
 	for _, m := range program.Modules {
 		if m.N > maxN {
@@ -102,8 +105,6 @@ func newProverRuntime(t trace.Trace, setup PublicKey, publicInputs proof.PublicI
 
 	res.queryPositions = make([]int, constants.NUM_QUERIES)
 
-	res.Committer = commitment.NewRSCommit(uint64(maxN), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
-
 	// initialize FS transcript and pre-register all challenges (challenge@loom_0..n-1 and zeta)
 	res.fs = fiatshamir.NewTranscript(sha256.New())
 	numRounds := len(program.FScolumnsDependencies)
@@ -112,8 +113,9 @@ func newProverRuntime(t trace.Trace, setup PublicKey, publicInputs proof.PublicI
 	}
 	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
 
-	if setup.Tree != nil {
-		res.fs.Bind(constants.CanonicalChallengeName(0), res.setup.Root())
+	// Bind every setup tree's root to challenge_0 (decreasing-N order, set by Setup).
+	for _, tree := range setup {
+		res.fs.Bind(constants.CanonicalChallengeName(0), tree.Root())
 	}
 
 	return res, nil
@@ -138,27 +140,49 @@ func (pr *proverRuntime) ExecuteSteps() error {
 			if ok {
 				challengeName := constants.CanonicalChallengeName(roundIdx)
 
-				// fetch all trace polynomials referred in FScolumnsDependencies[roundIdx]
+				// Fetch trace polynomials for this round, grouping by their
+				// owning module's domain size so we can build one commitment
+				// per size (multi-degree commitment scheme).
 				deps := pr.program.FScolumnsDependencies[roundIdx]
-				polys := make([]poly.Polynomial, len(deps))
+				polysByN := map[int][]poly.Polynomial{}
 				pr.mu.Lock()
-				for i, name := range deps {
-					polys[i] = pr.t[name]
+				for _, dep := range deps {
+					m, ok := pr.program.Modules[dep.Module]
+					if !ok {
+						pr.mu.Unlock()
+						return fmt.Errorf("ExecuteSteps: column %q references unknown module %q", dep.Name, dep.Module)
+					}
+					polysByN[m.N] = append(polysByN[m.N], pr.t[dep.Name])
 				}
 				pr.mu.Unlock()
 
-				// commit to them using RSCommit
-				tree, err := pr.Committer.Commit(polys)
-				if err != nil {
-					return err
+				// Sizes ordered by decreasing N (consistent with FRI level convention).
+				sizes := make([]int, 0, len(polysByN))
+				for n := range polysByN {
+					sizes = append(sizes, n)
 				}
-				commitRoot := tree.Root()
-				pr.tTrees = append(pr.tTrees, tree)
+				sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
 
-				// store the commitment in proof.TraceCommitments[roundIdx], bind it to challengeName in fs
-				pr.Proof.TraceCommitments = append(pr.Proof.TraceCommitments, commitRoot)
-				if err := pr.fs.Bind(challengeName, commitRoot); err != nil {
-					return err
+				// Commit per size, store trees and roots.
+				roundTrees := make([]commitment.WMerkleTree, len(sizes))
+				roundRoots := make([][]byte, len(sizes))
+				for i, N := range sizes {
+					committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
+					tree, err := committer.Commit(polysByN[N])
+					if err != nil {
+						return err
+					}
+					roundTrees[i] = tree
+					roundRoots[i] = tree.Root()
+				}
+				pr.tTrees = append(pr.tTrees, roundTrees)
+
+				// Store roots in proof and bind every root to the round challenge.
+				pr.Proof.TraceCommitments = append(pr.Proof.TraceCommitments, roundRoots)
+				for _, root := range roundRoots {
+					if err := pr.fs.Bind(challengeName, root); err != nil {
+						return err
+					}
 				}
 
 				// derive 'challengeName' using fs, or sample a random element if EmulateFS is set,
@@ -236,42 +260,52 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 		}
 	}
 
-	// 2 - commit to the AIR quotient trace in deterministic order: sortedModule × chunkIdx.
-	// Must match the ordering used in ComputeDeepQuotient so that airTree.RawLeafs indices
-	// are consistent with what the verifier expects when checking the FRI bridge.
-	sortedModuleAir := make([]string, 0, len(pr.program.Modules))
+	// 2 - Group AIR-quotient chunks by their owning module's domain size, in
+	// deterministic order. Within a size group: modules sorted by name
+	// (ascending), then their chunks in index order. Sizes are processed in
+	// decreasing-N order so that airTrees and AIRQuotientsCommitment line up
+	// with the rest of the multi-degree commitment scheme.
+	chunksByN := map[int][]poly.Polynomial{}
+	moduleNames := make([]string, 0, len(pr.program.Modules))
 	for name := range pr.program.Modules {
-		sortedModuleAir = append(sortedModuleAir, name)
+		moduleNames = append(moduleNames, name)
 	}
-	sort.Slice(sortedModuleAir, func(i, j int) bool {
-		ni := pr.program.Modules[sortedModuleAir[i]].N
-		nj := pr.program.Modules[sortedModuleAir[j]].N
-		if ni != nj {
-			return ni > nj
-		}
-		return sortedModuleAir[i] < sortedModuleAir[j]
-	})
-	polysToCommit := make([]poly.Polynomial, 0, len(pr.airTrace))
-	for _, moduleName := range sortedModuleAir {
+	sort.Strings(moduleNames)
+	for _, moduleName := range moduleNames {
+		N := pr.program.Modules[moduleName].N
 		for i := 0; ; i++ {
 			chunkName := constants.QuotientChunkName(moduleName, i)
 			chunk, ok := pr.airTrace[chunkName]
 			if !ok {
 				break
 			}
-			polysToCommit = append(polysToCommit, chunk)
+			chunksByN[N] = append(chunksByN[N], chunk)
 		}
 	}
-	tree, err := pr.Committer.Commit(polysToCommit)
-	if err != nil {
-		return err
+	sizes := make([]int, 0, len(chunksByN))
+	for n := range chunksByN {
+		sizes = append(sizes, n)
 	}
-	pr.Proof.AIRQuotientsCommitment = tree.Root()
-	pr.airTree = tree
+	sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
 
-	// 3 - derive zeta using FS (or emulate), bind to the AIR quotient commitment
-	if err := pr.fs.Bind(constants.FINAL_EVALUATION_POINT, pr.Proof.AIRQuotientsCommitment); err != nil {
-		return err
+	pr.airTrees = make([]commitment.WMerkleTree, len(sizes))
+	pr.Proof.AIRQuotientsCommitment = make([][]byte, len(sizes))
+	for i, N := range sizes {
+		committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
+		tree, err := committer.Commit(chunksByN[N])
+		if err != nil {
+			return err
+		}
+		pr.airTrees[i] = tree
+		pr.Proof.AIRQuotientsCommitment[i] = tree.Root()
+	}
+
+	// 3 - derive zeta using FS (or emulate), binding every AIR quotient root
+	// (decreasing-N order) before computing the challenge.
+	for _, root := range pr.Proof.AIRQuotientsCommitment {
+		if err := pr.fs.Bind(constants.FINAL_EVALUATION_POINT, root); err != nil {
+			return err
+		}
 	}
 
 	var zetaVal koalabear.Element
@@ -504,10 +538,14 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 		}
 	}
 
-	// Expose the largest-level root as DeepQuotientCommitment so the existing
-	// single-level FRI verifier path keeps working. The polynomial-commitment
-	// bridge that exposes the smaller-level roots is left for later.
-	pr.Proof.DeepQuotientCommitment = levels[0].Trees[0].Root()
+	// Expose every level's tree root as DeepQuotientCommitment[l] (same order
+	// as `levels`, i.e. decreasing N). The verifier passes these to fri.Verify
+	// as levelRoots; the polynomial-commitment bridge that ties them back to
+	// the trace and AIR commitments is left for later.
+	pr.Proof.DeepQuotientCommitment = make([][]byte, len(levels))
+	for li := range levels {
+		pr.Proof.DeepQuotientCommitment[li] = levels[li].Trees[0].Root()
+	}
 
 	var err error
 	pr.Proof.DeepQuotientFriProof, pr.queryPositions, err = fri.Prove(pr.friParams, levels, pr.fs)
@@ -518,50 +556,74 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 	return nil
 }
 
-// SampleEvaluations builds
+// openWMerkleAt opens a WMerkleTree at the leaf index corresponding to FRI
+// query position `s`, reduced mod the tree's paired-leaf count (=
+// encoded_size/2 = RATE·N/2).
+func openWMerkleAt(tree commitment.WMerkleTree, s int) (commitment.WMerkleProof, error) {
+	pos := s % len(tree.RawLeafs)
+	pth, err := tree.Tree.OpenProof(pos)
+	if err != nil {
+		return commitment.WMerkleProof{}, err
+	}
+	rawLeaf := make([]commitment.Pair, len(tree.RawLeafs[pos]))
+	copy(rawLeaf, tree.RawLeafs[pos])
+	return commitment.WMerkleProof{RawLeaf: rawLeaf, Proof: pth}, nil
+}
+
+// SampleEvaluations opens every committed polynomial (setup, trace, AIR
+// quotients) at every FRI query position so the verifier can bridge the FRI
+// proof back to the column commitments. The query position s is reduced mod
+// N/2 per tree (N = the tree's encoded polynomial size).
 func (pr *proverRuntime) SampleEvaluations() error {
+	NQ := len(pr.queryPositions)
 
-	// for each query position, open the list of polynomial evaluations at {f(w^i),f(-w^i)}
-	// the relevant polynomials, that the verifier need to connec to the DEEP quotient,
-	// are already stored in the setup tree, the trace trees, and the air trees
-	for k, pos := range pr.queryPositions {
-
-		var err error
-
-		// setup
-		if pr.setup.Tree != nil {
-			var wproof commitment.WMerkleProof
-			wproof.RawLeaf = make([]commitment.Pair, len(pr.setup.RawLeafs[pos]))
-			copy(wproof.RawLeaf, pr.setup.RawLeafs[pos])
-			wproof.Proof, err = pr.setup.Tree.OpenProof(pos)
-			if err != nil {
-				return err
+	// 1 - PointSamplingsSetup[q][i] for each setup tree i (size group),
+	// only when a setup exists.
+	if len(pr.setup) > 0 {
+		pr.Proof.PointSamplingsSetup = make([][]commitment.WMerkleProof, NQ)
+		for q, s := range pr.queryPositions {
+			samplings := make([]commitment.WMerkleProof, len(pr.setup))
+			for i, tree := range pr.setup {
+				wp, err := openWMerkleAt(tree, s)
+				if err != nil {
+					return fmt.Errorf("SampleEvaluations: setup size %d query %d: %w", i, q, err)
+				}
+				samplings[i] = wp
 			}
-			pr.Proof.PointSamplings[k] = append(pr.Proof.PointSamplings[k], wproof)
+			pr.Proof.PointSamplingsSetup[q] = samplings
 		}
+	}
 
-		// trace polynomials
-		for _, tree := range pr.tTrees {
-			var wproof commitment.WMerkleProof
-			wproof.RawLeaf = make([]commitment.Pair, len(tree.RawLeafs[pos]))
-			copy(wproof.RawLeaf, tree.RawLeafs[pos])
-			wproof.Proof, err = tree.Tree.OpenProof(pos)
-			if err != nil {
-				return err
+	// 2 - PointSamplingsTrace[q][round][i] for each FS round, each size group.
+	pr.Proof.PointSamplingsTrace = make([][][]commitment.WMerkleProof, NQ)
+	for q, s := range pr.queryPositions {
+		rounds := make([][]commitment.WMerkleProof, len(pr.tTrees))
+		for r, roundTrees := range pr.tTrees {
+			samplings := make([]commitment.WMerkleProof, len(roundTrees))
+			for i, tree := range roundTrees {
+				wp, err := openWMerkleAt(tree, s)
+				if err != nil {
+					return fmt.Errorf("SampleEvaluations: trace round %d size %d query %d: %w", r, i, q, err)
+				}
+				samplings[i] = wp
 			}
-			pr.Proof.PointSamplings[k] = append(pr.Proof.PointSamplings[k], wproof)
+			rounds[r] = samplings
 		}
+		pr.Proof.PointSamplingsTrace[q] = rounds
+	}
 
-		// air quotients
-		var wproof commitment.WMerkleProof
-		wproof.RawLeaf = make([]commitment.Pair, len(pr.airTree.RawLeafs[pos]))
-		copy(wproof.RawLeaf, pr.airTree.RawLeafs[pos])
-		wproof.Proof, err = pr.airTree.Tree.OpenProof(pos)
-		if err != nil {
-			return err
+	// 3 - PointSamplingsAIRQuotients[q][i] for each AIR-quotient size group.
+	pr.Proof.PointSamplingsAIRQuotients = make([][]commitment.WMerkleProof, NQ)
+	for q, s := range pr.queryPositions {
+		samplings := make([]commitment.WMerkleProof, len(pr.airTrees))
+		for i, tree := range pr.airTrees {
+			wp, err := openWMerkleAt(tree, s)
+			if err != nil {
+				return fmt.Errorf("SampleEvaluations: air size %d query %d: %w", i, q, err)
+			}
+			samplings[i] = wp
 		}
-		pr.Proof.PointSamplings[k] = append(pr.Proof.PointSamplings[k], wproof)
-
+		pr.Proof.PointSamplingsAIRQuotients[q] = samplings
 	}
 
 	return nil
@@ -604,9 +666,9 @@ func Prove(t trace.Trace, setup PublicKey, publicInputs proof.PublicInputs, prog
 	}
 
 	// Brige FRI <-> polynomial commitments, using sample at queryPositions
-	// if err := pr.SampleEvaluations(); err != nil {
-	// 	return proof.Proof{}, err
-	// }
+	if err := pr.SampleEvaluations(); err != nil {
+		return proof.Proof{}, err
+	}
 
 	return pr.Proof, nil
 }

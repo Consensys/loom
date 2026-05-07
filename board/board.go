@@ -37,11 +37,20 @@ func NewLogupBus(positive, negative []string) LogupBus {
 	}
 }
 
+// ColumnRef identifies a column by its bare name and the module it belongs to.
+// The module name is needed to recover the column's polynomial size from
+// program.Modules, which is required for multi-degree FRI (commitments are
+// grouped per size).
+type ColumnRef struct {
+	Name   string
+	Module string
+}
+
 type Builder struct {
 	Modules       map[string]*Module
 	LogupBus      []LogupBus
 	Steps         []ProverStep
-	PublicColumns []string // known columns, precommitted (ex: ql, qr, etc in plonk)
+	PublicColumns []ColumnRef // known columns, precommitted (ex: ql, qr, etc in plonk)
 }
 
 func NewBuilder() Builder {
@@ -52,8 +61,8 @@ func NewBuilder() Builder {
 	return res
 }
 
-func (b *Builder) AddPublicColumn(name string) {
-	b.PublicColumns = append(b.PublicColumns, name)
+func (b *Builder) AddPublicColumn(module, name string) {
+	b.PublicColumns = append(b.PublicColumns, ColumnRef{Name: name, Module: module})
 }
 
 func (b *Builder) AddModule(name string, m Module) {
@@ -243,8 +252,8 @@ type RoundInputs = map[string][]string
 // Program the double slice [][] means that the steps are scheduled
 type Program struct {
 	Modules               map[string]CompiledModule
-	PublicColumns         []string // known columns, precommitted (ex: ql, qr, etc in plonk)
-	FScolumnsDependencies [][]string
+	PublicColumns         []ColumnRef // known columns, precommitted (ex: ql, qr, etc in plonk)
+	FScolumnsDependencies [][]ColumnRef
 	LogupBus              []LogupBus
 	Steps                 [][]ProverStep
 }
@@ -520,12 +529,25 @@ func Compile(b *Builder) (Program, error) {
 	}
 
 	// Step 7e: Build res.FiatShamir and replace per-round FS steps with a single canonical one.
-	res.PublicColumns = make([]string, len(b.PublicColumns))
+	res.PublicColumns = make([]ColumnRef, len(b.PublicColumns))
 	copy(res.PublicColumns, b.PublicColumns)
-	res.FScolumnsDependencies = make([][]string, numRounds)
+	res.FScolumnsDependencies = make([][]ColumnRef, numRounds)
+
+	// Build a column-name → owning-module map by scanning every module's
+	// relations. This lets us tag each FS-bound column with its module so the
+	// prover can group commitments by polynomial size.
+	columnModule := map[string]string{}
+	for moduleName, m := range b.Modules {
+		for _, rel := range m.Relations {
+			for _, leaf := range rel.LeavesFull(noLagrangeNoChallengeNoPublicCols) {
+				columnModule[leaf.Name] = moduleName
+			}
+		}
+	}
+
 	prevCovered := map[string]bool{}
-	for _, n := range res.PublicColumns {
-		prevCovered[n] = true
+	for _, c := range res.PublicColumns {
+		prevCovered[c.Name] = true
 	}
 	for lvl := 0; lvl < len(res.Steps); lvl++ {
 		round, ok := levelToRound[lvl]
@@ -543,7 +565,11 @@ func Compile(b *Builder) (Program, error) {
 				for _, leaf := range inp.LeavesFull(noLagrangeNoChallengeNoPublicCols) {
 					if !prevCovered[leaf.Name] {
 						prevCovered[leaf.Name] = true
-						res.FScolumnsDependencies[round] = append(res.FScolumnsDependencies[round], leaf.Name)
+						mod, ok := columnModule[leaf.Name]
+						if !ok {
+							return res, fmt.Errorf("Compile: column %q referenced by FS step has no owning module", leaf.Name)
+						}
+						res.FScolumnsDependencies[round] = append(res.FScolumnsDependencies[round], ColumnRef{Name: leaf.Name, Module: mod})
 					}
 				}
 			}
@@ -566,12 +592,12 @@ func Compile(b *Builder) (Program, error) {
 	// The last canonical FS step already has Ins=nil (set in phase 7e).
 
 	lastRound := numRounds - 1
-	for _, m := range b.Modules {
+	for moduleName, m := range b.Modules {
 		for _, rel := range m.Relations {
 			for _, leaf := range rel.LeavesFull(noLagrangeNoChallengeNoPublicCols) {
 				if !prevCovered[leaf.Name] {
 					prevCovered[leaf.Name] = true
-					res.FScolumnsDependencies[lastRound] = append(res.FScolumnsDependencies[lastRound], leaf.Name)
+					res.FScolumnsDependencies[lastRound] = append(res.FScolumnsDependencies[lastRound], ColumnRef{Name: leaf.Name, Module: moduleName})
 				}
 			}
 		}
