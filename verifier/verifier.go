@@ -313,28 +313,25 @@ func (vr *verifierRunTime) checkMerkleProofsPointSampling() error {
 // positions instead of as a polynomial.
 func (vr *verifierRunTime) checkFRIBridge() error {
 	NQ := constants.NUM_QUERIES
-	leafConfig := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutPublicColumns())
+
+	// Same iteration order as the prover (sizes decreasing, shifts increasing,
+	// names sorted by leaf-key) — built from `program` so module-size changes
+	// via SetSize are picked up.
+	dqLayout := prover.BuildDeepQuotientLayout(vr.program)
+	sizes := dqLayout.Sizes
+
+	// Per-size canonical domain (used to compute z_s = zeta · ω_N^shift).
+	domainBySize := make(map[int]*fft.Domain, len(sizes))
+	for _, m := range vr.program.Modules {
+		if _, ok := domainBySize[m.N]; !ok {
+			domainBySize[m.N] = m.D
+		}
+	}
 
 	// Folding challenge — must match the prover's hard-coded value.
 	// TODO derive from FS, same as prover.
 	var alpha koalabear.Element
 	alpha.SetUint64(10)
-
-	// Group modules by size N (decreasing N). Within a size, names sorted
-	// alphabetically — matches the prover's ComputeDeepQuotient ordering.
-	modulesByN := map[int][]string{}
-	for name := range vr.program.Modules {
-		N := vr.program.Modules[name].N
-		modulesByN[N] = append(modulesByN[N], name)
-	}
-	for _, names := range modulesByN {
-		sort.Strings(names)
-	}
-	sizes := make([]int, 0, len(modulesByN))
-	for n := range modulesByN {
-		sizes = append(sizes, n)
-	}
-	sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
 
 	// samplePair returns the (LeafP, LeafQ) pair for a given Slot at query q.
 	samplePair := func(slot prover.Slot, q int) (koalabear.Element, koalabear.Element, error) {
@@ -352,7 +349,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 		// Full-domain FRI query position (the level-0 leaf index).
 		s_full := vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0].Path.LeafIdx
 
-		for li, N := range sizes {
+		for i, N := range sizes {
 			domainSize := constants.RATE * N
 			halfDomain := domainSize / 2
 			s_l := s_full % halfDomain
@@ -365,61 +362,30 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 			X.Exp(domL.Generator, big.NewInt(int64(s_l)))
 			negX.Neg(&X)
 
-			// Generator of the size-N domain (NOT RATE*N) — used for shift
-			// evaluation z_s = zeta · ω_N^shift.
-			domN := vr.program.Modules[modulesByN[N][0]].D
+			// Generator of the size-N domain (NOT RATE*N).
+			domN := domainBySize[N]
 
 			var DQ_P, DQ_Q koalabear.Element
 			var alphaAcc koalabear.Element
 			alphaAcc.SetOne()
 
-			// ── Phase 1: vanishing-relation columns (pool across modules of size N) ──
-			type colEntry struct {
-				name string // → trace ColSlot lookup
-				key  string // → ValuesAtZeta lookup
-			}
-			byShift := map[int][]colEntry{}
-			seenKey := map[string]bool{}
-			for _, moduleName := range modulesByN[N] {
-				module := vr.program.Modules[moduleName]
-				for _, leaf := range module.VanishingRelation.LeavesFull(leafConfig) {
-					k := leaf.String()
-					if seenKey[k] {
-						continue
-					}
-					seenKey[k] = true
-					normalizedShift := 0
-					if leaf.Type == expr.RotatedColumn {
-						normalizedShift = ((leaf.Shift % N) + N) % N
-					}
-					byShift[normalizedShift] = append(byShift[normalizedShift], colEntry{name: leaf.Name, key: k})
-				}
-			}
-			shifts := make([]int, 0, len(byShift))
-			for sh := range byShift {
-				shifts = append(shifts, sh)
-			}
-			sort.Ints(shifts)
-			for _, sh := range shifts {
-				sort.Slice(byShift[sh], func(i, j int) bool { return byShift[sh][i].key < byShift[sh][j].key })
-			}
-
-			for _, shift := range shifts {
-				// z_s = zeta · ω_N^shift
+			// ── Phase 1: vanishing-relation columns ──
+			for j, shift := range dqLayout.Shifts[i] {
 				var omegaShift, z_s koalabear.Element
 				omegaShift.Exp(domN.Generator, big.NewInt(int64(shift)))
 				z_s.Mul(&vr.zeta, &omegaShift)
 
-				// Accumulate alphaAcc_i · column_i at zeta and at X / -X.
 				var v_s, C_at_X, C_at_negX koalabear.Element
-				for _, entry := range byShift[shift] {
-					evalAtZ, ok := vr.proof.ValuesAtZeta[entry.key]
+				names := dqLayout.Names[i][j]
+				keys := dqLayout.Keys[i][j]
+				for k := range names {
+					evalAtZ, ok := vr.proof.ValuesAtZeta[keys[k]]
 					if !ok {
-						return fmt.Errorf("checkFRIBridge: %q not in ValuesAtZeta", entry.key)
+						return fmt.Errorf("checkFRIBridge: %q not in ValuesAtZeta", keys[k])
 					}
-					slot, ok := vr.layout.ColSlot[entry.name]
+					slot, ok := vr.layout.ColSlot[names[k]]
 					if !ok {
-						return fmt.Errorf("checkFRIBridge: column %q not in layout.ColSlot", entry.name)
+						return fmt.Errorf("checkFRIBridge: column %q not in layout.ColSlot", names[k])
 					}
 					leafP, leafQ, err := samplePair(slot, q)
 					if err != nil {
@@ -452,14 +418,13 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 				DQ_Q.Add(&DQ_Q, &num)
 			}
 
-			// ── Phase 2: AIR-quotient chunks (per module; eval point = zeta) ──
-			for _, moduleName := range modulesByN[N] {
+			// ── Phase 2: AIR-quotient chunks (merged across modules of size N) ──
+			if len(dqLayout.AIRChunks[i]) > 0 {
 				var v_air, C_at_X, C_at_negX koalabear.Element
-				for i := 0; ; i++ {
-					chunkName := constants.QuotientChunkName(moduleName, i)
+				for _, chunkName := range dqLayout.AIRChunks[i] {
 					evalAtZ, ok := vr.proof.ValuesAtZeta[chunkName]
 					if !ok {
-						break
+						return fmt.Errorf("checkFRIBridge: %q not in ValuesAtZeta", chunkName)
 					}
 					slot, ok := vr.layout.AIRChunkSlot[chunkName]
 					if !ok {
@@ -495,21 +460,21 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 				DQ_Q.Add(&DQ_Q, &num)
 			}
 
-			// Compare DQ_N at (X, -X) with the FRI level-l layer-0 leaves.
+			// Compare DQ_N at (X, -X) with the FRI level-i layer-0 leaves.
 			var actualP, actualQ koalabear.Element
-			if li == 0 {
+			if i == 0 {
 				actualP = vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0].LeafP
 				actualQ = vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0].LeafQ
 			} else {
-				lq := vr.proof.DeepQuotientFriProof.LevelQueries[li-1][q][0]
+				lq := vr.proof.DeepQuotientFriProof.LevelQueries[i-1][q][0]
 				actualP = lq.LeafP
 				actualQ = lq.LeafQ
 			}
 			if !DQ_P.Equal(&actualP) {
-				return fmt.Errorf("checkFRIBridge: query %d level %d (N=%d): DQ(ω_l^s) mismatch: got %s, want %s", q, li, N, DQ_P.String(), actualP.String())
+				return fmt.Errorf("checkFRIBridge: query %d level %d (N=%d): DQ(ω_l^s) mismatch: got %s, want %s", q, i, N, DQ_P.String(), actualP.String())
 			}
 			if !DQ_Q.Equal(&actualQ) {
-				return fmt.Errorf("checkFRIBridge: query %d level %d (N=%d): DQ(-ω_l^s) mismatch: got %s, want %s", q, li, N, DQ_Q.String(), actualQ.String())
+				return fmt.Errorf("checkFRIBridge: query %d level %d (N=%d): DQ(-ω_l^s) mismatch: got %s, want %s", q, i, N, DQ_Q.String(), actualQ.String())
 			}
 		}
 	}
