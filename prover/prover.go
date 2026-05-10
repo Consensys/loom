@@ -32,6 +32,7 @@ import (
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/internal/reedsolomon"
 	"github.com/consensys/loom/proof"
+	"github.com/consensys/loom/setup"
 	"github.com/consensys/loom/trace"
 )
 
@@ -70,12 +71,12 @@ type proverRuntime struct {
 	program        board.Program
 	zeta           koalabear.Element
 	mu             sync.Mutex
-	setup          PublicKey
+	setup          setup.PublicKey
 	queryPositions []int
 	fs             *fiatshamir.Transcript
 }
 
-func newProverRuntime(t trace.Trace, setup PublicKey, publicInputs proof.PublicInputs, program board.Program, config Config) (proverRuntime, error) {
+func newProverRuntime(t trace.Trace, setup setup.PublicKey, publicInputs proof.PublicInputs, program board.Program, config Config) (proverRuntime, error) {
 
 	res := proverRuntime{
 		Proof:        proof.NewProof(),
@@ -93,7 +94,7 @@ func newProverRuntime(t trace.Trace, setup PublicKey, publicInputs proof.PublicI
 
 	// allTrees holds setup trees up front; trace and AIR slots get filled as
 	// commitments happen. proof.Commitments stores ONLY the trace+AIR roots
-	// (setup roots come from the verifier's PublicKey input, not the proof).
+	// (setup roots come from the verifier's setup.PublicKey input, not the proof).
 	res.allTrees = make([]commitment.WMerkleTree, res.layout.NumTrees)
 	for i, tree := range setup {
 		res.allTrees[res.layout.SetupBegin+i] = tree
@@ -530,13 +531,13 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 // query position `s`, reduced mod the tree's paired-leaf count (=
 // encoded_size/2 = RATE·N/2).
 func openWMerkleAt(tree commitment.WMerkleTree, s int) (commitment.WMerkleProof, error) {
-	pos := s % len(tree.RawLeafs)
+	pos := s % len(tree.UnhashedLeafs)
 	pth, err := tree.Tree.OpenProof(pos)
 	if err != nil {
 		return commitment.WMerkleProof{}, err
 	}
-	rawLeaf := make([]commitment.Pair, len(tree.RawLeafs[pos]))
-	copy(rawLeaf, tree.RawLeafs[pos])
+	rawLeaf := make([]commitment.Pair, len(tree.UnhashedLeafs[pos]))
+	copy(rawLeaf, tree.UnhashedLeafs[pos])
 	return commitment.WMerkleProof{RawLeaf: rawLeaf, Proof: pth}, nil
 }
 
@@ -544,7 +545,7 @@ func openWMerkleAt(tree commitment.WMerkleTree, s int) (commitment.WMerkleProof,
 // position so the verifier can bridge the FRI proof back to the column
 // commitments. Trees are walked in the canonical layout order
 // (setup → trace per round → AIR), and each tree is opened at
-// `s mod len(tree.RawLeafs)` (= s reduced mod RATE·N/2 for the tree's size N).
+// `s mod len(tree.UnhashedLeafs)` (= s reduced mod RATE·N/2 for the tree's size N).
 func (pr *proverRuntime) SampleEvaluations() error {
 	NQ := len(pr.queryPositions)
 	pr.Proof.PointSamplings = make([][]commitment.WMerkleProof, NQ)
@@ -563,7 +564,7 @@ func (pr *proverRuntime) SampleEvaluations() error {
 }
 
 // TODO publicInputs are not used
-func Prove(t trace.Trace, setup PublicKey, publicInputs proof.PublicInputs, program board.Program, opts ...Option) (proof.Proof, error) {
+func Prove(t trace.Trace, setup setup.PublicKey, publicInputs proof.PublicInputs, program board.Program, opts ...Option) (proof.Proof, error) {
 
 	var config Config
 	for _, opt := range opts {

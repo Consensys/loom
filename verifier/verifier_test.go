@@ -21,6 +21,7 @@ import (
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/prover"
+	"github.com/consensys/loom/setup"
 	"github.com/consensys/loom/viz"
 )
 
@@ -107,38 +108,89 @@ func TestVerifierPlonk(t *testing.T) {
 
 	builder := board.NewBuilder()
 
-	// fetch the plonk trace
-	N := 16
-	tr, sigma, size, err := getPlonkTrace(N)
-	if err != nil {
-		t.Fatal(err)
+	// without setup
+	{
+		// fetch the plonk trace
+		N := 16
+		tr, sigma, size, err := getPlonkTrace(N)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// build the plonk module
+		plonkModule := preparePlonkModule(size)
+		builder.AddModule("plonk", plonkModule)
+
+		lro := []expr.Expr{expr.Col(ID_L), expr.Col(ID_R), expr.Col(ID_O)}
+		sigmaGen := board.NewPermutationGen(sigma, "plonk.S")
+		err = arguments.CopyConstraint(&builder, "plonk", lro, sigmaGen)
+		if err != nil {
+			t.Fatal(err)
+		}
+		program, err := board.Compile(&builder)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		proof, err := prover.Prove(tr, nil, nil, program)
+		if err != nil {
+			t.Fatal(err)
+		}
+		viz.ViewDag(program, "dag_plonk.html")
+
+		err = Verify(nil, nil, program, proof)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	// build the plonk module
-	plonkModule := preparePlonkModule(size)
-	builder.AddModule("plonk", plonkModule)
+	// with setup
+	{
+		// fetch the plonk trace
+		N := 16
+		tr, sigma, size, err := getPlonkTrace(N)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	lro := []expr.Expr{expr.Col(ID_L), expr.Col(ID_R), expr.Col(ID_O)}
-	sigmaGen := board.NewPermutationGen(sigma, "plonk.S")
-	err = arguments.CopyConstraint(&builder, "plonk", lro, sigmaGen)
-	if err != nil {
-		t.Fatal(err)
-	}
+		// build the plonk module
+		plonkModule := preparePlonkModule(size)
+		builder.AddModule("plonk", plonkModule)
 
-	program, err := board.Compile(&builder)
-	if err != nil {
-		t.Fatal(err)
-	}
+		lro := []expr.Expr{expr.Col(ID_L), expr.Col(ID_R), expr.Col(ID_O)}
+		sigmaGen := board.NewPermutationGen(sigma, "plonk.S")
+		err = arguments.CopyConstraint(&builder, "plonk", lro, sigmaGen)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	proof, err := prover.Prove(tr, nil, nil, program)
-	if err != nil {
-		t.Fatal(err)
-	}
-	viz.ViewDag(program, "dag_plonk.html")
+		builder.MakeColumnPublic("plonk", ID_Ql)
+		builder.MakeColumnPublic("plonk", ID_Qr)
+		builder.MakeColumnPublic("plonk", ID_Qm)
+		builder.MakeColumnPublic("plonk", ID_Qo)
+		builder.MakeColumnPublic("plonk", ID_Qk)
 
-	err = Verify(nil, nil, program, proof)
-	if err != nil {
-		t.Fatal(err)
+		program, err := board.Compile(&builder)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		pk, err := setup.Setup(tr, program)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		proof, err := prover.Prove(tr, pk, nil, program)
+		if err != nil {
+			t.Fatal(err)
+		}
+		viz.ViewDag(program, "dag_plonk.html")
+
+		roots := setup.Roots(pk)
+		err = Verify(nil, roots, program, proof)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

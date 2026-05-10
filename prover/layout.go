@@ -86,7 +86,7 @@ func BuildLayout(program board.Program, numSetupSizes int) Layout {
 		colsByN := map[int][]string{}
 		for _, c := range program.PublicColumns {
 			m, ok := program.Modules[c.Module]
-			if !ok {
+			if !ok { // TODO should raise an error here ?
 				continue
 			}
 			colsByN[m.N] = append(colsByN[m.N], c.Name)
@@ -325,4 +325,3 @@ func BuildDeepQuotientLayout(program board.Program) DEEPquotientLayout {
 
 	return out
 }
-

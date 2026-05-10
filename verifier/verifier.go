@@ -31,6 +31,7 @@ import (
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/prover"
+	"github.com/consensys/loom/setup"
 )
 
 type PublicKey = []commitment.WMerkleTree
@@ -41,7 +42,7 @@ type verifierRunTime struct {
 	publicInputs map[string]proof.PublicInput
 	program      board.Program
 	zeta         koalabear.Element
-	setup        PublicKey
+	setup        setup.PublicKeyRoots
 	fs           *fiatshamir.Transcript
 
 	// layout is the canonical commitment layout, shared with the prover side
@@ -53,7 +54,7 @@ type verifierRunTime struct {
 	roots [][]byte
 }
 
-func newVerifierRuntime(program board.Program, setup PublicKey, publicInputs map[string]proof.PublicInput, prf proof.Proof) (verifierRunTime, error) {
+func newVerifierRuntime(program board.Program, setup setup.PublicKeyRoots, publicInputs map[string]proof.PublicInput, prf proof.Proof) (verifierRunTime, error) {
 
 	res := verifierRunTime{
 		proof:        prf,
@@ -76,8 +77,8 @@ func newVerifierRuntime(program board.Program, setup PublicKey, publicInputs map
 	if len(setup) != res.layout.SetupEnd-res.layout.SetupBegin {
 		return res, fmt.Errorf("verifier: setup has %d trees, layout expects %d", len(setup), res.layout.SetupEnd-res.layout.SetupBegin)
 	}
-	for i, tree := range setup {
-		res.roots[res.layout.SetupBegin+i] = tree.Root()
+	for i, pkr := range setup {
+		res.roots[res.layout.SetupBegin+i] = pkr
 	}
 	for i, root := range prf.Commitments {
 		res.roots[res.layout.SetupEnd+i] = root
@@ -91,8 +92,8 @@ func newVerifierRuntime(program board.Program, setup PublicKey, publicInputs map
 	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
 
 	// Setup roots are bound to challenge_0 (alongside trace round 0 in deriveChallenges).
-	for _, tree := range setup {
-		res.fs.Bind(constants.CanonicalChallengeName(0), tree.Root())
+	for _, pkr := range setup {
+		res.fs.Bind(constants.CanonicalChallengeName(0), pkr)
 	}
 
 	// find the largest module size N in program (used to size FRI's outer domain)
@@ -357,9 +358,13 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 			// Sample point for this level: omega_l^{s_l}, where omega_l is
 			// the generator of the size-(RATE*N) FRI domain. fft.NewDomain
 			// is deterministic so this matches what the prover used.
-			domL := fft.NewDomain(uint64(domainSize))
+			// domL := fft.NewDomain(uint64(domainSize))
+			generator, err := koalabear.Generator(uint64(domainSize))
+			if err != nil {
+				return err
+			}
 			var X, negX koalabear.Element
-			X.Exp(domL.Generator, big.NewInt(int64(s_l)))
+			X.Exp(generator, big.NewInt(int64(s_l)))
 			negX.Neg(&X)
 
 			// Generator of the size-N domain (NOT RATE*N).
@@ -482,7 +487,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 	return nil
 }
 
-func Verify(publicInputs map[string]proof.PublicInput, setup PublicKey, program board.Program, proof proof.Proof) error {
+func Verify(publicInputs map[string]proof.PublicInput, setup setup.PublicKeyRoots, program board.Program, proof proof.Proof) error {
 
 	vr, err := newVerifierRuntime(program, setup, publicInputs, proof)
 	if err != nil {

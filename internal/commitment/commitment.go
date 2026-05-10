@@ -31,7 +31,7 @@ type RSCommit struct {
 
 type WMerkleTree struct {
 	Tree     *merkle.Tree
-	RawLeafs [][]Pair // RawLeafs[i] = { .. {f_k(w^i), f_k(-w^i)}, .. }
+	UnhashedLeafs [][]Pair // UnhashedLeafs[i] = { .. {f_k(w^i), f_k(-w^i)}, .. }
 }
 
 // PointSampling contains the pair evaluation {f(w^i),f(-w^i)} for batch of polynomials f,
@@ -99,13 +99,13 @@ func (rs *RSCommit) Commit(p []poly.Polynomial) (WMerkleTree, error) {
 	if err != nil {
 		return WMerkleTree{}, err
 	}
-	wTree := WMerkleTree{Tree: tree, RawLeafs: make([][]Pair, halfN)}
+	wTree := WMerkleTree{Tree: tree, UnhashedLeafs: make([][]Pair, halfN)}
 	buf := make([]byte, 2*koalabear.Bytes*len(_p))
 	for i := 0; i < halfN; i++ {
-		wTree.RawLeafs[i] = make([]Pair, len(_p))
+		wTree.UnhashedLeafs[i] = make([]Pair, len(_p))
 		for j := 0; j < len(_p); j++ {
-			wTree.RawLeafs[i][j][0].Set(&_p[j][i])
-			wTree.RawLeafs[i][j][1].Set(&_p[j][i+halfN])
+			wTree.UnhashedLeafs[i][j][0].Set(&_p[j][i])
+			wTree.UnhashedLeafs[i][j][1].Set(&_p[j][i+halfN])
 			copy(buf[2*j*koalabear.Bytes:], _p[j][i].Marshal())
 			copy(buf[(2*j+1)*koalabear.Bytes:], _p[j][i+halfN].Marshal())
 		}

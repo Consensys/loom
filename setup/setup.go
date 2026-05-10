@@ -11,7 +11,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package prover
+package setup
 
 import (
 	"sort"
@@ -23,35 +23,56 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
+type PublicKeyRoots = [][]byte
+
 // PublicKey is the per-size set of WMerkleTrees over the program's public
 // columns: PublicKey[s] is the commitment for the s-th size group, sizes
 // ordered by decreasing N. An empty/nil PublicKey means "no setup".
 type PublicKey = []commitment.WMerkleTree
+
+func Roots(pk PublicKey) PublicKeyRoots {
+	res := make([][]byte, len(pk))
+	for i, tree := range pk {
+		res[i] = tree.Root()
+	}
+	return res
+}
 
 func Setup(t trace.Trace, program board.Program) (PublicKey, error) {
 	if len(program.PublicColumns) == 0 {
 		return nil, nil
 	}
 
-	// Group public columns by their owning module's domain size.
-	colsByN := map[int][]poly.Polynomial{}
+	// Group public column names by their owning module's domain size, then
+	// sort each group by name so the polynomial order inside the per-size
+	// commitment tree matches prover.BuildLayout (which sorts setup columns
+	// by name when assigning PolyIdx). Without this, the verifier's
+	// layout.ColSlot[name].PolyIdx points at the wrong polynomial in the
+	// setup tree.
+	namesByN := map[int][]string{}
 	for _, c := range program.PublicColumns {
 		m, ok := program.Modules[c.Module]
 		if !ok {
 			continue
 		}
-		colsByN[m.N] = append(colsByN[m.N], t[c.Name])
+		namesByN[m.N] = append(namesByN[m.N], c.Name)
 	}
-	sizes := make([]int, 0, len(colsByN))
-	for n := range colsByN {
+	sizes := make([]int, 0, len(namesByN))
+	for n := range namesByN {
 		sizes = append(sizes, n)
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
 
 	res := make(PublicKey, len(sizes))
 	for i, N := range sizes {
+		names := namesByN[N]
+		sort.Strings(names)
+		cols := make([]poly.Polynomial, len(names))
+		for j, name := range names {
+			cols[j] = t[name]
+		}
 		committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
-		tree, err := committer.Commit(colsByN[N])
+		tree, err := committer.Commit(cols)
 		if err != nil {
 			return nil, err
 		}

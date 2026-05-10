@@ -62,7 +62,7 @@ func NewBuilder() Builder {
 	return res
 }
 
-func (b *Builder) AddPublicColumn(module, name string) {
+func (b *Builder) MakeColumnPublic(module, name string) {
 	b.PublicColumns = append(b.PublicColumns, ColumnRef{Name: name, Module: module})
 }
 
