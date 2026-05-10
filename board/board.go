@@ -18,6 +18,7 @@ import (
 	"sort"
 
 	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/constants"
@@ -236,8 +237,12 @@ func (b *Builder) addGrandProductConstraint(module string, N, D expr.Expr, outpu
 	m := b.Modules[module]
 	gp := expr.Col(output)
 	gpshifted := expr.Rot(output, 1)
-	relation := gpshifted.Mul(D).Sub(gp.Mul(N))
-	m.AssertZero(relation)
+	recurrence := gpshifted.Mul(D).Sub(gp.Mul(N))
+	m.AssertZero(recurrence)
+
+	// GP[0] = 1
+	boundary := gp.Sub(expr.Const(koalabear.One()))
+	m.AssertZeroAt(boundary, 0)
 }
 
 func (b *Builder) AddGrandProductStep(module string, N, D expr.Expr, output string) {

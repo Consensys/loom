@@ -242,10 +242,13 @@ func CLookupUnion(builder *board.Builder, selS, selT []expr.Expr, S, T []board.C
 		builder.AddLogupStep(
 			s.Module,
 			sMinusGamma,
-			selS[i].Mul(S[i].In),
+			selS[i],
 			logupName)
 		logupS[i] = board.Column{Module: s.Module, In: expr.Col(logupName)}
 	}
+
+	// 4. Add logup equality check
+	AddLogupEqualityCheck(builder, logupS, logupT)
 
 	return nil
 }
