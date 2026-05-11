@@ -24,9 +24,9 @@ The important conceptual split is:
 
 So the end-to-end polynomial commitment scheme is best read as:
 
-\[
+$$
 \text{AIR / trace commitments} \;+\; \text{DEEP-ALI-style quotienting} \;+\; \text{FRI backend}.
-\]
+$$
 
 It is **not** that `internal/fri` itself is a DEEP-FRI implementation in isolation.
 
@@ -38,14 +38,14 @@ Before talking about `loom` specifically, it is worth isolating what FRI contrib
 
 Strictly speaking, plain FRI is not "first and foremost" an evaluation-opening protocol. Its native statement is:
 
-> given oracle access to a function \(f : L \to \mathbb{F}\), prove that \(f\) is close to the Reed-Solomon code of degree-`<D` polynomials on the evaluation domain \(L\).
+> given oracle access to a function $f : L \to \mathbb{F}$, prove that $f$ is close to the Reed-Solomon code of degree-`<D` polynomials on the evaluation domain $L$.
 
 Equivalently, FRI is a protocol for proving that a committed codeword is consistent with a low-degree polynomial.
 
 That distinction matters because a polynomial commitment scheme typically exposes an interface closer to:
 
 - `Commit(p)` -> commitment
-- `Open(p, z)` -> value \(v = p(z)\) plus proof
+- `Open(p, z)` -> value $v = p(z)$ plus proof
 - `Verify(commitment, z, v, proof)` -> accept / reject
 
 Plain FRI directly addresses the "is this codeword low degree?" part. To turn that into a PCS, one adds:
@@ -59,39 +59,33 @@ That is exactly the architecture used in STARK-style systems, and it is exactly 
 
 Fix:
 
-- a field \(\mathbb{F}\),
-- an evaluation domain \(L = \{x_0, \dots, x_{N-1}\}\),
-- and a degree bound \(D < N\).
+- a field $\mathbb{F}$,
+- an evaluation domain $L = \{x_0, \dots, x_{N-1}\}$,
+- and a degree bound $D < N$.
 
 The Reed-Solomon code is
 
-\[
-\mathrm{RS}_{L,D}
-=
-\left\{
-\big(p(x_0), \dots, p(x_{N-1})\big)
-\;\middle|\;
-\deg p < D
-\right\}.
-\]
+$$
+\mathrm{RS}_{L,D} = \{ (p(x_0), \dots, p(x_{N-1})) \mid \deg p < D \}.
+$$
 
-So committing to a polynomial via FRI really means committing to a codeword in \(\mathrm{RS}_{L,D}\), or at least claiming that the committed oracle is in, or close to, that code.
+So committing to a polynomial via FRI really means committing to a codeword in $\mathrm{RS}_{L,D}$, or at least claiming that the committed oracle is in, or close to, that code.
 
 ### The commitment layer: Merkleized codewords
 
 To use FRI non-interactively, the prover first commits to the evaluation vector
 
-\[
+$$
 c = \big(f(x_0), \dots, f(x_{N-1})\big)
-\]
+$$
 
 by Merkle-hashing it.
 
 In textbook FRI, the commitment is often described as a Merkle tree over the full vector. In `loom`, the leaves are paired as:
 
-\[
+$$
 \big(f(x), f(-x)\big),
-\]
+$$
 
 because the fold relation always consumes opposite points together. So the Merkle root binds the prover to a single oracle on the whole domain while making opposite-point openings efficient.
 
@@ -102,13 +96,13 @@ This gives the usual binding story:
 
 ### What a FRI proof actually proves about that commitment
 
-If the prover commits to a codeword \(c\), then a FRI proof says, informally:
+If the prover commits to a codeword $c$, then a FRI proof says, informally:
 
 > the committed codeword is consistent with repeated random folds of a low-degree codeword, all the way down to a tiny terminal oracle.
 
 The proof does **not** say, by itself:
 
-> this polynomial evaluates to \(v\) at an arbitrary point \(z \notin L\).
+> this polynomial evaluates to $v$ at an arbitrary point $z \notin L$.
 
 That second statement needs a separate reduction.
 
@@ -116,39 +110,39 @@ That second statement needs a separate reduction.
 
 Suppose the verifier wants to check an off-domain claim
 
-\[
+$$
 v \stackrel{?}{=} p(z),
 \qquad
 z \notin L.
-\]
+$$
 
 The standard reduction is to define
 
-\[
+$$
 q(X) = \frac{v - p(X)}{z - X}.
-\]
+$$
 
-If \(v = p(z)\), then the numerator vanishes at \(X=z\), so \(q\) is a polynomial and
+If $v = p(z)$, then the numerator vanishes at $X=z$, so $q$ is a polynomial and
 
-\[
+$$
 \deg q < \deg p.
-\]
+$$
 
-If \(v \neq p(z)\), then \(q\) is not a polynomial at all; it is merely a rational function with a pole at \(z\).
+If $v \neq p(z)$, then $q$ is not a polynomial at all; it is merely a rational function with a pole at $z$.
 
 That means the verifier can reduce the evaluation claim to a low-degree claim:
 
-1. prove that the committed oracle for \(q\) is low degree using FRI,
-2. query the original commitment for \(p(X)\) and the quotient commitment for \(q(X)\) at random domain points \(X\),
+1. prove that the committed oracle for $q$ is low degree using FRI,
+2. query the original commitment for $p(X)$ and the quotient commitment for $q(X)$ at random domain points $X$,
 3. check the identity
 
-\[
+$$
 q(X) (z - X) = v - p(X).
-\]
+$$
 
 This is the core reason FRI can act as a PCS backend.
 
-For in-domain points \(z \in L\), quotienting is unnecessary: a Merkle opening of \(p(z)\) is enough. Quotienting is needed precisely for the out-of-domain openings that dominate STARK/AIR verification.
+For in-domain points $z \in L$, quotienting is unnecessary: a Merkle opening of $p(z)$ is enough. Quotienting is needed precisely for the out-of-domain openings that dominate STARK/AIR verification.
 
 ### Where `loom` fits in that picture
 
@@ -161,13 +155,13 @@ For in-domain points \(z \in L\), quotienting is unnecessary: a Merkle opening o
 
 So, in "FRI as PCS" language, `loom` is best understood as:
 
-\[
+$$
 \text{Merkleized RS commitments}
 \;+\;
 \text{batched quotient reduction}
 \;+\;
 \text{multi-degree FRI proximity proof}.
-\]
+$$
 
 ## Notation and Representation Conventions
 
@@ -180,17 +174,17 @@ The code is currently specialized to the Koalabear field:
 
 For a module of size `N`, let:
 
-\[
+$$
 H_N = \{ \omega_N^0, \omega_N^1, \dots, \omega_N^{N-1} \}
-\]
+$$
 
 be the size-`N` multiplicative subgroup used as that module's trace domain.
 
 `loom` uses a fixed Reed-Solomon blowup factor
 
-\[
+$$
 \rho = \texttt{RATE} = 4
-\]
+$$
 
 from `internal/constants/const.go`.
 
@@ -210,21 +204,21 @@ This is why functions like `poly.Evaluate`, `poly.DeepQuotient`, `reedsolomon.En
 
 Both the Merkle commitment layer and the FRI layer pair evaluations at opposite points:
 
-\[
+$$
 x \quad \text{and} \quad -x.
-\]
+$$
 
 For a vector of length `M`, leaf `i` of the paired Merkle tree contains:
 
-\[
+$$
 (f(x_i), f(-x_i)).
-\]
+$$
 
 In the code this is implemented by pairing entry `i` with entry `i + M/2`, because on a power-of-two subgroup:
 
-\[
+$$
 \omega^{i + M/2} = -\omega^i.
-\]
+$$
 
 This pairing is built in:
 
@@ -262,23 +256,23 @@ The last three steps are the FRI-backed PCS verification:
 
 Each compiled module has a folded AIR relation `VanishingRelation` in `board.CompiledModule`.
 
-If a module has size `N` and row-wise constraint polynomial \(V_M(X)\), the intended algebraic statement is:
+If a module has size `N` and row-wise constraint polynomial $V_M(X)$, the intended algebraic statement is:
 
-\[
+$$
 V_M(x) = 0 \quad \forall x \in H_N.
-\]
+$$
 
 Equivalently,
 
-\[
+$$
 X^N - 1 \;\mid\; V_M(X).
-\]
+$$
 
-So there exists a quotient polynomial \(Q_M(X)\) such that
+So there exists a quotient polynomial $Q_M(X)$ such that
 
-\[
+$$
 V_M(X) = (X^N - 1) Q_M(X).
-\]
+$$
 
 ### How the prover computes it
 
@@ -286,7 +280,7 @@ V_M(X) = (X^N - 1) Q_M(X).
 
 - `poly.ComputeQuotient(trace, vanishingRelation, N)`
 
-`poly.ComputeQuotient` evaluates the numerator on a coset-extended domain to avoid division by zero on \(X^N-1\), divides pointwise, and returns the quotient in **coset-Lagrange** form. The prover then converts it back:
+`poly.ComputeQuotient` evaluates the numerator on a coset-extended domain to avoid division by zero on $X^N-1$, divides pointwise, and returns the quotient in **coset-Lagrange** form. The prover then converts it back:
 
 1. coset-Lagrange -> ordinary Lagrange: `poly.CosetLagrangeToLagrangeNormal`
 2. Lagrange -> coefficient form via IFFT
@@ -295,10 +289,10 @@ V_M(X) = (X^N - 1) Q_M(X).
 
 If the quotient has degree larger than `N`, the code writes it as:
 
-\[
+$$
 Q_M(X) = \sum_{c=0}^{t-1} X^{cN} Q_{M,c}(X),
 \qquad \deg Q_{M,c} < N.
-\]
+$$
 
 Each `Q_{M,c}` becomes one committed AIR chunk, named by:
 
@@ -310,15 +304,15 @@ constants.QuotientChunkName(moduleName, c)
 
 The verifier reconstructs
 
-\[
+$$
 Q_M(\zeta) = \sum_{c=0}^{t-1} \zeta^{cN} Q_{M,c}(\zeta)
-\]
+$$
 
 in `verifier.checkAIRRelations`, and checks
 
-\[
+$$
 V_M(\zeta) = (\zeta^N - 1) Q_M(\zeta).
-\]
+$$
 
 This is the standard out-of-domain AIR check.
 
@@ -353,9 +347,9 @@ If an AIR relation references:
 - an unshifted column `A(X)`, the prover evaluates it at `zeta`
 - a rotated column `A(omega^s X)`, the prover evaluates it at
 
-\[
+$$
 \zeta_s = \zeta \cdot \omega_N^s.
-\]
+$$
 
 This happens in `prover.ComputeEvaluationsAtZeta`.
 
@@ -390,9 +384,9 @@ Modules may have different base sizes. The prover first groups everything by siz
 
 For each distinct size `N`, it constructs one DEEP quotient polynomial
 
-\[
+$$
 DQ_N(X).
-\]
+$$
 
 The sizes are ordered in decreasing order.
 
@@ -412,57 +406,57 @@ This ordering is encoded by `prover.DEEPquotientLayout`.
 
 Fix a size `N`. For each shift `s` that occurs among AIR leaves of that size, the prover gathers all columns with that shift and forms a random-looking linear combination:
 
-\[
+$$
 C_{N,s}(X) = \sum_i a^{e_{s,i}} C_{s,i}(X),
-\]
+$$
 
 where:
 
-- the \(C_{s,i}\) are the relevant columns of size `N`,
-- the exponents \(e_{s,i}\) are assigned in the deterministic traversal order,
+- the $C_{s,i}$ are the relevant columns of size `N`,
+- the exponents $e_{s,i}$ are assigned in the deterministic traversal order,
 - `a` is the batching scalar used in `ComputeDeepQuotient`.
 
 Then it evaluates that combination at:
 
-\[
+$$
 z_s = \zeta \cdot \omega_N^s,
 \qquad
 v_{N,s} = C_{N,s}(z_s),
-\]
+$$
 
 and forms the quotient
 
-\[
+$$
 DQ_{N,s}(X) = \frac{v_{N,s} - C_{N,s}(X)}{z_s - X}.
-\]
+$$
 
-If the claimed evaluation \(v_{N,s}\) is correct, then the numerator vanishes at \(X=z_s\), so the quotient is a polynomial and its degree is one less than the degree of \(C_{N,s}\).
+If the claimed evaluation $v_{N,s}$ is correct, then the numerator vanishes at $X=z_s$, so the quotient is a polynomial and its degree is one less than the degree of $C_{N,s}$.
 
 ### DEEP quotient from AIR chunks
 
 For the AIR quotient chunks of size `N`, the prover forms one more linear combination:
 
-\[
+$$
 A_N(X) = \sum_j a^{e'_j} Q_{N,j}(X),
 \qquad
 u_N = A_N(\zeta),
-\]
+$$
 
 and then
 
-\[
+$$
 DQ^{air}_N(X) = \frac{u_N - A_N(X)}{\zeta - X}.
-\]
+$$
 
-Here the \(Q_{N,j}\) are the AIR quotient chunks of size `N`, pooled across all modules of that size.
+Here the $Q_{N,j}$ are the AIR quotient chunks of size `N`, pooled across all modules of that size.
 
 ### Final per-size DEEP quotient
 
 The prover adds all those quotients:
 
-\[
+$$
 DQ_N(X) = \sum_s DQ_{N,s}(X) + DQ^{air}_N(X).
-\]
+$$
 
 This is the object whose low degree will be proven by FRI.
 
@@ -476,15 +470,15 @@ The quotienting above happens in:
 
 The `internal/fri` package itself never computes:
 
-\[
+$$
 \frac{f(z)-f(X)}{z-X}.
-\]
+$$
 
 It only receives already-constructed evaluation vectors and proves low degree of those vectors.
 
 ## Step 5: Reed-Solomon Encoding and Size Levels
 
-For each per-size DEEP quotient \(DQ_N\), the prover Reed-Solomon encodes it from size `N` to size `RATE * N`.
+For each per-size DEEP quotient $DQ_N$, the prover Reed-Solomon encodes it from size `N` to size `RATE * N`.
 
 This is done by:
 
@@ -517,67 +511,66 @@ Before discussing `loom`'s multi-degree extension, it helps to spell out the sta
 
 ### Standard single-degree FRI, in PCS form
 
-Fix an evaluation domain \(L_0\) of size \(N_0\), degree bound \(D_0\), and a codeword
+Fix an evaluation domain $L_0$ of size $N_0$, degree bound $D_0$, and a codeword
 
-\[
+$$
 A_0 : L_0 \to \mathbb{F}
-\]
+$$
 
 purporting to be the evaluation of some polynomial of degree `< D_0`.
 
-The prover commits to \(A_0\) with a Merkle root. Then FRI proceeds by repeated folding.
+The prover commits to $A_0$ with a Merkle root. Then FRI proceeds by repeated folding.
 
 #### Even/odd decomposition
 
-Any polynomial \(P_j(X)\) can be written uniquely as
+Any polynomial $P_j(X)$ can be written uniquely as
 
-\[
+$$
 P_j(X) = G_j(X^2) + X H_j(X^2).
-\]
+$$
 
-If \(A_j\) is the evaluation of \(P_j\) on a multiplicative subgroup, then values at opposite points satisfy
+If $A_j$ is the evaluation of $P_j$ on a multiplicative subgroup, then values at opposite points satisfy
 
-\[
+$$
 P_j(x) = G_j(x^2) + x H_j(x^2),
 \qquad
 P_j(-x) = G_j(x^2) - x H_j(x^2).
-\]
+$$
 
 So one can recover:
 
-\[
+$$
 G_j(x^2) = \frac{P_j(x)+P_j(-x)}{2},
 \qquad
 H_j(x^2) = \frac{P_j(x)-P_j(-x)}{2x}.
-\]
+$$
 
-FRI samples a challenge \(\beta_j\) and defines the next polynomial
+FRI samples a challenge $\beta_j$ and defines the next polynomial
 
-\[
+$$
 P_{j+1}(Y) = G_j(Y) + \beta_j H_j(Y).
-\]
+$$
 
-Its degree is roughly half that of \(P_j\). Evaluated pointwise, that is exactly the fold relation used in the code:
+Its degree is roughly half that of $P_j$. Evaluated pointwise, that is exactly the fold relation used in the code:
 
-\[
+$$
 A_{j+1}(x^2)
 =
 \frac{A_j(x)+A_j(-x)}{2}
-
 + \beta_j \frac{A_j(x)-A_j(-x)}{2x}.
-\]
+$$
 
 This is the heart of `foldLayer` and of the per-round consistency checks in `checkQueryB`.
 
 #### Why the domain halves
 
-At round `j`, the oracle lives on a multiplicative subgroup \(L_j\) of size \(N_j\). Because the fold maps \((x,-x)\) to \(x^2\), the next oracle naturally lives on the squared domain
+At round `j`, the oracle lives on a multiplicative subgroup $L_j$ of size $N_j$. Because the fold maps $(x,-x)$ to $x^2$, the next oracle naturally lives on the squared domain
 
-\[
+$$
 L_{j+1} = \{ x^2 : x \in L_j \},
-\]
+$$
 
-whose size is \(N_j/2\).
+whose size is $N_j/2$.
 
 So each FRI round simultaneously:
 
@@ -604,16 +597,16 @@ The initial root is supplied externally by the caller because, in a PCS integrat
 
 #### What a single query checks
 
-If the verifier samples an outer query index \(s\), it reduces it modulo the paired-leaf count at each round. At round `j`, the verifier learns the authenticated pair
+If the verifier samples an outer query index $s$, it reduces it modulo the paired-leaf count at each round. At round `j`, the verifier learns the authenticated pair
 
-\[
+$$
 \big(A_j(x), A_j(-x)\big)
-\]
+$$
 
-for the corresponding domain point \(x\), and checks:
+for the corresponding domain point $x$, and checks:
 
 1. the Merkle authentication path is valid,
-2. folding those two values with \(\beta_j\) yields the next-round value,
+2. folding those two values with $\beta_j$ yields the next-round value,
 3. after the final round, the recursively folded value matches the explicit terminal oracle.
 
 So one FRI query is not "open one point once"; it is "open one opposite-point pair per round, and verify a whole recursive chain of fold identities."
@@ -623,7 +616,7 @@ So one FRI query is not "open one point once"; it is "open one opposite-point pa
 The Merkle layer matters because it prevents adaptive cheating across rounds. Without commitments, a dishonest prover could answer each query with freshly invented values satisfying the local fold identities. With commitments:
 
 - the round-`j` values are bound by the round-`j` Merkle root,
-- the same root is what the transcript used when sampling \(\beta_j\),
+- the same root is what the transcript used when sampling $\beta_j$,
 - and all rounds are linked by the recursive fold identities.
 
 This is the reason the combination "Merkleized oracle + random folds + random queries" constitutes a polynomial commitment backend rather than merely a consistency gadget.
@@ -632,11 +625,11 @@ This is the reason the combination "Merkleized oracle + random folds + random qu
 
 The outer FRI instance is created once from the largest module size:
 
-\[
+$$
 D_0 = \max_M N_M,
 \qquad
 N_0 = \rho D_0.
-\]
+$$
 
 That is exactly how `newProverRuntime` and `newVerifierRuntime` call:
 
@@ -652,58 +645,58 @@ So inside `internal/fri`:
 
 The final FRI polynomial therefore has length:
 
-\[
+$$
 \frac{N_0}{D_0} = \rho.
-\]
+$$
 
 With the current constants, that means `FinalPoly` has length `4`.
 
 ### Ordinary FRI fold
 
-If a round-`j` committed layer is \(A_j\), defined on a domain of size \(N_j\), the code folds values at \(x\) and \(-x\) into a value on \(x^2\):
+If a round-`j` committed layer is $A_j$, defined on a domain of size $N_j$, the code folds values at $x$ and $-x$ into a value on $x^2$:
 
-\[
+$$
 A_{j+1}^{pre}(x^2)
 =
 \frac{A_j(x) + A_j(-x)}{2}
 \;+\;
 \beta_j \cdot \frac{A_j(x) - A_j(-x)}{2x}.
-\]
+$$
 
 This is the standard FRI step obtained by writing
 
-\[
+$$
 A_j(X) = g_j(X^2) + X h_j(X^2)
-\]
+$$
 
 and then defining
 
-\[
+$$
 A_{j+1}^{pre}(Y) = g_j(Y) + \beta_j h_j(Y).
-\]
+$$
 
 In the code:
 
 - fold challenge: `fri_fold_j`
 - implementation: `internal/fri/fri.go`, `foldLayer`
 
-To avoid symbol clash with the DEEP batching scalar, this document writes the fold challenge as \(\beta_j\), even though the code stores it in `alphas[j]`.
+To avoid symbol clash with the DEEP batching scalar, this document writes the fold challenge as $\beta_j$, even though the code stores it in `alphas[j]`.
 
 ### Multi-degree batching
 
 Suppose the DEEP quotient levels have degree bounds
 
-\[
+$$
 D_0 > D_1 > \dots > D_t
-\]
+$$
 
-with each \(D_\ell\) a power of two dividing \(D_0\).
+with each $D_\ell$ a power of two dividing $D_0$.
 
-Level \(\ell\) is introduced at round
+Level $\ell$ is introduced at round
 
-\[
+$$
 j_\ell = \log_2(D_0 / D_\ell).
-\]
+$$
 
 This is exactly the code in:
 
@@ -711,35 +704,35 @@ This is exactly the code in:
 jl := log2(p.D / levels[l].D)
 ```
 
-Why this works: after `j` folds, the largest encoded domain has shrunk from \(\rho D_0\) to
+Why this works: after `j` folds, the largest encoded domain has shrunk from $\rho D_0$ to
 
-\[
+$$
 \rho D_0 / 2^j.
-\]
+$$
 
-When \(j = j_\ell\), this equals \(\rho D_\ell\), which is the encoded length of the smaller level polynomial. So at that round, the smaller level lives on the same domain size as the running FRI polynomial and can be batched in pointwise.
+When $j = j_\ell$, this equals $\rho D_\ell$, which is the encoded length of the smaller level polynomial. So at that round, the smaller level lives on the same domain size as the running FRI polynomial and can be batched in pointwise.
 
 ### The running polynomial
 
-Let \(L_\ell(X)\) denote the encoded DEEP quotient polynomial for level \(\ell\).
+Let $L_\ell(X)$ denote the encoded DEEP quotient polynomial for level $\ell$.
 
 The running polynomial evolves as follows:
 
 1. Start with the largest level:
 
-\[
+$$
 A_0 = L_0.
-\]
+$$
 
-2. At round \(j > 0\), if one or more new levels are introduced there, batch them in:
+2. At round $j > 0$, if one or more new levels are introduced there, batch them in:
 
-\[
+$$
 A_j = A_j^{pre} + \sum_i \gamma_j^{i+1} L_{j,i}.
-\]
+$$
 
 In current `loom`, there is only one polynomial per size level, so the inner sum is trivial, but `internal/fri` supports several.
 
-3. Commit to \(A_j\), derive fold challenge \(\beta_j\), and fold to produce the next pre-batched layer.
+3. Commit to $A_j$, derive fold challenge $\beta_j$, and fold to produce the next pre-batched layer.
 
 The per-level batching challenges are transcript names:
 
@@ -772,15 +765,15 @@ At a high level, FRI soundness comes from three facts.
 
 If an oracle is far from every degree-`<D` polynomial, then writing it as
 
-\[
+$$
 f(X) = g(X^2) + X h(X^2)
-\]
+$$
 
-does not magically make both pieces low degree. A random challenge \(\beta\) mixes the even and odd parts so that an adversarial high-degree component is unlikely to disappear round after round.
+does not magically make both pieces low degree. A random challenge $\beta$ mixes the even and odd parts so that an adversarial high-degree component is unlikely to disappear round after round.
 
 #### 2. Commitments freeze every round before the next challenge is sampled
 
-The verifier does not let the prover choose \(\beta_j\) first and only then decide what round-`j` oracle to pretend to have committed to. The root is bound into the transcript first, so the prover is stuck with a specific oracle before seeing the next folding challenge.
+The verifier does not let the prover choose $\beta_j$ first and only then decide what round-`j` oracle to pretend to have committed to. The root is bound into the transcript first, so the prover is stuck with a specific oracle before seeing the next folding challenge.
 
 #### 3. Query repetition drives the residual error down
 
@@ -823,23 +816,23 @@ So the codebase is best described as:
 
 Each query samples an index
 
-\[
+$$
 s \in \{0, \dots, N_0/2 - 1\}
-\]
+$$
 
-because each Merkle leaf already contains the pair \((x, -x)\).
+because each Merkle leaf already contains the pair $(x, -x)$.
 
 For the running FRI polynomial, round `j` opens:
 
-\[
+$$
 \text{base}_j = s \bmod (N_j / 2).
-\]
+$$
 
 For a smaller size level `N`, the same outer query is reduced to:
 
-\[
+$$
 s_N = s \bmod (\rho N / 2).
-\]
+$$
 
 This is why the prover opens:
 
@@ -866,14 +859,14 @@ The main Merkleized polynomial commitment is `commitment.WMerkleTree`.
 
 For a size-`N` commitment with `m` polynomials, leaf `i` contains:
 
-\[
+$$
 \big(
 f_0(x_i), f_0(-x_i),
 f_1(x_i), f_1(-x_i),
 \dots,
 f_{m-1}(x_i), f_{m-1}(-x_i)
 \big).
-\]
+$$
 
 This is built in `commitment.RSCommit.Commit`.
 
@@ -901,13 +894,13 @@ This is what lets `checkFRIBridge` look up the right pair in `proof.PointSamplin
 
 For each FRI query `q` and each distinct size `N`, the verifier:
 
-1. recovers the query point \(X\) and its opposite \(-X\) on the size-`\rho N` encoded domain,
+1. recovers the query point $X$ and its opposite $-X$ on the size-`\rho N` encoded domain,
 2. reconstructs the same DEEP linear combinations the prover used,
 3. evaluates the DEEP quotient formulas pointwise:
 
-\[
+$$
 DQ_N(X), \qquad DQ_N(-X),
-\]
+$$
 
 4. compares them to the values opened from the DEEP quotient commitment:
    - largest level: `FRIQueries[q].Layers[0].LeafP/Q`
@@ -915,10 +908,10 @@ DQ_N(X), \qquad DQ_N(-X),
 
 So `checkFRIBridge` is the exact place where the mathematics
 
-\[
+$$
 DQ_N(X) = \sum_s \frac{C_{N,s}(z_s)-C_{N,s}(X)}{z_s-X}
          + \frac{A_N(\zeta)-A_N(X)}{\zeta-X}
-\]
+$$
 
 is connected back to authenticated openings of the original trace and AIR commitments.
 
@@ -1006,15 +999,15 @@ That design is deliberate because those level roots may already be committed els
 
 | Mathematical object | Code |
 | --- | --- |
-| AIR quotient \(V(X)/(X^N-1)\) | `poly.ComputeQuotient`, `prover.ComputeAIRQuotients`, `verifier.checkAIRRelations` |
+| AIR quotient $V(X)/(X^N-1)$ | `poly.ComputeQuotient`, `prover.ComputeAIRQuotients`, `verifier.checkAIRRelations` |
 | Point evaluation of Lagrange-form polynomial | `poly.Evaluate` |
-| Lagrange basis element \(L_i(\zeta)\) | `poly.LagrangeAtZeta` |
-| DEEP quotient \((v-f(X))/(z-X)\) | `poly.DeepQuotient` |
+| Lagrange basis element $L_i(\zeta)$ | `poly.LagrangeAtZeta` |
+| DEEP quotient $(v-f(X))/(z-X)$ | `poly.DeepQuotient` |
 | Deterministic DEEP batching order | `prover.BuildDeepQuotientLayout` |
 | Per-size DEEP quotient assembly | `prover.ComputeDeepQuotient` |
 | Pointwise DEEP reconstruction on verifier side | `verifier.checkFRIBridge` |
 | Reed-Solomon encoding from size `D` to size `N` | `reedsolomon.Encoder.Encode` |
-| Merkle commitment of packed \((f(x),f(-x))\) pairs | `commitment.RSCommit.Commit` |
+| Merkle commitment of packed $(f(x),f(-x))$ pairs | `commitment.RSCommit.Commit` |
 | FRI paired-leaf Merkle tree for a single level | `fri.Params.BuildLevelTree`, `buildTree` |
 | FRI fold relation | `internal/fri/fri.go`, `foldLayer` and `checkQueryB` |
 | Multi-degree round-introduction logic | `fri.Prove`, `fri.Verify`, `levelAtRound` |
@@ -1024,7 +1017,7 @@ That design is deliberate because those level roots may already be committed els
 
 ### Prover
 
-For a compiled program with module sizes \(N_1, \dots, N_m\):
+For a compiled program with module sizes $N_1, \dots, N_m$:
 
 1. commit setup columns by size,
 2. commit trace-round columns by size at every main FS round,
