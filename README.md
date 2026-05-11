@@ -28,6 +28,8 @@ It lets you describe a computation as a set of polynomial constraints over a **t
 6. verifier.Verify(publicInputs, setup, program, proof)
 ```
 
+For a detailed note on the low-degree testing and polynomial commitment layer, see [docs/fri.md](docs/fri.md).
+
 ## Example: PLONK gate + copy constraint
 
 Prove that PLONK arithmetic gates are satisfied and that wires are consistently connected.
