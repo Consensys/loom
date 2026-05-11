@@ -41,8 +41,8 @@ func TestViz(t *testing.T) {
 	C = expr.Col("C").Sub(expr.Col("A")).Sub(expr.Col("B"))
 	fibonacciModule.AssertZero(C)
 
-	builder.AddModule("fibonacci", fibonacciModule)
-	builder.AddModule("range", rangeModule)
+	builder.AddModule(fibonacciModule)
+	builder.AddModule(rangeModule)
 
 	T := board.Column{
 		Module: "range",

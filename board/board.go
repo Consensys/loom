@@ -66,8 +66,8 @@ func (b *Builder) MakeColumnPublic(module, name string) {
 	b.PublicColumns = append(b.PublicColumns, ColumnRef{Name: name, Module: module})
 }
 
-func (b *Builder) AddModule(name string, m Module) {
-	b.Modules[name] = &m
+func (b *Builder) AddModule(m Module) {
+	b.Modules[m.Name] = &m
 }
 
 func (b *Builder) AddLogupBus(cm LogupBus) {

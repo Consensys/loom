@@ -33,7 +33,7 @@ func Range(builder *board.Builder, S board.Column, bound uint64) error {
 		rangeModule := board.NewModule(constants.RangeModuleName(bound))
 		rangeModule.N = int(bound)
 		rangeModule.GenCol = append(rangeModule.GenCol, board.RangeColumnGen{Bound: bound})
-		builder.AddModule(constants.RangeModuleName(bound), rangeModule)
+		builder.AddModule(rangeModule)
 	}
 	T := board.Column{Module: rangeModuleName, In: expr.Col(constants.RangeColName(bound))}
 

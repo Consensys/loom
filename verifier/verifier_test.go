@@ -26,7 +26,7 @@ import (
 )
 
 func prepareFibonacciModule(N int) board.Module {
-	fibonacciModule := board.NewModule("fibo")
+	fibonacciModule := board.NewModule("fibonacci")
 	fibonacciModule.N = N
 	C := expr.Rot("A", 1).Sub(expr.Col("B"))
 	fibonacciModule.AssertZeroExceptAt(C, N-1)
@@ -37,15 +37,15 @@ func prepareFibonacciModule(N int) board.Module {
 	return fibonacciModule
 }
 
-func preparePlonkModule(N int) board.Module {
-	plonkModule := board.NewModule("plonk")
+func prepareIthPlonk(N int, i int) board.Module {
+	plonkModule := board.NewModule(Ith("plonk", 0))
 	plonkModule.N = N
 
-	qll := expr.Col(ID_Ql).Mul(expr.Col(ID_L))
-	qrr := expr.Col(ID_Qr).Mul(expr.Col(ID_R))
-	qmlr := expr.Col(ID_Qm).Mul(expr.Col(ID_L)).Mul(expr.Col(ID_R))
-	qoo := expr.Col(ID_Qo).Mul(expr.Col(ID_O))
-	qk := expr.Col(ID_Qk)
+	qll := expr.Col(Ith(ID_Ql, i)).Mul(expr.Col(Ith(ID_L, i)))
+	qrr := expr.Col(Ith(ID_Qr, i)).Mul(expr.Col(Ith(ID_R, i)))
+	qmlr := expr.Col(Ith(ID_Qm, i)).Mul(expr.Col(Ith(ID_L, i))).Mul(expr.Col(Ith(ID_R, i)))
+	qoo := expr.Col(Ith(ID_Qo, i)).Mul(expr.Col(Ith(ID_O, i)))
+	qk := expr.Col(Ith(ID_Qk, i))
 	vanishingRelation := qll.Add(qrr).Add(qmlr).Add(qoo).Add(qk)
 	plonkModule.AssertZero(vanishingRelation)
 	return plonkModule
@@ -56,14 +56,14 @@ func TestVerifierFibo(t *testing.T) {
 	// build the modules
 	builder := board.NewBuilder()
 
-	rangeModule := board.NewModule("lookup")
+	rangeModule := board.NewModule("range")
 
 	N := 4
 	rangeModule.N = 2 * N
 
 	fibonacciModule := prepareFibonacciModule(N)
-	builder.AddModule("fibonacci", fibonacciModule)
-	builder.AddModule("range", rangeModule)
+	builder.AddModule(fibonacciModule)
+	builder.AddModule(rangeModule)
 
 	T := board.Column{
 		Module: "range",
@@ -112,18 +112,18 @@ func TestVerifierPlonk(t *testing.T) {
 	{
 		// fetch the plonk trace
 		N := 16
-		tr, sigma, size, err := getPlonkTrace(N)
+		tr, sigma, size, err := getIthPlonkTrace(N, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		// build the plonk module
-		plonkModule := preparePlonkModule(size)
-		builder.AddModule("plonk", plonkModule)
+		plonkModule := prepareIthPlonk(size, 0)
+		builder.AddModule(plonkModule)
 
-		lro := []expr.Expr{expr.Col(ID_L), expr.Col(ID_R), expr.Col(ID_O)}
-		sigmaGen := board.NewPermutationGen(sigma, "plonk.S")
-		err = arguments.CopyConstraint(&builder, "plonk", lro, sigmaGen)
+		lro := []expr.Expr{expr.Col(Ith(ID_L, 0)), expr.Col(Ith(ID_R, 0)), expr.Col(Ith(ID_O, 0))}
+		sigmaGen := board.NewPermutationGen(sigma, Ith("plonk.S", 0))
+		err = arguments.CopyConstraint(&builder, Ith("plonk", 0), lro, sigmaGen)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -148,27 +148,27 @@ func TestVerifierPlonk(t *testing.T) {
 	{
 		// fetch the plonk trace
 		N := 16
-		tr, sigma, size, err := getPlonkTrace(N)
+		tr, sigma, size, err := getIthPlonkTrace(N, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		// build the plonk module
-		plonkModule := preparePlonkModule(size)
-		builder.AddModule("plonk", plonkModule)
+		plonkModule := prepareIthPlonk(size, 0)
+		builder.AddModule(plonkModule)
 
-		lro := []expr.Expr{expr.Col(ID_L), expr.Col(ID_R), expr.Col(ID_O)}
-		sigmaGen := board.NewPermutationGen(sigma, "plonk.S")
-		err = arguments.CopyConstraint(&builder, "plonk", lro, sigmaGen)
+		lro := []expr.Expr{expr.Col(Ith(ID_L, 0)), expr.Col(Ith(ID_R, 0)), expr.Col(Ith(ID_O, 0))}
+		sigmaGen := board.NewPermutationGen(sigma, Ith("plonk.S", 0))
+		err = arguments.CopyConstraint(&builder, Ith("plonk", 0), lro, sigmaGen)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		builder.MakeColumnPublic("plonk", ID_Ql)
-		builder.MakeColumnPublic("plonk", ID_Qr)
-		builder.MakeColumnPublic("plonk", ID_Qm)
-		builder.MakeColumnPublic("plonk", ID_Qo)
-		builder.MakeColumnPublic("plonk", ID_Qk)
+		builder.MakeColumnPublic(Ith("plonk", 0), Ith(ID_Ql, 0))
+		builder.MakeColumnPublic(Ith("plonk", 0), Ith(ID_Qr, 0))
+		builder.MakeColumnPublic(Ith("plonk", 0), Ith(ID_Qm, 0))
+		builder.MakeColumnPublic(Ith("plonk", 0), Ith(ID_Qo, 0))
+		builder.MakeColumnPublic(Ith("plonk", 0), Ith(ID_Qk, 0))
 
 		program, err := board.Compile(&builder)
 		if err != nil {
@@ -198,13 +198,13 @@ func TestFiboPlonk(t *testing.T) {
 
 	// fetch the plonk trace
 	NPlonk := 16
-	tr, sigma, size, err := getPlonkTrace(NPlonk)
+	tr, sigma, size, err := getIthPlonkTrace(NPlonk, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// build the modules
-	plonkModule := preparePlonkModule(size)
+	plonkModule := prepareIthPlonk(size, 0)
 	NFibo := 4
 	fibonacciModule := prepareFibonacciModule(NFibo)
 	rangeModule := board.NewModule("range")
@@ -212,9 +212,9 @@ func TestFiboPlonk(t *testing.T) {
 
 	// build the arguments
 	builder := board.NewBuilder()
-	builder.AddModule("plonk", plonkModule)
-	builder.AddModule("fibonacci", fibonacciModule)
-	builder.AddModule("range", rangeModule)
+	builder.AddModule(plonkModule)
+	builder.AddModule(fibonacciModule)
+	builder.AddModule(rangeModule)
 
 	// 1 - lookup of fibo's columns
 	T := board.Column{
@@ -234,9 +234,9 @@ func TestFiboPlonk(t *testing.T) {
 	}
 
 	// 2 - plonk copy constraint
-	lro := []expr.Expr{expr.Col(ID_L), expr.Col(ID_R), expr.Col(ID_O)}
-	sigmaGen := board.NewPermutationGen(sigma, "plonk.S")
-	err = arguments.CopyConstraint(&builder, "plonk", lro, sigmaGen)
+	lro := []expr.Expr{expr.Col(Ith(ID_L, 0)), expr.Col(Ith(ID_R, 0)), expr.Col(Ith(ID_O, 0))}
+	sigmaGen := board.NewPermutationGen(sigma, Ith("plonk.S", 0))
+	err = arguments.CopyConstraint(&builder, Ith("plonk", 0), lro, sigmaGen)
 	if err != nil {
 		t.Fatal(err)
 	}

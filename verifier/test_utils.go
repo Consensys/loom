@@ -86,29 +86,29 @@ func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial) (poly.Polynomial, error)
 // where Ql[i]=-1), with the explicit note "to be completed by the prover". The prover
 // must set Qk[i]=L[i] so that the vanishing relation Ql[i]*L[i]+Qk[i] = -L[i]+L[i] = 0
 // holds on those rows.
-func buildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1CSSolution, nbPublicInputs int) (trace.Trace, error) {
+func buildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1CSSolution, nbPublicInputs int, i int) (trace.Trace, error) {
 
 	nbColumns := 16
 	T := make(trace.Trace, nbColumns)
 	var err error
 
-	T[ID_Ql], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Ql)
+	T[Ith(ID_Ql, i)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Ql)
 	if err != nil {
 		return T, err
 	}
-	T[ID_Qr], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qr)
+	T[Ith(ID_Qr, i)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qr)
 	if err != nil {
 		return T, err
 	}
-	T[ID_Qm], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qm)
+	T[Ith(ID_Qm, i)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qm)
 	if err != nil {
 		return T, err
 	}
-	T[ID_Qo], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qo)
+	T[Ith(ID_Qo, i)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qo)
 	if err != nil {
 		return T, err
 	}
-	T[ID_Qk], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qk)
+	T[Ith(ID_Qk, i)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qk)
 	if err != nil {
 		return T, err
 	}
@@ -116,20 +116,20 @@ func buildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1C
 	// Solution columns: L, R, O are already in Lagrange Normal form
 	lCoeffs := make([]koalabear.Element, len(plonkSolution.L))
 	copy(lCoeffs, plonkSolution.L)
-	T[ID_L] = lCoeffs
+	T[Ith(ID_L, i)] = lCoeffs
 
 	// Complete Qk for the public-input placeholder rows.
-	for i := 0; i < nbPublicInputs; i++ {
-		T[ID_Qk][i] = T[ID_L][i]
+	for k := 0; k < nbPublicInputs; k++ {
+		T[Ith(ID_Qk, i)][k] = T[Ith(ID_L, i)][k]
 	}
 
 	rCoeffs := make([]koalabear.Element, len(plonkSolution.R))
 	copy(rCoeffs, plonkSolution.R)
-	T[ID_R] = rCoeffs
+	T[Ith(ID_R, i)] = rCoeffs
 
 	oCoeffs := make([]koalabear.Element, len(plonkSolution.O))
 	copy(oCoeffs, plonkSolution.O)
-	T[ID_O] = oCoeffs
+	T[Ith(ID_O, i)] = oCoeffs
 
 	return T, nil
 }
@@ -155,27 +155,11 @@ func (c *Circuit) Define(api frontend.API) error {
 	return nil
 }
 
-func getPublicPart(t trace.Trace) trace.Trace {
-	res := make(trace.Trace, len(t)-3)
-	res[ID_Z] = t[ID_Z]
-	res[ID_ZS] = t[ID_ZS]
-	res[ID_Ql] = t[ID_Ql]
-	res[ID_Qr] = t[ID_Qr]
-	res[ID_Qm] = t[ID_Qm]
-	res[ID_Qo] = t[ID_Qo]
-	res[ID_Qk] = t[ID_Qk]
-	return res
+func Ith(s string, i int) string {
+	return fmt.Sprintf("%s_%d", s, i)
 }
 
-func getPrivatePartCopy(t trace.Trace, i int) trace.Trace {
-	res := make(trace.Trace, len(t)-3)
-	res[ithInstance(ID_L, i)] = t[ID_L]
-	res[ithInstance(ID_R, i)] = t[ID_R]
-	res[ithInstance(ID_O, i)] = t[ID_O]
-	return res
-}
-
-func getPlonkTrace(N int) (trace.Trace, []int64, int, error) {
+func getIthPlonkTrace(N int, i int) (trace.Trace, []int64, int, error) {
 
 	assignment := Circuit{
 		A: 3,
@@ -216,7 +200,7 @@ func getPlonkTrace(N int) (trace.Trace, []int64, int, error) {
 		return nil, nil, size, fmt.Errorf("cannot cast isolution to *gnark_constraint.SparseR1CSSolution")
 	}
 
-	T, err := buildTrace(publicTrace, solution, nbPublic)
+	T, err := buildTrace(publicTrace, solution, nbPublic, i)
 	if err != nil {
 		return nil, nil, size, err
 	}

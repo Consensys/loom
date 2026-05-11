@@ -132,7 +132,7 @@ func (b *CorsetBridge) SetupModules() {
 		}
 		name := m.Name().String()
 		loomMod := board.NewModule(name)
-		b.Builder.AddModule(name, loomMod)
+		b.Builder.AddModule(loomMod)
 	}
 }
 
