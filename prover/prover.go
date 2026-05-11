@@ -38,6 +38,7 @@ import (
 
 type Config struct {
 	EmulateFS bool
+	SkipFRI   bool
 }
 
 type Option func(c *Config) error
@@ -45,6 +46,13 @@ type Option func(c *Config) error
 func EmulateFS() Option {
 	return func(c *Config) error {
 		c.EmulateFS = true
+		return nil
+	}
+}
+
+func SkipFRI() Option {
+	return func(c *Config) error {
+		c.SkipFRI = true
 		return nil
 	}
 }
@@ -594,14 +602,18 @@ func Prove(t trace.Trace, setup setup.PublicKey, publicInputs proof.PublicInputs
 		return proof.Proof{}, err
 	}
 
-	// Compute DEEP quotient and FRI-prove that it is the evaluation of a polynomial of degree N
-	if err := pr.ComputeDeepQuotient(); err != nil {
-		return proof.Proof{}, err
-	}
+	// ------ PCS related verification ------
 
-	// Brige FRI <-> polynomial commitments, using sample at queryPositions
-	if err := pr.SampleEvaluations(); err != nil {
-		return proof.Proof{}, err
+	if !config.SkipFRI {
+		// Compute DEEP quotient and FRI-prove that it is the evaluation of a polynomial of degree N
+		if err := pr.ComputeDeepQuotient(); err != nil {
+			return proof.Proof{}, err
+		}
+
+		// Brige FRI <-> polynomial commitments, using sample at queryPositions
+		if err := pr.SampleEvaluations(); err != nil {
+			return proof.Proof{}, err
+		}
 	}
 
 	return pr.Proof, nil

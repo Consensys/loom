@@ -34,9 +34,23 @@ import (
 	"github.com/consensys/loom/setup"
 )
 
+type Config struct {
+	SkipFRI bool
+}
+
+type Option func(c *Config) error
+
+func SkipFRI() Option {
+	return func(c *Config) error {
+		c.SkipFRI = true
+		return nil
+	}
+}
+
 type PublicKey = []commitment.WMerkleTree
 
 type verifierRunTime struct {
+	config       Config
 	proof        proof.Proof
 	friParams    fri.Params
 	publicInputs map[string]proof.PublicInput
@@ -54,9 +68,10 @@ type verifierRunTime struct {
 	roots [][]byte
 }
 
-func newVerifierRuntime(program board.Program, setup setup.PublicKeyRoots, publicInputs map[string]proof.PublicInput, prf proof.Proof) (verifierRunTime, error) {
+func newVerifierRuntime(program board.Program, setup setup.PublicKeyRoots, publicInputs map[string]proof.PublicInput, prf proof.Proof, config Config) (verifierRunTime, error) {
 
 	res := verifierRunTime{
+		config:       config,
 		proof:        prf,
 		publicInputs: publicInputs,
 		program:      program,
@@ -487,9 +502,17 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 	return nil
 }
 
-func Verify(publicInputs map[string]proof.PublicInput, setup setup.PublicKeyRoots, program board.Program, proof proof.Proof) error {
+func Verify(publicInputs map[string]proof.PublicInput, setup setup.PublicKeyRoots, program board.Program, proof proof.Proof, opts ...Option) error {
 
-	vr, err := newVerifierRuntime(program, setup, publicInputs, proof)
+	var config Config
+	for _, opt := range opts {
+		err := opt(&config)
+		if err != nil {
+			return err
+		}
+	}
+
+	vr, err := newVerifierRuntime(program, setup, publicInputs, proof, config)
 	if err != nil {
 		return err
 	}
@@ -524,22 +547,26 @@ func Verify(publicInputs map[string]proof.PublicInput, setup setup.PublicKeyRoot
 
 	// ------ PCS related verification ------
 
-	// 5a - check FRI proof
-	err = vr.checkFRIProof()
-	if err != nil {
-		return err
-	}
+	if !config.SkipFRI {
 
-	// 5b - check merkle proofs of proof.PointSamplings
-	err = vr.checkMerkleProofsPointSampling()
-	if err != nil {
-		return err
-	}
+		// 5a - check FRI proof
+		err = vr.checkFRIProof()
+		if err != nil {
+			return err
+		}
 
-	// 5c - check FRI <-> PointSamplings bridge
-	err = vr.checkFRIBridge()
-	if err != nil {
-		return err
+		// 5b - check merkle proofs of proof.PointSamplings
+		err = vr.checkMerkleProofsPointSampling()
+		if err != nil {
+			return err
+		}
+
+		// 5c - check FRI <-> PointSamplings bridge
+		err = vr.checkFRIBridge()
+		if err != nil {
+			return err
+		}
+
 	}
 
 	return nil

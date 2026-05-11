@@ -11,7 +11,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package verifier
+package integrationtest
 
 import (
 	"testing"
@@ -22,6 +22,8 @@ import (
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/prover"
 	"github.com/consensys/loom/setup"
+	"github.com/consensys/loom/trace"
+	"github.com/consensys/loom/verifier"
 	"github.com/consensys/loom/viz"
 )
 
@@ -38,7 +40,7 @@ func prepareFibonacciModule(N int) board.Module {
 }
 
 func prepareIthPlonk(N int, i int) board.Module {
-	plonkModule := board.NewModule(Ith("plonk", 0))
+	plonkModule := board.NewModule(Ith("plonk", i))
 	plonkModule.N = N
 
 	qll := expr.Col(Ith(ID_Ql, i)).Mul(expr.Col(Ith(ID_L, i)))
@@ -98,7 +100,7 @@ func TestVerifierFibo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = Verify(nil, nil, program, proof)
+	err = verifier.Verify(nil, nil, program, proof)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +140,7 @@ func TestVerifierPlonk(t *testing.T) {
 		}
 		viz.ViewDag(program, "dag_plonk.html")
 
-		err = Verify(nil, nil, program, proof)
+		err = verifier.Verify(nil, nil, program, proof)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -187,7 +189,7 @@ func TestVerifierPlonk(t *testing.T) {
 		viz.ViewDag(program, "dag_plonk.html")
 
 		roots := setup.Roots(pk)
-		err = Verify(nil, roots, program, proof)
+		err = verifier.Verify(nil, roots, program, proof)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -263,9 +265,78 @@ func TestFiboPlonk(t *testing.T) {
 
 	viz.WriteRawTraceToCSV("trace.csv", fullTrace)
 
-	err = Verify(nil, nil, program, proof)
+	err = verifier.Verify(nil, nil, program, proof)
 	if err != nil {
 		t.Fatal(err)
 	}
 
+}
+
+//======================== Benchmarks ========================
+
+func BenchmarkPlonk(b *testing.B) {
+
+	sameSize := make([]int, 50)
+	for i := range sameSize {
+		sameSize[i] = 1 << 10
+	}
+
+	varying := make([]int, 0, 50)
+	for s := 8; s <= 12; s++ {
+		for k := 0; k < 10; k++ {
+			varying = append(varying, 1<<s)
+		}
+	}
+
+	b.Run("SameSize/N=1024/SkipFRI", func(b *testing.B) { benchPlonkBatch(b, sameSize, true) })
+	b.Run("SameSize/N=1024", func(b *testing.B) { benchPlonkBatch(b, sameSize, false) })
+	b.Run("VaryingSizes/SkipFRI", func(b *testing.B) { benchPlonkBatch(b, varying, true) })
+	b.Run("VaryingSizes", func(b *testing.B) { benchPlonkBatch(b, varying, false) })
+}
+
+func benchPlonkBatch(b *testing.B, ns []int, skipFRI bool) {
+
+	builder := board.NewBuilder()
+	traces := make([]trace.Trace, len(ns))
+	for i, n := range ns {
+		tr, sigma, size, err := getIthPlonkTrace(n, i)
+		if err != nil {
+			b.Fatal(err)
+		}
+		traces[i] = tr
+		builder.AddModule(prepareIthPlonk(size, i))
+
+		lro := []expr.Expr{expr.Col(Ith(ID_L, i)), expr.Col(Ith(ID_R, i)), expr.Col(Ith(ID_O, i))}
+		sigmaGen := board.NewPermutationGen(sigma, Ith("plonk.S", i))
+		if err := arguments.CopyConstraint(&builder, Ith("plonk", i), lro, sigmaGen); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	fullTrace := prover.MergeTrace(traces[0], traces[1:]...)
+	program, err := board.Compile(&builder)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	var opts []prover.Option
+	if skipFRI {
+		opts = append(opts, prover.SkipFRI())
+	}
+
+	b.ResetTimer()
+	for b.Loop() {
+		// prover.Prove mutates the input trace (adds challenge / GP /
+		// multiplicity columns), so each iteration needs a fresh map. The
+		// column slices themselves are not mutated and can be shared.
+		b.StopTimer()
+		fresh := make(trace.Trace, len(fullTrace))
+		for k, v := range fullTrace {
+			fresh[k] = v
+		}
+		b.StartTimer()
+		if _, err := prover.Prove(fresh, nil, nil, program, opts...); err != nil {
+			b.Fatal(err)
+		}
+	}
 }
