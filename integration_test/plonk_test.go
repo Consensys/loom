@@ -39,20 +39,6 @@ func prepareFibonacciModule(N int) board.Module {
 	return fibonacciModule
 }
 
-func prepareIthPlonk(N int, i int) board.Module {
-	plonkModule := board.NewModule(Ith("plonk", i))
-	plonkModule.N = N
-
-	qll := expr.Col(Ith(ID_Ql, i)).Mul(expr.Col(Ith(ID_L, i)))
-	qrr := expr.Col(Ith(ID_Qr, i)).Mul(expr.Col(Ith(ID_R, i)))
-	qmlr := expr.Col(Ith(ID_Qm, i)).Mul(expr.Col(Ith(ID_L, i))).Mul(expr.Col(Ith(ID_R, i)))
-	qoo := expr.Col(Ith(ID_Qo, i)).Mul(expr.Col(Ith(ID_O, i)))
-	qk := expr.Col(Ith(ID_Qk, i))
-	vanishingRelation := qll.Add(qrr).Add(qmlr).Add(qoo).Add(qk)
-	plonkModule.AssertZero(vanishingRelation)
-	return plonkModule
-}
-
 func TestVerifierFibo(t *testing.T) {
 
 	// build the modules
@@ -114,13 +100,13 @@ func TestVerifierPlonk(t *testing.T) {
 	{
 		// fetch the plonk trace
 		N := 16
-		tr, sigma, size, err := getIthPlonkTrace(N, 0)
+		tr, sigma, size, err := GetIthPlonkTrace(N, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		// build the plonk module
-		plonkModule := prepareIthPlonk(size, 0)
+		plonkModule := PrepareIthPlonk(size, 0)
 		builder.AddModule(plonkModule)
 
 		lro := []expr.Expr{expr.Col(Ith(ID_L, 0)), expr.Col(Ith(ID_R, 0)), expr.Col(Ith(ID_O, 0))}
@@ -150,13 +136,13 @@ func TestVerifierPlonk(t *testing.T) {
 	{
 		// fetch the plonk trace
 		N := 16
-		tr, sigma, size, err := getIthPlonkTrace(N, 0)
+		tr, sigma, size, err := GetIthPlonkTrace(N, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		// build the plonk module
-		plonkModule := prepareIthPlonk(size, 0)
+		plonkModule := PrepareIthPlonk(size, 0)
 		builder.AddModule(plonkModule)
 
 		lro := []expr.Expr{expr.Col(Ith(ID_L, 0)), expr.Col(Ith(ID_R, 0)), expr.Col(Ith(ID_O, 0))}
@@ -200,13 +186,13 @@ func TestFiboPlonk(t *testing.T) {
 
 	// fetch the plonk trace
 	NPlonk := 16
-	tr, sigma, size, err := getIthPlonkTrace(NPlonk, 0)
+	tr, sigma, size, err := GetIthPlonkTrace(NPlonk, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// build the modules
-	plonkModule := prepareIthPlonk(size, 0)
+	plonkModule := PrepareIthPlonk(size, 0)
 	NFibo := 4
 	fibonacciModule := prepareFibonacciModule(NFibo)
 	rangeModule := board.NewModule("range")
@@ -272,9 +258,38 @@ func TestFiboPlonk(t *testing.T) {
 
 }
 
+func TestBigGraph(t *testing.T) {
+
+	ns := []int{8, 8, 8, 8, 8}
+	builder := board.NewBuilder()
+	traces := make([]trace.Trace, len(ns))
+	for i, n := range ns {
+		tr, sigma, size, err := GetIthPlonkTrace(n, i)
+		if err != nil {
+			t.Fatal(err)
+		}
+		traces[i] = tr
+		builder.AddModule(PrepareIthPlonk(size, i))
+
+		lro := []expr.Expr{expr.Col(Ith(ID_L, i)), expr.Col(Ith(ID_R, i)), expr.Col(Ith(ID_O, i))}
+		sigmaGen := board.NewPermutationGen(sigma, Ith("plonk.S", i))
+		if err := arguments.CopyConstraint(&builder, Ith("plonk", i), lro, sigmaGen); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// fullTrace := prover.MergeTrace(traces[0], traces[1:]...)
+	program, err := board.Compile(&builder)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	viz.ViewDag(program, "5_plonk.html")
+}
+
 //======================== Benchmarks ========================
 
-func BenchmarkPlonk(b *testing.B) {
+func BenchmarkProver(b *testing.B) {
 
 	sameSize := make([]int, 50)
 	for i := range sameSize {
@@ -288,23 +303,23 @@ func BenchmarkPlonk(b *testing.B) {
 		}
 	}
 
-	b.Run("SameSize/N=1024/SkipFRI", func(b *testing.B) { benchPlonkBatch(b, sameSize, true) })
-	b.Run("SameSize/N=1024", func(b *testing.B) { benchPlonkBatch(b, sameSize, false) })
-	b.Run("VaryingSizes/SkipFRI", func(b *testing.B) { benchPlonkBatch(b, varying, true) })
-	b.Run("VaryingSizes", func(b *testing.B) { benchPlonkBatch(b, varying, false) })
+	b.Run("SameSize/N=1024/SkipFRI", func(b *testing.B) { benchProver(b, sameSize, true) })
+	b.Run("SameSize/N=1024", func(b *testing.B) { benchProver(b, sameSize, false) })
+	b.Run("VaryingSizes/SkipFRI", func(b *testing.B) { benchProver(b, varying, true) })
+	b.Run("VaryingSizes", func(b *testing.B) { benchProver(b, varying, false) })
 }
 
-func benchPlonkBatch(b *testing.B, ns []int, skipFRI bool) {
+func benchProver(b *testing.B, ns []int, skipFRI bool) {
 
 	builder := board.NewBuilder()
 	traces := make([]trace.Trace, len(ns))
 	for i, n := range ns {
-		tr, sigma, size, err := getIthPlonkTrace(n, i)
+		tr, sigma, size, err := GetIthPlonkTrace(n, i)
 		if err != nil {
 			b.Fatal(err)
 		}
 		traces[i] = tr
-		builder.AddModule(prepareIthPlonk(size, i))
+		builder.AddModule(PrepareIthPlonk(size, i))
 
 		lro := []expr.Expr{expr.Col(Ith(ID_L, i)), expr.Col(Ith(ID_R, i)), expr.Col(Ith(ID_O, i))}
 		sigmaGen := board.NewPermutationGen(sigma, Ith("plonk.S", i))
@@ -336,6 +351,75 @@ func benchPlonkBatch(b *testing.B, ns []int, skipFRI bool) {
 		}
 		b.StartTimer()
 		if _, err := prover.Prove(fresh, nil, nil, program, opts...); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkVerifier(b *testing.B) {
+
+	sameSize := make([]int, 50)
+	for i := range sameSize {
+		sameSize[i] = 1 << 10
+	}
+
+	varying := make([]int, 0, 50)
+	for s := 8; s <= 12; s++ {
+		for k := 0; k < 10; k++ {
+			varying = append(varying, 1<<s)
+		}
+	}
+
+	b.Run("SameSize/N=1024/SkipFRI", func(b *testing.B) { benchVerifier(b, sameSize, true) })
+	b.Run("SameSize/N=1024", func(b *testing.B) { benchVerifier(b, sameSize, false) })
+	b.Run("VaryingSizes/SkipFRI", func(b *testing.B) { benchVerifier(b, varying, true) })
+	b.Run("VaryingSizes", func(b *testing.B) { benchVerifier(b, varying, false) })
+}
+
+func benchVerifier(b *testing.B, ns []int, skipFRI bool) {
+
+	builder := board.NewBuilder()
+	traces := make([]trace.Trace, len(ns))
+	for i, n := range ns {
+		tr, sigma, size, err := GetIthPlonkTrace(n, i)
+		if err != nil {
+			b.Fatal(err)
+		}
+		traces[i] = tr
+		builder.AddModule(PrepareIthPlonk(size, i))
+
+		lro := []expr.Expr{expr.Col(Ith(ID_L, i)), expr.Col(Ith(ID_R, i)), expr.Col(Ith(ID_O, i))}
+		sigmaGen := board.NewPermutationGen(sigma, Ith("plonk.S", i))
+		if err := arguments.CopyConstraint(&builder, Ith("plonk", i), lro, sigmaGen); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	fullTrace := prover.MergeTrace(traces[0], traces[1:]...)
+	program, err := board.Compile(&builder)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	var optsProver []prover.Option
+	if skipFRI {
+		optsProver = append(optsProver, prover.SkipFRI())
+	}
+	proof, err := prover.Prove(fullTrace, nil, nil, program, optsProver...)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	var optsVerifier []verifier.Option
+	if skipFRI {
+		optsVerifier = append(optsVerifier, verifier.SkipFRI())
+	}
+
+	b.ResetTimer()
+	for b.Loop() {
+		b.StartTimer()
+		err := verifier.Verify(nil, nil, program, proof, optsVerifier...)
+		if err != nil {
 			b.Fatal(err)
 		}
 	}

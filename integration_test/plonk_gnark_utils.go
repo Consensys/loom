@@ -23,6 +23,8 @@ import (
 	gnark_cs "github.com/consensys/gnark/constraint/koalabear"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/scs"
+	"github.com/consensys/loom/board"
+	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/trace"
 )
@@ -159,7 +161,7 @@ func Ith(s string, i int) string {
 	return fmt.Sprintf("%s_%d", s, i)
 }
 
-func getIthPlonkTrace(N int, i int) (trace.Trace, []int64, int, error) {
+func GetIthPlonkTrace(N int, i int) (trace.Trace, []int64, int, error) {
 
 	assignment := Circuit{
 		A: 3,
@@ -173,7 +175,7 @@ func getIthPlonkTrace(N int, i int) (trace.Trace, []int64, int, error) {
 		return nil, nil, 0, err
 	}
 
-	var circuit Circuit
+	circuit := Circuit{N: N}
 
 	ccs, err := frontend.CompileU32(koalabear.Modulus(), scs.NewBuilder, &circuit)
 	if err != nil {
@@ -206,4 +208,18 @@ func getIthPlonkTrace(N int, i int) (trace.Trace, []int64, int, error) {
 	}
 
 	return T, publicTrace.S, size, nil
+}
+
+func PrepareIthPlonk(N int, i int) board.Module {
+	plonkModule := board.NewModule(Ith("plonk", i))
+	plonkModule.N = N
+
+	qll := expr.Col(Ith(ID_Ql, i)).Mul(expr.Col(Ith(ID_L, i)))
+	qrr := expr.Col(Ith(ID_Qr, i)).Mul(expr.Col(Ith(ID_R, i)))
+	qmlr := expr.Col(Ith(ID_Qm, i)).Mul(expr.Col(Ith(ID_L, i))).Mul(expr.Col(Ith(ID_R, i)))
+	qoo := expr.Col(Ith(ID_Qo, i)).Mul(expr.Col(Ith(ID_O, i)))
+	qk := expr.Col(Ith(ID_Qk, i))
+	vanishingRelation := qll.Add(qrr).Add(qmlr).Add(qoo).Add(qk)
+	plonkModule.AssertZero(vanishingRelation)
+	return plonkModule
 }
