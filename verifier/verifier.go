@@ -120,7 +120,7 @@ func newVerifierRuntime(program board.Program, setup setup.PublicKeyRoots, publi
 	}
 
 	var err error
-	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, commitment.LeafHash, commitment.NodeHash)
+	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, commitment.LeafHash, commitment.NodeHash, fri.LightMode())
 	if err != nil {
 		return res, err
 	}

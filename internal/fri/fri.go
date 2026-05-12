@@ -35,13 +35,27 @@ type Params struct {
 	LeafHasher merkle.LeafHasher
 	NodeHasher merkle.NodeHasher
 
-	numRounds int // numRounds = m
-	invTwo    koalabear.Element
-	domains   []*fft.Domain // domains[j] has cardinality N/2^j, generator ωⱼ
+	numRounds    int // numRounds = m
+	invTwo       koalabear.Element
+	domains      []*fft.Domain // domains[j] has cardinality N/2^j, generator ωⱼ
+	domainsLight []domainLight // domainLight stores only the cardinality and the domain generator
+}
+
+type Config struct {
+	LightMode bool
+}
+
+type Option func(c *Config) error
+
+func LightMode() Option {
+	return func(c *Config) error {
+		c.LightMode = true
+		return nil
+	}
 }
 
 // NewParams constructs and validates a Params, precomputing r+1 domains and inv(2).
-func NewParams(N, D, numQueries int, lh merkle.LeafHasher, nh merkle.NodeHasher) (Params, error) {
+func NewParams(N, D, numQueries int, lh merkle.LeafHasher, nh merkle.NodeHasher, opts ...Option) (Params, error) {
 	if N <= 0 || N&(N-1) != 0 {
 		return Params{}, fmt.Errorf("fri: N must be a positive power of two, got %d", N)
 	}
@@ -55,18 +69,20 @@ func NewParams(N, D, numQueries int, lh merkle.LeafHasher, nh merkle.NodeHasher)
 		return Params{}, fmt.Errorf("fri: numQueries must be positive, got %d", numQueries)
 	}
 
+	var config Config
+	for _, opt := range opts {
+		if err := opt(&config); err != nil {
+			return Params{}, err
+		}
+	}
+
 	numRounds := log2(D) // r = m = log₂(D)
 
 	var two, invTwo koalabear.Element
 	two.SetUint64(2)
 	invTwo.Inverse(&two)
 
-	domains := make([]*fft.Domain, numRounds+1)
-	for j := 0; j <= numRounds; j++ {
-		domains[j] = fft.NewDomain(uint64(N) >> j)
-	}
-
-	return Params{
+	res := Params{
 		N:          N,
 		D:          D,
 		NumQueries: numQueries,
@@ -74,8 +90,30 @@ func NewParams(N, D, numQueries int, lh merkle.LeafHasher, nh merkle.NodeHasher)
 		NodeHasher: nh,
 		numRounds:  numRounds,
 		invTwo:     invTwo,
-		domains:    domains,
-	}, nil
+	}
+
+	if !config.LightMode {
+		res.domains = make([]*fft.Domain, numRounds+1)
+		for j := 0; j <= numRounds; j++ {
+			res.domains[j] = fft.NewDomain(uint64(N) >> j)
+		}
+	}
+	res.domainsLight = make([]domainLight, numRounds+1)
+	for j := 0; j <= numRounds; j++ {
+		g, err := koalabear.Generator(uint64(N) >> j)
+		if err != nil {
+			return Params{}, err
+		}
+		res.domainsLight[j] = domainLight{cardinality: uint64(N) >> j, generator: g}
+
+	}
+
+	return res, nil
+}
+
+type domainLight struct {
+	cardinality uint64
+	generator   koalabear.Element
 }
 
 // QueryLayer holds the two opened values and a single Merkle proof for one folding level.
@@ -467,7 +505,7 @@ func Verify(p Params, levelRoots [][][]byte, levelDs []int, prf Proof, ts *fiats
 	}
 
 	// ── Query phase ───────────────────────────────────────────────────────────
-	// levelRootsExtra[l-1] = roots for levels[l] (l >= 1), passed to checkQueryB.
+	// levelRootsExtra[l-1] = roots for levels[l] (l >= 1), passed to checkQuery.
 	var levelRootsExtra [][][]byte
 	if numExtraLevels > 0 {
 		levelRootsExtra = levelRoots[1:]
@@ -494,7 +532,7 @@ func Verify(p Params, levelRoots [][][]byte, levelDs []int, prf Proof, ts *fiats
 			}
 		}
 
-		if err := checkQueryB(s, prf.FRIQueries[k], levelQueriesForQuery, levelRootsExtra,
+		if err := checkQuery(s, prf.FRIQueries[k], levelQueriesForQuery, levelRootsExtra,
 			levelAtRound, gammas, roots, prf.FinalPoly, alphas, p); err != nil {
 			return fmt.Errorf("fri: Verify: query %d failed: %w", k, err)
 		}
@@ -590,7 +628,7 @@ func openQuery(s int, layers [][]koalabear.Element, trees []*merkle.Tree, numRou
 	return q, nil
 }
 
-// checkQueryB verifies one multi-degree FRI query:
+// checkQuery verifies one multi-degree FRI query:
 //   - Merkle proofs for all level polynomial openings
 //   - Merkle proofs and fold consistency for the running-polynomial path
 //   - Batching consistency at each level introduction round
@@ -598,7 +636,7 @@ func openQuery(s int, layers [][]koalabear.Element, trees []*merkle.Tree, numRou
 // levelQueriesForQuery[l-1] holds openings for levels[l] (l 0-based index offset by 1).
 // levelRoots[l-1][i] is the Merkle root of levels[l].Evals[i] (l 0-based offset by 1).
 // gammas[l] is the batching challenge for levels[l] (1-based; gammas[0] unused).
-func checkQueryB(s int, fq Query,
+func checkQuery(s int, fq Query,
 	levelQueriesForQuery []QueriesAtLevel,
 	levelRoots [][][]byte,
 	levelAtRound map[int]int,
@@ -620,7 +658,7 @@ func checkQueryB(s int, fq Query,
 
 	// Verify running-polynomial fold path with batching consistency checks.
 	for j := 0; j < p.numRounds; j++ {
-		Nj := int(p.domains[j].Cardinality)
+		Nj := int(p.domainsLight[j].cardinality)
 		base := s % (Nj / 2)
 		layer := fq.Layers[j]
 
@@ -631,7 +669,7 @@ func checkQueryB(s int, fq Query,
 
 		// Fold: expected = (LeafP+LeafQ)/2 + α*(LeafP-LeafQ)/(2·ωⱼ^base).
 		var xInv, sum, diff, expected koalabear.Element
-		xInv.Exp(p.domains[j].Generator, big.NewInt(int64(Nj-base)))
+		xInv.Exp(p.domainsLight[j].generator, big.NewInt(int64(Nj-base)))
 		sum.Add(&layer.LeafP, &layer.LeafQ)
 		sum.Mul(&sum, &p.invTwo)
 		diff.Sub(&layer.LeafP, &layer.LeafQ)
