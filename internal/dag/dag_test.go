@@ -18,6 +18,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/field"
 )
 
 // u64Vals builds a vals map from alternating (name, uint64) pairs.
@@ -279,6 +280,40 @@ func TestDAGDegree(t *testing.T) {
 			// Must also match Expr.Degree()
 			if exprDeg := tc.expr.Degree(); exprDeg != tc.want {
 				t.Errorf("Expr.Degree() = %d, want %d (test case has wrong want?)", exprDeg, tc.want)
+			}
+		})
+	}
+}
+
+func TestDAGFieldInference(t *testing.T) {
+	tests := []struct {
+		name string
+		expr expr.Expr
+		want field.Kind
+	}{
+		{"BaseColumn", expr.Col("x"), field.Base},
+		{"ExtColumn", expr.ExtCol("x"), field.Ext},
+		{"Challenge", expr.Challenge("gamma"), field.Ext},
+		{"BaseExpression", expr.Col("x").Add(expr.Col("y")), field.Base},
+		{"ChallengeExpression", expr.Col("x").Mul(expr.Challenge("gamma")), field.Ext},
+		{"ExtColumnExpression", expr.ExtCol("x").Sub(expr.Col("y")).Pow(3), field.Ext},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d := ExprToDAG(tc.expr)
+			if got := d.Root.Field; got != tc.want {
+				t.Fatalf("root field = %s, want %s", got, tc.want)
+			}
+
+			flat := d.Flatten()
+			if got := flat.Root.Field; got != tc.want {
+				t.Fatalf("flattened root field = %s, want %s", got, tc.want)
+			}
+
+			factored := flat.Factorize()
+			if got := factored.Root.Field; got != tc.want {
+				t.Fatalf("factored root field = %s, want %s", got, tc.want)
 			}
 		})
 	}

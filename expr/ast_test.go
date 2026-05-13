@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/field"
 )
 
 func TestString(t *testing.T) {
@@ -45,6 +46,38 @@ func TestString(t *testing.T) {
 		t.Errorf("Expected '(x * (x + 5))', got '%s'", d.String())
 	}
 
+}
+
+func TestFieldMetadata(t *testing.T) {
+	var one koalabear.Element
+	one.SetOne()
+
+	tests := []struct {
+		name string
+		expr Expr
+		want field.Kind
+	}{
+		{"Col", Col("x"), field.Base},
+		{"ExtCol", ExtCol("x"), field.Ext},
+		{"Rot", Rot("x", 1), field.Base},
+		{"ExtRot", ExtRot("x", 1), field.Ext},
+		{"Public", Public("x"), field.Base},
+		{"Lagrange", Lagrange("L0"), field.Base},
+		{"Const", Const(one), field.Base},
+		{"Challenge", Challenge("gamma"), field.Ext},
+		{"RawChallengeLeaf", &Leaf{Type: ChallengeColumn, Name: "gamma"}, field.Ext},
+		{"BaseExpression", Col("x").Add(Const(one)), field.Base},
+		{"ChallengeExpression", Col("x").Mul(Challenge("gamma")), field.Ext},
+		{"ExtColumnExpression", ExtCol("x").Sub(Col("y")).Pow(2), field.Ext},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := FieldOf(tc.expr); got != tc.want {
+				t.Fatalf("FieldOf(%s) = %s, want %s", tc.expr.String(), got, tc.want)
+			}
+		})
+	}
 }
 
 func TestPrune(t *testing.T) {

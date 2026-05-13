@@ -21,6 +21,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/dag"
 	"github.com/consensys/loom/proof"
@@ -45,6 +46,7 @@ func NewLogupBus(positive, negative []string) LogupBus {
 type ColumnRef struct {
 	Name   string
 	Module string
+	Field  field.Kind
 }
 
 type Builder struct {
@@ -106,6 +108,14 @@ func NewTable(module string, size int) Table {
 type Column struct {
 	Module string
 	In     expr.Expr
+	Field  field.Kind
+}
+
+func (c Column) FieldKind() field.Kind {
+	if c.In == nil {
+		return c.Field
+	}
+	return field.Join(c.Field, expr.FieldOf(c.In))
 }
 
 type Output struct {
@@ -538,14 +548,19 @@ func Compile(b *Builder) (Program, error) {
 	copy(res.PublicColumns, b.PublicColumns)
 	res.FScolumnsDependencies = make([][]ColumnRef, numRounds)
 
-	// Build a column-name → owning-module map by scanning every module's
-	// relations. This lets us tag each FS-bound column with its module so the
-	// prover can group commitments by polynomial size.
-	columnModule := map[string]string{}
+	// Build a column-name → metadata map by scanning every module's
+	// relations. This lets us tag each FS-bound column with its module and
+	// inferred field so the prover can eventually group commitments by size
+	// and field.
+	columnInfo := map[string]ColumnRef{}
 	for moduleName, m := range b.Modules {
 		for _, rel := range m.Relations {
 			for _, leaf := range rel.LeavesFull(noLagrangeNoChallengeNoPublicCols) {
-				columnModule[leaf.Name] = moduleName
+				ref := columnInfo[leaf.Name]
+				ref.Name = leaf.Name
+				ref.Module = moduleName
+				ref.Field = field.Join(ref.Field, leaf.FieldKind())
+				columnInfo[leaf.Name] = ref
 			}
 		}
 	}
@@ -570,11 +585,11 @@ func Compile(b *Builder) (Program, error) {
 				for _, leaf := range inp.LeavesFull(noLagrangeNoChallengeNoPublicCols) {
 					if !prevCovered[leaf.Name] {
 						prevCovered[leaf.Name] = true
-						mod, ok := columnModule[leaf.Name]
+						ref, ok := columnInfo[leaf.Name]
 						if !ok {
 							return res, fmt.Errorf("Compile: column %q referenced by FS step has no owning module", leaf.Name)
 						}
-						res.FScolumnsDependencies[round] = append(res.FScolumnsDependencies[round], ColumnRef{Name: leaf.Name, Module: mod})
+						res.FScolumnsDependencies[round] = append(res.FScolumnsDependencies[round], ref)
 					}
 				}
 			}
@@ -602,7 +617,11 @@ func Compile(b *Builder) (Program, error) {
 			for _, leaf := range rel.LeavesFull(noLagrangeNoChallengeNoPublicCols) {
 				if !prevCovered[leaf.Name] {
 					prevCovered[leaf.Name] = true
-					res.FScolumnsDependencies[lastRound] = append(res.FScolumnsDependencies[lastRound], ColumnRef{Name: leaf.Name, Module: moduleName})
+					ref := columnInfo[leaf.Name]
+					ref.Name = leaf.Name
+					ref.Module = moduleName
+					ref.Field = field.Join(ref.Field, leaf.FieldKind())
+					res.FScolumnsDependencies[lastRound] = append(res.FScolumnsDependencies[lastRound], ref)
 				}
 			}
 		}

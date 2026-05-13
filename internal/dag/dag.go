@@ -21,6 +21,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/field"
 )
 
 // fnvKey computes an FNV-64a hash of s and returns it as a 16-char hex string.
@@ -65,6 +66,7 @@ type DAGNode struct {
 	Exp      uint32            // exponent, only meaningful when Kind == KindPow
 	Index    int               // position in DAG.Nodes; used by EvalWithCache / EvalWithCacheVars
 	VarIdx   int               // for KindLeaf: index into vars slice for EvalWithCacheVars
+	Field    field.Kind        // output field inferred from the node and its children
 	IsConst  bool              // true iff Kind == KindLeaf and the leaf is a Const
 	ConstVal koalabear.Element // valid iff IsConst; avoids the l.Type==Const branch in the hot eval path
 
@@ -123,6 +125,14 @@ func (b *dagBuilder) intern(key string, make func() *DAGNode) *DAGNode {
 	return n
 }
 
+func inferField(children ...*DAGNode) field.Kind {
+	res := field.Base
+	for _, child := range children {
+		res = field.Join(res, child.Field)
+	}
+	return res
+}
+
 func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 	// Iterative post-order traversal to avoid stack overflow on deep expression trees
 	// (e.g. a sum of thousands of constraints folded left-associatively).
@@ -163,7 +173,7 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 			key := dagKey(prefix, v.String())
 			lv := v
 			result[e] = b.intern(key, func() *DAGNode {
-				n := &DAGNode{Kind: KindLeaf, Leaf: lv, VarIdx: b.assignVarIdx(lv.String())}
+				n := &DAGNode{Kind: KindLeaf, Leaf: lv, VarIdx: b.assignVarIdx(lv.String()), Field: lv.FieldKind()}
 				if lv.Type == expr.ConstantColumn {
 					n.IsConst = true
 					n.ConstVal = lv.Value
@@ -184,7 +194,7 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 				key := dagKey("add", strconv.FormatUint(lh, 16), strconv.FormatUint(rh, 16))
 				l, r := left, right
 				result[e] = b.intern(key, func() *DAGNode {
-					return &DAGNode{Kind: KindAdd, Children: []*DAGNode{l, r}}
+					return &DAGNode{Kind: KindAdd, Children: []*DAGNode{l, r}, Field: inferField(l, r)}
 				})
 			}
 
@@ -196,7 +206,7 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 				key := dagKey("sub", fnvKey(left.key), fnvKey(right.key)) // Sub is not commutative; order is preserved
 				l, r := left, right
 				result[e] = b.intern(key, func() *DAGNode {
-					return &DAGNode{Kind: KindSub, Children: []*DAGNode{l, r}}
+					return &DAGNode{Kind: KindSub, Children: []*DAGNode{l, r}, Field: inferField(l, r)}
 				})
 			}
 
@@ -213,7 +223,7 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 				key := dagKey("mul", strconv.FormatUint(lh, 16), strconv.FormatUint(rh, 16))
 				l, r := left, right
 				result[e] = b.intern(key, func() *DAGNode {
-					return &DAGNode{Kind: KindMul, Children: []*DAGNode{l, r}}
+					return &DAGNode{Kind: KindMul, Children: []*DAGNode{l, r}, Field: inferField(l, r)}
 				})
 			}
 
@@ -225,7 +235,7 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 				key := dagKey("pow", fnvKey(base.key), strconv.Itoa(int(v.Exp)))
 				bs, exp := base, v.Exp
 				result[e] = b.intern(key, func() *DAGNode {
-					return &DAGNode{Kind: KindPow, Children: []*DAGNode{bs}, Exp: exp}
+					return &DAGNode{Kind: KindPow, Children: []*DAGNode{bs}, Exp: exp, Field: bs.Field}
 				})
 			}
 
@@ -370,21 +380,21 @@ func factorizeRewrite(n *DAGNode, rewritten map[*DAGNode]*DAGNode) *DAGNode {
 		if !changed {
 			return n // unchanged: preserve key for factor lookup
 		}
-		return &DAGNode{Kind: KindMul, Children: children} // key intentionally empty
+		return &DAGNode{Kind: KindMul, Children: children, Field: inferField(children...)} // key intentionally empty
 
 	case KindSub:
 		l, r := rewritten[n.Children[0]], rewritten[n.Children[1]]
 		if l == n.Children[0] && r == n.Children[1] {
 			return n
 		}
-		return &DAGNode{Kind: KindSub, Children: []*DAGNode{l, r}}
+		return &DAGNode{Kind: KindSub, Children: []*DAGNode{l, r}, Field: inferField(l, r)}
 
 	case KindPow:
 		base := rewritten[n.Children[0]]
 		if base == n.Children[0] {
 			return n
 		}
-		return &DAGNode{Kind: KindPow, Children: []*DAGNode{base}, Exp: n.Exp}
+		return &DAGNode{Kind: KindPow, Children: []*DAGNode{base}, Exp: n.Exp, Field: base.Field}
 	}
 	panic(fmt.Sprintf("Factorize: unknown NodeKind %d", n.Kind))
 }
@@ -430,7 +440,7 @@ func factorizeAddChildren(children []*DAGNode) *DAGNode {
 		}
 	}
 	if bestKey == "" {
-		return &DAGNode{Kind: KindAdd, Children: children}
+		return &DAGNode{Kind: KindAdd, Children: children, Field: inferField(children...)}
 	}
 
 	factor := factorByKey[bestKey]
@@ -461,7 +471,7 @@ func factorizeAddChildren(children []*DAGNode) *DAGNode {
 				case 1:
 					withFactor = append(withFactor, rem[0])
 				default:
-					withFactor = append(withFactor, &DAGNode{Kind: KindMul, Children: rem})
+					withFactor = append(withFactor, &DAGNode{Kind: KindMul, Children: rem, Field: inferField(rem...)})
 				}
 				continue
 			}
@@ -475,13 +485,13 @@ func factorizeAddChildren(children []*DAGNode) *DAGNode {
 	switch len(withFactor) {
 	case 0:
 		// Nothing was factored (all candidates hit the len=0 edge case).
-		return &DAGNode{Kind: KindAdd, Children: children}
+		return &DAGNode{Kind: KindAdd, Children: children, Field: inferField(children...)}
 	case 1:
 		inner = withFactor[0]
 	default:
 		inner = factorizeAddChildren(withFactor) // recurse: more factors possible
 	}
-	factored := &DAGNode{Kind: KindMul, Children: []*DAGNode{factor, inner}}
+	factored := &DAGNode{Kind: KindMul, Children: []*DAGNode{factor, inner}, Field: inferField(factor, inner)}
 
 	if len(withoutFactor) == 0 {
 		return factored
@@ -501,16 +511,20 @@ func flattenNode(n *DAGNode, flat map[*DAGNode]*DAGNode) *DAGNode {
 		return n // leaves have no children; share the original pointer
 
 	case KindAdd:
-		return &DAGNode{Kind: KindAdd, Children: absorbChildren(n, KindAdd, flat)}
+		children := absorbChildren(n, KindAdd, flat)
+		return &DAGNode{Kind: KindAdd, Children: children, Field: inferField(children...)}
 
 	case KindMul:
-		return &DAGNode{Kind: KindMul, Children: absorbChildren(n, KindMul, flat)}
+		children := absorbChildren(n, KindMul, flat)
+		return &DAGNode{Kind: KindMul, Children: children, Field: inferField(children...)}
 
 	case KindSub:
-		return &DAGNode{Kind: KindSub, Children: []*DAGNode{flat[n.Children[0]], flat[n.Children[1]]}}
+		l, r := flat[n.Children[0]], flat[n.Children[1]]
+		return &DAGNode{Kind: KindSub, Children: []*DAGNode{l, r}, Field: inferField(l, r)}
 
 	case KindPow:
-		return &DAGNode{Kind: KindPow, Children: []*DAGNode{flat[n.Children[0]]}, Exp: n.Exp}
+		base := flat[n.Children[0]]
+		return &DAGNode{Kind: KindPow, Children: []*DAGNode{base}, Exp: n.Exp, Field: base.Field}
 	}
 	panic(fmt.Sprintf("Flatten: unknown NodeKind %d", n.Kind))
 }

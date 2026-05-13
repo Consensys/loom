@@ -160,6 +160,8 @@ func (vr *verifierRunTime) deriveChallenges() error {
 	return nil
 }
 
+// TODO the verifier should fetch the public values from the vanishing expressions, and look them up
+// in proof.PublicColumns, but not just trust proof.PublicColumns
 func (vr *verifierRunTime) computePublicColumns() error {
 	for k, pi := range vr.proof.PublicColumns {
 		var lag koalabear.Element
