@@ -57,7 +57,7 @@ func TestCompileColumnFieldsForChallengeDerivedOutputs(t *testing.T) {
 	denominator := expr.Col("x").Sub(expr.Challenge("gamma"))
 	builder.AddLogupStep("m", denominator, expr.Const(one), "logup")
 	builder.AddGrandProductStep("m", expr.Col("x").Add(expr.Challenge("beta")), expr.Col("y"), "gp")
-	builder.AddExposeIthEntry("m", expr.Col("logup"), "public_logup", 0)
+	builder.AddExposeLastEntryStep("m", expr.Col("logup"), "public_logup")
 
 	program, err := Compile(&builder)
 	if err != nil {

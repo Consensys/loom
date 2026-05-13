@@ -166,6 +166,19 @@ func (b *Builder) addMakeIthValuePublicConstraint(module string, E expr.Expr, ou
 	m.AssertEqualAt(E, v, pos)
 }
 
+// AddExposeLastEntryStep syntactic sugar for AddExposeRelativeIthEntryStep(module, E, out, 0)
+func (b *Builder) AddExposeLastEntryStep(module string, E expr.Expr, out string) {
+	ctx := ExposeRelativeIthEntryCtx{Pos: 0, Module: module}
+	pvStep := ProverStep{
+		Ctx:  ctx,
+		Ins:  []expr.Expr{E},
+		Outs: []string{out},
+		Step: ExposeRelativeIthEntryStep,
+	}
+	b.Steps = append(b.Steps, pvStep)
+	b.addMakeRelativeIthValuePublicConstraint(module, E, out, 0)
+}
+
 // AddExposeIthEntry adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
 // the 1 entry column expr[pos] is registered in the trace
 func (b *Builder) AddExposeRelativeIthEntryStep(module string, E expr.Expr, out string, pos int) {
@@ -186,9 +199,9 @@ func (b *Builder) addMakeRelativeIthValuePublicConstraint(module string, E expr.
 	m.AssertEqualRelativeAt(E, v, pos)
 }
 
-// AddExposeIthEntry adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
+// AddExposeIthEntryStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
 // the 1 entry column expr[pos] is registered in the trace
-func (b *Builder) AddExposeIthEntry(module string, E expr.Expr, out string, pos int) {
+func (b *Builder) AddExposeIthEntryStep(module string, E expr.Expr, out string, pos int) {
 	ctx := ExposeIthEntryCtx{Pos: pos}
 	pvStep := ProverStep{
 		Ctx:  ctx,
@@ -647,6 +660,11 @@ func Compile(b *Builder) (Program, error) {
 
 func inferProgramColumnFields(program *Program, modules map[string]*Module) map[string]field.Kind {
 	fields := make(map[string]field.Kind)
+
+	// Field inference is monotone: Base can only stay Base or be upgraded to
+	// Ext, and Ext never downgrades. This makes the seeding order, relation
+	// walk, and step iteration order irrelevant; every update is joined with
+	// the current value.
 	setField := func(name string, f field.Kind) {
 		fields[name] = field.Join(fields[name], f)
 	}
@@ -658,6 +676,10 @@ func inferProgramColumnFields(program *Program, modules map[string]*Module) map[
 	columnConfig := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges())
 	for _, m := range modules {
 		for _, rel := range m.Relations {
+			// Capture any explicitly-declared Ext leaves (e.g. via expr.ExtCol).
+			// The fields-map argument is irrelevant here (single-leaf input ⇒
+			// self-cancels via Join); we keep the general helper to mirror the
+			// step walk's call shape below.
 			for _, leaf := range rel.LeavesFull(columnConfig) {
 				setField(leaf.Name, expr.FieldOfWithColumnFields(leaf, fields))
 			}
