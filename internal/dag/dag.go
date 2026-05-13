@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/field"
 )
@@ -622,6 +623,102 @@ func evalDAGNode(n *DAGNode, cache map[*DAGNode]koalabear.Element, vals map[stri
 	panic(fmt.Sprintf("Eval: unknown NodeKind %d", n.Kind))
 }
 
+// EvalMixed evaluates the DAG in the Koalabear E4 extension field. Base-field
+// variables are lifted from baseVars; extension-field variables are read from
+// extVars. If an extension-marked leaf is absent from extVars but present in
+// baseVars, it is lifted as a compatibility fallback for transition code.
+func (d *DAG) EvalMixed(baseVars map[string]koalabear.Element, extVars map[string]ext.E4) ext.E4 {
+	cache := make(map[*DAGNode]ext.E4, len(d.Nodes))
+	for _, n := range d.Nodes {
+		cache[n] = evalMixedDAGNode(n, cache, baseVars, extVars)
+	}
+	return cache[d.Root]
+}
+
+// evalMixedDAGNode evaluates one node for EvalMixed after all children have
+// already been evaluated into cache. Every operation is performed in E4; base
+// inputs must have been lifted before reaching non-leaf arithmetic.
+func evalMixedDAGNode(n *DAGNode, cache map[*DAGNode]ext.E4, baseVars map[string]koalabear.Element, extVars map[string]ext.E4) ext.E4 {
+	switch n.Kind {
+	case KindLeaf:
+		return evalMixedLeaf(n, baseVars, extVars)
+
+	case KindAdd:
+		var acc ext.E4
+		for _, child := range n.Children {
+			v := cache[child]
+			acc.Add(&acc, &v)
+		}
+		return acc
+
+	case KindSub:
+		l, r := cache[n.Children[0]], cache[n.Children[1]]
+		var res ext.E4
+		res.Sub(&l, &r)
+		return res
+
+	case KindMul:
+		var acc ext.E4
+		acc.SetOne()
+		for _, child := range n.Children {
+			v := cache[child]
+			acc.Mul(&acc, &v)
+		}
+		return acc
+
+	case KindPow:
+		base := cache[n.Children[0]]
+		var res ext.E4
+		res.SetOne()
+		exp := n.Exp
+		for exp > 0 {
+			if exp&1 == 1 {
+				res.Mul(&res, &base)
+			}
+			base.Mul(&base, &base)
+			exp >>= 1
+		}
+		return res
+	}
+	panic(fmt.Sprintf("EvalMixed: unknown NodeKind %d", n.Kind))
+}
+
+// evalMixedLeaf resolves a leaf from the appropriate scalar variable map and
+// returns it as an E4 element. Extension leaves prefer extVars but may fall back
+// to baseVars during the staged migration while some callers still provide only
+// base values for extension-tagged leaves.
+func evalMixedLeaf(n *DAGNode, baseVars map[string]koalabear.Element, extVars map[string]ext.E4) ext.E4 {
+	if n.IsConst {
+		return liftBaseToE4(n.ConstVal)
+	}
+
+	key := n.Leaf.String()
+	if n.Field == field.Ext {
+		if v, ok := extVars[key]; ok {
+			return v
+		}
+		if v, ok := baseVars[key]; ok {
+			return liftBaseToE4(v)
+		}
+		panic("EvalMixed: missing extension value for " + key)
+	}
+
+	if v, ok := baseVars[key]; ok {
+		return liftBaseToE4(v)
+	}
+	if v, ok := extVars[key]; ok {
+		return v
+	}
+	panic("EvalMixed: missing base value for " + key)
+}
+
+// liftBaseToE4 embeds a Koalabear base-field element into the E4 extension.
+func liftBaseToE4(v koalabear.Element) ext.E4 {
+	var res ext.E4
+	res.Lift(&v)
+	return res
+}
+
 // EvalWithCacheVars evaluates the DAG using pre-filled vars and cache slices,
 // avoiding all map operations. vars must be indexed by DAGNode.VarIdx (leaf
 // variables must be set by the caller before each call). cache must have
@@ -637,6 +734,9 @@ func (d *DAG) EvalWithCacheVars(vars []koalabear.Element, cache []koalabear.Elem
 func evalDAGNodeSliceVars(n *DAGNode, cache []koalabear.Element, vars []koalabear.Element) koalabear.Element {
 	switch n.Kind {
 	case KindLeaf:
+		if n.IsConst {
+			return n.ConstVal
+		}
 		return vars[n.VarIdx]
 
 	case KindAdd:
@@ -677,6 +777,89 @@ func evalDAGNodeSliceVars(n *DAGNode, cache []koalabear.Element, vars []koalabea
 		return res
 	}
 	panic(fmt.Sprintf("EvalWithCacheVars: unknown NodeKind %d", n.Kind))
+}
+
+// EvalWithCacheVarsMixed evaluates the DAG with base and extension variable
+// rails, using pre-filled vars and cache slices indexed by DAGNode.VarIdx and
+// DAGNode.Index respectively. Base-valued nodes stay in koalabear arithmetic;
+// extension-valued nodes use E4 arithmetic and lift base children on demand.
+// Only works on DAGs produced by ExprToDAG (not Flatten).
+func (d *DAG) EvalWithCacheVarsMixed(baseVars []koalabear.Element, extVars []ext.E4, baseCache []koalabear.Element, extCache []ext.E4) ext.E4 {
+	for _, n := range d.Nodes {
+		if n.Field == field.Base {
+			baseCache[n.Index] = evalDAGNodeSliceVars(n, baseCache, baseVars)
+			continue
+		}
+		extCache[n.Index] = evalExtDAGNodeSliceVars(n, baseCache, extCache, baseVars, extVars)
+	}
+	if d.Root.Field == field.Base {
+		return liftBaseToE4(baseCache[d.Root.Index])
+	}
+	return extCache[d.Root.Index]
+}
+
+// evalExtDAGNodeSliceVars evaluates one extension-valued node in the cached
+// variable-slice evaluator. Base-valued children are read from baseCache and
+// lifted just before they participate in E4 arithmetic.
+func evalExtDAGNodeSliceVars(n *DAGNode, baseCache []koalabear.Element, extCache []ext.E4, baseVars []koalabear.Element, extVars []ext.E4) ext.E4 {
+	switch n.Kind {
+	case KindLeaf:
+		if n.IsConst {
+			return liftBaseToE4(n.ConstVal)
+		}
+		if n.Field == field.Ext {
+			return extVars[n.VarIdx]
+		}
+		return liftBaseToE4(baseVars[n.VarIdx])
+
+	case KindAdd:
+		var acc ext.E4
+		for _, child := range n.Children {
+			v := childCacheAsExt(child, baseCache, extCache)
+			acc.Add(&acc, &v)
+		}
+		return acc
+
+	case KindSub:
+		l := childCacheAsExt(n.Children[0], baseCache, extCache)
+		r := childCacheAsExt(n.Children[1], baseCache, extCache)
+		var res ext.E4
+		res.Sub(&l, &r)
+		return res
+
+	case KindMul:
+		var acc ext.E4
+		acc.SetOne()
+		for _, child := range n.Children {
+			v := childCacheAsExt(child, baseCache, extCache)
+			acc.Mul(&acc, &v)
+		}
+		return acc
+
+	case KindPow:
+		base := childCacheAsExt(n.Children[0], baseCache, extCache)
+		var res ext.E4
+		res.SetOne()
+		exp := n.Exp
+		for exp > 0 {
+			if exp&1 == 1 {
+				res.Mul(&res, &base)
+			}
+			base.Mul(&base, &base)
+			exp >>= 1
+		}
+		return res
+	}
+	panic(fmt.Sprintf("EvalWithCacheVarsMixed: unknown NodeKind %d", n.Kind))
+}
+
+// childCacheAsExt returns a child node's cached value as E4, lifting from the
+// base cache when the child itself is base-valued.
+func childCacheAsExt(child *DAGNode, baseCache []koalabear.Element, extCache []ext.E4) ext.E4 {
+	if child.Field == field.Ext {
+		return extCache[child.Index]
+	}
+	return liftBaseToE4(baseCache[child.Index])
 }
 
 // EvalOnIthEntry evaluates the DAG at row i of the polynomial slice _Pi.
@@ -859,6 +1042,302 @@ func (d *DAG) EvalOnAllEntries(Pi [][]koalabear.Element, N int) []koalabear.Elem
 	}
 
 	return vectors[d.Root.Index]
+}
+
+// EvalOnAllEntriesMixed evaluates the DAG pointwise for all N rows using
+// separate base and extension polynomial rails. Base-valued nodes stay in
+// koalabear arithmetic and extension-valued nodes use E4 arithmetic, lifting
+// base children on demand. The root must be extension-valued.
+func (d *DAG) EvalOnAllEntriesMixed(PiBase [][]koalabear.Element, PiExt [][]ext.E4, N int) []ext.E4 {
+	if d.Root.Field != field.Ext {
+		panic("EvalOnAllEntriesMixed: root is not extension-valued")
+	}
+
+	refCount := make([]int, len(d.Nodes))
+	for _, n := range d.Nodes {
+		for _, child := range n.Children {
+			refCount[child.Index]++
+		}
+	}
+
+	var basePool [][]koalabear.Element
+	allocBase := func() []koalabear.Element {
+		if last := len(basePool) - 1; last >= 0 {
+			b := basePool[last]
+			basePool = basePool[:last]
+			return b
+		}
+		return make([]koalabear.Element, N)
+	}
+	releaseBase := func(b []koalabear.Element) { basePool = append(basePool, b) }
+
+	var extPool [][]ext.E4
+	allocExt := func() []ext.E4 {
+		if last := len(extPool) - 1; last >= 0 {
+			b := extPool[last]
+			extPool = extPool[:last]
+			return b
+		}
+		return make([]ext.E4, N)
+	}
+	releaseExt := func(b []ext.E4) { extPool = append(extPool, b) }
+
+	baseVec := make([][]koalabear.Element, len(d.Nodes))
+	extVec := make([][]ext.E4, len(d.Nodes))
+
+	for _, n := range d.Nodes {
+		if n.Field == field.Base {
+			dst := allocBase()
+			evalBaseNodeOnAllEntries(dst, n, baseVec, PiBase, N, allocBase, releaseBase)
+			baseVec[n.Index] = dst
+		} else {
+			dst := allocExt()
+			evalExtNodeOnAllEntries(dst, n, baseVec, extVec, PiExt, N, allocExt, releaseExt)
+			extVec[n.Index] = dst
+		}
+
+		for _, child := range n.Children {
+			refCount[child.Index]--
+			if refCount[child.Index] != 0 || child == d.Root {
+				continue
+			}
+			if child.Field == field.Base {
+				releaseBase(baseVec[child.Index])
+				baseVec[child.Index] = nil
+			} else {
+				releaseExt(extVec[child.Index])
+				extVec[child.Index] = nil
+			}
+		}
+	}
+
+	return extVec[d.Root.Index]
+}
+
+// evalBaseNodeOnAllEntries evaluates one base-valued node for
+// EvalOnAllEntriesMixed into dst. It mirrors the base-only EvalOnAllEntries
+// tight loops so base subgraphs remain on koalabear arithmetic even when the
+// overall expression root is extension-valued.
+func evalBaseNodeOnAllEntries(dst []koalabear.Element, n *DAGNode, baseVec [][]koalabear.Element, PiBase [][]koalabear.Element, N int, alloc func() []koalabear.Element, release func([]koalabear.Element)) {
+	switch n.Kind {
+	case KindLeaf:
+		fillBaseLeafVector(dst, n, PiBase, N)
+
+	case KindAdd:
+		copy(dst, baseVec[n.Children[0].Index])
+		for _, child := range n.Children[1:] {
+			src := baseVec[child.Index]
+			for j := range N {
+				dst[j].Add(&dst[j], &src[j])
+			}
+		}
+
+	case KindSub:
+		l, r := baseVec[n.Children[0].Index], baseVec[n.Children[1].Index]
+		for j := range N {
+			dst[j].Sub(&l[j], &r[j])
+		}
+
+	case KindMul:
+		copy(dst, baseVec[n.Children[0].Index])
+		for _, child := range n.Children[1:] {
+			src := baseVec[child.Index]
+			for j := range N {
+				dst[j].Mul(&dst[j], &src[j])
+			}
+		}
+
+	case KindPow:
+		base := baseVec[n.Children[0].Index]
+		tmp := alloc()
+		copy(tmp, base)
+		for j := range N {
+			dst[j].SetOne()
+		}
+		exp := n.Exp
+		for exp > 0 {
+			if exp&1 == 1 {
+				for j := range N {
+					dst[j].Mul(&dst[j], &tmp[j])
+				}
+			}
+			for j := range N {
+				tmp[j].Mul(&tmp[j], &tmp[j])
+			}
+			exp >>= 1
+		}
+		release(tmp)
+
+	default:
+		panic(fmt.Sprintf("EvalOnAllEntriesMixed: unknown NodeKind %d", n.Kind))
+	}
+}
+
+// fillBaseLeafVector writes the N row values of a base leaf into dst. It
+// handles constant leaves, length-1 constant polynomials, rotated columns, and
+// regular columns using the same row-selection convention as EvalOnAllEntries.
+func fillBaseLeafVector(dst []koalabear.Element, n *DAGNode, PiBase [][]koalabear.Element, N int) {
+	if n.IsConst {
+		for j := range N {
+			dst[j] = n.ConstVal
+		}
+		return
+	}
+
+	l := n.Leaf
+	p := PiBase[l.Idx]
+	if len(p) == 1 {
+		for j := range N {
+			dst[j] = p[0]
+		}
+	} else if l.Type == expr.RotatedColumn {
+		for j := range N {
+			dst[j] = p[(j+N+l.Shift)%N]
+		}
+	} else {
+		copy(dst, p[:N])
+	}
+}
+
+// evalExtNodeOnAllEntries evaluates one extension-valued node for
+// EvalOnAllEntriesMixed into dst. Extension children are consumed directly
+// from extVec; base children are lifted row by row from baseVec.
+func evalExtNodeOnAllEntries(dst []ext.E4, n *DAGNode, baseVec [][]koalabear.Element, extVec [][]ext.E4, PiExt [][]ext.E4, N int, alloc func() []ext.E4, release func([]ext.E4)) {
+	switch n.Kind {
+	case KindLeaf:
+		fillExtLeafVector(dst, n, PiExt, N)
+
+	case KindAdd:
+		copyChildVectorToExt(dst, n.Children[0], baseVec, extVec, N)
+		for _, child := range n.Children[1:] {
+			addChildVectorToExt(dst, child, baseVec, extVec, N)
+		}
+
+	case KindSub:
+		copyChildVectorToExt(dst, n.Children[0], baseVec, extVec, N)
+		subChildVectorFromExt(dst, n.Children[1], baseVec, extVec, N)
+
+	case KindMul:
+		copyChildVectorToExt(dst, n.Children[0], baseVec, extVec, N)
+		for _, child := range n.Children[1:] {
+			mulChildVectorIntoExt(dst, child, baseVec, extVec, N)
+		}
+
+	case KindPow:
+		tmp := alloc()
+		copyChildVectorToExt(tmp, n.Children[0], baseVec, extVec, N)
+		for j := range N {
+			dst[j].SetOne()
+		}
+		exp := n.Exp
+		for exp > 0 {
+			if exp&1 == 1 {
+				for j := range N {
+					dst[j].Mul(&dst[j], &tmp[j])
+				}
+			}
+			for j := range N {
+				tmp[j].Mul(&tmp[j], &tmp[j])
+			}
+			exp >>= 1
+		}
+		release(tmp)
+
+	default:
+		panic(fmt.Sprintf("EvalOnAllEntriesMixed: unknown NodeKind %d", n.Kind))
+	}
+}
+
+// fillExtLeafVector writes the N row values of an extension leaf into dst. It
+// mirrors fillBaseLeafVector for the extension rail, while constants are base
+// values embedded into E4.
+func fillExtLeafVector(dst []ext.E4, n *DAGNode, PiExt [][]ext.E4, N int) {
+	if n.IsConst {
+		v := liftBaseToE4(n.ConstVal)
+		for j := range N {
+			dst[j] = v
+		}
+		return
+	}
+
+	l := n.Leaf
+	p := PiExt[l.Idx]
+	if len(p) == 1 {
+		for j := range N {
+			dst[j] = p[0]
+		}
+	} else if l.Type == expr.RotatedColumn {
+		for j := range N {
+			dst[j] = p[(j+N+l.Shift)%N]
+		}
+	} else {
+		copy(dst, p[:N])
+	}
+}
+
+// copyChildVectorToExt copies an already-computed child vector into an
+// extension destination, lifting each row when the child vector lives on the
+// base rail.
+func copyChildVectorToExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.Element, extVec [][]ext.E4, N int) {
+	if child.Field == field.Ext {
+		copy(dst, extVec[child.Index])
+		return
+	}
+	src := baseVec[child.Index]
+	for j := range N {
+		dst[j].Lift(&src[j])
+	}
+}
+
+// addChildVectorToExt accumulates a child vector into an extension destination.
+// Base children are lifted per row; extension children are added directly.
+func addChildVectorToExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.Element, extVec [][]ext.E4, N int) {
+	if child.Field == field.Ext {
+		src := extVec[child.Index]
+		for j := range N {
+			dst[j].Add(&dst[j], &src[j])
+		}
+		return
+	}
+	src := baseVec[child.Index]
+	for j := range N {
+		rhs := liftBaseToE4(src[j])
+		dst[j].Add(&dst[j], &rhs)
+	}
+}
+
+// subChildVectorFromExt subtracts a child vector from an extension destination.
+// Base children are lifted per row; extension children are subtracted directly.
+func subChildVectorFromExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.Element, extVec [][]ext.E4, N int) {
+	if child.Field == field.Ext {
+		src := extVec[child.Index]
+		for j := range N {
+			dst[j].Sub(&dst[j], &src[j])
+		}
+		return
+	}
+	src := baseVec[child.Index]
+	for j := range N {
+		rhs := liftBaseToE4(src[j])
+		dst[j].Sub(&dst[j], &rhs)
+	}
+}
+
+// mulChildVectorIntoExt multiplies an extension destination by a child vector.
+// Base children are lifted per row; extension children are multiplied directly.
+func mulChildVectorIntoExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.Element, extVec [][]ext.E4, N int) {
+	if child.Field == field.Ext {
+		src := extVec[child.Index]
+		for j := range N {
+			dst[j].Mul(&dst[j], &src[j])
+		}
+		return
+	}
+	src := baseVec[child.Index]
+	for j := range N {
+		rhs := liftBaseToE4(src[j])
+		dst[j].Mul(&dst[j], &rhs)
+	}
 }
 
 // EvalWithCache evaluates the DAG using the caller-supplied cache slice instead
