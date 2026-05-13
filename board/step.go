@@ -85,7 +85,7 @@ func MakeEntriesPublicStep(ins []expr.Expr, outs []string, t trace.Trace, _ *Pro
 		sparseCol[i].Set(&res[i])
 	}
 	if err := trace.RegisterColumn(t, out, sparseCol); err != nil {
-		panic(fmt.Sprintf("[MakeIthValuePublicStep] register public column %s: %v", out, err))
+		panic(fmt.Sprintf("[ExposeIthEntry] register public column %s: %v", out, err))
 	}
 
 	return nil
@@ -98,7 +98,7 @@ func FSStep(ins []expr.Expr, outs []string, t trace.Trace, _ *Program, proof *pr
 	return nil
 }
 
-type MakeRelativeIthValuePublicCtx struct {
+type ExposeRelativeIthEntryCtx struct {
 	Module string
 	Pos    int // relative position of the value to pick in a column -> the position module.N - 1 - Pos. It allows to refer to N, so N can be modified
 }
@@ -106,7 +106,7 @@ type MakeRelativeIthValuePublicCtx struct {
 // ExposeRelativeIthEntryStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
 func ExposeRelativeIthEntryStep(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
 
-	_ctx, ok := ctx.(MakeRelativeIthValuePublicCtx)
+	_ctx, ok := ctx.(ExposeRelativeIthEntryCtx)
 	if !ok {
 		return fmt.Errorf("[PickLocalValueStep] wrong context type")
 	}
@@ -132,7 +132,7 @@ func ExposeRelativeIthEntryStep(ins []expr.Expr, outs []string, t trace.Trace, p
 	sparseCol := make([]koalabear.Element, m.N)
 	sparseCol[m.N-1-_ctx.Pos].Set(&res[m.N-1-_ctx.Pos])
 	if err := trace.RegisterColumn(t, out, sparseCol); err != nil {
-		panic(fmt.Sprintf("[MakeIthValuePublicStep] register public column %s: %v", out, err))
+		panic(fmt.Sprintf("[ExposeIthEntry] register public column %s: %v", out, err))
 	}
 
 	return nil
@@ -143,8 +143,8 @@ type ExposeIthEntryCtx struct {
 	Pos    int // position of the value to pick in a column
 }
 
-// MakeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
-func MakeIthValuePublicStep(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+// ExposeIthEntry adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
+func ExposeIthEntry(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
 
 	_ctx, ok := ctx.(ExposeIthEntryCtx)
 	if !ok {
@@ -172,7 +172,7 @@ func MakeIthValuePublicStep(ins []expr.Expr, outs []string, t trace.Trace, pg *P
 	sparseCol := make([]koalabear.Element, m.N)
 	sparseCol[_ctx.Pos].Set(&res[_ctx.Pos])
 	if err := trace.RegisterColumn(t, out, sparseCol); err != nil {
-		panic(fmt.Sprintf("[MakeIthValuePublicStep] register public column %s: %v", out, err))
+		panic(fmt.Sprintf("[ExposeIthEntry] register public column %s: %v", out, err))
 	}
 
 	return nil

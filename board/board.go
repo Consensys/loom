@@ -166,10 +166,10 @@ func (b *Builder) addMakeIthValuePublicConstraint(module string, E expr.Expr, ou
 	m.AssertEqualAt(E, v, pos)
 }
 
-// AddMakeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
+// AddExposeIthEntry adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
 // the 1 entry column expr[pos] is registered in the trace
 func (b *Builder) AddExposeRelativeIthEntryStep(module string, E expr.Expr, out string, pos int) {
-	ctx := MakeRelativeIthValuePublicCtx{Pos: pos, Module: module}
+	ctx := ExposeRelativeIthEntryCtx{Pos: pos, Module: module}
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  []expr.Expr{E},
@@ -186,15 +186,15 @@ func (b *Builder) addMakeRelativeIthValuePublicConstraint(module string, E expr.
 	m.AssertEqualRelativeAt(E, v, pos)
 }
 
-// AddMakeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
+// AddExposeIthEntry adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
 // the 1 entry column expr[pos] is registered in the trace
-func (b *Builder) AddMakeIthValuePublicStep(module string, E expr.Expr, out string, pos int) {
+func (b *Builder) AddExposeIthEntry(module string, E expr.Expr, out string, pos int) {
 	ctx := ExposeIthEntryCtx{Pos: pos}
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  []expr.Expr{E},
 		Outs: []string{out},
-		Step: MakeIthValuePublicStep,
+		Step: ExposeIthEntry,
 	}
 	b.Steps = append(b.Steps, pvStep)
 	b.addMakeIthValuePublicConstraint(module, E, out, pos)
@@ -714,7 +714,7 @@ func inferStepOutputFields(step ProverStep, columnFields map[string]field.Kind) 
 		for i := range res {
 			res[i] = f
 		}
-	case MakeEntriesPublicCtx, ExposeIthEntryCtx, MakeRelativeIthValuePublicCtx:
+	case MakeEntriesPublicCtx, ExposeIthEntryCtx, ExposeRelativeIthEntryCtx:
 		f := field.Base
 		if len(step.Ins) > 0 {
 			f = expr.FieldOfWithColumnFields(step.Ins[0], columnFields)
