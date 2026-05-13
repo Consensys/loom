@@ -168,13 +168,13 @@ func (b *Builder) addMakeIthValuePublicConstraint(module string, E expr.Expr, ou
 
 // AddMakeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
 // the 1 entry column expr[pos] is registered in the trace
-func (b *Builder) AddMakeRelativeIthValuePublicStep(module string, E expr.Expr, out string, pos int) {
+func (b *Builder) AddExposeRelativeIthEntryStep(module string, E expr.Expr, out string, pos int) {
 	ctx := MakeRelativeIthValuePublicCtx{Pos: pos, Module: module}
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  []expr.Expr{E},
 		Outs: []string{out},
-		Step: MakeRelativeIthValuePublicStep,
+		Step: ExposeRelativeIthEntryStep,
 	}
 	b.Steps = append(b.Steps, pvStep)
 	b.addMakeRelativeIthValuePublicConstraint(module, E, out, pos)
@@ -189,7 +189,7 @@ func (b *Builder) addMakeRelativeIthValuePublicConstraint(module string, E expr.
 // AddMakeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
 // the 1 entry column expr[pos] is registered in the trace
 func (b *Builder) AddMakeIthValuePublicStep(module string, E expr.Expr, out string, pos int) {
-	ctx := MakeIthValuePublicCtx{Pos: pos}
+	ctx := ExposeIthEntryCtx{Pos: pos}
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  []expr.Expr{E},
@@ -269,6 +269,7 @@ type Program struct {
 	Modules               map[string]CompiledModule
 	PublicColumns         []ColumnRef // known columns, precommitted (ex: ql, qr, etc in plonk)
 	FScolumnsDependencies [][]ColumnRef
+	ColumnFields          map[string]field.Kind
 	LogupBus              []LogupBus
 	Steps                 [][]ProverStep
 }
@@ -548,19 +549,14 @@ func Compile(b *Builder) (Program, error) {
 	copy(res.PublicColumns, b.PublicColumns)
 	res.FScolumnsDependencies = make([][]ColumnRef, numRounds)
 
-	// Build a column-name → metadata map by scanning every module's
-	// relations. This lets us tag each FS-bound column with its module and
-	// inferred field so the prover can eventually group commitments by size
-	// and field.
-	columnInfo := map[string]ColumnRef{}
+	// Build a column-name → owning-module map by scanning every module's
+	// relations. This lets us tag each FS-bound column with its module so the
+	// prover can group commitments by polynomial size.
+	columnModule := map[string]string{}
 	for moduleName, m := range b.Modules {
 		for _, rel := range m.Relations {
 			for _, leaf := range rel.LeavesFull(noLagrangeNoChallengeNoPublicCols) {
-				ref := columnInfo[leaf.Name]
-				ref.Name = leaf.Name
-				ref.Module = moduleName
-				ref.Field = field.Join(ref.Field, leaf.FieldKind())
-				columnInfo[leaf.Name] = ref
+				columnModule[leaf.Name] = moduleName
 			}
 		}
 	}
@@ -585,11 +581,11 @@ func Compile(b *Builder) (Program, error) {
 				for _, leaf := range inp.LeavesFull(noLagrangeNoChallengeNoPublicCols) {
 					if !prevCovered[leaf.Name] {
 						prevCovered[leaf.Name] = true
-						ref, ok := columnInfo[leaf.Name]
+						mod, ok := columnModule[leaf.Name]
 						if !ok {
 							return res, fmt.Errorf("Compile: column %q referenced by FS step has no owning module", leaf.Name)
 						}
-						res.FScolumnsDependencies[round] = append(res.FScolumnsDependencies[round], ref)
+						res.FScolumnsDependencies[round] = append(res.FScolumnsDependencies[round], ColumnRef{Name: leaf.Name, Module: mod})
 					}
 				}
 			}
@@ -617,15 +613,14 @@ func Compile(b *Builder) (Program, error) {
 			for _, leaf := range rel.LeavesFull(noLagrangeNoChallengeNoPublicCols) {
 				if !prevCovered[leaf.Name] {
 					prevCovered[leaf.Name] = true
-					ref := columnInfo[leaf.Name]
-					ref.Name = leaf.Name
-					ref.Module = moduleName
-					ref.Field = field.Join(ref.Field, leaf.FieldKind())
-					res.FScolumnsDependencies[lastRound] = append(res.FScolumnsDependencies[lastRound], ref)
+					res.FScolumnsDependencies[lastRound] = append(res.FScolumnsDependencies[lastRound], ColumnRef{Name: leaf.Name, Module: moduleName})
 				}
 			}
 		}
 	}
+
+	res.ColumnFields = inferProgramColumnFields(&res, b.Modules)
+	applyProgramColumnFields(&res)
 
 	// --- Phase 9: create the compiled module. Fold the relations in each module,
 	// and create a domain of the module.N for each module
@@ -639,7 +634,7 @@ func Compile(b *Builder) (Program, error) {
 		cm.N = m.N
 		cm.D = fft.NewDomain(uint64(m.N))
 		foldedRelation := expr.Fold(lastChallenge, m.Relations)
-		cm.VanishingRelation = dag.ExprToDAG(foldedRelation)
+		cm.VanishingRelation = dag.ExprToDAGWithColumnFields(foldedRelation, res.ColumnFields)
 		res.Modules[k] = cm
 	}
 
@@ -648,4 +643,103 @@ func Compile(b *Builder) (Program, error) {
 	copy(res.LogupBus, b.LogupBus)
 
 	return res, nil
+}
+
+func inferProgramColumnFields(program *Program, modules map[string]*Module) map[string]field.Kind {
+	fields := make(map[string]field.Kind)
+	setField := func(name string, f field.Kind) {
+		fields[name] = field.Join(fields[name], f)
+	}
+
+	for _, ref := range program.PublicColumns {
+		setField(ref.Name, ref.Field)
+	}
+
+	columnConfig := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges())
+	for _, m := range modules {
+		for _, rel := range m.Relations {
+			for _, leaf := range rel.LeavesFull(columnConfig) {
+				setField(leaf.Name, expr.FieldOfWithColumnFields(leaf, fields))
+			}
+		}
+	}
+
+	for _, level := range program.Steps {
+		for _, step := range level {
+			outFields := inferStepOutputFields(step, fields)
+			for i, out := range step.Outs {
+				f := field.Base
+				if i < len(outFields) {
+					f = outFields[i]
+				}
+				setField(out, f)
+			}
+		}
+	}
+
+	return fields
+}
+
+func applyProgramColumnFields(program *Program) {
+	for i := range program.PublicColumns {
+		ref := &program.PublicColumns[i]
+		ref.Field = field.Join(ref.Field, program.ColumnFields[ref.Name])
+	}
+	for round := range program.FScolumnsDependencies {
+		for i := range program.FScolumnsDependencies[round] {
+			ref := &program.FScolumnsDependencies[round][i]
+			ref.Field = field.Join(ref.Field, program.ColumnFields[ref.Name])
+		}
+	}
+}
+
+func inferStepOutputFields(step ProverStep, columnFields map[string]field.Kind) []field.Kind {
+	res := make([]field.Kind, len(step.Outs))
+
+	fieldOfInputs := func(ins []expr.Expr) field.Kind {
+		f := field.Base
+		for _, in := range ins {
+			f = field.Join(f, expr.FieldOfWithColumnFields(in, columnFields))
+		}
+		return f
+	}
+
+	switch ctx := step.Ctx.(type) {
+	case FSCtx:
+		for i := range res {
+			res[i] = field.Ext
+		}
+	case LogUpCtx, GPCtx:
+		f := fieldOfInputs(step.Ins)
+		for i := range res {
+			res[i] = f
+		}
+	case MakeEntriesPublicCtx, ExposeIthEntryCtx, MakeRelativeIthValuePublicCtx:
+		f := field.Base
+		if len(step.Ins) > 0 {
+			f = expr.FieldOfWithColumnFields(step.Ins[0], columnFields)
+		}
+		for i := range res {
+			res[i] = f
+		}
+	case CMCtx:
+		for i := range res {
+			res[i] = field.Base
+		}
+	case CMWCtx:
+		f := field.Base
+		for i := 0; i < ctx.NbSources && i < len(step.Ins); i++ {
+			f = field.Join(f, expr.FieldOfWithColumnFields(step.Ins[i], columnFields))
+		}
+		for i := range res {
+			res[i] = f
+		}
+	default:
+		f := fieldOfInputs(step.Ins)
+		for i := range res {
+			res[i] = f
+		}
+	}
+
+	return res
 }

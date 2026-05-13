@@ -86,18 +86,24 @@ type DAG struct {
 // sub-expressions into shared nodes. Commutativity is respected: (a+b) and
 // (b+a) produce the same node, as do (a*b) and (b*a). Sub is not commutative.
 func ExprToDAG(e expr.Expr) *DAG {
+	return ExprToDAGWithColumnFields(e, nil)
+}
+
+func ExprToDAGWithColumnFields(e expr.Expr, columnFields map[string]field.Kind) *DAG {
 	b := &dagBuilder{
-		cache:    make(map[string]*DAGNode),
-		varIndex: make(map[string]int),
+		cache:        make(map[string]*DAGNode),
+		varIndex:     make(map[string]int),
+		columnFields: columnFields,
 	}
 	root := b.build(e)
 	return &DAG{Root: root, Nodes: b.ordered, VarIndex: b.varIndex}
 }
 
 type dagBuilder struct {
-	cache    map[string]*DAGNode
-	ordered  []*DAGNode
-	varIndex map[string]int
+	cache        map[string]*DAGNode
+	ordered      []*DAGNode
+	varIndex     map[string]int
+	columnFields map[string]field.Kind
 }
 
 func (b *dagBuilder) assignVarIdx(name string) int {
@@ -133,6 +139,16 @@ func inferField(children ...*DAGNode) field.Kind {
 	return res
 }
 
+func (b *dagBuilder) leafWithInferredField(l *expr.Leaf) *expr.Leaf {
+	f := expr.FieldOfWithColumnFields(l, b.columnFields)
+	if f == l.FieldKind() {
+		return l
+	}
+	cp := *l
+	cp.Field = f
+	return &cp
+}
+
 func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 	// Iterative post-order traversal to avoid stack overflow on deep expression trees
 	// (e.g. a sum of thousands of constraints folded left-associatively).
@@ -157,8 +173,9 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 
 		switch v := e.(type) {
 		case *expr.Leaf:
+			lv := b.leafWithInferredField(v)
 			var prefix string
-			switch v.Type {
+			switch lv.Type {
 			case expr.RotatedColumn:
 				prefix = "shifted"
 			case expr.CommittedColumn:
@@ -170,8 +187,7 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 			case expr.ConstantColumn:
 				prefix = "const"
 			}
-			key := dagKey(prefix, v.String())
-			lv := v
+			key := dagKey(prefix, lv.String(), lv.FieldKind().String())
 			result[e] = b.intern(key, func() *DAGNode {
 				n := &DAGNode{Kind: KindLeaf, Leaf: lv, VarIdx: b.assignVarIdx(lv.String()), Field: lv.FieldKind()}
 				if lv.Type == expr.ConstantColumn {

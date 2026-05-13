@@ -69,11 +69,13 @@ func TestFieldMetadata(t *testing.T) {
 		{"BaseExpression", Col("x").Add(Const(one)), field.Base},
 		{"ChallengeExpression", Col("x").Mul(Challenge("gamma")), field.Ext},
 		{"ExtColumnExpression", ExtCol("x").Sub(Col("y")).Pow(2), field.Ext},
+		{"ColumnRegistryExpression", Col("logup").Add(Col("x")), field.Ext},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := FieldOf(tc.expr); got != tc.want {
+			columnFields := map[string]field.Kind{"logup": field.Ext}
+			if got := FieldOfWithColumnFields(tc.expr, columnFields); got != tc.want {
 				t.Fatalf("FieldOf(%s) = %s, want %s", tc.expr.String(), got, tc.want)
 			}
 		})

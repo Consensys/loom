@@ -103,8 +103,8 @@ type MakeRelativeIthValuePublicCtx struct {
 	Pos    int // relative position of the value to pick in a column -> the position module.N - 1 - Pos. It allows to refer to N, so N can be modified
 }
 
-// MakeRelativeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
-func MakeRelativeIthValuePublicStep(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+// ExposeRelativeIthEntryStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
+func ExposeRelativeIthEntryStep(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
 
 	_ctx, ok := ctx.(MakeRelativeIthValuePublicCtx)
 	if !ok {
@@ -138,7 +138,7 @@ func MakeRelativeIthValuePublicStep(ins []expr.Expr, outs []string, t trace.Trac
 	return nil
 }
 
-type MakeIthValuePublicCtx struct {
+type ExposeIthEntryCtx struct {
 	Module string
 	Pos    int // position of the value to pick in a column
 }
@@ -146,7 +146,7 @@ type MakeIthValuePublicCtx struct {
 // MakeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
 func MakeIthValuePublicStep(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
 
-	_ctx, ok := ctx.(MakeIthValuePublicCtx)
+	_ctx, ok := ctx.(ExposeIthEntryCtx)
 	if !ok {
 		return fmt.Errorf("[PickLocalValueStep] wrong context type")
 	}

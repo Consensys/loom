@@ -180,19 +180,30 @@ func (l *Leaf) FieldKind() field.Kind {
 }
 
 func FieldOf(e Expr) field.Kind {
+	return FieldOfWithColumnFields(e, nil)
+}
+
+func FieldOfWithColumnFields(e Expr, columnFields map[string]field.Kind) field.Kind {
 	switch v := e.(type) {
 	case *Leaf:
-		return v.FieldKind()
+		f := v.FieldKind()
+		switch v.Type {
+		case CommittedColumn, RotatedColumn, PublicColumn:
+			if columnFields != nil {
+				f = field.Join(f, columnFields[v.Name])
+			}
+		}
+		return f
 	case *Add:
-		return field.Join(FieldOf(v.Left), FieldOf(v.Right))
+		return field.Join(FieldOfWithColumnFields(v.Left, columnFields), FieldOfWithColumnFields(v.Right, columnFields))
 	case *Sub:
-		return field.Join(FieldOf(v.Left), FieldOf(v.Right))
+		return field.Join(FieldOfWithColumnFields(v.Left, columnFields), FieldOfWithColumnFields(v.Right, columnFields))
 	case *Mul:
-		return field.Join(FieldOf(v.Left), FieldOf(v.Right))
+		return field.Join(FieldOfWithColumnFields(v.Left, columnFields), FieldOfWithColumnFields(v.Right, columnFields))
 	case *Pow:
-		return FieldOf(v.Base)
+		return FieldOfWithColumnFields(v.Base, columnFields)
 	default:
-		panic(fmt.Sprintf("FieldOf: unknown Expr type %T", e))
+		panic(fmt.Sprintf("FieldOfWithColumnFields: unknown Expr type %T", e))
 	}
 }
 
