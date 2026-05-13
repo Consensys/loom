@@ -147,9 +147,15 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 		accgn.Mul(&accgn, &gn)
 	}
 
-	// do the division
+	// Precompute the rho distinct inverses once; the bigSize-element loop only
+	// ever needs one of rho values, so doing Inverse() per row would be wasted
+	// work (rho is typically tiny, e.g. 4 for a degree-4 relation on N=32K).
+	xnMinusOneInv := make([]koalabear.Element, rho)
+	for i := range rho {
+		xnMinusOneInv[i].Inverse(&xnMinusOne[i])
+	}
 	for i := range bigSize {
-		numerator[i].Div(&numerator[i], &xnMinusOne[i%rho])
+		numerator[i].Mul(&numerator[i], &xnMinusOneInv[i%rho])
 	}
 
 	return numerator, nil
@@ -307,10 +313,13 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 		accgn.Mul(&accgn, &gn)
 	}
 
+	// Precompute the rho distinct inverses once (same reason as ComputeQuotient).
+	xnMinusOneInv := make([]koalabear.Element, rho)
+	for i := range rho {
+		xnMinusOneInv[i].Inverse(&xnMinusOne[i])
+	}
 	for i := range bigSize {
-		denInv := xnMinusOne[i%rho]
-		denInv.Inverse(&denInv)
-		numerator[i].MulByElement(&numerator[i], &denInv)
+		numerator[i].MulByElement(&numerator[i], &xnMinusOneInv[i%rho])
 	}
 
 	return numerator, nil
