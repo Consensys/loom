@@ -17,11 +17,13 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/consensys/loom/expr"
-	"github.com/consensys/loom/internal/dag"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/gnark-crypto/utils"
+	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/field"
+	"github.com/consensys/loom/internal/dag"
 )
 
 // ComputeQuotient computes E(PI)/X^N-1
@@ -153,6 +155,167 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 	return numerator, nil
 }
 
+// ComputeQuotientMixed computes E(Pi)/(X^N-1) for an extension-valued
+// vanishing relation. Base columns stay on the base rail, extension columns
+// stay on the extension rail, and mixed evaluation lifts base values only when
+// an extension node consumes them. The returned quotient is in coset-Lagrange
+// form, matching ComputeQuotient.
+func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPolynomial, vanishingRelation dag.DAG, N int) (ExtPolynomial, error) {
+	if vanishingRelation.Root.Field != field.Ext {
+		return nil, fmt.Errorf("ComputeQuotientMixed: root field is %s, want %s", vanishingRelation.Root.Field, field.Ext)
+	}
+
+	eDeg := vanishingRelation.Degree()
+	if eDeg <= 0 {
+		return nil, fmt.Errorf("expression degree must be at least 1, got %d", eDeg)
+	}
+	N = nextPowerOfTwo(N)
+	bigSize := nextPowerOfTwo(eDeg * N)
+	if bigSize%N != 0 {
+		return nil, fmt.Errorf("big domain size %d is not divisible by vanishing domain size %d", bigSize, N)
+	}
+
+	baseNameToIdx := make(map[string]int)
+	extNameToIdx := make(map[string]int)
+	baseCopies := make(map[string][]koalabear.Element)
+	extCopies := make(map[string][]ext.E4)
+	for _, n := range vanishingRelation.Nodes {
+		if n.Kind != dag.KindLeaf || n.Leaf.Type == expr.ConstantColumn {
+			continue
+		}
+		l := n.Leaf
+		if n.Field == field.Ext {
+			if _, ok := extNameToIdx[l.Name]; !ok {
+				src, ok := PiExt[l.Name]
+				if !ok {
+					return nil, fmt.Errorf("ComputeQuotientMixed: extension column %q not found", l.Name)
+				}
+				if len(src) != N && len(src) != 1 {
+					return nil, fmt.Errorf("ComputeQuotientMixed: extension column %q has length %d, want %d or 1", l.Name, len(src), N)
+				}
+				extNameToIdx[l.Name] = len(extNameToIdx)
+				cp := make([]ext.E4, len(src))
+				copy(cp, src)
+				extCopies[l.Name] = cp
+			}
+			l.Idx = extNameToIdx[l.Name]
+			continue
+		}
+
+		if _, ok := baseNameToIdx[l.Name]; !ok {
+			src, ok := PiBase[l.Name]
+			if !ok {
+				return nil, fmt.Errorf("ComputeQuotientMixed: base column %q not found", l.Name)
+			}
+			if len(src) != N && len(src) != 1 {
+				return nil, fmt.Errorf("ComputeQuotientMixed: base column %q has length %d, want %d or 1", l.Name, len(src), N)
+			}
+			baseNameToIdx[l.Name] = len(baseNameToIdx)
+			cp := make([]koalabear.Element, len(src))
+			copy(cp, src)
+			baseCopies[l.Name] = cp
+		}
+		l.Idx = baseNameToIdx[l.Name]
+	}
+
+	_PiBase := make([][]koalabear.Element, len(baseNameToIdx))
+	for name, idx := range baseNameToIdx {
+		_PiBase[idx] = baseCopies[name]
+	}
+	_PiExt := make([][]ext.E4, len(extNameToIdx))
+	for name, idx := range extNameToIdx {
+		_PiExt[idx] = extCopies[name]
+	}
+
+	baseNonConst := make([][]koalabear.Element, 0, len(baseCopies))
+	for _, poly := range baseCopies {
+		if len(poly) > 1 {
+			baseNonConst = append(baseNonConst, poly)
+		}
+	}
+	extNonConst := make([][]ext.E4, 0, len(extCopies))
+	for _, poly := range extCopies {
+		if len(poly) > 1 {
+			extNonConst = append(extNonConst, poly)
+		}
+	}
+
+	numerator := make(ExtPolynomial, bigSize)
+
+	bigDomain := fft.NewDomain(uint64(bigSize))
+	smallDomain := fft.NewDomain(uint64(N))
+	rho := bigSize / N
+
+	twiddleFrMultiplicativeGen := make([]koalabear.Element, N)
+	fft.BuildExpTable(bigDomain.FrMultiplicativeGen, twiddleFrMultiplicativeGen)
+	utils.BitReverse(twiddleFrMultiplicativeGen)
+	twiddleGeneratorBigDomain := make([]koalabear.Element, N)
+	fft.BuildExpTable(bigDomain.Generator, twiddleGeneratorBigDomain)
+	utils.BitReverse(twiddleGeneratorBigDomain)
+	scaleBaseByTwiddles := func(a, b []koalabear.Element) {
+		for i := 0; i < N; i++ {
+			a[i].Mul(&a[i], &b[i])
+		}
+	}
+	scaleExtByTwiddles := func(a []ext.E4, b []koalabear.Element) {
+		for i := 0; i < N; i++ {
+			a[i].MulByElement(&a[i], &b[i])
+		}
+	}
+
+	for _, pCopy := range baseNonConst {
+		smallDomain.FFTInverse(pCopy, fft.DIF)
+		scaleBaseByTwiddles(pCopy, twiddleFrMultiplicativeGen)
+	}
+	for _, pCopy := range extNonConst {
+		smallDomain.FFTInverseExt(pCopy, fft.DIF)
+		scaleExtByTwiddles(pCopy, twiddleFrMultiplicativeGen)
+	}
+
+	for i := range rho {
+		for _, pCopy := range baseNonConst {
+			smallDomain.FFT(pCopy, fft.DIT)
+		}
+		for _, pCopy := range extNonConst {
+			smallDomain.FFTExt(pCopy, fft.DIT)
+		}
+
+		vals := vanishingRelation.EvalOnAllEntriesMixed(_PiBase, _PiExt, N)
+		for j := 0; j < N; j++ {
+			numerator[rho*j+i] = vals[j]
+		}
+
+		for _, pCopy := range baseNonConst {
+			smallDomain.FFTInverse(pCopy, fft.DIF)
+			scaleBaseByTwiddles(pCopy, twiddleGeneratorBigDomain)
+		}
+		for _, pCopy := range extNonConst {
+			smallDomain.FFTInverseExt(pCopy, fft.DIF)
+			scaleExtByTwiddles(pCopy, twiddleGeneratorBigDomain)
+		}
+	}
+
+	xnMinusOne := make([]koalabear.Element, rho)
+	one := koalabear.One()
+	var gn, frn koalabear.Element
+	NBigInt := big.NewInt(int64(N))
+	frn.Exp(bigDomain.FrMultiplicativeGen, NBigInt)
+	gn.Exp(bigDomain.Generator, NBigInt)
+	accgn := koalabear.One()
+	for i := range rho {
+		xnMinusOne[i].Mul(&frn, &accgn).Sub(&xnMinusOne[i], &one)
+		accgn.Mul(&accgn, &gn)
+	}
+
+	for i := range bigSize {
+		denInv := xnMinusOne[i%rho]
+		denInv.Inverse(&denInv)
+		numerator[i].MulByElement(&numerator[i], &denInv)
+	}
+
+	return numerator, nil
+}
+
 // CosetLagrangeToLagrangeNormal converts a polynomial from coset-Lagrange Normal form
 // (as returned by ComputeQuotient, evaluated on {FrMultiplicativeGen * ω^j}) to
 // standard Lagrange Normal form (evaluated on {ω^j}).
@@ -180,5 +343,26 @@ func CosetLagrangeToLagrangeNormal(p Polynomial) {
 	d.FFT(p, fft.DIF)
 
 	// Step 5: BitReverse → Lagrange Normal
+	utils.BitReverse(p)
+}
+
+// CosetExtLagrangeToLagrangeNormal converts an extension polynomial from
+// coset-Lagrange normal form to standard Lagrange normal form.
+func CosetExtLagrangeToLagrangeNormal(p ExtPolynomial) {
+	N := uint64(len(p))
+	d := fft.NewDomain(N)
+
+	d.FFTInverseExt(p, fft.DIF)
+	utils.BitReverse(p)
+
+	invFrGen := d.FrMultiplicativeGen
+	invFrGen.Inverse(&invFrGen)
+	acc := koalabear.One()
+	for k := range p {
+		p[k].MulByElement(&p[k], &acc)
+		acc.Mul(&acc, &invFrGen)
+	}
+
+	d.FFTExt(p, fft.DIF)
 	utils.BitReverse(p)
 }

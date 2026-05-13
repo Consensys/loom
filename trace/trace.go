@@ -16,7 +16,6 @@ package trace
 import (
 	"fmt"
 
-	"github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/poly"
 )
@@ -26,7 +25,7 @@ import (
 
 // ExtPolynomial is a column whose coefficients live in the Koalabear E4
 // extension field.
-type ExtPolynomial = []extensions.E4
+type ExtPolynomial = poly.ExtPolynomial
 
 // Trace contains base-field and extension-field columns. Base columns are the
 // user-supplied trace and the current runtime path; extension columns are
