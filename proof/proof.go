@@ -14,7 +14,10 @@
 package proof
 
 import (
+	"fmt"
+
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/fri"
 )
@@ -25,8 +28,8 @@ type Commitment struct {
 }
 
 type Proof struct {
-	ValuesAtZeta  map[string]koalabear.Element // map string -> evaluation of the column whose String() is the key at zeta
-	PublicColumns map[string]PublicInput       // extracted values from columns of the trace, those values are passed as public inputs
+	ValuesAtZeta  map[string]extensions.E4 // map string -> evaluation of the column whose String() is the key at zeta
+	PublicColumns map[string]PublicInput   // extracted values from columns of the trace, those values are passed as public inputs
 
 	// Commitments holds the Merkle roots of every WMerkleTree the prover
 	// commits during the protocol, in canonical order:
@@ -49,7 +52,36 @@ type Proof struct {
 
 func NewProof() Proof {
 	var res Proof
-	res.ValuesAtZeta = make(map[string]koalabear.Element)
+	res.ValuesAtZeta = make(map[string]extensions.E4)
 	res.PublicColumns = make(map[string]PublicInput)
 	return res
+}
+
+func (p *Proof) SetValueAtZetaBase(name string, v koalabear.Element) {
+	var ext extensions.E4
+	ext.Lift(&v)
+	p.ValuesAtZeta[name] = ext
+}
+
+func (p Proof) ValueAtZetaBase(name string) (koalabear.Element, bool, error) {
+	v, ok := p.ValuesAtZeta[name]
+	if !ok {
+		return koalabear.Element{}, false, nil
+	}
+	if !v.B0.A1.IsZero() || !v.B1.IsZero() {
+		return koalabear.Element{}, true, fmt.Errorf("ValuesAtZeta[%q] is not a base-field value", name)
+	}
+	return v.B0.A0, true, nil
+}
+
+func (p Proof) BaseValuesAtZeta() (map[string]koalabear.Element, error) {
+	values := make(map[string]koalabear.Element, len(p.ValuesAtZeta))
+	for name := range p.ValuesAtZeta {
+		v, _, err := p.ValueAtZetaBase(name)
+		if err != nil {
+			return nil, err
+		}
+		values[name] = v
+	}
+	return values, nil
 }

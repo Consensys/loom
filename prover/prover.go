@@ -345,7 +345,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 
 	// evaluate each quotient chunk at zeta and store in ValuesAtZeta
 	for chunkName, chunkPoly := range pr.airTrace.Base {
-		pr.Proof.ValuesAtZeta[chunkName] = poly.Evaluate(chunkPoly, chunkDomains[chunkName], pr.zeta)
+		pr.Proof.SetValueAtZetaBase(chunkName, poly.Evaluate(chunkPoly, chunkDomains[chunkName], pr.zeta))
 	}
 
 	return nil
@@ -384,7 +384,7 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 			val := poly.Evaluate(p, module.D, evalPoint)
 
 			// store result using leaf.String() as key
-			pr.Proof.ValuesAtZeta[leaf.String()] = val
+			pr.Proof.SetValueAtZetaBase(leaf.String(), val)
 		}
 	}
 	return nil
@@ -445,7 +445,10 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 			keys := dqLayout.Keys[i][j]
 			for k := range names {
 				col := pr.t.Base[names[k]]
-				evalAtZ, ok := pr.Proof.ValuesAtZeta[keys[k]]
+				evalAtZ, ok, err := pr.Proof.ValueAtZetaBase(keys[k])
+				if err != nil {
+					return err
+				}
 				if !ok {
 					return fmt.Errorf("ComputeDeepQuotient: %q not found in ValuesAtZeta", keys[k])
 				}
@@ -477,7 +480,13 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 			var v_s koalabear.Element
 			for _, chunkName := range dqLayout.AIRChunks[i] {
 				chunk := pr.airTrace.Base[chunkName]
-				evalAtZ := pr.Proof.ValuesAtZeta[chunkName]
+				evalAtZ, ok, err := pr.Proof.ValueAtZetaBase(chunkName)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return fmt.Errorf("ComputeDeepQuotient: %q not found in ValuesAtZeta", chunkName)
+				}
 				for x := 0; x < N; x++ {
 					var term koalabear.Element
 					term.Mul(&chunk[x], &alphaAcc)

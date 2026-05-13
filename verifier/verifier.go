@@ -145,7 +145,7 @@ func (vr *verifierRunTime) deriveChallenges() error {
 		}
 		var c koalabear.Element
 		c.SetBytes(bChallenge)
-		vr.proof.ValuesAtZeta[challengeName] = c
+		vr.proof.SetValueAtZetaBase(challengeName, c)
 	}
 	// Bind every per-size AIR-quotient root before computing zeta.
 	for i := vr.layout.AIRBegin; i < vr.layout.AIREnd; i++ {
@@ -170,7 +170,7 @@ func (vr *verifierRunTime) computePublicColumns() error {
 			tmp.Mul(&tmp, &pe.Value)
 			lag.Add(&lag, &tmp)
 		}
-		vr.proof.ValuesAtZeta[k] = lag
+		vr.proof.SetValueAtZetaBase(k, lag)
 	}
 	return nil
 }
@@ -180,7 +180,10 @@ func (vr *verifierRunTime) computeLagrange() error {
 	for _, m := range vr.program.Modules {
 		lags := m.VanishingRelation.Leaves(expr.NewConfig(config...))
 		for _, lag := range lags {
-			_, ok := vr.proof.ValuesAtZeta[lag]
+			_, ok, err := vr.proof.ValueAtZetaBase(lag)
+			if err != nil {
+				return err
+			}
 			if ok {
 				continue
 			}
@@ -192,7 +195,7 @@ func (vr *verifierRunTime) computeLagrange() error {
 				i = m.N + i
 			}
 			v := poly.LagrangeAtZeta(vr.zeta, m.N, i)
-			vr.proof.ValuesAtZeta[lag] = v
+			vr.proof.SetValueAtZetaBase(lag, v)
 		}
 	}
 	return nil
@@ -226,6 +229,10 @@ func (vr *verifierRunTime) checkLogupBus() error {
 // checkAIRRelations checks the air relations per module
 func (vr *verifierRunTime) checkAIRRelations() error {
 
+	valuesAtZeta, err := vr.proof.BaseValuesAtZeta()
+	if err != nil {
+		return err
+	}
 	for moduleName, m := range vr.program.Modules {
 
 		// Compute Q(zeta) = chunk_0(zeta) + zeta^N * chunk_1(zeta) + zeta^(2N) * chunk_2(zeta) + ...
@@ -237,7 +244,10 @@ func (vr *verifierRunTime) checkAIRRelations() error {
 		zetaN.Exp(vr.zeta, big.NewInt(int64(m.N)))
 		for i := 0; ; i++ {
 			chunkName := constants.QuotientChunkName(moduleName, i)
-			chunkVal, ok := vr.proof.ValuesAtZeta[chunkName]
+			chunkVal, ok, err := vr.proof.ValueAtZetaBase(chunkName)
+			if err != nil {
+				return err
+			}
 			if !ok {
 				break
 			}
@@ -248,7 +258,7 @@ func (vr *verifierRunTime) checkAIRRelations() error {
 		}
 
 		// Compute V(zeta): evaluate the vanishing relation DAG at zeta using ValuesAtZeta.
-		vZeta := m.VanishingRelation.Eval(vr.proof.ValuesAtZeta)
+		vZeta := m.VanishingRelation.Eval(valuesAtZeta)
 
 		// Check V(zeta) == (zeta^N - 1) * Q(zeta)
 		one := koalabear.One()
@@ -401,7 +411,10 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 				names := dqLayout.Names[i][j]
 				keys := dqLayout.Keys[i][j]
 				for k := range names {
-					evalAtZ, ok := vr.proof.ValuesAtZeta[keys[k]]
+					evalAtZ, ok, err := vr.proof.ValueAtZetaBase(keys[k])
+					if err != nil {
+						return err
+					}
 					if !ok {
 						return fmt.Errorf("checkFRIBridge: %q not in ValuesAtZeta", keys[k])
 					}
@@ -444,7 +457,10 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 			if len(dqLayout.AIRChunks[i]) > 0 {
 				var v_air, C_at_X, C_at_negX koalabear.Element
 				for _, chunkName := range dqLayout.AIRChunks[i] {
-					evalAtZ, ok := vr.proof.ValuesAtZeta[chunkName]
+					evalAtZ, ok, err := vr.proof.ValueAtZetaBase(chunkName)
+					if err != nil {
+						return err
+					}
 					if !ok {
 						return fmt.Errorf("checkFRIBridge: %q not in ValuesAtZeta", chunkName)
 					}
