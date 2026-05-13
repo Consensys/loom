@@ -652,7 +652,7 @@ func buildLastValuePaddingSet(_ *air.Schema[gocorset_kb.Element]) map[string]boo
 // with their last real value (see buildLastValuePaddingSet).
 func corsetTraceToLoom(ct gc_trace.Trace[gocorset_kb.Element], origHeights map[string]uint,
 	padLastValue map[string]bool) trace.Trace {
-	t := make(trace.Trace)
+	t := trace.New()
 	for i := uint(0); i < ct.Width(); i++ {
 		mod := ct.Module(i)
 		modName := mod.Name().String()
@@ -681,7 +681,7 @@ func corsetTraceToLoom(ct gc_trace.Trace[gocorset_kb.Element], origHeights map[s
 					poly[r] = last
 				}
 			}
-			t[key] = poly
+			t.SetBase(key, poly)
 		}
 		// IS_REAL column: 1 for real rows 0..H-1, 0 for padded rows H..N-1.
 		// Vanishing constraints are multiplied by IS_REAL to restrict evaluation
@@ -690,7 +690,7 @@ func corsetTraceToLoom(ct gc_trace.Trace[gocorset_kb.Element], origHeights map[s
 		for r := uint(0); r < origHeight; r++ {
 			isReal[r].SetOne()
 		}
-		t[isRealColName(modName)] = isReal
+		t.SetBase(isRealColName(modName), isReal)
 	}
 	return t
 }
@@ -699,7 +699,7 @@ func corsetTraceToLoom(ct gc_trace.Trace[gocorset_kb.Element], origHeights map[s
 
 func setSizes(program *board.Program, tr trace.Trace) {
 	moduleSizes := map[string]int{}
-	for colName, col := range tr {
+	for colName, col := range tr.Base {
 		idx := strings.IndexByte(colName, '.')
 		if idx < 0 {
 			// root module column (no dot) — maps to module with empty name

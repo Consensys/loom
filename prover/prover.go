@@ -93,7 +93,7 @@ func newProverRuntime(t trace.Trace, setup setup.PublicKey, publicInputs proof.P
 		publicInputs: publicInputs,
 		program:      program,
 		setup:        setup,
-		airTrace:     make(trace.Trace),
+		airTrace:     trace.New(),
 		mu:           sync.Mutex{}, // mutex to protect the trace when reading/writing (in case of parallelisation)
 	}
 
@@ -179,7 +179,7 @@ func (pr *proverRuntime) ExecuteSteps() error {
 						pr.mu.Unlock()
 						return fmt.Errorf("ExecuteSteps: column %q references unknown module %q", dep.Name, dep.Module)
 					}
-					polysByN[m.N] = append(polysByN[m.N], pr.t[dep.Name])
+					polysByN[m.N] = append(polysByN[m.N], pr.t.Base[dep.Name])
 				}
 				pr.mu.Unlock()
 
@@ -222,7 +222,7 @@ func (pr *proverRuntime) ExecuteSteps() error {
 				}
 
 				pr.mu.Lock()
-				pr.t[challengeName] = []koalabear.Element{challengeVal}
+				pr.t.SetBase(challengeName, []koalabear.Element{challengeVal})
 				pr.mu.Unlock()
 
 				roundIdx++
@@ -254,7 +254,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 			continue
 		}
 		// compute quotient: VanishingRelation / (X^n - 1), returned in coset-Lagrange form
-		quotient, err := poly.ComputeQuotient(pr.t, *module.VanishingRelation, module.N)
+		quotient, err := poly.ComputeQuotient(pr.t.Base, *module.VanishingRelation, module.N)
 		if err != nil {
 			return err
 		}
@@ -278,7 +278,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 			module.D.FFT(chunk, fft.DIF)
 			utils.BitReverse(chunk)
 			chunkName := constants.QuotientChunkName(moduleName, i)
-			pr.airTrace[chunkName] = chunk
+			pr.airTrace.SetBase(chunkName, chunk)
 			chunkDomains[chunkName] = module.D
 		}
 	}
@@ -298,7 +298,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 		N := pr.program.Modules[moduleName].N
 		for i := 0; ; i++ {
 			chunkName := constants.QuotientChunkName(moduleName, i)
-			chunk, ok := pr.airTrace[chunkName]
+			chunk, ok := pr.airTrace.Base[chunkName]
 			if !ok {
 				break
 			}
@@ -344,7 +344,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	pr.zeta = zetaVal
 
 	// evaluate each quotient chunk at zeta and store in ValuesAtZeta
-	for chunkName, chunkPoly := range pr.airTrace {
+	for chunkName, chunkPoly := range pr.airTrace.Base {
 		pr.Proof.ValuesAtZeta[chunkName] = poly.Evaluate(chunkPoly, chunkDomains[chunkName], pr.zeta)
 	}
 
@@ -375,7 +375,7 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 			}
 
 			// fetch the polynomial from the trace using the leaf's bare name
-			p, ok := pr.t[leaf.Name]
+			p, ok := pr.t.Base[leaf.Name]
 			if !ok {
 				return fmt.Errorf("ComputeEvaluationsAtZeta: column %q not found in trace", leaf.Name)
 			}
@@ -444,7 +444,7 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 			names := dqLayout.Names[i][j]
 			keys := dqLayout.Keys[i][j]
 			for k := range names {
-				col := pr.t[names[k]]
+				col := pr.t.Base[names[k]]
 				evalAtZ, ok := pr.Proof.ValuesAtZeta[keys[k]]
 				if !ok {
 					return fmt.Errorf("ComputeDeepQuotient: %q not found in ValuesAtZeta", keys[k])
@@ -476,7 +476,7 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 			C_s := make(poly.Polynomial, N)
 			var v_s koalabear.Element
 			for _, chunkName := range dqLayout.AIRChunks[i] {
-				chunk := pr.airTrace[chunkName]
+				chunk := pr.airTrace.Base[chunkName]
 				evalAtZ := pr.Proof.ValuesAtZeta[chunkName]
 				for x := 0; x < N; x++ {
 					var term koalabear.Element

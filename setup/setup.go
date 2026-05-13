@@ -69,7 +69,7 @@ func Setup(t trace.Trace, program board.Program) (PublicKey, error) {
 		sort.Strings(names)
 		cols := make([]poly.Polynomial, len(names))
 		for j, name := range names {
-			cols[j] = t[name]
+			cols[j] = t.Base[name]
 		}
 		committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
 		tree, err := committer.Commit(cols)

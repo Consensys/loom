@@ -32,15 +32,15 @@ func WriteRawTraceToCSV(filename string, trace trace.Trace) error {
 	defer writer.Flush()
 
 	// 1️⃣ Collect and sort keys for deterministic column order
-	keys := make([]string, 0, len(trace))
-	for k := range trace {
+	keys := make([]string, 0, len(trace.Base))
+	for k := range trace.Base {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
 	// 2️⃣ Compute N as the max column length
 	N := 0
-	for _, poly := range trace {
+	for _, poly := range trace.Base {
 		if len(poly) > N {
 			N = len(poly)
 		}
@@ -56,7 +56,7 @@ func WriteRawTraceToCSV(filename string, trace trace.Trace) error {
 		row := make([]string, len(keys))
 
 		for j, k := range keys {
-			poly := trace[k]
+			poly := trace.Base[k]
 			var c string
 			if len(poly) == 1 {
 				c = poly[0].String()

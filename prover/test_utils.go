@@ -24,7 +24,7 @@ import (
 )
 
 func CheckVanishingRelation(tr trace.Trace, md board.CompiledModule) error {
-	ev, err := poly.Eval(tr, *md.VanishingRelation, md.N)
+	ev, err := poly.Eval(tr.Base, *md.VanishingRelation, md.N)
 	if err != nil {
 		return err
 	}
@@ -39,8 +39,11 @@ func CheckVanishingRelation(tr trace.Trace, md board.CompiledModule) error {
 func MergeTrace(t1 trace.Trace, t2 ...trace.Trace) trace.Trace {
 	res := t1
 	for _, t := range t2 {
-		for k, v := range t {
-			res[k] = v
+		for k, v := range t.Base {
+			res.SetBase(k, v)
+		}
+		for k, v := range t.Ext {
+			res.SetExt(k, v)
 		}
 	}
 	return res
@@ -56,7 +59,7 @@ func TraceFibonacci(n int, a, b koalabear.Element) trace.Trace {
 
 	n = int(ecc.NextPowerOfTwo(uint64(n)))
 
-	res := make(trace.Trace)
+	res := trace.New()
 	A := make([]koalabear.Element, n)
 	B := make([]koalabear.Element, n)
 	C := make([]koalabear.Element, n)
@@ -70,20 +73,20 @@ func TraceFibonacci(n int, a, b koalabear.Element) trace.Trace {
 			B[i+1].Set(&C[i])
 		}
 	}
-	res["A"] = A
-	res["B"] = B
-	res["C"] = C
+	res.SetBase("A", A)
+	res.SetBase("B", B)
+	res.SetBase("C", C)
 
 	return res
 }
 
 func TraceRange(n int) trace.Trace {
 	n = int(ecc.NextPowerOfTwo(uint64(n)))
-	res := make(trace.Trace)
+	res := trace.New()
 	col := make([]koalabear.Element, 2*n) // to handle modules of different size
 	for i := 0; i < 2*n; i++ {
 		col[i].SetUint64(uint64(i))
 	}
-	res["Lookup"] = col
+	res.SetBase("Lookup", col)
 	return res
 }

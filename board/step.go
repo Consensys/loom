@@ -63,7 +63,7 @@ func MakeEntriesPublicStep(ins []expr.Expr, outs []string, t trace.Trace, _ *Pro
 
 	out := outs[0]
 	C := ins[0]
-	res, err := poly.BuildPointwiseEvaluation(t, C, mu)
+	res, err := poly.BuildPointwiseEvaluation(t.Base, C, mu)
 	if err != nil {
 		return err
 	}
@@ -113,7 +113,7 @@ func ExposeRelativeIthEntryStep(ins []expr.Expr, outs []string, t trace.Trace, p
 
 	out := outs[0]
 	C := ins[0]
-	res, err := poly.BuildPointwiseEvaluation(t, C, mu)
+	res, err := poly.BuildPointwiseEvaluation(t.Base, C, mu)
 	if err != nil {
 		return err
 	}
@@ -153,7 +153,7 @@ func ExposeIthEntry(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, 
 
 	out := outs[0]
 	C := ins[0]
-	res, err := poly.BuildPointwiseEvaluation(t, C, mu)
+	res, err := poly.BuildPointwiseEvaluation(t.Base, C, mu)
 	if err != nil {
 		return err
 	}
@@ -197,7 +197,7 @@ func CountMultiplicityStep(ins []expr.Expr, outs []string, t trace.Trace, _ *Pro
 	T := make([]expr.Expr, nbT)
 	copy(S, ins[:nbS])
 	copy(T, ins[nbS:nbT+nbS])
-	res, err := poly.BuildMultiplicityPolynomials(t, S, T, mu)
+	res, err := poly.BuildMultiplicityPolynomials(t.Base, S, T, mu)
 	if err != nil {
 		return err
 	}
@@ -232,7 +232,7 @@ func CountWeightedMultiplicityStep(ins []expr.Expr, outs []string, t trace.Trace
 	copy(selS, ins[:nbS])
 	copy(S, ins[nbS:nbS+nbS])
 	copy(T, ins[nbS+nbS:nbS+nbS+nbT])
-	res, err := poly.BuildWeightedMultiplicityPolynomial(t, selS, S, T, mu)
+	res, err := poly.BuildWeightedMultiplicityPolynomial(t.Base, selS, S, T, mu)
 	if err != nil {
 		return err
 	}
@@ -256,7 +256,7 @@ func LogUpStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Program, pro
 	E := ins[0]
 	M := ins[1]
 
-	res, err := poly.BuildLogup(t, E, M, mu)
+	res, err := poly.BuildLogup(t.Base, E, M, mu)
 	if err != nil {
 		return err
 	}
@@ -277,7 +277,7 @@ func GrandProductStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Progr
 	N := ins[0]
 	D := ins[1]
 
-	res, err := poly.BuildGrandProduct(t, N, D, mu)
+	res, err := poly.BuildGrandProduct(t.Base, N, D, mu)
 	if err != nil {
 		return err
 	}

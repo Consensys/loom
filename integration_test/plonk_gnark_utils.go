@@ -91,26 +91,26 @@ func gnarkCryptoPolyToUnivariatePoly(p *iop.Polynomial) (poly.Polynomial, error)
 func buildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1CSSolution, nbPublicInputs int, i int) (trace.Trace, error) {
 
 	nbColumns := 16
-	T := make(trace.Trace, nbColumns)
+	T := trace.New(nbColumns)
 	var err error
 
-	T[Ith(ID_Ql, i)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Ql)
+	T.Base[Ith(ID_Ql, i)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Ql)
 	if err != nil {
 		return T, err
 	}
-	T[Ith(ID_Qr, i)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qr)
+	T.Base[Ith(ID_Qr, i)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qr)
 	if err != nil {
 		return T, err
 	}
-	T[Ith(ID_Qm, i)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qm)
+	T.Base[Ith(ID_Qm, i)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qm)
 	if err != nil {
 		return T, err
 	}
-	T[Ith(ID_Qo, i)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qo)
+	T.Base[Ith(ID_Qo, i)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qo)
 	if err != nil {
 		return T, err
 	}
-	T[Ith(ID_Qk, i)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qk)
+	T.Base[Ith(ID_Qk, i)], err = gnarkCryptoPolyToUnivariatePoly(plonkTrace.Qk)
 	if err != nil {
 		return T, err
 	}
@@ -118,20 +118,20 @@ func buildTrace(plonkTrace *gnark_plonk.Trace, plonkSolution *gnark_cs.SparseR1C
 	// Solution columns: L, R, O are already in Lagrange Normal form
 	lCoeffs := make([]koalabear.Element, len(plonkSolution.L))
 	copy(lCoeffs, plonkSolution.L)
-	T[Ith(ID_L, i)] = lCoeffs
+	T.SetBase(Ith(ID_L, i), lCoeffs)
 
 	// Complete Qk for the public-input placeholder rows.
 	for k := 0; k < nbPublicInputs; k++ {
-		T[Ith(ID_Qk, i)][k] = T[Ith(ID_L, i)][k]
+		T.Base[Ith(ID_Qk, i)][k] = T.Base[Ith(ID_L, i)][k]
 	}
 
 	rCoeffs := make([]koalabear.Element, len(plonkSolution.R))
 	copy(rCoeffs, plonkSolution.R)
-	T[Ith(ID_R, i)] = rCoeffs
+	T.SetBase(Ith(ID_R, i), rCoeffs)
 
 	oCoeffs := make([]koalabear.Element, len(plonkSolution.O))
 	copy(oCoeffs, plonkSolution.O)
-	T[Ith(ID_O, i)] = oCoeffs
+	T.SetBase(Ith(ID_O, i), oCoeffs)
 
 	return T, nil
 }
@@ -172,18 +172,18 @@ func GetIthPlonkTrace(N int, i int) (trace.Trace, []int64, int, error) {
 	}
 	witness, err := frontend.NewWitness(&assignment, koalabear.Modulus())
 	if err != nil {
-		return nil, nil, 0, err
+		return trace.Trace{}, nil, 0, err
 	}
 
 	circuit := Circuit{N: N}
 
 	ccs, err := frontend.CompileU32(koalabear.Modulus(), scs.NewBuilder, &circuit)
 	if err != nil {
-		return nil, nil, 0, err
+		return trace.Trace{}, nil, 0, err
 	}
 	spr, ok := ccs.(*gnark_cs.SparseR1CS)
 	if !ok {
-		return nil, nil, 0, fmt.Errorf("cannot cast ccs to *gnark_constraint.SparseR1CS")
+		return trace.Trace{}, nil, 0, fmt.Errorf("cannot cast ccs to *gnark_constraint.SparseR1CS")
 	}
 
 	nbPublic := ccs.GetNbPublicVariables()
@@ -195,16 +195,16 @@ func GetIthPlonkTrace(N int, i int) (trace.Trace, []int64, int, error) {
 
 	isolution, err := spr.Solve(witness)
 	if err != nil {
-		return nil, nil, size, err
+		return trace.Trace{}, nil, size, err
 	}
 	solution, ok := isolution.(*gnark_cs.SparseR1CSSolution)
 	if !ok {
-		return nil, nil, size, fmt.Errorf("cannot cast isolution to *gnark_constraint.SparseR1CSSolution")
+		return trace.Trace{}, nil, size, fmt.Errorf("cannot cast isolution to *gnark_constraint.SparseR1CSSolution")
 	}
 
 	T, err := buildTrace(publicTrace, solution, nbPublic, i)
 	if err != nil {
-		return nil, nil, size, err
+		return trace.Trace{}, nil, size, err
 	}
 
 	return T, publicTrace.S, size, nil
