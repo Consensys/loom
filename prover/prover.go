@@ -198,7 +198,7 @@ func (pr *proverRuntime) ExecuteSteps() error {
 				base := pr.layout.TraceBegin[roundIdx]
 				for i, N := range sizes {
 					committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
-					tree, err := committer.Commit(legacyBaseCommitOrder(polysByN[N]))
+					tree, err := committer.Commit(legacyBaseCommitOrder(polysByN[N]), nil)
 					if err != nil {
 						return err
 					}
@@ -323,7 +323,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	}
 	for i, N := range sizes {
 		committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
-		tree, err := committer.Commit(legacyBaseCommitOrder(chunksByN[N]))
+		tree, err := committer.Commit(legacyBaseCommitOrder(chunksByN[N]), nil)
 		if err != nil {
 			return err
 		}
@@ -553,21 +553,33 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 // query position `s`, reduced mod the tree's paired-leaf count (=
 // encoded_size/2 = RATE·N/2).
 func openWMerkleAt(tree commitment.WMerkleTree, s int) (commitment.WMerkleProof, error) {
-	pos := s % len(tree.UnhashedLeafs)
+	leafCount := tree.NumLeaves()
+	if leafCount == 0 {
+		return commitment.WMerkleProof{}, fmt.Errorf("empty WMerkleTree")
+	}
+	pos := s % leafCount
 	pth, err := tree.Tree.OpenProof(pos)
 	if err != nil {
 		return commitment.WMerkleProof{}, err
 	}
-	rawLeaf := make([]commitment.Pair, len(tree.UnhashedLeafs[pos]))
-	copy(rawLeaf, tree.UnhashedLeafs[pos])
-	return commitment.WMerkleProof{RawLeaf: rawLeaf, Proof: pth}, nil
+	var rawLeafBase []commitment.PairBase
+	if len(tree.UnhashedLeafsBase) > 0 {
+		rawLeafBase = make([]commitment.PairBase, len(tree.UnhashedLeafsBase[pos]))
+		copy(rawLeafBase, tree.UnhashedLeafsBase[pos])
+	}
+	var rawLeafExt []commitment.PairExt
+	if len(tree.UnhashedLeafsExt) > 0 {
+		rawLeafExt = make([]commitment.PairExt, len(tree.UnhashedLeafsExt[pos]))
+		copy(rawLeafExt, tree.UnhashedLeafsExt[pos])
+	}
+	return commitment.WMerkleProof{RawLeafBase: rawLeafBase, RawLeafExt: rawLeafExt, Proof: pth}, nil
 }
 
 // SampleEvaluations opens every committed polynomial at every FRI query
 // position so the verifier can bridge the FRI proof back to the column
 // commitments. Trees are walked in the canonical layout order
 // (setup → trace per round → AIR), and each tree is opened at
-// `s mod len(tree.UnhashedLeafs)` (= s reduced mod RATE·N/2 for the tree's size N).
+// `s mod tree.NumLeaves()` (= s reduced mod RATE·N/2 for the tree's size N).
 func (pr *proverRuntime) SampleEvaluations() error {
 	NQ := len(pr.queryPositions)
 	pr.Proof.PointSamplings = make([][]commitment.WMerkleProof, NQ)

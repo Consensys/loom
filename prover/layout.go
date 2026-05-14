@@ -28,7 +28,7 @@ import (
 //
 //	TreeIdx = index into the canonical tree order
 //	          (setup → trace-round-0 → … → trace-round-{r-1} → AIR)
-//	PolyIdx = rail-relative index of this polynomial inside the tree's RawLeaf entries
+//	PolyIdx = rail-relative index of this polynomial inside the tree's raw leaf entries
 //	Field   = rail to read/write inside the tree
 type Slot struct {
 	TreeIdx int
@@ -207,16 +207,15 @@ func nextRailPolyIdx(counters map[field.Kind]int, f field.Kind) int {
 	return idx
 }
 
-// TODO(PR9): replace with dual-rail Commit
 type legacyBaseCommitEntry struct {
 	Field field.Kind
 	Poly  poly.Polynomial
 }
 
-// legacyBaseCommitOrder returns the temporary single RawLeaf order used until
-// WMerkleTree grows separate base/ext rails: all base polys first, then all ext
-// polys, each preserving its rail-local layout order.
-// TODO(PR9): replace with dual-rail Commit
+// legacyBaseCommitOrder returns the temporary base-rail order used until PR11:
+// all currently-live polys are committed on the base rail, with layout-base
+// polys first and layout-ext polys second. Each partition preserves its
+// rail-local layout order.
 func legacyBaseCommitOrder(entries []legacyBaseCommitEntry) []poly.Polynomial {
 	out := make([]poly.Polynomial, 0, len(entries))
 	for _, e := range entries {
@@ -232,9 +231,9 @@ func legacyBaseCommitOrder(entries []legacyBaseCommitEntry) []poly.Polynomial {
 	return out
 }
 
-// LegacyBaseRawLeafIndex maps a PR8 rail-relative Slot to the current legacy
-// single RawLeaf index. PR9/PR11 should remove this shim once WMerkleTree has
-// separate base/ext leaf slices and callers can dispatch directly on Slot.Field.
+// LegacyBaseRawLeafIndex maps a rail-relative Slot to the temporary PR9
+// base-rail index. PR11 should remove this shim once runtime ext polys are
+// committed to RawLeafExt and callers can dispatch directly on Slot.Field.
 func (l Layout) LegacyBaseRawLeafIndex(slot Slot) int {
 	if slot.Field == field.Base {
 		return slot.PolyIdx

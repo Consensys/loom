@@ -302,14 +302,9 @@ func (vr *verifierRunTime) checkFRIProof() error {
 }
 
 // verifyWMerkleProof checks wp opens to its leaf data under root, using the
-// same paired-leaf serialisation as RSCommit.Commit (pair k contributes
-// pair[0] || pair[1] to the leaf buffer at offset 2k).
+// same base-then-ext paired-leaf serialisation as RSCommit.Commit.
 func verifyWMerkleProof(root []byte, wp commitment.WMerkleProof) bool {
-	buf := make([]byte, 2*len(wp.RawLeaf)*koalabear.Bytes)
-	for k, pair := range wp.RawLeaf {
-		copy(buf[2*k*koalabear.Bytes:], pair[0].Marshal())
-		copy(buf[(2*k+1)*koalabear.Bytes:], pair[1].Marshal())
-	}
+	buf := commitment.SerializeRawLeaf(wp.RawLeafBase, wp.RawLeafExt)
 	return merkle.Verify(root, wp.Proof, buf, commitment.LeafHash, commitment.NodeHash)
 }
 
@@ -368,10 +363,10 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 		}
 		wp := vr.proof.PointSamplings[q][slot.TreeIdx]
 		rawIdx := vr.layout.LegacyBaseRawLeafIndex(slot)
-		if rawIdx >= len(wp.RawLeaf) {
-			return koalabear.Element{}, koalabear.Element{}, fmt.Errorf("checkFRIBridge: raw leaf index %d out of range for slot %+v (have %d)", rawIdx, slot, len(wp.RawLeaf))
+		if rawIdx >= len(wp.RawLeafBase) {
+			return koalabear.Element{}, koalabear.Element{}, fmt.Errorf("checkFRIBridge: base raw leaf index %d out of range for slot %+v (have %d)", rawIdx, slot, len(wp.RawLeafBase))
 		}
-		return wp.RawLeaf[rawIdx][0], wp.RawLeaf[rawIdx][1], nil
+		return wp.RawLeafBase[rawIdx][0], wp.RawLeafBase[rawIdx][1], nil
 	}
 
 	for q := 0; q < NQ; q++ {

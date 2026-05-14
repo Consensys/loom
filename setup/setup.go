@@ -80,7 +80,7 @@ func Setup(t trace.Trace, program board.Program) (PublicKey, error) {
 			}
 		}
 		committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
-		tree, err := committer.Commit(cols)
+		tree, err := committer.Commit(cols, nil)
 		if err != nil {
 			return nil, err
 		}
