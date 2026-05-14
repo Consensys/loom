@@ -367,10 +367,11 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 			return koalabear.Element{}, koalabear.Element{}, fmt.Errorf("checkFRIBridge: tree index %d out of range", slot.TreeIdx)
 		}
 		wp := vr.proof.PointSamplings[q][slot.TreeIdx]
-		if slot.PolyIdx >= len(wp.RawLeaf) {
-			return koalabear.Element{}, koalabear.Element{}, fmt.Errorf("checkFRIBridge: poly index %d out of range (have %d)", slot.PolyIdx, len(wp.RawLeaf))
+		rawIdx := vr.layout.LegacyBaseRawLeafIndex(slot)
+		if rawIdx >= len(wp.RawLeaf) {
+			return koalabear.Element{}, koalabear.Element{}, fmt.Errorf("checkFRIBridge: raw leaf index %d out of range for slot %+v (have %d)", rawIdx, slot, len(wp.RawLeaf))
 		}
-		return wp.RawLeaf[slot.PolyIdx][0], wp.RawLeaf[slot.PolyIdx][1], nil
+		return wp.RawLeaf[rawIdx][0], wp.RawLeaf[rawIdx][1], nil
 	}
 
 	for q := 0; q < NQ; q++ {

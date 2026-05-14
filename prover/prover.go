@@ -171,7 +171,7 @@ func (pr *proverRuntime) ExecuteSteps() error {
 				// per size (multi-degree commitment scheme). Group order
 				// matches Layout (decreasing N, stable within a size).
 				deps := pr.program.FScolumnsDependencies[roundIdx]
-				polysByN := map[int][]poly.Polynomial{}
+				polysByN := map[int][]legacyBaseCommitEntry{}
 				pr.mu.Lock()
 				for _, dep := range deps {
 					m, ok := pr.program.Modules[dep.Module]
@@ -179,7 +179,10 @@ func (pr *proverRuntime) ExecuteSteps() error {
 						pr.mu.Unlock()
 						return fmt.Errorf("ExecuteSteps: column %q references unknown module %q", dep.Name, dep.Module)
 					}
-					polysByN[m.N] = append(polysByN[m.N], pr.t.Base[dep.Name])
+					polysByN[m.N] = append(polysByN[m.N], legacyBaseCommitEntry{
+						Field: dep.Field,
+						Poly:  pr.t.Base[dep.Name],
+					})
 				}
 				pr.mu.Unlock()
 
@@ -195,7 +198,7 @@ func (pr *proverRuntime) ExecuteSteps() error {
 				base := pr.layout.TraceBegin[roundIdx]
 				for i, N := range sizes {
 					committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
-					tree, err := committer.Commit(polysByN[N])
+					tree, err := committer.Commit(legacyBaseCommitOrder(polysByN[N]))
 					if err != nil {
 						return err
 					}
@@ -288,21 +291,23 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	// (ascending), then their chunks in index order. Sizes are processed in
 	// decreasing-N order so that airTrees and AIRQuotientsCommitment line up
 	// with the rest of the multi-degree commitment scheme.
-	chunksByN := map[int][]poly.Polynomial{}
+	chunksByN := map[int][]legacyBaseCommitEntry{}
 	moduleNames := make([]string, 0, len(pr.program.Modules))
 	for name := range pr.program.Modules {
 		moduleNames = append(moduleNames, name)
 	}
 	sort.Strings(moduleNames)
 	for _, moduleName := range moduleNames {
-		N := pr.program.Modules[moduleName].N
+		module := pr.program.Modules[moduleName]
+		N := module.N
 		for i := 0; ; i++ {
 			chunkName := constants.QuotientChunkName(moduleName, i)
 			chunk, ok := pr.airTrace.Base[chunkName]
 			if !ok {
 				break
 			}
-			chunksByN[N] = append(chunksByN[N], chunk)
+			f := module.VanishingRelation.Root.Field
+			chunksByN[N] = append(chunksByN[N], legacyBaseCommitEntry{Field: f, Poly: chunk})
 		}
 	}
 	sizes := make([]int, 0, len(chunksByN))
@@ -318,7 +323,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	}
 	for i, N := range sizes {
 		committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
-		tree, err := committer.Commit(chunksByN[N])
+		tree, err := committer.Commit(legacyBaseCommitOrder(chunksByN[N]))
 		if err != nil {
 			return err
 		}
