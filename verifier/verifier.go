@@ -39,6 +39,10 @@ import (
 type Config struct {
 	SkipFRI    bool
 	SoundField field.Kind
+	// soundFieldSet records whether WithSoundField was called. Needed because
+	// field.Kind's zero value coincides with field.Base, so we can't tell a
+	// caller that explicitly chose Base from one that left it default.
+	soundFieldSet bool
 }
 
 type Option func(c *Config) error
@@ -53,6 +57,7 @@ func SkipFRI() Option {
 func WithSoundField(soundField field.Kind) Option {
 	return func(c *Config) error {
 		c.SoundField = soundField
+		c.soundFieldSet = true
 		return nil
 	}
 }
@@ -80,8 +85,10 @@ type verifierRunTime struct {
 }
 
 func newVerifierRuntime(program board.Program, setup setup.PublicKeyRoots, publicInputs map[string]proof.PublicInput, prf proof.Proof, config Config) (verifierRunTime, error) {
-	if config.SoundField != field.Ext {
-		config.SoundField = field.Base
+	if !config.soundFieldSet {
+		config.SoundField = field.Ext
+	} else if config.SoundField != field.Base && config.SoundField != field.Ext {
+		config.SoundField = field.Ext
 	}
 	program.SoundField = config.SoundField
 
