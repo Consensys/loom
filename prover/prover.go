@@ -526,7 +526,7 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 
 		levels[li] = fri.Level{
 			D:     N,
-			Evals: [][]koalabear.Element{encoded},
+			Evals: fri.LevelEvals{Base: [][]koalabear.Element{encoded}},
 			Trees: []*merkle.Tree{tree},
 		}
 	}

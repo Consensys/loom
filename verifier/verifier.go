@@ -24,6 +24,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/fri"
@@ -497,12 +498,19 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 			// Compare DQ_N at (X, -X) with the FRI level-i layer-0 leaves.
 			var actualP, actualQ koalabear.Element
 			if i == 0 {
-				actualP = vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0].LeafP
-				actualQ = vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0].LeafQ
+				layer := vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0]
+				if layer.Field != field.Base {
+					return fmt.Errorf("checkFRIBridge: expected base FRI query layer, got %s", layer.Field)
+				}
+				actualP = layer.LeafPBase
+				actualQ = layer.LeafQBase
 			} else {
 				lq := vr.proof.DeepQuotientFriProof.LevelQueries[i-1][q][0]
-				actualP = lq.LeafP
-				actualQ = lq.LeafQ
+				if lq.Field != field.Base {
+					return fmt.Errorf("checkFRIBridge: expected base FRI level query, got %s", lq.Field)
+				}
+				actualP = lq.LeafPBase
+				actualQ = lq.LeafQBase
 			}
 			if !DQ_P.Equal(&actualP) {
 				return fmt.Errorf("checkFRIBridge: query %d level %d (N=%d): DQ(ω_l^s) mismatch: got %s, want %s", q, i, N, DQ_P.String(), actualP.String())
