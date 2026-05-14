@@ -19,6 +19,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/trace"
@@ -49,12 +50,16 @@ func NewProverStep(ins []expr.Expr, outs []string, step Step, ctx StepContext) P
 	}
 }
 
+func shouldRunExtStep(prog *Program, out string) bool {
+	return prog.SoundField == field.Ext && prog.ColumnFields[out] == field.Ext
+}
+
 type MakeEntriesPublicCtx struct {
 	Idx []int // indices of the entries to make public
 	N   int
 }
 
-func MakeEntriesPublicStep(ins []expr.Expr, outs []string, t trace.Trace, _ *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+func MakeEntriesPublicStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
 
 	_ctx, ok := ctx.(MakeEntriesPublicCtx)
 	if !ok {
@@ -63,6 +68,32 @@ func MakeEntriesPublicStep(ins []expr.Expr, outs []string, t trace.Trace, _ *Pro
 
 	out := outs[0]
 	C := ins[0]
+	if shouldRunExtStep(prog, out) {
+		res, err := poly.BuildPointwiseEvaluationMixed(t.Base, t.Ext, prog.ColumnFields, C, mu)
+		if err != nil {
+			return err
+		}
+
+		var publicColumnInfo PublicInput
+		publicColumnInfo.N = _ctx.N
+		publicColumnInfo.Entries = make([]PublicEntry, len(_ctx.Idx))
+		for j, i := range _ctx.Idx {
+			publicColumnInfo.Entries[j].Idx = i
+			publicColumnInfo.Entries[j].SetExt(res[i])
+		}
+		proof.PublicColumns[out] = publicColumnInfo
+
+		sparseCol := make(trace.ExtPolynomial, _ctx.N)
+		for _, i := range _ctx.Idx {
+			sparseCol[i].Set(&res[i])
+		}
+		if err := t.PutExt(out, sparseCol); err != nil {
+			panic(fmt.Sprintf("[MakeEntriesPublicStep] register public column %s: %v", out, err))
+		}
+
+		return nil
+	}
+
 	res, err := poly.BuildPointwiseEvaluation(t.Base, C, mu)
 	if err != nil {
 		return err
@@ -71,9 +102,9 @@ func MakeEntriesPublicStep(ins []expr.Expr, outs []string, t trace.Trace, _ *Pro
 	var publicColumnInfo PublicInput
 	publicColumnInfo.N = _ctx.N
 	publicColumnInfo.Entries = make([]PublicEntry, len(_ctx.Idx))
-	for _, i := range _ctx.Idx {
-		publicColumnInfo.Entries[i].Idx = i
-		publicColumnInfo.Entries[i].Value.Set(&res[i])
+	for j, i := range _ctx.Idx {
+		publicColumnInfo.Entries[j].Idx = i
+		publicColumnInfo.Entries[j].SetBase(res[i])
 	}
 	proof.PublicColumns[out] = publicColumnInfo
 
@@ -113,24 +144,47 @@ func ExposeRelativeIthEntryStep(ins []expr.Expr, outs []string, t trace.Trace, p
 
 	out := outs[0]
 	C := ins[0]
+	m := pg.Modules[_ctx.Module]
+	pos := m.N - 1 - _ctx.Pos
+	if shouldRunExtStep(pg, out) {
+		res, err := poly.BuildPointwiseEvaluationMixed(t.Base, t.Ext, pg.ColumnFields, C, mu)
+		if err != nil {
+			return err
+		}
+
+		var publicColumnInfo PublicInput
+		publicColumnInfo.N = m.N
+		publicColumnInfo.Entries = make([]PublicEntry, 1)
+		publicColumnInfo.Entries[0].Idx = pos
+		publicColumnInfo.Entries[0].SetExt(res[pos])
+		proof.PublicColumns[out] = publicColumnInfo
+
+		sparseCol := make(trace.ExtPolynomial, m.N)
+		sparseCol[pos].Set(&res[pos])
+		if err := t.PutExt(out, sparseCol); err != nil {
+			panic(fmt.Sprintf("[ExposeRelativeIthEntryStep] register public column %s: %v", out, err))
+		}
+
+		return nil
+	}
+
 	res, err := poly.BuildPointwiseEvaluation(t.Base, C, mu)
 	if err != nil {
 		return err
 	}
 
 	var publicColumnInfo PublicInput
-	m := pg.Modules[_ctx.Module]
 	publicColumnInfo.N = m.N
 	publicColumnInfo.Entries = make([]PublicEntry, 1)
-	publicColumnInfo.Entries[0].Idx = m.N - 1 - _ctx.Pos
-	publicColumnInfo.Entries[0].Value = res[m.N-1-_ctx.Pos]
+	publicColumnInfo.Entries[0].Idx = pos
+	publicColumnInfo.Entries[0].SetBase(res[pos])
 	proof.PublicColumns[out] = publicColumnInfo
 
 	// The constraint L_pos*(E - Public(out))=0 requires Public(out) to be the sparse
 	// polynomial with E[m.N-1-_ctx.Pos] at index m.N-1-_ctx.Pos and 0 elsewhere, matching what computePublicColumns
 	// reconstructs on the verifier side via Lagrange interpolation.
 	sparseCol := make([]koalabear.Element, m.N)
-	sparseCol[m.N-1-_ctx.Pos].Set(&res[m.N-1-_ctx.Pos])
+	sparseCol[pos].Set(&res[pos])
 	if err := trace.RegisterColumn(t, out, sparseCol); err != nil {
 		panic(fmt.Sprintf("[ExposeIthEntry] register public column %s: %v", out, err))
 	}
@@ -153,17 +207,39 @@ func ExposeIthEntry(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, 
 
 	out := outs[0]
 	C := ins[0]
+	m := pg.Modules[_ctx.Module]
+	if shouldRunExtStep(pg, out) {
+		res, err := poly.BuildPointwiseEvaluationMixed(t.Base, t.Ext, pg.ColumnFields, C, mu)
+		if err != nil {
+			return err
+		}
+
+		var publicColumnInfo PublicInput
+		publicColumnInfo.N = m.N
+		publicColumnInfo.Entries = make([]PublicEntry, 1)
+		publicColumnInfo.Entries[0].Idx = _ctx.Pos
+		publicColumnInfo.Entries[0].SetExt(res[_ctx.Pos])
+		proof.PublicColumns[out] = publicColumnInfo
+
+		sparseCol := make(trace.ExtPolynomial, m.N)
+		sparseCol[_ctx.Pos].Set(&res[_ctx.Pos])
+		if err := t.PutExt(out, sparseCol); err != nil {
+			panic(fmt.Sprintf("[ExposeIthEntry] register public column %s: %v", out, err))
+		}
+
+		return nil
+	}
+
 	res, err := poly.BuildPointwiseEvaluation(t.Base, C, mu)
 	if err != nil {
 		return err
 	}
 
 	var publicColumnInfo PublicInput
-	m := pg.Modules[_ctx.Module]
 	publicColumnInfo.N = m.N
 	publicColumnInfo.Entries = make([]PublicEntry, 1)
 	publicColumnInfo.Entries[0].Idx = _ctx.Pos
-	publicColumnInfo.Entries[0].Value = res[_ctx.Pos]
+	publicColumnInfo.Entries[0].SetBase(res[_ctx.Pos])
 	proof.PublicColumns[out] = publicColumnInfo
 
 	// The constraint L_pos*(E - Public(out))=0 requires Public(out) to be the sparse
@@ -256,6 +332,17 @@ func LogUpStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Program, pro
 	E := ins[0]
 	M := ins[1]
 
+	if shouldRunExtStep(prog, out) {
+		res, err := poly.BuildLogupMixed(t.Base, t.Ext, prog.ColumnFields, E, M, mu)
+		if err != nil {
+			return err
+		}
+		if err := t.PutExt(out, res); err != nil {
+			panic(fmt.Sprintf("[_LogUpStep] register logup column %s: %v", out, err))
+		}
+		return nil
+	}
+
 	res, err := poly.BuildLogup(t.Base, E, M, mu)
 	if err != nil {
 		return err
@@ -276,6 +363,17 @@ func GrandProductStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Progr
 	out := outs[0]
 	N := ins[0]
 	D := ins[1]
+
+	if shouldRunExtStep(prog, out) {
+		res, err := poly.BuildGrandProductMixed(t.Base, t.Ext, prog.ColumnFields, N, D, mu)
+		if err != nil {
+			return err
+		}
+		if err := t.PutExt(out, res); err != nil {
+			panic(fmt.Sprintf("[_GrandProductStep] register grand product column %s: %v", out, err))
+		}
+		return nil
+	}
 
 	res, err := poly.BuildGrandProduct(t.Base, N, D, mu)
 	if err != nil {

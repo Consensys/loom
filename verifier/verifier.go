@@ -21,6 +21,7 @@ import (
 
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
@@ -36,7 +37,8 @@ import (
 )
 
 type Config struct {
-	SkipFRI bool
+	SkipFRI    bool
+	SoundField field.Kind
 }
 
 type Option func(c *Config) error
@@ -44,6 +46,13 @@ type Option func(c *Config) error
 func SkipFRI() Option {
 	return func(c *Config) error {
 		c.SkipFRI = true
+		return nil
+	}
+}
+
+func WithSoundField(soundField field.Kind) Option {
+	return func(c *Config) error {
+		c.SoundField = soundField
 		return nil
 	}
 }
@@ -57,6 +66,7 @@ type verifierRunTime struct {
 	publicInputs map[string]proof.PublicInput
 	program      board.Program
 	zeta         koalabear.Element
+	zetaExt      ext.E4
 	setup        setup.PublicKeyRoots
 	fs           *fiatshamir.Transcript
 
@@ -70,6 +80,10 @@ type verifierRunTime struct {
 }
 
 func newVerifierRuntime(program board.Program, setup setup.PublicKeyRoots, publicInputs map[string]proof.PublicInput, prf proof.Proof, config Config) (verifierRunTime, error) {
+	if config.SoundField != field.Ext {
+		config.SoundField = field.Base
+	}
+	program.SoundField = config.SoundField
 
 	res := verifierRunTime{
 		config:       config,
@@ -129,6 +143,33 @@ func newVerifierRuntime(program board.Program, setup setup.PublicKeyRoots, publi
 	return res, nil
 }
 
+func (vr *verifierRunTime) soundExt() bool {
+	return vr.config.SoundField == field.Ext
+}
+
+func setExtFromBytes(z *ext.E4, b []byte) error {
+	if len(b) < 4*koalabear.Bytes {
+		return fmt.Errorf("need at least %d bytes, got %d", 4*koalabear.Bytes, len(b))
+	}
+	z.B0.A0.SetBytes(b[0*koalabear.Bytes : 1*koalabear.Bytes])
+	z.B0.A1.SetBytes(b[1*koalabear.Bytes : 2*koalabear.Bytes])
+	z.B1.A0.SetBytes(b[2*koalabear.Bytes : 3*koalabear.Bytes])
+	z.B1.A1.SetBytes(b[3*koalabear.Bytes : 4*koalabear.Bytes])
+	return nil
+}
+
+func liftBaseToExt(v koalabear.Element) ext.E4 {
+	var res ext.E4
+	res.Lift(&v)
+	return res
+}
+
+func extFromUint64(v uint64) ext.E4 {
+	var base koalabear.Element
+	base.SetUint64(v)
+	return liftBaseToExt(base)
+}
+
 func (vr *verifierRunTime) deriveChallenges() error {
 
 	// For each FS round, bind every per-size trace root (decreasing N order,
@@ -144,9 +185,17 @@ func (vr *verifierRunTime) deriveChallenges() error {
 		if err != nil {
 			return err
 		}
-		var c koalabear.Element
-		c.SetBytes(bChallenge)
-		vr.proof.SetValueAtZetaBase(challengeName, c)
+		if vr.soundExt() {
+			var c ext.E4
+			if err := setExtFromBytes(&c, bChallenge); err != nil {
+				return err
+			}
+			vr.proof.SetValueAtZetaExt(challengeName, c)
+		} else {
+			var c koalabear.Element
+			c.SetBytes(bChallenge)
+			vr.proof.SetValueAtZetaBase(challengeName, c)
+		}
 	}
 	// Bind every per-size AIR-quotient root before computing zeta.
 	for i := vr.layout.AIRBegin; i < vr.layout.AIREnd; i++ {
@@ -156,7 +205,15 @@ func (vr *verifierRunTime) deriveChallenges() error {
 	if err != nil {
 		return err
 	}
-	vr.zeta.SetBytes(bzeta)
+	if vr.soundExt() {
+		if err := setExtFromBytes(&vr.zetaExt, bzeta); err != nil {
+			return err
+		}
+		vr.zeta.Set(&vr.zetaExt.B0.A0)
+	} else {
+		vr.zeta.SetBytes(bzeta)
+		vr.zetaExt.Lift(&vr.zeta)
+	}
 
 	return nil
 }
@@ -164,6 +221,9 @@ func (vr *verifierRunTime) deriveChallenges() error {
 // TODO the verifier should fetch the public values from the vanishing expressions, and look them up
 // in proof.PublicColumns, but not just trust proof.PublicColumns
 func (vr *verifierRunTime) computePublicColumns() error {
+	if vr.soundExt() {
+		return vr.computePublicColumnsExt()
+	}
 	for k, pi := range vr.proof.PublicColumns {
 		var lag koalabear.Element
 		for _, pe := range pi.Entries {
@@ -176,7 +236,24 @@ func (vr *verifierRunTime) computePublicColumns() error {
 	return nil
 }
 
+func (vr *verifierRunTime) computePublicColumnsExt() error {
+	for k, pi := range vr.proof.PublicColumns {
+		var lag ext.E4
+		for _, pe := range pi.Entries {
+			tmp := poly.LagrangeAtZetaExt(vr.zetaExt, pi.N, pe.Idx)
+			value := pe.ExtValue()
+			tmp.Mul(&tmp, &value)
+			lag.Add(&lag, &tmp)
+		}
+		vr.proof.SetValueAtZetaExt(k, lag)
+	}
+	return nil
+}
+
 func (vr *verifierRunTime) computeLagrange() error {
+	if vr.soundExt() {
+		return vr.computeLagrangeExt()
+	}
 	config := expr.OnlyLagranges
 	for _, m := range vr.program.Modules {
 		lags := m.VanishingRelation.Leaves(expr.NewConfig(config...))
@@ -202,7 +279,29 @@ func (vr *verifierRunTime) computeLagrange() error {
 	return nil
 }
 
+func (vr *verifierRunTime) computeLagrangeExt() error {
+	config := expr.OnlyLagranges
+	for _, m := range vr.program.Modules {
+		lags := m.VanishingRelation.Leaves(expr.NewConfig(config...))
+		for _, lag := range lags {
+			if _, ok := vr.proof.ValueAtZetaExt(lag); ok {
+				continue
+			}
+			i := constants.ParseLagrangeName(lag)
+			if i < 0 {
+				i = m.N + i
+			}
+			v := poly.LagrangeAtZetaExt(vr.zetaExt, m.N, i)
+			vr.proof.SetValueAtZetaExt(lag, v)
+		}
+	}
+	return nil
+}
+
 func (vr *verifierRunTime) checkLogupBus() error {
+	if vr.soundExt() {
+		return vr.checkLogupBusExt()
+	}
 	for _, bus := range vr.program.LogupBus {
 		var cumNegative, cumPositive koalabear.Element
 		for _, pos := range bus.Positive {
@@ -227,8 +326,38 @@ func (vr *verifierRunTime) checkLogupBus() error {
 	return nil
 }
 
+func (vr *verifierRunTime) checkLogupBusExt() error {
+	for _, bus := range vr.program.LogupBus {
+		var cumNegative, cumPositive ext.E4
+		for _, pos := range bus.Positive {
+			if len(vr.proof.PublicColumns[pos].Entries) > 1 {
+				return fmt.Errorf("an extracted value from a logup column should have exactly one entry")
+			}
+			pe := vr.proof.PublicColumns[pos].Entries[0]
+			value := pe.ExtValue()
+			cumPositive.Add(&cumPositive, &value)
+		}
+		for _, neg := range bus.Negative {
+			if len(vr.proof.PublicColumns[neg].Entries) > 1 {
+				return fmt.Errorf("an extracted value from a logup column should have exactly one entry")
+			}
+			pe := vr.proof.PublicColumns[neg].Entries[0]
+			value := pe.ExtValue()
+			cumNegative.Add(&cumNegative, &value)
+		}
+		cumPositive.Sub(&cumPositive, &cumNegative)
+		if !cumPositive.IsZero() {
+			return fmt.Errorf("the cumulative sums of the bus are not equal")
+		}
+	}
+	return nil
+}
+
 // checkAIRRelations checks the air relations per module
 func (vr *verifierRunTime) checkAIRRelations() error {
+	if vr.soundExt() {
+		return vr.checkAIRRelationsExt()
+	}
 
 	valuesAtZeta, err := vr.proof.BaseValuesAtZeta()
 	if err != nil {
@@ -266,6 +395,42 @@ func (vr *verifierRunTime) checkAIRRelations() error {
 		var zetaNMinusOne koalabear.Element
 		zetaNMinusOne.Sub(&zetaN, &one)
 		var rhs koalabear.Element
+		rhs.Mul(&zetaNMinusOne, &qZeta)
+
+		if !vZeta.Equal(&rhs) {
+			return fmt.Errorf("AIR relation check failed for module %q: V(zeta)=%s != (zeta^N-1)*Q(zeta)=%s", moduleName, vZeta.String(), rhs.String())
+		}
+	}
+
+	return nil
+}
+
+func (vr *verifierRunTime) checkAIRRelationsExt() error {
+	valuesAtZeta := vr.proof.ExtValuesAtZeta()
+
+	for moduleName, m := range vr.program.Modules {
+		var qZeta ext.E4
+		var zetaPowIN ext.E4
+		zetaPowIN.SetOne()
+		var zetaN ext.E4
+		zetaN.Exp(vr.zetaExt, big.NewInt(int64(m.N)))
+		for i := 0; ; i++ {
+			chunkName := constants.QuotientChunkName(moduleName, i)
+			chunkVal, ok := vr.proof.ValueAtZetaExt(chunkName)
+			if !ok {
+				break
+			}
+			var term ext.E4
+			term.Mul(&zetaPowIN, &chunkVal)
+			qZeta.Add(&qZeta, &term)
+			zetaPowIN.Mul(&zetaPowIN, &zetaN)
+		}
+
+		vZeta := m.VanishingRelation.EvalExt(valuesAtZeta)
+
+		var one, zetaNMinusOne, rhs ext.E4
+		one.SetOne()
+		zetaNMinusOne.Sub(&zetaN, &one)
 		rhs.Mul(&zetaNMinusOne, &qZeta)
 
 		if !vZeta.Equal(&rhs) {
@@ -336,6 +501,9 @@ func (vr *verifierRunTime) checkMerkleProofsPointSampling() error {
 // the prover-side ComputeDeepQuotient computed pointwise at the FRI query
 // positions instead of as a polynomial.
 func (vr *verifierRunTime) checkFRIBridge() error {
+	if vr.soundExt() {
+		return vr.checkFRIBridgeExt()
+	}
 	NQ := constants.NUM_QUERIES
 
 	// Same iteration order as the prover (sizes decreasing, shifts increasing,
@@ -511,6 +679,182 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 				}
 				actualP = lq.LeafPBase
 				actualQ = lq.LeafQBase
+			}
+			if !DQ_P.Equal(&actualP) {
+				return fmt.Errorf("checkFRIBridge: query %d level %d (N=%d): DQ(ω_l^s) mismatch: got %s, want %s", q, i, N, DQ_P.String(), actualP.String())
+			}
+			if !DQ_Q.Equal(&actualQ) {
+				return fmt.Errorf("checkFRIBridge: query %d level %d (N=%d): DQ(-ω_l^s) mismatch: got %s, want %s", q, i, N, DQ_Q.String(), actualQ.String())
+			}
+		}
+	}
+
+	return nil
+}
+
+func (vr *verifierRunTime) checkFRIBridgeExt() error {
+	NQ := constants.NUM_QUERIES
+
+	dqLayout := prover.BuildDeepQuotientLayout(vr.program)
+	sizes := dqLayout.Sizes
+
+	domainBySize := make(map[int]*fft.Domain, len(sizes))
+	for _, m := range vr.program.Modules {
+		if _, ok := domainBySize[m.N]; !ok {
+			domainBySize[m.N] = m.D
+		}
+	}
+
+	alpha := extFromUint64(10)
+
+	samplePair := func(slot prover.Slot, q int) (ext.E4, ext.E4, error) {
+		if slot.TreeIdx >= len(vr.proof.PointSamplings[q]) {
+			return ext.E4{}, ext.E4{}, fmt.Errorf("checkFRIBridge: tree index %d out of range", slot.TreeIdx)
+		}
+		wp := vr.proof.PointSamplings[q][slot.TreeIdx]
+		if slot.Field == field.Ext {
+			rawIdx := slot.PolyIdx
+			if rawIdx >= len(wp.RawLeafExt) {
+				return ext.E4{}, ext.E4{}, fmt.Errorf("checkFRIBridge: ext raw leaf index %d out of range for slot %+v (have %d)", rawIdx, slot, len(wp.RawLeafExt))
+			}
+			return wp.RawLeafExt[rawIdx][0], wp.RawLeafExt[rawIdx][1], nil
+		}
+
+		rawIdx := slot.PolyIdx
+		if rawIdx >= len(wp.RawLeafBase) {
+			return ext.E4{}, ext.E4{}, fmt.Errorf("checkFRIBridge: base raw leaf index %d out of range for slot %+v (have %d)", rawIdx, slot, len(wp.RawLeafBase))
+		}
+		return liftBaseToExt(wp.RawLeafBase[rawIdx][0]), liftBaseToExt(wp.RawLeafBase[rawIdx][1]), nil
+	}
+
+	for q := 0; q < NQ; q++ {
+		sFull := vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0].Path.LeafIdx
+
+		for i, N := range sizes {
+			domainSize := constants.RATE * N
+			halfDomain := domainSize / 2
+			sL := sFull % halfDomain
+
+			generator, err := koalabear.Generator(uint64(domainSize))
+			if err != nil {
+				return err
+			}
+			var XBase, negXBase koalabear.Element
+			XBase.Exp(generator, big.NewInt(int64(sL)))
+			negXBase.Neg(&XBase)
+			X := liftBaseToExt(XBase)
+			negX := liftBaseToExt(negXBase)
+
+			domN := domainBySize[N]
+
+			var DQ_P, DQ_Q ext.E4
+			var alphaAcc ext.E4
+			alphaAcc.SetOne()
+
+			for j, shift := range dqLayout.Shifts[i] {
+				var omegaShift koalabear.Element
+				omegaShift.Exp(domN.Generator, big.NewInt(int64(shift)))
+				z_s := vr.zetaExt
+				z_s.MulByElement(&z_s, &omegaShift)
+
+				var v_s, C_at_X, C_at_negX ext.E4
+				names := dqLayout.Names[i][j]
+				keys := dqLayout.Keys[i][j]
+				for k := range names {
+					evalAtZ, ok := vr.proof.ValueAtZetaExt(keys[k])
+					if !ok {
+						return fmt.Errorf("checkFRIBridge: %q not in ValuesAtZeta", keys[k])
+					}
+					slot, ok := vr.layout.ColSlot[names[k]]
+					if !ok {
+						return fmt.Errorf("checkFRIBridge: column %q not in layout.ColSlot", names[k])
+					}
+					leafP, leafQ, err := samplePair(slot, q)
+					if err != nil {
+						return err
+					}
+
+					var term ext.E4
+					term.Mul(&evalAtZ, &alphaAcc)
+					v_s.Add(&v_s, &term)
+					term.Mul(&leafP, &alphaAcc)
+					C_at_X.Add(&C_at_X, &term)
+					term.Mul(&leafQ, &alphaAcc)
+					C_at_negX.Add(&C_at_negX, &term)
+
+					alphaAcc.Mul(&alphaAcc, &alpha)
+				}
+
+				var num, denom ext.E4
+				num.Sub(&v_s, &C_at_X)
+				denom.Sub(&z_s, &X)
+				denom.Inverse(&denom)
+				num.Mul(&num, &denom)
+				DQ_P.Add(&DQ_P, &num)
+
+				num.Sub(&v_s, &C_at_negX)
+				denom.Sub(&z_s, &negX)
+				denom.Inverse(&denom)
+				num.Mul(&num, &denom)
+				DQ_Q.Add(&DQ_Q, &num)
+			}
+
+			if len(dqLayout.AIRChunks[i]) > 0 {
+				var v_air, C_at_X, C_at_negX ext.E4
+				for _, chunkName := range dqLayout.AIRChunks[i] {
+					evalAtZ, ok := vr.proof.ValueAtZetaExt(chunkName)
+					if !ok {
+						return fmt.Errorf("checkFRIBridge: %q not in ValuesAtZeta", chunkName)
+					}
+					slot, ok := vr.layout.AIRChunkSlot[chunkName]
+					if !ok {
+						return fmt.Errorf("checkFRIBridge: chunk %q not in layout.AIRChunkSlot", chunkName)
+					}
+					leafP, leafQ, err := samplePair(slot, q)
+					if err != nil {
+						return err
+					}
+
+					var term ext.E4
+					term.Mul(&evalAtZ, &alphaAcc)
+					v_air.Add(&v_air, &term)
+					term.Mul(&leafP, &alphaAcc)
+					C_at_X.Add(&C_at_X, &term)
+					term.Mul(&leafQ, &alphaAcc)
+					C_at_negX.Add(&C_at_negX, &term)
+
+					alphaAcc.Mul(&alphaAcc, &alpha)
+				}
+
+				var num, denom ext.E4
+				num.Sub(&v_air, &C_at_X)
+				denom.Sub(&vr.zetaExt, &X)
+				denom.Inverse(&denom)
+				num.Mul(&num, &denom)
+				DQ_P.Add(&DQ_P, &num)
+
+				num.Sub(&v_air, &C_at_negX)
+				denom.Sub(&vr.zetaExt, &negX)
+				denom.Inverse(&denom)
+				num.Mul(&num, &denom)
+				DQ_Q.Add(&DQ_Q, &num)
+			}
+
+			var actualP, actualQ ext.E4
+			if i == 0 {
+				layer := vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0]
+				if layer.Field != field.Ext {
+					return fmt.Errorf("checkFRIBridge: expected ext FRI query layer, got %s", layer.Field)
+				}
+				actualP = layer.LeafPExt
+				actualQ = layer.LeafQExt
+			} else {
+				lq := vr.proof.DeepQuotientFriProof.LevelQueries[i-1][q][0]
+				if lq.Field != field.Ext {
+					return fmt.Errorf("checkFRIBridge: expected ext FRI level query, got %s", lq.Field)
+				}
+				actualP = lq.LeafPExt
+				actualQ = lq.LeafQExt
 			}
 			if !DQ_P.Equal(&actualP) {
 				return fmt.Errorf("checkFRIBridge: query %d level %d (N=%d): DQ(ω_l^s) mismatch: got %s, want %s", q, i, N, DQ_P.String(), actualP.String())

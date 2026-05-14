@@ -635,6 +635,13 @@ func (d *DAG) EvalMixed(baseVars map[string]koalabear.Element, extVars map[strin
 	return cache[d.Root]
 }
 
+// EvalExt evaluates the DAG entirely in the E4 extension field. It is used on
+// verifier-side zeta checks where every column evaluation, even for base
+// polynomials, already lives in E4 because zeta is an extension point.
+func (d *DAG) EvalExt(vals map[string]ext.E4) ext.E4 {
+	return d.EvalMixed(nil, vals)
+}
+
 // evalMixedDAGNode evaluates one node for EvalMixed after all children have
 // already been evaluated into cache. Every operation is performed in E4; base
 // inputs must have been lifted before reaching non-leaf arithmetic.

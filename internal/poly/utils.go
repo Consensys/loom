@@ -17,6 +17,7 @@ import (
 	"math/big"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 )
 
 // isPowerOfTwo checks if n is a power of two
@@ -58,6 +59,32 @@ func LagrangeAtZeta(zeta koalabear.Element, N, i int) koalabear.Element {
 	zeta.Mul(&zeta, &Nk)
 	omegai.Div(&omegai, &zeta)
 	return omegai
+}
+
+func LagrangeAtZetaExt(zeta ext.E4, N, i int) ext.E4 {
+	var zetaN, numerator, denominator, one ext.E4
+	zetaN.Exp(zeta, big.NewInt(int64(N)))
+	one.SetOne()
+	zetaN.Sub(&zetaN, &one)
+
+	omegaI, err := koalabear.Generator(uint64(N))
+	if err != nil {
+		panic(err)
+	}
+	omegaI.Exp(omegaI, big.NewInt(int64(i)))
+	numerator.MulByElement(&zetaN, &omegaI)
+
+	var omegaIExt ext.E4
+	omegaIExt.Lift(&omegaI)
+	denominator.Sub(&zeta, &omegaIExt)
+
+	var Nk koalabear.Element
+	Nk.SetUint64(uint64(N))
+	denominator.MulByElement(&denominator, &Nk)
+	denominator.Inverse(&denominator)
+
+	numerator.Mul(&numerator, &denominator)
+	return numerator
 }
 
 // nextPowerOfTwo is an alias for NextPowerOfTwo for internal use

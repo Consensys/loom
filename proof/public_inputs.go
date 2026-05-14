@@ -13,11 +13,37 @@
 
 package proof
 
-import "github.com/consensys/gnark-crypto/field/koalabear"
+import (
+	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/gnark-crypto/field/koalabear/extensions"
+	"github.com/consensys/loom/field"
+)
 
 type PublicEntry struct {
-	Idx   int
-	Value koalabear.Element
+	Idx      int
+	Field    field.Kind
+	Value    koalabear.Element
+	ValueExt extensions.E4
+}
+
+func (e *PublicEntry) SetBase(v koalabear.Element) {
+	e.Field = field.Base
+	e.Value.Set(&v)
+	e.ValueExt.Lift(&v)
+}
+
+func (e *PublicEntry) SetExt(v extensions.E4) {
+	e.Field = field.Ext
+	e.ValueExt.Set(&v)
+}
+
+func (e PublicEntry) ExtValue() extensions.E4 {
+	if e.Field == field.Ext {
+		return e.ValueExt
+	}
+	var v extensions.E4
+	v.Lift(&e.Value)
+	return v
 }
 
 type PublicInput struct {

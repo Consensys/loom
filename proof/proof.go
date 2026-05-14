@@ -63,6 +63,10 @@ func (p *Proof) SetValueAtZetaBase(name string, v koalabear.Element) {
 	p.ValuesAtZeta[name] = ext
 }
 
+func (p *Proof) SetValueAtZetaExt(name string, v extensions.E4) {
+	p.ValuesAtZeta[name] = v
+}
+
 func (p Proof) ValueAtZetaBase(name string) (koalabear.Element, bool, error) {
 	v, ok := p.ValuesAtZeta[name]
 	if !ok {
@@ -72,6 +76,11 @@ func (p Proof) ValueAtZetaBase(name string) (koalabear.Element, bool, error) {
 		return koalabear.Element{}, true, fmt.Errorf("ValuesAtZeta[%q] is not a base-field value", name)
 	}
 	return v.B0.A0, true, nil
+}
+
+func (p Proof) ValueAtZetaExt(name string) (extensions.E4, bool) {
+	v, ok := p.ValuesAtZeta[name]
+	return v, ok
 }
 
 func (p Proof) BaseValuesAtZeta() (map[string]koalabear.Element, error) {
@@ -84,4 +93,12 @@ func (p Proof) BaseValuesAtZeta() (map[string]koalabear.Element, error) {
 		values[name] = v
 	}
 	return values, nil
+}
+
+func (p Proof) ExtValuesAtZeta() map[string]extensions.E4 {
+	values := make(map[string]extensions.E4, len(p.ValuesAtZeta))
+	for name, v := range p.ValuesAtZeta {
+		values[name] = v
+	}
+	return values
 }
