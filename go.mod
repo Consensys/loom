@@ -8,7 +8,7 @@ require (
 	github.com/bits-and-blooms/bitset v1.24.4 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/consensys/gnark v0.14.1-0.20260224185952-e002a37bb76c // indirect
-	github.com/consensys/go-corset v1.2.12 // indirect
+	github.com/consensys/go-corset v1.2.16 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/google/pprof v0.0.0-20260202012954-cb029daf43ef // indirect
 	github.com/leanovate/gopter v0.2.11 // indirect

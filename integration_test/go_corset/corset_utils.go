@@ -331,6 +331,7 @@ func (b *CorsetBridge) AddConstraintInLoom(name string, corsetCS schema.Constrai
 	case air.VanishingConstraint[gocorset_kb.Element]:
 		vc := cs.Unwrap()
 		modName := b.loomModuleName(vc.Context)
+		frontPadding := int(schema.RequiredPaddingRows(vc.Context, false, schema.Any(*b.Schema)))
 
 		if vc.Domain.IsEmpty() {
 			// Global vanishing constraint. go-corset evaluates on rows
@@ -373,7 +374,7 @@ func (b *CorsetBridge) AddConstraintInLoom(name string, corsetCS schema.Constrai
 			// For bounds.End > 0, the spillage row reads zero for the "current" value
 			// and the first real row for the forward-shifted value. Add a boundary
 			// constraint at row 0 of our (spillage-free) trace to enforce this.
-			if bounds.End > 0 {
+			if bounds.End > 0 && frontPadding > 0 {
 				boundaryExpr := b.termToSpillageBoundaryExpr(vc.Constraint.Term, vc.Context)
 				m.AssertZeroAt(boundaryExpr, 0)
 			}
@@ -383,10 +384,19 @@ func (b *CorsetBridge) AddConstraintInLoom(name string, corsetCS schema.Constrai
 		// Local constraint: holds on a specific row.
 		position := vc.Domain.Unwrap()
 		if position >= 0 {
-			// go-corset always prepends ≥1 spillage rows (all zero) before real data.
-			// (:domain {0}) therefore checks the spillage row, which is trivially zero.
-			// In loom we strip spillage and work on real rows only, so non-negative
-			// domain constraints are vacuously satisfied — skip them entirely.
+			// Non-negative domains are counted from the start of go-corset's
+			// expanded trace. We strip front padding before passing the trace to
+			// loom, so positions that fall in that stripped padding are vacuous.
+			// Positions after the padding become fixed row constraints.
+			if position < frontPadding {
+				return nil
+			}
+			m, ok := b.Builder.Modules[modName]
+			if !ok {
+				return fmt.Errorf("constraint %q: module %q not found in builder", name, modName)
+			}
+			loomExpr := b.termToExpr(vc.Constraint.Term, vc.Context, 0)
+			m.AssertZeroAt(loomExpr, position-frontPadding)
 			return nil
 		}
 		// position < 0: (:domain {-K}) checks the K-th row from the end of the
@@ -646,6 +656,46 @@ func buildLastValuePaddingSet(_ *air.Schema[gocorset_kb.Element]) map[string]boo
 	return make(map[string]bool)
 }
 
+// ExpandedTraceToLoom converts an expanded go-corset trace into a loom trace.
+// It assumes the trace was built by go-corset's TraceBuilder with the supplied
+// defensive-padding setting, so the original row counts are obtained by removing
+// the schema-required front padding from each module.
+func ExpandedTraceToLoom(
+	ct gc_trace.Trace[gocorset_kb.Element],
+	airSchema *air.Schema[gocorset_kb.Element],
+	defensive bool,
+) (trace.Trace, error) {
+	anySchema := schema.Any(*airSchema)
+	origHeights := make(map[string]uint, ct.Width())
+
+	for i := uint(0); i < ct.Width(); i++ {
+		mod := ct.Module(i)
+		padding := schema.RequiredPaddingRows(i, defensive, anySchema)
+		if mod.Height() < padding {
+			return trace.Trace{}, fmt.Errorf(
+				"ExpandedTraceToLoom: module %q height %d is smaller than required padding %d",
+				mod.Name().String(),
+				mod.Height(),
+				padding,
+			)
+		}
+		origHeights[mod.Name().String()] = mod.Height() - padding
+	}
+
+	return TraceToLoom(ct, airSchema, origHeights), nil
+}
+
+// TraceToLoom converts a go-corset expanded trace into a loom trace. The
+// origHeights map must contain each module's row count before go-corset added
+// spillage / defensive front padding.
+func TraceToLoom(
+	ct gc_trace.Trace[gocorset_kb.Element],
+	airSchema *air.Schema[gocorset_kb.Element],
+	origHeights map[string]uint,
+) trace.Trace {
+	return corsetTraceToLoom(ct, origHeights, buildLastValuePaddingSet(airSchema))
+}
+
 // corsetTraceToLoom converts a go-corset expanded trace into a loom trace.Trace.
 // origHeights maps each module name to its row count before spillage padding.
 // padLastValue maps full column keys to true for columns that should be padded
@@ -697,7 +747,7 @@ func corsetTraceToLoom(ct gc_trace.Trace[gocorset_kb.Element], origHeights map[s
 
 // ====================== Size setting =========================
 
-func setSizes(program *board.Program, tr trace.Trace) {
+func SetSize(program *board.Program, tr trace.Trace) {
 	moduleSizes := map[string]int{}
 	for colName, col := range tr.Base {
 		idx := strings.IndexByte(colName, '.')
