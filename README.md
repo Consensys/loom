@@ -6,18 +6,18 @@
 
 It lets you describe a computation as a set of polynomial constraints over a **trace** (a collection of named columns), compile it into a proof system, and produce a succinct proof that all constraints vanish on the evaluation domain.
 
-Fiat-Shamir challenges, including lookup/permutation challenges, zeta, and FRI fold challenges, are sampled in the Koalabear E4 extension field. Base trace columns remain base-valued and are lifted only when evaluated at extension points. The resulting soundness error is approximately `N/2^124`.
+Fiat-Shamir challenges, including lookup/permutation challenges, canonical trace-round challenges, `__zeta`, `alpha_DEEP`, and FRI fold challenges, are sampled in the Koalabear E4 extension field. The `alpha_DEEP` challenge binds the claimed evaluations folded into the DEEP quotient. Base trace columns remain base-valued and are lifted only when evaluated at extension points. The resulting soundness error is approximately `N/2^124`.
 
 ## Core concepts
 
 | Concept | Type | Description |
 |---|---|---|
-| Trace | `trace.Trace` (`Base` and `Ext` column maps) | Named base or extension columns, all of length N |
+| Trace | `trace.Trace` (`Base` and `Ext` column maps) | Named base or extension columns. Columns in the same module share the module size N; a program may contain several sizes |
 | Relation | `expr.Expr` | A multivariate polynomial that must vanish row-wise |
 | Builder | `board.Builder` | Accumulates modules, relations, and derivation steps before compilation |
 | Module | `board.Module` | A named constraint domain; all columns within it share the same N |
 | Program | `board.Program` | Compiled IOP: level-ordered step schedule + folded vanishing relations |
-| Public inputs | `proof.PublicInputs` | Claimed values at specific row indices, checked by both prover and verifier |
+| Public openings | `proof.Proof.PublicColumns` / `proof.PublicInput` | Values exposed by board steps such as `AddExposeIthEntryStep` and checked through sparse public columns |
 
 ## Workflow
 
@@ -25,9 +25,10 @@ Fiat-Shamir challenges, including lookup/permutation challenges, zeta, and FRI f
 1. Create a board.Builder and add one board.Module per constraint domain
 2. Describe polynomial constraints on each module (AssertZero, …)
 3. Attach standard arguments (permutation, lookup, …) from the arguments/ package
-4. board.Compile(builder) → Program
-5. prover.Prove(trace, setup, publicInputs, program) → Proof
-6. verifier.Verify(publicInputs, setup, program, proof)
+4. board.Compile(&builder) → Program
+5. setup.Setup(trace, program) → setup.PublicKey, if the program has precommitted public columns
+6. prover.Prove(trace, publicKey, publicInputs, program) → Proof
+7. verifier.Verify(publicInputs, setup.Roots(publicKey), program, proof)
 ```
 
 ## Example: PLONK gate + copy constraint
@@ -35,6 +36,9 @@ Fiat-Shamir challenges, including lookup/permutation challenges, zeta, and FRI f
 Prove that PLONK arithmetic gates are satisfied and that wires are consistently connected.
 
 ```go
+builder := board.NewBuilder()
+mod := board.NewModule("plonk")
+
 // Arithmetic gate: QL·L + QR·R + QM·L·R + QO·O + QK = 0
 gate := expr.Col("QL").Mul(expr.Col("L")).
     Add(expr.Col("QR").Mul(expr.Col("R"))).
@@ -42,9 +46,10 @@ gate := expr.Col("QL").Mul(expr.Col("L")).
     Add(expr.Col("QO").Mul(expr.Col("O"))).
     Add(expr.Col("QK"))
 mod.AssertZero(gate)
+builder.AddModule(mod)
 
 // Copy constraint: wires L, R, O are consistently permuted by S
-arguments.CopyConstraint(&builder, "", []expr.Expr{
+arguments.CopyConstraint(&builder, "plonk", []expr.Expr{
     expr.Col("L"), expr.Col("R"), expr.Col("O"),
 }, S)  // S is a board.PermutationGen
 
@@ -67,31 +72,46 @@ err = verifier.Verify(nil, nil, pg, prf)
 | `LookupUnion(builder, S, T []board.Column)` | Multiple S/T pairs sharing one challenge |
 | `LookupUnionTuple(builder, S, T []board.Table)` | Same for row-tuples |
 | `CLookup(builder, S, T board.Column, selS, selT expr.Expr)` | Conditional lookup with per-row selectors |
+| `CLookupTuple(builder, S, T board.Table, selS, selT expr.Expr)` | Conditional lookup for row-tuples |
 | `CLookupUnion(builder, selS, selT []expr.Expr, S, T []board.Column)` | Conditional lookup, multi-pair |
+| `CLookupUnionTuple(builder, selS, selT []expr.Expr, S, T []board.Table)` | Conditional tuple lookup, multi-pair |
 | `Range(builder, S board.Column, bound uint64)` | Every value in `S` is in `[0, bound)` |
 
 `board.Column{Module: "name", In: expr}` and `board.Table{Module: "name", In: []expr}` are the two helper types used across all argument functions.
 
-## Public inputs
+## Public values
 
-`proof.PublicInputs` is a `map[string]PublicInput` that binds specific row indices of named columns to claimed field values. Pass it to both `prover.Prove` and `verifier.Verify`.
+Values exposed with `board.AddExposeIthEntryStep`, `board.AddExposeRelativeIthEntryStep`, `board.AddExposeLastEntryStep`, and `board.AddMakeEntriesPublicStep` are stored in `proof.Proof.PublicColumns`. The verifier reconstructs their sparse public columns at `__zeta` and checks the constraints that bind them to the private trace.
 
 ```go
-publicInputs := proof.PublicInputs{
-    "A": {N: 16, Entries: []proof.PublicEntry{
+publicColumn := proof.PublicInput{
+    N: 16,
+    Entries: []proof.PublicEntry{
         {Idx: 0, Value: zeroElement},
         {Idx: 5, Value: someElement},
-    }},
+    },
 }
 ```
 
-For columns that require a setup commitment (e.g. PLONK selector columns), use `prover.Setup` to pre-commit them:
+The `publicInputs` parameters on `prover.Prove` and `verifier.Verify` are still part of the API, but the current prover/verifier path uses the public values carried in `Proof.PublicColumns`.
+
+For columns that require a setup commitment (e.g. PLONK selector columns), mark them with `builder.MakeColumnPublic` and use `setup.Setup` to pre-commit them:
 
 ```go
-setup, err := prover.Setup(trace, pg)
-prf, err  := prover.Prove(trace, setup, publicInputs, pg)
-err        = verifier.Verify(publicInputs, setup, pg, prf)
+pk, err  := setup.Setup(trace, pg)
+prf, err := prover.Prove(trace, pk, nil, pg)
+err       = verifier.Verify(nil, setup.Roots(pk), pg, prf)
 ```
+
+## Development
+
+```sh
+go mod download
+go test ./integration_test/go_corset/zkc   # current Go-Corset/zkc integration path
+go test ./...                              # full suite, including older Lisp fixtures
+```
+
+Go-Corset integration tests are split by frontend. Current zkc fixtures live in `integration_test/go_corset/zkc/testdata`; the older Lisp fixtures live under `integration_test/go_corset/lisp`.
 
 ## Visualisation (`viz/`)
 
