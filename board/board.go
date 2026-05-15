@@ -283,7 +283,6 @@ type Program struct {
 	PublicColumns         []ColumnRef // known columns, precommitted (ex: ql, qr, etc in plonk)
 	FScolumnsDependencies [][]ColumnRef
 	ColumnFields          map[string]field.Kind
-	SoundField            field.Kind
 	LogupBus              []LogupBus
 	Steps                 [][]ProverStep
 }

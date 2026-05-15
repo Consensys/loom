@@ -51,7 +51,7 @@ func NewProverStep(ins []expr.Expr, outs []string, step Step, ctx StepContext) P
 }
 
 func shouldRunExtStep(prog *Program, out string) bool {
-	return prog.SoundField == field.Ext && prog.ColumnFields[out] == field.Ext
+	return prog.ColumnFields[out] == field.Ext
 }
 
 type MakeEntriesPublicCtx struct {

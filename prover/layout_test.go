@@ -154,17 +154,6 @@ func TestBuildLayoutRailRelativePolyIdx(t *testing.T) {
 			t.Errorf("ColSlot[%q] = %+v, want %+v", name, got, want)
 		}
 	}
-	wantTraceRawIdx := map[string]int{
-		"base_0": 0,
-		"base_1": 1,
-		"ext_0":  2,
-		"ext_1":  3,
-	}
-	for name, want := range wantTraceRawIdx {
-		if got := layout.LegacyBaseRawLeafIndex(layout.ColSlot[name]); got != want {
-			t.Errorf("LegacyBaseRawLeafIndex(%q) = %d, want %d", name, got, want)
-		}
-	}
 
 	wantAIRSlot := map[string]Slot{
 		constants.QuotientChunkName("base", 0): {TreeIdx: 1, PolyIdx: 0, Field: field.Base},
@@ -173,15 +162,6 @@ func TestBuildLayoutRailRelativePolyIdx(t *testing.T) {
 	for name, want := range wantAIRSlot {
 		if got := layout.AIRChunkSlot[name]; got != want {
 			t.Errorf("AIRChunkSlot[%q] = %+v, want %+v", name, got, want)
-		}
-	}
-	wantAIRRawIdx := map[string]int{
-		constants.QuotientChunkName("base", 0): 0,
-		constants.QuotientChunkName("ext", 0):  1,
-	}
-	for name, want := range wantAIRRawIdx {
-		if got := layout.LegacyBaseRawLeafIndex(layout.AIRChunkSlot[name]); got != want {
-			t.Errorf("LegacyBaseRawLeafIndex(%q) = %d, want %d", name, got, want)
 		}
 	}
 

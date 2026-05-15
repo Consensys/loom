@@ -207,51 +207,6 @@ func nextRailPolyIdx(counters map[field.Kind]int, f field.Kind) int {
 	return idx
 }
 
-type legacyBaseCommitEntry struct {
-	Field field.Kind
-	Poly  poly.Polynomial
-}
-
-// legacyBaseCommitOrder returns the temporary base-rail order used until PR11:
-// all currently-live polys are committed on the base rail, with layout-base
-// polys first and layout-ext polys second. Each partition preserves its
-// rail-local layout order.
-func legacyBaseCommitOrder(entries []legacyBaseCommitEntry) []poly.Polynomial {
-	out := make([]poly.Polynomial, 0, len(entries))
-	for _, e := range entries {
-		if e.Field == field.Base {
-			out = append(out, e.Poly)
-		}
-	}
-	for _, e := range entries {
-		if e.Field == field.Ext {
-			out = append(out, e.Poly)
-		}
-	}
-	return out
-}
-
-// LegacyBaseRawLeafIndex maps a rail-relative Slot to the temporary PR9
-// base-rail index. PR11 should remove this shim once runtime ext polys are
-// committed to RawLeafExt and callers can dispatch directly on Slot.Field.
-func (l Layout) LegacyBaseRawLeafIndex(slot Slot) int {
-	if slot.Field == field.Base {
-		return slot.PolyIdx
-	}
-	baseCount := 0
-	for _, s := range l.ColSlot {
-		if s.TreeIdx == slot.TreeIdx && s.Field == field.Base {
-			baseCount++
-		}
-	}
-	for _, s := range l.AIRChunkSlot {
-		if s.TreeIdx == slot.TreeIdx && s.Field == field.Base {
-			baseCount++
-		}
-	}
-	return baseCount + slot.PolyIdx
-}
-
 // sortedSizesDesc returns the keys of m sorted in decreasing order.
 func sortedSizesDesc[V any](m map[int]V) []int {
 	out := make([]int, 0, len(m))

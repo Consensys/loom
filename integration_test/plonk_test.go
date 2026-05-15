@@ -20,7 +20,6 @@ import (
 	"github.com/consensys/loom/arguments"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
-	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/prover"
 	"github.com/consensys/loom/setup"
 	"github.com/consensys/loom/trace"
@@ -89,52 +88,6 @@ func TestVerifierFibo(t *testing.T) {
 
 	err = verifier.Verify(nil, nil, program, proof)
 	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestVerifierFiboExtensionSoundField(t *testing.T) {
-	builder := board.NewBuilder()
-
-	rangeModule := board.NewModule("range")
-	N := 4
-	rangeModule.N = 2 * N
-
-	fibonacciModule := prepareFibonacciModule(N)
-	builder.AddModule(fibonacciModule)
-	builder.AddModule(rangeModule)
-
-	T := board.Column{
-		Module: "range",
-		In:     expr.Col("Lookup"),
-	}
-	for _, c := range []string{"A", "B", "C"} {
-		S := board.Column{
-			Module: "fibonacci",
-			In:     expr.Col(c),
-		}
-		if err := arguments.Lookup(&builder, S, T); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	program, err := board.Compile(&builder)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var a, b koalabear.Element
-	b.SetOne()
-	traceFrob := prover.TraceFibonacci(N, a, b)
-	traceRange := prover.TraceRange(N)
-	tr := prover.MergeTrace(traceFrob, traceRange)
-
-	proof, err := prover.Prove(tr, nil, nil, program, prover.WithSoundField(field.Ext))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := verifier.Verify(nil, nil, program, proof, verifier.WithSoundField(field.Ext)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -226,39 +179,6 @@ func TestVerifierPlonk(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	}
-}
-
-func TestVerifierPlonkExtensionSoundField(t *testing.T) {
-	builder := board.NewBuilder()
-
-	N := 16
-	tr, sigma, size, err := GetIthPlonkTrace(N, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	plonkModule := PrepareIthPlonk(size, 0)
-	builder.AddModule(plonkModule)
-
-	lro := []expr.Expr{expr.Col(Ith(ID_L, 0)), expr.Col(Ith(ID_R, 0)), expr.Col(Ith(ID_O, 0))}
-	sigmaGen := board.NewPermutationGen(sigma, Ith("plonk.S", 0))
-	if err := arguments.CopyConstraint(&builder, Ith("plonk", 0), lro, sigmaGen); err != nil {
-		t.Fatal(err)
-	}
-
-	program, err := board.Compile(&builder)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	proof, err := prover.Prove(tr, nil, nil, program, prover.WithSoundField(field.Ext))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := verifier.Verify(nil, nil, program, proof, verifier.WithSoundField(field.Ext)); err != nil {
-		t.Fatal(err)
 	}
 }
 

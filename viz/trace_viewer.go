@@ -18,6 +18,7 @@ import (
 	"os"
 	"sort"
 
+	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/trace"
 )
 
@@ -31,37 +32,59 @@ func WriteRawTraceToCSV(filename string, trace trace.Trace) error {
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
 
-	// 1️⃣ Collect and sort keys for deterministic column order
-	keys := make([]string, 0, len(trace.Base))
-	for k := range trace.Base {
-		keys = append(keys, k)
+	type column struct {
+		name   string
+		header string
+		field  field.Kind
 	}
-	sort.Strings(keys)
+	cols := make([]column, 0, len(trace.Base)+len(trace.Ext))
+	for k := range trace.Base {
+		cols = append(cols, column{name: k, header: k, field: field.Base})
+	}
+	for k := range trace.Ext {
+		cols = append(cols, column{name: k, header: k + "[ext]", field: field.Ext})
+	}
+	sort.Slice(cols, func(i, j int) bool { return cols[i].header < cols[j].header })
 
-	// 2️⃣ Compute N as the max column length
 	N := 0
 	for _, poly := range trace.Base {
 		if len(poly) > N {
 			N = len(poly)
 		}
 	}
+	for _, poly := range trace.Ext {
+		if len(poly) > N {
+			N = len(poly)
+		}
+	}
 
-	// 3️⃣ Write header row
-	if err := writer.Write(keys); err != nil {
+	headers := make([]string, len(cols))
+	for i, col := range cols {
+		headers[i] = col.header
+	}
+	if err := writer.Write(headers); err != nil {
 		return err
 	}
 
-	// 4️⃣ Write rows
 	for i := 0; i < N; i++ {
-		row := make([]string, len(keys))
+		row := make([]string, len(cols))
 
-		for j, k := range keys {
-			poly := trace.Base[k]
+		for j, col := range cols {
 			var c string
-			if len(poly) == 1 {
-				c = poly[0].String()
-			} else if i < len(poly) {
-				c = poly[i].String()
+			if col.field == field.Base {
+				poly := trace.Base[col.name]
+				if len(poly) == 1 {
+					c = poly[0].String()
+				} else if i < len(poly) {
+					c = poly[i].String()
+				}
+			} else {
+				poly := trace.Ext[col.name]
+				if len(poly) == 1 {
+					c = poly[0].String()
+				} else if i < len(poly) {
+					c = poly[i].String()
+				}
 			}
 			row[j] = c
 		}

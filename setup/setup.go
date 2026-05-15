@@ -14,6 +14,7 @@
 package setup
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/consensys/loom/board"
@@ -68,19 +69,28 @@ func Setup(t trace.Trace, program board.Program) (PublicKey, error) {
 	for i, N := range sizes {
 		refs := colsByN[N]
 		sort.Slice(refs, func(i, j int) bool { return refs[i].Name < refs[j].Name })
-		cols := make([]poly.Polynomial, 0, len(refs))
+		basePublic := make([]poly.Polynomial, 0, len(refs))
+		extPublic := make([]poly.ExtPolynomial, 0, len(refs))
 		for _, ref := range refs {
 			if ref.Field == field.Base {
-				cols = append(cols, t.Base[ref.Name])
+				p, ok := t.Base[ref.Name]
+				if !ok {
+					return nil, fmt.Errorf("setup: base public column %q not found", ref.Name)
+				}
+				basePublic = append(basePublic, p)
 			}
 		}
 		for _, ref := range refs {
 			if ref.Field == field.Ext {
-				cols = append(cols, t.Base[ref.Name])
+				p, ok := t.Ext[ref.Name]
+				if !ok {
+					return nil, fmt.Errorf("setup: extension public column %q not found", ref.Name)
+				}
+				extPublic = append(extPublic, p)
 			}
 		}
 		committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
-		tree, err := committer.Commit(cols, nil)
+		tree, err := committer.Commit(basePublic, extPublic)
 		if err != nil {
 			return nil, err
 		}
