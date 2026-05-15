@@ -28,6 +28,7 @@ const NUM_QUERIES = 4
 
 const RANGE_MODULE = "range"
 const FINAL_EVALUATION_POINT = "__zeta"
+const DEEP_ALPHA = "alpha_DEEP"
 const SUFFIX_SHIFT_SPLIT = "_"
 const SUFFIX_SHIFT = "shift"
 const LOGUP = "logup"

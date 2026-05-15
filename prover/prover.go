@@ -78,7 +78,8 @@ type proverRuntime struct {
 	airTrace       trace.Trace
 	publicInputs   proof.PublicInputs
 	program        board.Program
-	zeta           ext.E4
+	zeta           ext.E4 // point of evaluation to check the AIR relation with SZ
+	alpha          ext.E4 // folding challenge for N-grouped polynomials, used to build the DEEP quotient
 	mu             sync.Mutex
 	setup          setup.PublicKey
 	queryPositions []int
@@ -125,13 +126,15 @@ func newProverRuntime(t trace.Trace, setup setup.PublicKey, publicInputs proof.P
 
 	res.queryPositions = make([]int, constants.NUM_QUERIES)
 
-	// initialize FS transcript and pre-register all challenges (challenge@loom_0..n-1 and zeta)
+	// initialize FS transcript and pre-register all challenges
+	// (challenge@loom_0..n-1, zeta, and alpha_DEEP)
 	res.fs = fiatshamir.NewTranscript(sha256.New())
 	numRounds := len(program.FScolumnsDependencies)
 	for i := 0; i < numRounds; i++ {
 		res.fs.NewChallenge(constants.CanonicalChallengeName(i))
 	}
 	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
+	res.fs.NewChallenge(constants.DEEP_ALPHA)
 
 	// Bind every setup tree's root to challenge_0 (decreasing-N order, set by Setup).
 	for _, tree := range setup {
@@ -170,12 +173,6 @@ func liftPolynomialToExt(p poly.Polynomial) poly.ExtPolynomial {
 		res[i].Lift(&p[i])
 	}
 	return res
-}
-
-func extFromUint64(v uint64) ext.E4 {
-	var base koalabear.Element
-	base.SetUint64(v)
-	return liftBaseToExt(base)
 }
 
 type mixedCommitGroup struct {
@@ -496,8 +493,9 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 		}
 	}
 
-	// TODO sample alpha with FS, hardcoded for now
-	alpha := extFromUint64(10)
+	if err := pr.deriveDeepAlpha(dqLayout); err != nil {
+		return err
+	}
 	deepQuotients := make(map[int]poly.ExtPolynomial, len(sizes))
 
 	for i, N := range sizes {
@@ -550,7 +548,7 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 				var term ext.E4
 				term.Mul(&evalAtZ, &alphaAcc)
 				v_s.Add(&v_s, &term)
-				alphaAcc.Mul(&alphaAcc, &alpha)
+				alphaAcc.Mul(&alphaAcc, &pr.alpha)
 			}
 
 			DQ_s := poly.DeepQuotientExt(C_s, v_s, z_s, domainN)
@@ -585,7 +583,7 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 				var term ext.E4
 				term.Mul(&evalAtZ, &alphaAcc)
 				v_s.Add(&v_s, &term)
-				alphaAcc.Mul(&alphaAcc, &alpha)
+				alphaAcc.Mul(&alphaAcc, &pr.alpha)
 			}
 
 			DQ_air := poly.DeepQuotientExt(C_s, v_s, pr.zeta, domainN)

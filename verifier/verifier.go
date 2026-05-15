@@ -57,9 +57,11 @@ type verifierRunTime struct {
 	friParams    fri.Params
 	publicInputs map[string]proof.PublicInput
 	program      board.Program
-	zeta         ext.E4
+	zeta         ext.E4 // point of evaluation to check the AIR relation with SZ
+	alpha        ext.E4 // folding challenge for N-grouped polynomials, used to build the DEEP quotient
 	setup        setup.PublicKeyRoots
 	fs           *fiatshamir.Transcript
+	dqLayout     prover.DEEPquotientLayout
 
 	// layout is the canonical commitment layout, shared with the prover side
 	// (built from program + len(setup) at the start of every Verify call).
@@ -81,6 +83,7 @@ func newVerifierRuntime(program board.Program, setup setup.PublicKeyRoots, publi
 
 	// Build the layout shared with the prover.
 	res.layout = prover.BuildLayout(program, len(setup))
+	res.dqLayout = prover.BuildDeepQuotientLayout(program)
 
 	// Validate proof.Commitments matches layout (trace + AIR section).
 	wantCommitments := res.layout.NumTrees - res.layout.SetupEnd
@@ -106,6 +109,7 @@ func newVerifierRuntime(program board.Program, setup setup.PublicKeyRoots, publi
 		res.fs.NewChallenge(constants.CanonicalChallengeName(i))
 	}
 	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
+	res.fs.NewChallenge(constants.DEEP_ALPHA)
 
 	// Setup roots are bound to challenge_0 (alongside trace round 0 in deriveChallenges).
 	for _, pkr := range setup {
@@ -146,12 +150,6 @@ func liftBaseToExt(v koalabear.Element) ext.E4 {
 	return res
 }
 
-func extFromUint64(v uint64) ext.E4 {
-	var base koalabear.Element
-	base.SetUint64(v)
-	return liftBaseToExt(base)
-}
-
 func (vr *verifierRunTime) deriveChallenges() error {
 
 	// For each FS round, bind every per-size trace root (decreasing N order,
@@ -186,6 +184,17 @@ func (vr *verifierRunTime) deriveChallenges() error {
 	}
 
 	return nil
+}
+
+func (vr *verifierRunTime) deriveDeepAlpha() error {
+	if err := prover.BindDeepEvaluationClaims(vr.fs, vr.proof, vr.dqLayout); err != nil {
+		return err
+	}
+	alphaBytes, err := vr.fs.ComputeChallenge(constants.DEEP_ALPHA)
+	if err != nil {
+		return err
+	}
+	return setExtFromBytes(&vr.alpha, alphaBytes)
 }
 
 // TODO the verifier should fetch the public values from the vanishing expressions, and look them up
@@ -349,7 +358,7 @@ func (vr *verifierRunTime) checkMerkleProofsPointSampling() error {
 func (vr *verifierRunTime) checkFRIBridge() error {
 	NQ := constants.NUM_QUERIES
 
-	dqLayout := prover.BuildDeepQuotientLayout(vr.program)
+	dqLayout := vr.dqLayout
 	sizes := dqLayout.Sizes
 
 	domainBySize := make(map[int]*fft.Domain, len(sizes))
@@ -358,8 +367,6 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 			domainBySize[m.N] = m.D
 		}
 	}
-
-	alpha := extFromUint64(10)
 
 	samplePair := func(slot prover.Slot, q int) (ext.E4, ext.E4, error) {
 		if slot.TreeIdx >= len(vr.proof.PointSamplings[q]) {
@@ -436,7 +443,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 					term.Mul(&leafQ, &alphaAcc)
 					C_at_negX.Add(&C_at_negX, &term)
 
-					alphaAcc.Mul(&alphaAcc, &alpha)
+					alphaAcc.Mul(&alphaAcc, &vr.alpha)
 				}
 
 				var num, denom ext.E4
@@ -477,7 +484,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 					term.Mul(&leafQ, &alphaAcc)
 					C_at_negX.Add(&C_at_negX, &term)
 
-					alphaAcc.Mul(&alphaAcc, &alpha)
+					alphaAcc.Mul(&alphaAcc, &vr.alpha)
 				}
 
 				var num, denom ext.E4
@@ -569,19 +576,26 @@ func Verify(publicInputs map[string]proof.PublicInput, setup setup.PublicKeyRoot
 
 	if !config.SkipFRI {
 
-		// 5a - check FRI proof
+		// 5a - derive the DEEP batching challenge before FRI appends its own
+		// challenges to the shared transcript.
+		err = vr.deriveDeepAlpha()
+		if err != nil {
+			return err
+		}
+
+		// 5b - check FRI proof
 		err = vr.checkFRIProof()
 		if err != nil {
 			return err
 		}
 
-		// 5b - check merkle proofs of proof.PointSamplings
+		// 5c - check merkle proofs of proof.PointSamplings
 		err = vr.checkMerkleProofsPointSampling()
 		if err != nil {
 			return err
 		}
 
-		// 5c - check FRI <-> PointSamplings bridge
+		// 5d - check FRI <-> PointSamplings bridge
 		err = vr.checkFRIBridge()
 		if err != nil {
 			return err
