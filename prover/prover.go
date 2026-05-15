@@ -30,7 +30,6 @@ import (
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/fri"
-	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/internal/reedsolomon"
 	"github.com/consensys/loom/proof"
@@ -604,14 +603,14 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 
 		levels[li] = fri.Level{
 			D:     N,
-			Evals: fri.LevelEvals{Ext: [][]ext.E4{encoded}},
-			Trees: []*merkle.Tree{tree},
+			Evals: fri.LevelEvals{Ext: encoded},
+			Tree:  tree,
 		}
 	}
 
 	pr.Proof.DeepQuotientCommitment = make([][]byte, len(levels))
 	for li := range levels {
-		pr.Proof.DeepQuotientCommitment[li] = levels[li].Trees[0].Root()
+		pr.Proof.DeepQuotientCommitment[li] = levels[li].Tree.Root()
 	}
 
 	var err error

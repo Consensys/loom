@@ -100,15 +100,15 @@ func TestProveVerify(t *testing.T) {
 			tsP := freshTS()
 			prf, _, err := fri.Prove(p, []fri.Level{{
 				D:     p.D,
-				Evals: fri.LevelEvals{Base: [][]koalabear.Element{evals}},
-				Trees: []*merkle.Tree{tree},
+				Evals: fri.LevelEvals{Base: evals},
+				Tree:  tree,
 			}}, tsP)
 			if err != nil {
 				t.Fatalf("Prove: %v", err)
 			}
 
 			tsV := freshTS()
-			if err := fri.Verify(p, [][][]byte{{tree.Root()}}, []int{p.D}, prf, tsV); err != nil {
+			if err := fri.Verify(p, [][]byte{tree.Root()}, []int{p.D}, prf, tsV); err != nil {
 				t.Fatalf("Verify: %v", err)
 			}
 		})
@@ -128,15 +128,59 @@ func TestProveVerifyExtRail(t *testing.T) {
 	tsP := freshTS()
 	prf, _, err := fri.Prove(p, []fri.Level{{
 		D:     p.D,
-		Evals: fri.LevelEvals{Ext: [][]ext.E4{evals}},
-		Trees: []*merkle.Tree{tree},
+		Evals: fri.LevelEvals{Ext: evals},
+		Tree:  tree,
 	}}, tsP)
 	if err != nil {
 		t.Fatalf("Prove: %v", err)
 	}
 
 	tsV := freshTS()
-	if err := fri.Verify(p, [][][]byte{{tree.Root()}}, []int{p.D}, prf, tsV); err != nil {
+	if err := fri.Verify(p, [][]byte{tree.Root()}, []int{p.D}, prf, tsV); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+}
+
+func TestProveVerifyExtRailWithExtraLevel(t *testing.T) {
+	p := testParams(t, 64, 16, 4)
+	pSmall := testParams(t, 16, 4, 4)
+
+	poly0 := randomExtPoly(p.D)
+	evals0, err := p.EncodeExt(poly0)
+	if err != nil {
+		t.Fatalf("EncodeExt level 0: %v", err)
+	}
+	poly1 := randomExtPoly(pSmall.D)
+	evals1, err := pSmall.EncodeExt(poly1)
+	if err != nil {
+		t.Fatalf("EncodeExt extra level: %v", err)
+	}
+
+	tree0 := buildLevelTreeExt(t, p, evals0)
+	tree1 := buildLevelTreeExt(t, p, evals1)
+
+	tsP := freshTS()
+	prf, _, err := fri.Prove(p, []fri.Level{
+		{
+			D:     p.D,
+			Evals: fri.LevelEvals{Ext: evals0},
+			Tree:  tree0,
+		},
+		{
+			D:     pSmall.D,
+			Evals: fri.LevelEvals{Ext: evals1},
+			Tree:  tree1,
+		},
+	}, tsP)
+	if err != nil {
+		t.Fatalf("Prove: %v", err)
+	}
+	if len(prf.LevelQueries) != 1 {
+		t.Fatalf("LevelQueries length = %d, want 1", len(prf.LevelQueries))
+	}
+
+	tsV := freshTS()
+	if err := fri.Verify(p, [][]byte{tree0.Root(), tree1.Root()}, []int{p.D, pSmall.D}, prf, tsV); err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
 }
@@ -150,15 +194,15 @@ func TestVerifyRejectsWrongRoot(t *testing.T) {
 	tsP := freshTS()
 	prf, _, _ := fri.Prove(p, []fri.Level{{
 		D:     p.D,
-		Evals: fri.LevelEvals{Base: [][]koalabear.Element{evals}},
-		Trees: []*merkle.Tree{tree},
+		Evals: fri.LevelEvals{Base: evals},
+		Tree:  tree,
 	}}, tsP)
 
 	badRoot := make([]byte, 32)
 	rand.Read(badRoot) //nolint:gosec
 
 	tsV := freshTS()
-	if err := fri.Verify(p, [][][]byte{{badRoot}}, []int{p.D}, prf, tsV); err == nil {
+	if err := fri.Verify(p, [][]byte{badRoot}, []int{p.D}, prf, tsV); err == nil {
 		t.Fatal("Verify accepted a proof with a wrong root0")
 	}
 }
@@ -172,8 +216,8 @@ func TestVerifyRejectsFlippedLeaf(t *testing.T) {
 	tsP := freshTS()
 	prf, _, err := fri.Prove(p, []fri.Level{{
 		D:     p.D,
-		Evals: fri.LevelEvals{Base: [][]koalabear.Element{evals}},
-		Trees: []*merkle.Tree{tree},
+		Evals: fri.LevelEvals{Base: evals},
+		Tree:  tree,
 	}}, tsP)
 	if err != nil {
 		t.Fatalf("Prove: %v", err)
@@ -183,7 +227,7 @@ func TestVerifyRejectsFlippedLeaf(t *testing.T) {
 	prf.FRIQueries[0].Layers[0].LeafPBase.SetRandom()
 
 	tsV := freshTS()
-	if err := fri.Verify(p, [][][]byte{{tree.Root()}}, []int{p.D}, prf, tsV); err == nil {
+	if err := fri.Verify(p, [][]byte{tree.Root()}, []int{p.D}, prf, tsV); err == nil {
 		t.Fatal("Verify accepted a proof with a corrupted leaf")
 	}
 }
@@ -196,8 +240,8 @@ func TestVerifyRejectsFlippedExtLeaf(t *testing.T) {
 	tsP := freshTS()
 	prf, _, err := fri.Prove(p, []fri.Level{{
 		D:     p.D,
-		Evals: fri.LevelEvals{Ext: [][]ext.E4{evals}},
-		Trees: []*merkle.Tree{tree},
+		Evals: fri.LevelEvals{Ext: evals},
+		Tree:  tree,
 	}}, tsP)
 	if err != nil {
 		t.Fatalf("Prove: %v", err)
@@ -206,7 +250,7 @@ func TestVerifyRejectsFlippedExtLeaf(t *testing.T) {
 	prf.FRIQueries[0].Layers[0].LeafPExt.MustSetRandom()
 
 	tsV := freshTS()
-	if err := fri.Verify(p, [][][]byte{{tree.Root()}}, []int{p.D}, prf, tsV); err == nil {
+	if err := fri.Verify(p, [][]byte{tree.Root()}, []int{p.D}, prf, tsV); err == nil {
 		t.Fatal("Verify accepted a proof with a corrupted ext leaf")
 	}
 }

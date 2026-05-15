@@ -305,9 +305,9 @@ func (vr *verifierRunTime) checkFRIProof() error {
 	if len(vr.proof.DeepQuotientCommitment) != len(levelDs) {
 		return fmt.Errorf("checkFRIProof: proof has %d level commitments, want %d", len(vr.proof.DeepQuotientCommitment), len(levelDs))
 	}
-	levelRoots := make([][][]byte, len(levelDs))
+	levelRoots := make([][]byte, len(levelDs))
 	for i := range levelDs {
-		levelRoots[i] = [][]byte{vr.proof.DeepQuotientCommitment[i]}
+		levelRoots[i] = vr.proof.DeepQuotientCommitment[i]
 	}
 
 	return fri.Verify(vr.friParams, levelRoots, levelDs, vr.proof.DeepQuotientFriProof, vr.fs)
@@ -503,7 +503,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 				actualP = layer.LeafPExt
 				actualQ = layer.LeafQExt
 			} else {
-				lq := vr.proof.DeepQuotientFriProof.LevelQueries[i-1][q][0]
+				lq := vr.proof.DeepQuotientFriProof.LevelQueries[i-1][q]
 				if lq.Field != field.Ext {
 					return fmt.Errorf("checkFRIBridge: expected ext FRI level query, got %s", lq.Field)
 				}
