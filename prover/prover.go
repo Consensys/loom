@@ -279,6 +279,9 @@ func (pr *proverRuntime) ExecuteSteps() error {
 				var challengeVal ext.E4
 				if pr.config.EmulateFS {
 					challengeVal.MustSetRandom()
+					if _, err := pr.fs.ComputeChallenge(challengeName); err != nil {
+						return fmt.Errorf("ExecuteSteps: compute emulated challenge %s: %w", challengeName, err)
+					}
 				} else {
 					challengeBytes, err := pr.fs.ComputeChallenge(challengeName)
 					if err != nil {
@@ -424,6 +427,9 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 
 	if pr.config.EmulateFS {
 		pr.zeta.MustSetRandom()
+		if _, err := pr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT); err != nil {
+			return fmt.Errorf("ComputeAIRQuotients: compute emulated zeta: %w", err)
+		}
 	} else {
 		zetaBytes, err := pr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
 		if err != nil {

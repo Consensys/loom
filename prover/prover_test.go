@@ -27,7 +27,7 @@ func TestVanishingRelationsAndLogupBus(t *testing.T) {
 
 	builder := board.NewBuilder()
 
-	fibonacciModule := board.NewModule("fibo")
+	fibonacciModule := board.NewModule("fibonacci")
 	rangeModule := board.NewModule("range")
 
 	N := 4

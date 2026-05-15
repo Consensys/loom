@@ -24,7 +24,7 @@ import (
 )
 
 func CheckVanishingRelation(tr trace.Trace, md board.CompiledModule) error {
-	ev, err := poly.Eval(tr.Base, *md.VanishingRelation, md.N)
+	ev, err := poly.EvalMixed(tr.Base, tr.Ext, *md.VanishingRelation, md.N)
 	if err != nil {
 		return err
 	}

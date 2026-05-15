@@ -23,6 +23,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/dag"
 )
 
@@ -220,4 +221,68 @@ func Eval(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int) (Polynomia
 	}
 
 	return vanishingRelation.EvalOnAllEntries(_Pi, N), nil
+}
+
+// EvalMixed evaluates vanishingRelation pointwise on mixed base/extension
+// columns and returns N extension-field results in Lagrange normal form.
+// Base columns referenced from extension-valued nodes are lifted on demand.
+// Used for testing only.
+func EvalMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPolynomial, vanishingRelation dag.DAG, N int) (ExtPolynomial, error) {
+	if vanishingRelation.Root.Field == field.Base {
+		baseVals, err := Eval(PiBase, vanishingRelation, N)
+		if err != nil {
+			return nil, err
+		}
+		return liftPolynomialToExt(baseVals), nil
+	}
+
+	baseToIdx := make(map[string]int)
+	extToIdx := make(map[string]int)
+	var piBaseByIdx []Polynomial
+	var piExtByIdx []ExtPolynomial
+
+	for _, n := range vanishingRelation.Nodes {
+		if n.Kind != dag.KindLeaf || n.Leaf.Type == expr.ConstantColumn {
+			continue
+		}
+		name := n.Leaf.Name
+		if n.Field == field.Ext {
+			idx, ok := extToIdx[name]
+			if !ok {
+				p, ok := PiExt[name]
+				if !ok {
+					base, baseOK := PiBase[name]
+					if !baseOK {
+						return nil, fmt.Errorf("EvalMixed: extension column %q not found", name)
+					}
+					p = liftPolynomialToExt(base)
+				}
+				if len(p) != N && len(p) != 1 {
+					return nil, fmt.Errorf("EvalMixed: extension column %q has length %d, want %d or 1", name, len(p), N)
+				}
+				idx = len(piExtByIdx)
+				extToIdx[name] = idx
+				piExtByIdx = append(piExtByIdx, p)
+			}
+			n.Leaf.Idx = idx
+			continue
+		}
+
+		idx, ok := baseToIdx[name]
+		if !ok {
+			p, ok := PiBase[name]
+			if !ok {
+				return nil, fmt.Errorf("EvalMixed: base column %q not found", name)
+			}
+			if len(p) != N && len(p) != 1 {
+				return nil, fmt.Errorf("EvalMixed: base column %q has length %d, want %d or 1", name, len(p), N)
+			}
+			idx = len(piBaseByIdx)
+			baseToIdx[name] = idx
+			piBaseByIdx = append(piBaseByIdx, p)
+		}
+		n.Leaf.Idx = idx
+	}
+
+	return vanishingRelation.EvalOnAllEntriesMixed(piBaseByIdx, piExtByIdx, N), nil
 }
