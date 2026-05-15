@@ -63,10 +63,10 @@ func (rc RangeColumnGen) Gen(t trace.Trace, m *CompiledModule) error {
 		res[i].SetUint64(uint64(i))
 	}
 	name := constants.RangeColName(rc.Bound)
-	if _, ok := t[name]; ok {
+	if _, ok := t.GetField(name); ok {
 		return nil
 	}
-	t[name] = res
+	t.SetBase(name, res)
 	return nil
 }
 
@@ -78,10 +78,10 @@ func (p LagrangeRelativeGen) Gen(t trace.Trace, m *CompiledModule) error {
 	res := make([]koalabear.Element, m.N)
 	res[m.N-1-p.i].SetOne()
 	name := constants.LagrangeNameRelative(m.Name, p.i)
-	if _, ok := t[name]; ok {
+	if _, ok := t.GetField(name); ok {
 		return nil
 	}
-	t[name] = res
+	t.SetBase(name, res)
 	return nil
 }
 
@@ -93,10 +93,10 @@ func (p LagrangeGen) Gen(t trace.Trace, m *CompiledModule) error {
 	res := make([]koalabear.Element, m.N)
 	res[p.i].SetOne()
 	name := constants.LagrangeName(m.Name, p.i)
-	if _, ok := t[name]; ok {
+	if _, ok := t.GetField(name); ok {
 		return nil
 	}
-	t[name] = res
+	t.SetBase(name, res)
 	return nil
 }
 

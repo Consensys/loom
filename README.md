@@ -6,11 +6,13 @@
 
 It lets you describe a computation as a set of polynomial constraints over a **trace** (a collection of named columns), compile it into a proof system, and produce a succinct proof that all constraints vanish on the evaluation domain.
 
+Fiat-Shamir challenges, including lookup/permutation challenges, zeta, and FRI fold challenges, are sampled in the Koalabear E4 extension field. Base trace columns remain base-valued and are lifted only when evaluated at extension points. The resulting soundness error is approximately `N/2^124`.
+
 ## Core concepts
 
 | Concept | Type | Description |
 |---|---|---|
-| Trace | `trace.Trace` (`map[string][]koalabear.Element`) | Named columns of field elements, all of length N |
+| Trace | `trace.Trace` (`Base` and `Ext` column maps) | Named base or extension columns, all of length N |
 | Relation | `expr.Expr` | A multivariate polynomial that must vanish row-wise |
 | Builder | `board.Builder` | Accumulates modules, relations, and derivation steps before compilation |
 | Module | `board.Module` | A named constraint domain; all columns within it share the same N |

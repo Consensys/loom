@@ -21,6 +21,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/dag"
 	"github.com/consensys/loom/proof"
@@ -45,6 +46,7 @@ func NewLogupBus(positive, negative []string) LogupBus {
 type ColumnRef struct {
 	Name   string
 	Module string
+	Field  field.Kind
 }
 
 type Builder struct {
@@ -106,6 +108,14 @@ func NewTable(module string, size int) Table {
 type Column struct {
 	Module string
 	In     expr.Expr
+	Field  field.Kind
+}
+
+func (c Column) FieldKind() field.Kind {
+	if c.In == nil {
+		return c.Field
+	}
+	return field.Join(c.Field, expr.FieldOf(c.In))
 }
 
 type Output struct {
@@ -156,15 +166,28 @@ func (b *Builder) addMakeIthValuePublicConstraint(module string, E expr.Expr, ou
 	m.AssertEqualAt(E, v, pos)
 }
 
-// AddMakeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
-// the 1 entry column expr[pos] is registered in the trace
-func (b *Builder) AddMakeRelativeIthValuePublicStep(module string, E expr.Expr, out string, pos int) {
-	ctx := MakeRelativeIthValuePublicCtx{Pos: pos, Module: module}
+// AddExposeLastEntryStep syntactic sugar for AddExposeRelativeIthEntryStep(module, E, out, 0)
+func (b *Builder) AddExposeLastEntryStep(module string, E expr.Expr, out string) {
+	ctx := ExposeRelativeIthEntryCtx{Pos: 0, Module: module}
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  []expr.Expr{E},
 		Outs: []string{out},
-		Step: MakeRelativeIthValuePublicStep,
+		Step: ExposeRelativeIthEntryStep,
+	}
+	b.Steps = append(b.Steps, pvStep)
+	b.addMakeRelativeIthValuePublicConstraint(module, E, out, 0)
+}
+
+// AddExposeIthEntry adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
+// the 1 entry column expr[pos] is registered in the trace
+func (b *Builder) AddExposeRelativeIthEntryStep(module string, E expr.Expr, out string, pos int) {
+	ctx := ExposeRelativeIthEntryCtx{Pos: pos, Module: module}
+	pvStep := ProverStep{
+		Ctx:  ctx,
+		Ins:  []expr.Expr{E},
+		Outs: []string{out},
+		Step: ExposeRelativeIthEntryStep,
 	}
 	b.Steps = append(b.Steps, pvStep)
 	b.addMakeRelativeIthValuePublicConstraint(module, E, out, pos)
@@ -176,15 +199,15 @@ func (b *Builder) addMakeRelativeIthValuePublicConstraint(module string, E expr.
 	m.AssertEqualRelativeAt(E, v, pos)
 }
 
-// AddMakeIthValuePublicStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
+// AddExposeIthEntryStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
 // the 1 entry column expr[pos] is registered in the trace
-func (b *Builder) AddMakeIthValuePublicStep(module string, E expr.Expr, out string, pos int) {
-	ctx := MakeIthValuePublicCtx{Pos: pos}
+func (b *Builder) AddExposeIthEntryStep(module string, E expr.Expr, out string, pos int) {
+	ctx := ExposeIthEntryCtx{Pos: pos}
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  []expr.Expr{E},
 		Outs: []string{out},
-		Step: MakeIthValuePublicStep,
+		Step: ExposeIthEntry,
 	}
 	b.Steps = append(b.Steps, pvStep)
 	b.addMakeIthValuePublicConstraint(module, E, out, pos)
@@ -259,6 +282,7 @@ type Program struct {
 	Modules               map[string]CompiledModule
 	PublicColumns         []ColumnRef // known columns, precommitted (ex: ql, qr, etc in plonk)
 	FScolumnsDependencies [][]ColumnRef
+	ColumnFields          map[string]field.Kind
 	LogupBus              []LogupBus
 	Steps                 [][]ProverStep
 }
@@ -608,6 +632,9 @@ func Compile(b *Builder) (Program, error) {
 		}
 	}
 
+	res.ColumnFields = inferProgramColumnFields(&res, b.Modules)
+	applyProgramColumnFields(&res)
+
 	// --- Phase 9: create the compiled module. Fold the relations in each module,
 	// and create a domain of the module.N for each module
 	res.Modules = map[string]CompiledModule{}
@@ -620,7 +647,7 @@ func Compile(b *Builder) (Program, error) {
 		cm.N = m.N
 		cm.D = fft.NewDomain(uint64(m.N))
 		foldedRelation := expr.Fold(lastChallenge, m.Relations)
-		cm.VanishingRelation = dag.ExprToDAG(foldedRelation)
+		cm.VanishingRelation = dag.ExprToDAGWithColumnFields(foldedRelation, res.ColumnFields)
 		res.Modules[k] = cm
 	}
 
@@ -629,4 +656,112 @@ func Compile(b *Builder) (Program, error) {
 	copy(res.LogupBus, b.LogupBus)
 
 	return res, nil
+}
+
+func inferProgramColumnFields(program *Program, modules map[string]*Module) map[string]field.Kind {
+	fields := make(map[string]field.Kind)
+
+	// Field inference is monotone: Base can only stay Base or be upgraded to
+	// Ext, and Ext never downgrades. This makes the seeding order, relation
+	// walk, and step iteration order irrelevant; every update is joined with
+	// the current value.
+	setField := func(name string, f field.Kind) {
+		fields[name] = field.Join(fields[name], f)
+	}
+
+	for _, ref := range program.PublicColumns {
+		setField(ref.Name, ref.Field)
+	}
+
+	columnConfig := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges())
+	for _, m := range modules {
+		for _, rel := range m.Relations {
+			// Capture any explicitly-declared Ext leaves (e.g. via expr.ExtCol).
+			// The fields-map argument is irrelevant here (single-leaf input ⇒
+			// self-cancels via Join); we keep the general helper to mirror the
+			// step walk's call shape below.
+			for _, leaf := range rel.LeavesFull(columnConfig) {
+				setField(leaf.Name, expr.FieldOfWithColumnFields(leaf, fields))
+			}
+		}
+	}
+
+	for _, level := range program.Steps {
+		for _, step := range level {
+			outFields := inferStepOutputFields(step, fields)
+			for i, out := range step.Outs {
+				f := field.Base
+				if i < len(outFields) {
+					f = outFields[i]
+				}
+				setField(out, f)
+			}
+		}
+	}
+
+	return fields
+}
+
+func applyProgramColumnFields(program *Program) {
+	for i := range program.PublicColumns {
+		ref := &program.PublicColumns[i]
+		ref.Field = field.Join(ref.Field, program.ColumnFields[ref.Name])
+	}
+	for round := range program.FScolumnsDependencies {
+		for i := range program.FScolumnsDependencies[round] {
+			ref := &program.FScolumnsDependencies[round][i]
+			ref.Field = field.Join(ref.Field, program.ColumnFields[ref.Name])
+		}
+	}
+}
+
+func inferStepOutputFields(step ProverStep, columnFields map[string]field.Kind) []field.Kind {
+	res := make([]field.Kind, len(step.Outs))
+
+	fieldOfInputs := func(ins []expr.Expr) field.Kind {
+		f := field.Base
+		for _, in := range ins {
+			f = field.Join(f, expr.FieldOfWithColumnFields(in, columnFields))
+		}
+		return f
+	}
+
+	switch ctx := step.Ctx.(type) {
+	case FSCtx:
+		for i := range res {
+			res[i] = field.Ext
+		}
+	case LogUpCtx, GPCtx:
+		f := fieldOfInputs(step.Ins)
+		for i := range res {
+			res[i] = f
+		}
+	case MakeEntriesPublicCtx, ExposeIthEntryCtx, ExposeRelativeIthEntryCtx:
+		f := field.Base
+		if len(step.Ins) > 0 {
+			f = expr.FieldOfWithColumnFields(step.Ins[0], columnFields)
+		}
+		for i := range res {
+			res[i] = f
+		}
+	case CMCtx:
+		for i := range res {
+			res[i] = field.Base
+		}
+	case CMWCtx:
+		f := field.Base
+		for i := 0; i < ctx.NbSources && i < len(step.Ins); i++ {
+			f = field.Join(f, expr.FieldOfWithColumnFields(step.Ins[i], columnFields))
+		}
+		for i := range res {
+			res[i] = f
+		}
+	default:
+		f := fieldOfInputs(step.Ins)
+		for i := range res {
+			res[i] = f
+		}
+	}
+
+	return res
 }

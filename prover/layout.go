@@ -18,6 +18,7 @@ import (
 
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/poly"
 )
@@ -27,10 +28,12 @@ import (
 //
 //	TreeIdx = index into the canonical tree order
 //	          (setup → trace-round-0 → … → trace-round-{r-1} → AIR)
-//	PolyIdx = index of this polynomial inside that tree's RawLeaf entries
+//	PolyIdx = rail-relative index of this polynomial inside the tree's raw leaf entries
+//	Field   = rail to read/write inside the tree
 type Slot struct {
 	TreeIdx int
 	PolyIdx int
+	Field   field.Kind
 }
 
 // Layout describes the canonical order of WMerkleTrees produced by the
@@ -57,6 +60,7 @@ type Layout struct {
 	AIREnd     int // = NumTrees
 
 	// Per-tree polynomial size N (the encoded tree has 2·N·RATE/2 leaves).
+	// Base and extension polynomial rails share the same tree for a given N.
 	TreeSize []int
 
 	// Column-name → Slot for trace columns and setup public columns.
@@ -83,20 +87,22 @@ func BuildLayout(program board.Program, numSetupSizes int) Layout {
 	layout.SetupBegin = treeIdx
 	{
 		// Group public columns by size, decreasing N.
-		colsByN := map[int][]string{}
+		colsByN := map[int][]board.ColumnRef{}
 		for _, c := range program.PublicColumns {
 			m, ok := program.Modules[c.Module]
 			if !ok { // TODO should raise an error here ?
 				continue
 			}
-			colsByN[m.N] = append(colsByN[m.N], c.Name)
+			colsByN[m.N] = append(colsByN[m.N], c)
 		}
 		sizes := sortedSizesDesc(colsByN)
 		for _, N := range sizes {
 			cols := colsByN[N]
-			sort.Strings(cols)
-			for polyIdx, name := range cols {
-				layout.ColSlot[name] = Slot{TreeIdx: treeIdx, PolyIdx: polyIdx}
+			sort.Slice(cols, func(i, j int) bool { return cols[i].Name < cols[j].Name })
+			railIdx := map[field.Kind]int{}
+			for _, col := range cols {
+				polyIdx := nextRailPolyIdx(railIdx, col.Field)
+				layout.ColSlot[col.Name] = Slot{TreeIdx: treeIdx, PolyIdx: polyIdx, Field: col.Field}
 			}
 			layout.TreeSize = append(layout.TreeSize, N)
 			treeIdx++
@@ -131,8 +137,10 @@ func BuildLayout(program board.Program, numSetupSizes int) Layout {
 			// Preserve iteration order of FScolumnsDependencies[r] within a
 			// size by NOT re-sorting here — matches prover's polysByN append
 			// order in ExecuteSteps.
-			for polyIdx, dep := range group {
-				layout.ColSlot[dep.Name] = Slot{TreeIdx: treeIdx, PolyIdx: polyIdx}
+			railIdx := map[field.Kind]int{}
+			for _, dep := range group {
+				polyIdx := nextRailPolyIdx(railIdx, dep.Field)
+				layout.ColSlot[dep.Name] = Slot{TreeIdx: treeIdx, PolyIdx: polyIdx, Field: dep.Field}
 			}
 			layout.TreeSize = append(layout.TreeSize, N)
 			treeIdx++
@@ -158,6 +166,7 @@ func BuildLayout(program board.Program, numSetupSizes int) Layout {
 		type airEntry struct {
 			module string
 			idx    int
+			field  field.Kind
 		}
 		chunksByN := map[int][]airEntry{}
 		for _, moduleName := range moduleNames {
@@ -169,15 +178,18 @@ func BuildLayout(program board.Program, numSetupSizes int) Layout {
 			eDeg := m.VanishingRelation.Degree()
 			bigSize := poly.NextPowerOfTwo(eDeg * N)
 			numChunks := bigSize / N
+			f := m.VanishingRelation.Root.Field
 			for i := 0; i < numChunks; i++ {
-				chunksByN[N] = append(chunksByN[N], airEntry{module: moduleName, idx: i})
+				chunksByN[N] = append(chunksByN[N], airEntry{module: moduleName, idx: i, field: f})
 			}
 		}
 		sizes := sortedSizesDesc(chunksByN)
 		for _, N := range sizes {
-			for polyIdx, e := range chunksByN[N] {
+			railIdx := map[field.Kind]int{}
+			for _, e := range chunksByN[N] {
 				chunkName := constants.QuotientChunkName(e.module, e.idx)
-				layout.AIRChunkSlot[chunkName] = Slot{TreeIdx: treeIdx, PolyIdx: polyIdx}
+				polyIdx := nextRailPolyIdx(railIdx, e.field)
+				layout.AIRChunkSlot[chunkName] = Slot{TreeIdx: treeIdx, PolyIdx: polyIdx, Field: e.field}
 			}
 			layout.TreeSize = append(layout.TreeSize, N)
 			treeIdx++
@@ -187,6 +199,12 @@ func BuildLayout(program board.Program, numSetupSizes int) Layout {
 
 	layout.NumTrees = treeIdx
 	return layout
+}
+
+func nextRailPolyIdx(counters map[field.Kind]int, f field.Kind) int {
+	idx := counters[f]
+	counters[f] = idx + 1
+	return idx
 }
 
 // sortedSizesDesc returns the keys of m sorted in decreasing order.

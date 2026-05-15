@@ -21,7 +21,10 @@ import (
 
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
+	"github.com/consensys/loom/field"
+	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/reedsolomon"
 )
@@ -116,13 +119,16 @@ type domainLight struct {
 	generator   koalabear.Element
 }
 
-// QueryLayer holds the two opened values and a single Merkle proof for one folding level.
+// QueryLayer holds the two opened values and a single Merkle proof for one
+// folding level. Exactly one rail is populated, selected by Field.
 // LeafP = layer[base], LeafQ = layer[base + Nⱼ/2] where base = s % (Nⱼ/2).
-// The pair is committed as a single leaf: hash(encode(LeafP) || encode(LeafQ)).
 type QueryLayer struct {
-	LeafP koalabear.Element // layer[base], lower-index element of the sibling pair
-	LeafQ koalabear.Element // layer[base + Nⱼ/2], upper-index element
-	Path  merkle.Proof      // authenticates the pair; depth = log₂(Nⱼ/2)
+	Field     field.Kind
+	LeafPBase koalabear.Element // populated when Field == field.Base
+	LeafQBase koalabear.Element
+	LeafPExt  ext.E4 // populated when Field == field.Ext
+	LeafQExt  ext.E4
+	Path      merkle.Proof // authenticates the pair; depth = log₂(Nⱼ/2)
 }
 
 // Query holds the opening data for one full query path across all r levels.
@@ -134,14 +140,60 @@ type Query struct {
 // Multi-degree FRI types (see multi_degree_fri.txt for the full protocol spec)
 // ────────────────────────────────────────────────────────────────────────────────
 
+// LevelEvals stores the evaluation vectors for one FRI level. Exactly one rail
+// must be populated; each row is one polynomial at this degree.
+type LevelEvals struct {
+	Base [][]koalabear.Element
+	Ext  [][]ext.E4
+}
+
+// Field returns the populated rail. Invalid mixed/empty values are rejected by
+// Prove's validation; the zero value reports field.Base.
+func (e LevelEvals) Field() field.Kind {
+	if len(e.Ext) > 0 {
+		return field.Ext
+	}
+	return field.Base
+}
+
+func (e LevelEvals) checkedField() (field.Kind, error) {
+	hasBase := len(e.Base) > 0
+	hasExt := len(e.Ext) > 0
+	switch {
+	case hasBase && hasExt:
+		return field.Base, fmt.Errorf("both base and ext rails are populated")
+	case !hasBase && !hasExt:
+		return field.Base, fmt.Errorf("no rail is populated")
+	case hasExt:
+		return field.Ext, nil
+	default:
+		return field.Base, nil
+	}
+}
+
+func (e LevelEvals) Len() int {
+	if e.Field() == field.Ext {
+		return len(e.Ext)
+	}
+	return len(e.Base)
+}
+
+func (e LevelEvals) LenAt(i int) int {
+	if e.Field() == field.Ext {
+		return len(e.Ext[i])
+	}
+	return len(e.Base[i])
+}
+
 // Level groups polynomials of the same degree, introduced at the folding round
 // where the running polynomial's degree matches Level.D. Trees holds the
 // pre-built paired-leaf Merkle trees, one per polynomial in Evals; build them
-// with Params.BuildLevelTree so the leaf/node hashers match.
+// with Params.BuildLevelTree or Params.BuildLevelTreeExt so the leaf/node
+// hashers match.
 type Level struct {
 	D     int
-	Evals [][]koalabear.Element // evaluation vectors, each of size N * D / p.D
-	Trees []*merkle.Tree        // pre-built paired-leaf Merkle trees, len matches Evals
+	Evals LevelEvals
+	Trees []*merkle.Tree // pre-built paired-leaf Merkle trees, len matches Evals
 }
 
 // QueriesAtLevel holds one opening per polynomial in one Level for one outer
@@ -156,9 +208,11 @@ type Proof struct {
 	LevelQueries [][]QueriesAtLevel
 
 	// Running-polynomial FRI path
-	FRIRoots   [][]byte            // Merkle roots for running poly T_1..T_{r-1}
-	FinalPoly  []koalabear.Element // explicit final folded evaluations
-	FRIQueries []Query             // len = NumQueries
+	FRIRoots      [][]byte // Merkle roots for running poly T_1..T_{r-1}
+	FinalField    field.Kind
+	FinalPolyBase []koalabear.Element // populated when FinalField == field.Base
+	FinalPolyExt  []ext.E4            // populated when FinalField == field.Ext
+	FRIQueries    []Query             // len = NumQueries
 }
 
 // FullDomainGenerator returns the generator of the full evaluation domain (layer 0, size N).
@@ -177,11 +231,27 @@ func (p Params) Encode(poly []koalabear.Element) ([]koalabear.Element, error) {
 	return enc.Encode(poly, domainD), nil
 }
 
+// EncodeExt is the extension-field counterpart of Encode.
+func (p Params) EncodeExt(poly []ext.E4) ([]ext.E4, error) {
+	if len(poly) != p.D {
+		return nil, fmt.Errorf("fri: EncodeExt: polynomial length %d != D=%d", len(poly), p.D)
+	}
+	enc := reedsolomon.NewEncoder(uint64(p.N))
+	domainD := fft.NewDomain(uint64(p.D))
+	return enc.EncodeExt(poly, domainD), nil
+}
+
 // BuildLevelTree builds the paired-leaf Merkle tree expected by FRI for a
 // level polynomial: tree of len(layer)/2 leaves where
 // leaf k = LeafHasher(encode(layer[k]) || encode(layer[k + len(layer)/2])).
 func (p Params) BuildLevelTree(layer []koalabear.Element) (*merkle.Tree, error) {
-	return buildTree(layer, p.LeafHasher, p.NodeHasher)
+	return buildTreeBase(layer, p.LeafHasher, p.NodeHasher)
+}
+
+// BuildLevelTreeExt builds the paired-leaf Merkle tree expected by FRI for an
+// extension-field level polynomial.
+func (p Params) BuildLevelTreeExt(layer []ext.E4) (*merkle.Tree, error) {
+	return buildTreeExt(layer, p.LeafHasher, p.NodeHasher)
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
@@ -189,60 +259,92 @@ func (p Params) BuildLevelTree(layer []koalabear.Element) (*merkle.Tree, error) 
 // ────────────────────────────────────────────────────────────────────────────────
 
 // Prove runs multi-degree FRI (commit + query phase) and returns a Proof together
-// with the query positions. levels[0].D must equal p.D and len(levels[0].Evals) must
-// be 1. levels is sorted in-place in decreasing order of D.
+// with the query positions. levels[0].D must equal p.D and levels[0].Evals must
+// contain exactly one polynomial on exactly one rail. levels is sorted in-place
+// in decreasing order of D.
 // ts must already have been initialised with any prior-round context.
 func Prove(p Params, levels []Level, ts *fiatshamir.Transcript) (Proof, []int, error) {
 	sort.Slice(levels, func(i, j int) bool { return levels[i].D > levels[j].D })
 
+	plan, err := buildProvePlan(p, levels)
+	if err != nil {
+		return Proof{}, nil, err
+	}
+	registerChallenges(p, plan.levelAtRound, ts)
+
+	if plan.rail == field.Ext {
+		return proveExt(p, levels, plan, ts)
+	}
+	return proveBase(p, levels, plan, ts)
+}
+
+type provePlan struct {
+	rail         field.Kind
+	numLevels    int
+	levelAtRound map[int]int
+}
+
+func buildProvePlan(p Params, levels []Level) (provePlan, error) {
+	var plan provePlan
 	if len(levels) == 0 {
-		return Proof{}, nil, fmt.Errorf("fri: Prove: at least one level required")
+		return plan, fmt.Errorf("fri: Prove: at least one level required")
 	}
 	if levels[0].D != p.D {
-		return Proof{}, nil, fmt.Errorf("fri: Prove: levels[0].D=%d must equal p.D=%d", levels[0].D, p.D)
+		return plan, fmt.Errorf("fri: Prove: levels[0].D=%d must equal p.D=%d", levels[0].D, p.D)
 	}
-	if len(levels[0].Evals) != 1 {
-		return Proof{}, nil, fmt.Errorf("fri: Prove: levels[0] must contain exactly one polynomial, got %d", len(levels[0].Evals))
+	rail, err := levels[0].Evals.checkedField()
+	if err != nil {
+		return plan, fmt.Errorf("fri: Prove: levels[0].Evals: %w", err)
 	}
-	if len(levels[0].Evals[0]) != p.N {
-		return Proof{}, nil, fmt.Errorf("fri: Prove: levels[0].Evals[0] length %d != N=%d", len(levels[0].Evals[0]), p.N)
+	plan.rail = rail
+	if levels[0].Evals.Len() != 1 {
+		return plan, fmt.Errorf("fri: Prove: levels[0] must contain exactly one polynomial, got %d", levels[0].Evals.Len())
+	}
+	if levels[0].Evals.LenAt(0) != p.N {
+		return plan, fmt.Errorf("fri: Prove: levels[0].Evals[0] length %d != N=%d", levels[0].Evals.LenAt(0), p.N)
 	}
 	if len(levels[0].Trees) != 1 {
-		return Proof{}, nil, fmt.Errorf("fri: Prove: levels[0] must have exactly one Tree, got %d", len(levels[0].Trees))
+		return plan, fmt.Errorf("fri: Prove: levels[0] must have exactly one Tree, got %d", len(levels[0].Trees))
 	}
 
-	numLevels := len(levels)
+	plan.numLevels = len(levels)
 
 	// Build levelAtRound: folding round j → level index l (1-based).
-	levelAtRound := make(map[int]int, numLevels-1)
-	for l := 1; l < numLevels; l++ {
+	plan.levelAtRound = make(map[int]int, plan.numLevels-1)
+	for l := 1; l < plan.numLevels; l++ {
 		if levels[l].D <= 0 || levels[l].D&(levels[l].D-1) != 0 {
-			return Proof{}, nil, fmt.Errorf("fri: Prove: levels[%d].D=%d is not a positive power of two", l, levels[l].D)
+			return plan, fmt.Errorf("fri: Prove: levels[%d].D=%d is not a positive power of two", l, levels[l].D)
+		}
+		levelRail, err := levels[l].Evals.checkedField()
+		if err != nil {
+			return plan, fmt.Errorf("fri: Prove: levels[%d].Evals: %w", l, err)
+		}
+		if levelRail != rail {
+			return plan, fmt.Errorf("fri: Prove: levels[%d] is %s, running rail is %s", l, levelRail, rail)
 		}
 		jl := log2(p.D / levels[l].D)
 		if jl < 1 || jl >= p.numRounds {
-			return Proof{}, nil, fmt.Errorf("fri: Prove: levels[%d].D=%d gives intro round %d, must be in 1..%d", l, levels[l].D, jl, p.numRounds-1)
+			return plan, fmt.Errorf("fri: Prove: levels[%d].D=%d gives intro round %d, must be in 1..%d", l, levels[l].D, jl, p.numRounds-1)
 		}
-		if _, dup := levelAtRound[jl]; dup {
-			return Proof{}, nil, fmt.Errorf("fri: Prove: two levels share intro round %d", jl)
+		if _, dup := plan.levelAtRound[jl]; dup {
+			return plan, fmt.Errorf("fri: Prove: two levels share intro round %d", jl)
 		}
-		levelAtRound[jl] = l
+		plan.levelAtRound[jl] = l
 		Nl := p.N >> jl
-		for i, evals := range levels[l].Evals {
-			if len(evals) != Nl {
-				return Proof{}, nil, fmt.Errorf("fri: Prove: levels[%d].Evals[%d] length %d != N_l=%d", l, i, len(evals), Nl)
+		for i := 0; i < levels[l].Evals.Len(); i++ {
+			if levels[l].Evals.LenAt(i) != Nl {
+				return plan, fmt.Errorf("fri: Prove: levels[%d].Evals[%d] length %d != N_l=%d", l, i, levels[l].Evals.LenAt(i), Nl)
 			}
 		}
-		if len(levels[l].Trees) != len(levels[l].Evals) {
-			return Proof{}, nil, fmt.Errorf("fri: Prove: levels[%d] has %d Trees, want %d (= len(Evals))", l, len(levels[l].Trees), len(levels[l].Evals))
+		if len(levels[l].Trees) != levels[l].Evals.Len() {
+			return plan, fmt.Errorf("fri: Prove: levels[%d] has %d Trees, want %d (= len(Evals))", l, len(levels[l].Trees), levels[l].Evals.Len())
 		}
 	}
 
-	// ── Register all challenge names up front, in compute order ──────────────
-	// At round j (j >= 1), if a level is introduced, we bind all its poly
-	// roots to fri_level_j_gamma and compute that challenge before computing
-	// fri_fold_j. Each level uses a single FS slot — multiple polynomials are
-	// just multiple Bind calls to the same name.
+	return plan, nil
+}
+
+func registerChallenges(p Params, levelAtRound map[int]int, ts *fiatshamir.Transcript) {
 	ts.NewChallenge(foldName(0))
 	for j := 1; j < p.numRounds; j++ {
 		if l, ok := levelAtRound[j]; ok {
@@ -253,12 +355,14 @@ func Prove(p Params, levels []Level, ts *fiatshamir.Transcript) (Proof, []int, e
 	for k := 0; k < p.NumQueries; k++ {
 		ts.NewChallenge(queryName(k))
 	}
+}
 
+func proveBase(p Params, levels []Level, plan provePlan, ts *fiatshamir.Transcript) (Proof, []int, error) {
 	// ── Commit phase ─────────────────────────────────────────────────────────
 
-	// running is the current evaluation vector; copy levels[0].Evals[0] so we own it.
+	// running is the current evaluation vector; copy levels[0].Evals.Base[0] so we own it.
 	running := make([]koalabear.Element, p.N)
-	copy(running, levels[0].Evals[0])
+	copy(running, levels[0].Evals.Base[0])
 
 	layers := make([][]koalabear.Element, p.numRounds+1)
 	friTrees := make([]*merkle.Tree, p.numRounds)
@@ -272,9 +376,9 @@ func Prove(p Params, levels []Level, ts *fiatshamir.Transcript) (Proof, []int, e
 	for j := 0; j < p.numRounds; j++ {
 		// Level batching step (j > 0 only; j=0 reuses the caller-supplied levels[0].Trees[0]).
 		if j > 0 {
-			if l, ok := levelAtRound[j]; ok {
+			if l, ok := plan.levelAtRound[j]; ok {
 				gammaName := levelGammaName(l)
-				for i := range levels[l].Evals {
+				for i := range levels[l].Evals.Base {
 					if err := ts.Bind(gammaName, levels[l].Trees[i].Root()); err != nil {
 						return Proof{}, nil, fmt.Errorf("fri: Prove: bind level poly l=%d i=%d: %w", l, i, err)
 					}
@@ -289,7 +393,7 @@ func Prove(p Params, levels []Level, ts *fiatshamir.Transcript) (Proof, []int, e
 				// Batch γ^{i+1} * levels[l].Evals[i] into running (pointwise).
 				var gammaPow koalabear.Element
 				gammaPow.Set(&gamma)
-				for _, evals := range levels[l].Evals {
+				for _, evals := range levels[l].Evals.Base {
 					for k, v := range evals {
 						var term koalabear.Element
 						term.Mul(&v, &gammaPow)
@@ -308,7 +412,7 @@ func Prove(p Params, levels []Level, ts *fiatshamir.Transcript) (Proof, []int, e
 			tree = levels[0].Trees[0] // caller-supplied, root must match running pre-fold
 		} else {
 			var err error
-			tree, err = buildTree(running, p.LeafHasher, p.NodeHasher)
+			tree, err = buildTreeBase(running, p.LeafHasher, p.NodeHasher)
 			if err != nil {
 				return Proof{}, nil, fmt.Errorf("fri: Prove: build tree layer %d: %w", j, err)
 			}
@@ -332,20 +436,21 @@ func Prove(p Params, levels []Level, ts *fiatshamir.Transcript) (Proof, []int, e
 		}
 
 		// foldLayer returns a new slice, so running for round j+1 is independent.
-		running = foldLayer(running, alphas[j], p.domains[j], p.invTwo)
+		running = foldLayerBase(running, alphas[j], p.domains[j], p.invTwo)
 	}
 	layers[p.numRounds] = running
-	prf.FinalPoly = running
+	prf.FinalField = field.Base
+	prf.FinalPolyBase = running
 
-	if err := ts.Bind(queryName(0), serialise(prf.FinalPoly)); err != nil {
+	if err := ts.Bind(queryName(0), serialiseBase(prf.FinalPolyBase)); err != nil {
 		return Proof{}, nil, fmt.Errorf("fri: Prove: bind final poly: %w", err)
 	}
 
 	// ── Query phase ───────────────────────────────────────────────────────────
 
 	prf.FRIQueries = make([]Query, p.NumQueries)
-	if numLevels > 1 {
-		prf.LevelQueries = make([][]QueriesAtLevel, numLevels-1)
+	if plan.numLevels > 1 {
+		prf.LevelQueries = make([][]QueriesAtLevel, plan.numLevels-1)
 		for l := range prf.LevelQueries {
 			prf.LevelQueries[l] = make([]QueriesAtLevel, p.NumQueries)
 		}
@@ -366,27 +471,166 @@ func Prove(p Params, levels []Level, ts *fiatshamir.Transcript) (Proof, []int, e
 			}
 		}
 
-		q, err := openQuery(s, layers, friTrees, p.numRounds)
+		q, err := openQueryBase(s, layers, friTrees, p.numRounds)
 		if err != nil {
 			return Proof{}, nil, fmt.Errorf("fri: Prove: open FRI query %d: %w", k, err)
 		}
 		prf.FRIQueries[k] = q
 
-		for l := 1; l < numLevels; l++ {
+		for l := 1; l < plan.numLevels; l++ {
 			jl := log2(p.D / levels[l].D)
 			Nl := p.N >> jl
 			base := s % (Nl / 2)
 
-			prf.LevelQueries[l-1][k] = make(QueriesAtLevel, len(levels[l].Evals))
-			for i := range levels[l].Evals {
+			prf.LevelQueries[l-1][k] = make(QueriesAtLevel, len(levels[l].Evals.Base))
+			for i := range levels[l].Evals.Base {
 				path, err := levels[l].Trees[i].OpenProof(base)
 				if err != nil {
 					return Proof{}, nil, fmt.Errorf("fri: Prove: open level query l=%d i=%d k=%d: %w", l, i, k, err)
 				}
 				prf.LevelQueries[l-1][k][i] = QueryLayer{
-					LeafP: levels[l].Evals[i][base],
-					LeafQ: levels[l].Evals[i][base+Nl/2],
-					Path:  path,
+					Field:     field.Base,
+					LeafPBase: levels[l].Evals.Base[i][base],
+					LeafQBase: levels[l].Evals.Base[i][base+Nl/2],
+					Path:      path,
+				}
+			}
+		}
+	}
+
+	return prf, queryPositions, nil
+}
+
+func proveExt(p Params, levels []Level, plan provePlan, ts *fiatshamir.Transcript) (Proof, []int, error) {
+	running := make([]ext.E4, p.N)
+	copy(running, levels[0].Evals.Ext[0])
+
+	layers := make([][]ext.E4, p.numRounds+1)
+	friTrees := make([]*merkle.Tree, p.numRounds)
+	alphas := make([]ext.E4, p.numRounds)
+
+	var prf Proof
+	if p.numRounds > 1 {
+		prf.FRIRoots = make([][]byte, p.numRounds-1)
+	}
+
+	for j := 0; j < p.numRounds; j++ {
+		if j > 0 {
+			if l, ok := plan.levelAtRound[j]; ok {
+				gammaName := levelGammaName(l)
+				for i := range levels[l].Evals.Ext {
+					if err := ts.Bind(gammaName, levels[l].Trees[i].Root()); err != nil {
+						return Proof{}, nil, fmt.Errorf("fri: Prove: bind level poly l=%d i=%d: %w", l, i, err)
+					}
+				}
+				b, err := ts.ComputeChallenge(gammaName)
+				if err != nil {
+					return Proof{}, nil, fmt.Errorf("fri: Prove: compute level gamma l=%d: %w", l, err)
+				}
+				var gamma ext.E4
+				if err := setChallengeExt(&gamma, b); err != nil {
+					return Proof{}, nil, fmt.Errorf("fri: Prove: decode level gamma l=%d: %w", l, err)
+				}
+
+				var gammaPow ext.E4
+				gammaPow.Set(&gamma)
+				for _, evals := range levels[l].Evals.Ext {
+					for k, v := range evals {
+						var term ext.E4
+						term.Mul(&v, &gammaPow)
+						running[k].Add(&running[k], &term)
+					}
+					gammaPow.Mul(&gammaPow, &gamma)
+				}
+			}
+		}
+
+		layers[j] = running
+
+		var tree *merkle.Tree
+		if j == 0 {
+			tree = levels[0].Trees[0]
+		} else {
+			var err error
+			tree, err = buildTreeExt(running, p.LeafHasher, p.NodeHasher)
+			if err != nil {
+				return Proof{}, nil, fmt.Errorf("fri: Prove: build tree layer %d: %w", j, err)
+			}
+		}
+		friTrees[j] = tree
+		root := tree.Root()
+
+		name := foldName(j)
+		if err := ts.Bind(name, root); err != nil {
+			return Proof{}, nil, fmt.Errorf("fri: Prove: bind fold %d: %w", j, err)
+		}
+		b, err := ts.ComputeChallenge(name)
+		if err != nil {
+			return Proof{}, nil, fmt.Errorf("fri: Prove: compute fold challenge %d: %w", j, err)
+		}
+		if err := setChallengeExt(&alphas[j], b); err != nil {
+			return Proof{}, nil, fmt.Errorf("fri: Prove: decode fold challenge %d: %w", j, err)
+		}
+
+		if j > 0 {
+			prf.FRIRoots[j-1] = root
+		}
+
+		running = foldLayerExt(running, alphas[j], p.domains[j], p.invTwo)
+	}
+	layers[p.numRounds] = running
+	prf.FinalField = field.Ext
+	prf.FinalPolyExt = running
+
+	if err := ts.Bind(queryName(0), serialiseExt(prf.FinalPolyExt)); err != nil {
+		return Proof{}, nil, fmt.Errorf("fri: Prove: bind final poly: %w", err)
+	}
+
+	prf.FRIQueries = make([]Query, p.NumQueries)
+	if plan.numLevels > 1 {
+		prf.LevelQueries = make([][]QueriesAtLevel, plan.numLevels-1)
+		for l := range prf.LevelQueries {
+			prf.LevelQueries[l] = make([]QueriesAtLevel, p.NumQueries)
+		}
+	}
+
+	queryPositions := make([]int, p.NumQueries)
+	for k := 0; k < p.NumQueries; k++ {
+		b, err := ts.ComputeChallenge(queryName(k))
+		if err != nil {
+			return Proof{}, nil, fmt.Errorf("fri: Prove: compute query challenge %d: %w", k, err)
+		}
+		s := int(binary.BigEndian.Uint64(b[:8]) % uint64(p.N/2))
+		queryPositions[k] = s
+
+		if k < p.NumQueries-1 {
+			if err := ts.Bind(queryName(k+1), b); err != nil {
+				return Proof{}, nil, fmt.Errorf("fri: Prove: bind query chain %d: %w", k+1, err)
+			}
+		}
+
+		q, err := openQueryExt(s, layers, friTrees, p.numRounds)
+		if err != nil {
+			return Proof{}, nil, fmt.Errorf("fri: Prove: open FRI query %d: %w", k, err)
+		}
+		prf.FRIQueries[k] = q
+
+		for l := 1; l < plan.numLevels; l++ {
+			jl := log2(p.D / levels[l].D)
+			Nl := p.N >> jl
+			base := s % (Nl / 2)
+
+			prf.LevelQueries[l-1][k] = make(QueriesAtLevel, len(levels[l].Evals.Ext))
+			for i := range levels[l].Evals.Ext {
+				path, err := levels[l].Trees[i].OpenProof(base)
+				if err != nil {
+					return Proof{}, nil, fmt.Errorf("fri: Prove: open level query l=%d i=%d k=%d: %w", l, i, k, err)
+				}
+				prf.LevelQueries[l-1][k][i] = QueryLayer{
+					Field:    field.Ext,
+					LeafPExt: levels[l].Evals.Ext[i][base],
+					LeafQExt: levels[l].Evals.Ext[i][base+Nl/2],
+					Path:     path,
 				}
 			}
 		}
@@ -440,6 +684,15 @@ func Verify(p Params, levelRoots [][][]byte, levelDs []int, prf Proof, ts *fiats
 	if numExtraLevels > 0 && len(prf.LevelQueries) != numExtraLevels {
 		return fmt.Errorf("fri: Verify: proof has %d level query sets, want %d", len(prf.LevelQueries), numExtraLevels)
 	}
+	if prf.FinalField != field.Base && prf.FinalField != field.Ext {
+		return fmt.Errorf("fri: Verify: invalid final field %s", prf.FinalField)
+	}
+	if prf.FinalField == field.Base && len(prf.FinalPolyBase) == 0 {
+		return fmt.Errorf("fri: Verify: base final field with empty FinalPolyBase")
+	}
+	if prf.FinalField == field.Ext && len(prf.FinalPolyExt) == 0 {
+		return fmt.Errorf("fri: Verify: ext final field with empty FinalPolyExt")
+	}
 
 	// levelAtRound: folding round j → level index l (1-based).
 	levelAtRound := make(map[int]int, numExtraLevels)
@@ -448,17 +701,7 @@ func Verify(p Params, levelRoots [][][]byte, levelDs []int, prf Proof, ts *fiats
 		levelAtRound[jl] = l
 	}
 
-	// ── Register all challenge names up front, in compute order (same as Prove) ──
-	ts.NewChallenge(foldName(0))
-	for j := 1; j < p.numRounds; j++ {
-		if l, ok := levelAtRound[j]; ok {
-			ts.NewChallenge(levelGammaName(l))
-		}
-		ts.NewChallenge(foldName(j))
-	}
-	for k := 0; k < p.NumQueries; k++ {
-		ts.NewChallenge(queryName(k))
-	}
+	registerChallenges(p, levelAtRound, ts)
 
 	// Assemble FRI running-polynomial roots: roots[0] is the level-0 root;
 	// roots[1..r-1] come from prf.FRIRoots.
@@ -467,6 +710,21 @@ func Verify(p Params, levelRoots [][][]byte, levelDs []int, prf Proof, ts *fiats
 	for j := 1; j < p.numRounds; j++ {
 		roots[j] = prf.FRIRoots[j-1]
 	}
+
+	var levelRootsExtra [][][]byte
+	if numExtraLevels > 0 {
+		levelRootsExtra = levelRoots[1:]
+	}
+
+	if prf.FinalField == field.Ext {
+		return verifyExt(p, levelRoots, levelRootsExtra, levelAtRound, roots, prf, ts)
+	}
+	return verifyBase(p, levelRoots, levelRootsExtra, levelAtRound, roots, prf, ts)
+}
+
+func verifyBase(p Params, levelRoots, levelRootsExtra [][][]byte, levelAtRound map[int]int, roots [][]byte, prf Proof, ts *fiatshamir.Transcript) error {
+	numLevels := len(levelRoots)
+	numExtraLevels := numLevels - 1
 
 	// ── Replay commit phase (interleaved, same order as Prove) ───────────────
 	gammas := make([]koalabear.Element, numLevels) // gammas[l] for levels[l], l = 1..numLevels-1
@@ -500,15 +758,82 @@ func Verify(p Params, levelRoots [][][]byte, levelDs []int, prf Proof, ts *fiats
 		alphas[j].SetBytes(b)
 	}
 
-	if err := ts.Bind(queryName(0), serialise(prf.FinalPoly)); err != nil {
+	if err := ts.Bind(queryName(0), serialiseBase(prf.FinalPolyBase)); err != nil {
 		return fmt.Errorf("fri: Verify: bind final poly: %w", err)
 	}
 
 	// ── Query phase ───────────────────────────────────────────────────────────
-	// levelRootsExtra[l-1] = roots for levels[l] (l >= 1), passed to checkQuery.
-	var levelRootsExtra [][][]byte
-	if numExtraLevels > 0 {
-		levelRootsExtra = levelRoots[1:]
+	for k := 0; k < p.NumQueries; k++ {
+		b, err := ts.ComputeChallenge(queryName(k))
+		if err != nil {
+			return fmt.Errorf("fri: Verify: compute query challenge %d: %w", k, err)
+		}
+		s := int(binary.BigEndian.Uint64(b[:8]) % uint64(p.N/2))
+
+		if k < p.NumQueries-1 {
+			if err := ts.Bind(queryName(k+1), b); err != nil {
+				return fmt.Errorf("fri: Verify: bind query chain %d: %w", k+1, err)
+			}
+		}
+
+		var levelQueriesForQuery []QueriesAtLevel
+		if numExtraLevels > 0 {
+			levelQueriesForQuery = make([]QueriesAtLevel, numExtraLevels)
+			for l := 0; l < numExtraLevels; l++ {
+				levelQueriesForQuery[l] = prf.LevelQueries[l][k]
+			}
+		}
+
+		if err := checkQuery(s, prf.FRIQueries[k], levelQueriesForQuery, levelRootsExtra,
+			levelAtRound, gammas, roots, prf.FinalPolyBase, alphas, p); err != nil {
+			return fmt.Errorf("fri: Verify: query %d failed: %w", k, err)
+		}
+	}
+
+	return nil
+}
+
+func verifyExt(p Params, levelRoots, levelRootsExtra [][][]byte, levelAtRound map[int]int, roots [][]byte, prf Proof, ts *fiatshamir.Transcript) error {
+	numLevels := len(levelRoots)
+	numExtraLevels := numLevels - 1
+
+	gammas := make([]ext.E4, numLevels)
+	alphas := make([]ext.E4, p.numRounds)
+
+	for j := 0; j < p.numRounds; j++ {
+		if j > 0 {
+			if l, ok := levelAtRound[j]; ok {
+				gammaName := levelGammaName(l)
+				for i, root := range levelRoots[l] {
+					if err := ts.Bind(gammaName, root); err != nil {
+						return fmt.Errorf("fri: Verify: bind level poly l=%d i=%d: %w", l, i, err)
+					}
+				}
+				b, err := ts.ComputeChallenge(gammaName)
+				if err != nil {
+					return fmt.Errorf("fri: Verify: compute level gamma l=%d: %w", l, err)
+				}
+				if err := setChallengeExt(&gammas[l], b); err != nil {
+					return fmt.Errorf("fri: Verify: decode level gamma l=%d: %w", l, err)
+				}
+			}
+		}
+
+		name := foldName(j)
+		if err := ts.Bind(name, roots[j]); err != nil {
+			return fmt.Errorf("fri: Verify: bind fold %d: %w", j, err)
+		}
+		b, err := ts.ComputeChallenge(name)
+		if err != nil {
+			return fmt.Errorf("fri: Verify: compute fold challenge %d: %w", j, err)
+		}
+		if err := setChallengeExt(&alphas[j], b); err != nil {
+			return fmt.Errorf("fri: Verify: decode fold challenge %d: %w", j, err)
+		}
+	}
+
+	if err := ts.Bind(queryName(0), serialiseExt(prf.FinalPolyExt)); err != nil {
+		return fmt.Errorf("fri: Verify: bind final poly: %w", err)
 	}
 
 	for k := 0; k < p.NumQueries; k++ {
@@ -532,8 +857,8 @@ func Verify(p Params, levelRoots [][][]byte, levelDs []int, prf Proof, ts *fiats
 			}
 		}
 
-		if err := checkQuery(s, prf.FRIQueries[k], levelQueriesForQuery, levelRootsExtra,
-			levelAtRound, gammas, roots, prf.FinalPoly, alphas, p); err != nil {
+		if err := checkQueryExt(s, prf.FRIQueries[k], levelQueriesForQuery, levelRootsExtra,
+			levelAtRound, gammas, roots, prf.FinalPolyExt, alphas, p); err != nil {
 			return fmt.Errorf("fri: Verify: query %d failed: %w", k, err)
 		}
 	}
@@ -556,9 +881,9 @@ func log2(n int) int {
 	return k
 }
 
-// buildTree builds a Merkle tree of Nⱼ/2 leaves where
+// buildTreeBase builds a Merkle tree of Nⱼ/2 leaves where
 // leaf k = LeafHasher(encode(layer[k]) || encode(layer[k + Nⱼ/2])).
-func buildTree(layer []koalabear.Element, lh merkle.LeafHasher, nh merkle.NodeHasher) (*merkle.Tree, error) {
+func buildTreeBase(layer []koalabear.Element, lh merkle.LeafHasher, nh merkle.NodeHasher) (*merkle.Tree, error) {
 	half := len(layer) / 2
 	tree, err := merkle.New(half, lh, nh)
 	if err != nil {
@@ -566,13 +891,29 @@ func buildTree(layer []koalabear.Element, lh merkle.LeafHasher, nh merkle.NodeHa
 	}
 	leaves := make([][]byte, half)
 	for k := 0; k < half; k++ {
-		leaves[k] = append(layer[k].Marshal(), layer[k+half].Marshal()...)
+		pair := []commitment.PairBase{{layer[k], layer[k+half]}}
+		leaves[k] = commitment.SerializeRawLeaf(pair, nil)
 	}
 	return tree, tree.Build(leaves)
 }
 
-// foldLayer folds a layer of size Nⱼ into a layer of size Nⱼ/2.
-func foldLayer(layer []koalabear.Element, alpha koalabear.Element, domain *fft.Domain, invTwo koalabear.Element) []koalabear.Element {
+// buildTreeExt is the extension-field counterpart of buildTreeBase.
+func buildTreeExt(layer []ext.E4, lh merkle.LeafHasher, nh merkle.NodeHasher) (*merkle.Tree, error) {
+	half := len(layer) / 2
+	tree, err := merkle.New(half, lh, nh)
+	if err != nil {
+		return nil, err
+	}
+	leaves := make([][]byte, half)
+	for k := 0; k < half; k++ {
+		pair := []commitment.PairExt{{layer[k], layer[k+half]}}
+		leaves[k] = commitment.SerializeRawLeaf(nil, pair)
+	}
+	return tree, tree.Build(leaves)
+}
+
+// foldLayerBase folds a base-field layer of size Nⱼ into a layer of size Nⱼ/2.
+func foldLayerBase(layer []koalabear.Element, alpha koalabear.Element, domain *fft.Domain, invTwo koalabear.Element) []koalabear.Element {
 	half := len(layer) / 2
 	next := make([]koalabear.Element, half)
 
@@ -598,8 +939,38 @@ func foldLayer(layer []koalabear.Element, alpha koalabear.Element, domain *fft.D
 	return next
 }
 
-// serialise encodes a slice of field elements to bytes (4 bytes each, Marshal form).
-func serialise(poly []koalabear.Element) []byte {
+// foldLayerExt folds an extension-field layer of size Nⱼ into a layer of size
+// Nⱼ/2. Domain factors remain base-field elements and are multiplied with
+// MulByElement.
+func foldLayerExt(layer []ext.E4, alpha ext.E4, domain *fft.Domain, invTwo koalabear.Element) []ext.E4 {
+	half := len(layer) / 2
+	next := make([]ext.E4, half)
+
+	var xInv koalabear.Element
+	xInv.SetOne()
+
+	for i := 0; i < half; i++ {
+		p, q := layer[i], layer[i+half]
+
+		var sum, diff ext.E4
+		sum.Add(&p, &q)
+		sum.MulByElement(&sum, &invTwo)
+
+		diff.Sub(&p, &q)
+		diff.MulByElement(&diff, &invTwo)
+		diff.MulByElement(&diff, &xInv)
+		diff.Mul(&diff, &alpha)
+
+		next[i].Add(&sum, &diff)
+
+		xInv.Mul(&xInv, &domain.GeneratorInv)
+	}
+
+	return next
+}
+
+// serialiseBase encodes a slice of base field elements to bytes.
+func serialiseBase(poly []koalabear.Element) []byte {
 	buf := make([]byte, len(poly)*koalabear.Bytes)
 	for i, e := range poly {
 		copy(buf[i*koalabear.Bytes:], e.Marshal())
@@ -607,8 +978,42 @@ func serialise(poly []koalabear.Element) []byte {
 	return buf
 }
 
-// openQuery builds the Merkle opening data for query index s across all r folding levels.
-func openQuery(s int, layers [][]koalabear.Element, trees []*merkle.Tree, numRounds int) (Query, error) {
+// serialiseExt encodes a slice of E4 elements using gnark-crypto's coordinate
+// order: B0.A0, B0.A1, B1.A0, B1.A1.
+func serialiseExt(poly []ext.E4) []byte {
+	buf := make([]byte, len(poly)*4*koalabear.Bytes)
+	offset := 0
+	for i := range poly {
+		offset = putExtElement(buf, offset, &poly[i])
+	}
+	return buf
+}
+
+func putExtElement(buf []byte, offset int, e *ext.E4) int {
+	copy(buf[offset:], e.B0.A0.Marshal())
+	offset += koalabear.Bytes
+	copy(buf[offset:], e.B0.A1.Marshal())
+	offset += koalabear.Bytes
+	copy(buf[offset:], e.B1.A0.Marshal())
+	offset += koalabear.Bytes
+	copy(buf[offset:], e.B1.A1.Marshal())
+	return offset + koalabear.Bytes
+}
+
+func setChallengeExt(z *ext.E4, b []byte) error {
+	if len(b) < 4*koalabear.Bytes {
+		return fmt.Errorf("need at least %d bytes, got %d", 4*koalabear.Bytes, len(b))
+	}
+	z.B0.A0.SetBytes(b[0*koalabear.Bytes : 1*koalabear.Bytes])
+	z.B0.A1.SetBytes(b[1*koalabear.Bytes : 2*koalabear.Bytes])
+	z.B1.A0.SetBytes(b[2*koalabear.Bytes : 3*koalabear.Bytes])
+	z.B1.A1.SetBytes(b[3*koalabear.Bytes : 4*koalabear.Bytes])
+	return nil
+}
+
+// openQueryBase builds the Merkle opening data for query index s across all r
+// base folding levels.
+func openQueryBase(s int, layers [][]koalabear.Element, trees []*merkle.Tree, numRounds int) (Query, error) {
 	q := Query{Layers: make([]QueryLayer, numRounds)}
 	for j := 0; j < numRounds; j++ {
 		Nj := len(layers[j])
@@ -620,15 +1025,39 @@ func openQuery(s int, layers [][]koalabear.Element, trees []*merkle.Tree, numRou
 		}
 
 		q.Layers[j] = QueryLayer{
-			LeafP: layers[j][base],
-			LeafQ: layers[j][base+Nj/2],
-			Path:  path,
+			Field:     field.Base,
+			LeafPBase: layers[j][base],
+			LeafQBase: layers[j][base+Nj/2],
+			Path:      path,
 		}
 	}
 	return q, nil
 }
 
-// checkQuery verifies one multi-degree FRI query:
+// openQueryExt builds the Merkle opening data for query index s across all r
+// extension folding levels.
+func openQueryExt(s int, layers [][]ext.E4, trees []*merkle.Tree, numRounds int) (Query, error) {
+	q := Query{Layers: make([]QueryLayer, numRounds)}
+	for j := 0; j < numRounds; j++ {
+		Nj := len(layers[j])
+		base := s % (Nj / 2)
+
+		path, err := trees[j].OpenProof(base)
+		if err != nil {
+			return Query{}, fmt.Errorf("layer %d OpenProof base=%d: %w", j, base, err)
+		}
+
+		q.Layers[j] = QueryLayer{
+			Field:    field.Ext,
+			LeafPExt: layers[j][base],
+			LeafQExt: layers[j][base+Nj/2],
+			Path:     path,
+		}
+	}
+	return q, nil
+}
+
+// checkQuery verifies one base-field multi-degree FRI query:
 //   - Merkle proofs for all level polynomial openings
 //   - Merkle proofs and fold consistency for the running-polynomial path
 //   - Batching consistency at each level introduction round
@@ -649,7 +1078,11 @@ func checkQuery(s int, fq Query,
 	// Verify Merkle proofs for all level polynomial openings.
 	for lIdx, lqList := range levelQueriesForQuery {
 		for i, ld := range lqList {
-			leafData := append(ld.LeafP.Marshal(), ld.LeafQ.Marshal()...)
+			if ld.Field != field.Base {
+				return fmt.Errorf("level %d poly %d: expected base query layer, got %s", lIdx+1, i, ld.Field)
+			}
+			pair := []commitment.PairBase{{ld.LeafPBase, ld.LeafQBase}}
+			leafData := commitment.SerializeRawLeaf(pair, nil)
 			if !merkle.Verify(levelRoots[lIdx][i], ld.Path, leafData, p.LeafHasher, p.NodeHasher) {
 				return fmt.Errorf("level %d poly %d: Merkle proof invalid", lIdx+1, i)
 			}
@@ -661,8 +1094,12 @@ func checkQuery(s int, fq Query,
 		Nj := int(p.domainsLight[j].cardinality)
 		base := s % (Nj / 2)
 		layer := fq.Layers[j]
+		if layer.Field != field.Base {
+			return fmt.Errorf("round %d: expected base query layer, got %s", j, layer.Field)
+		}
 
-		leafData := append(layer.LeafP.Marshal(), layer.LeafQ.Marshal()...)
+		pair := []commitment.PairBase{{layer.LeafPBase, layer.LeafQBase}}
+		leafData := commitment.SerializeRawLeaf(pair, nil)
 		if !merkle.Verify(roots[j], layer.Path, leafData, p.LeafHasher, p.NodeHasher) {
 			return fmt.Errorf("round %d: Merkle proof invalid (base=%d)", j, base)
 		}
@@ -670,9 +1107,9 @@ func checkQuery(s int, fq Query,
 		// Fold: expected = (LeafP+LeafQ)/2 + α*(LeafP-LeafQ)/(2·ωⱼ^base).
 		var xInv, sum, diff, expected koalabear.Element
 		xInv.Exp(p.domainsLight[j].generator, big.NewInt(int64(Nj-base)))
-		sum.Add(&layer.LeafP, &layer.LeafQ)
+		sum.Add(&layer.LeafPBase, &layer.LeafQBase)
 		sum.Mul(&sum, &p.invTwo)
-		diff.Sub(&layer.LeafP, &layer.LeafQ)
+		diff.Sub(&layer.LeafPBase, &layer.LeafQBase)
 		diff.Mul(&diff, &p.invTwo)
 		diff.Mul(&diff, &xInv)
 		diff.Mul(&diff, &alphas[j])
@@ -694,9 +1131,9 @@ func checkQuery(s int, fq Query,
 				for _, ld := range levelQueriesForQuery[li-1] {
 					var leafVal koalabear.Element
 					if isLeafP {
-						leafVal.Set(&ld.LeafP)
+						leafVal.Set(&ld.LeafPBase)
 					} else {
-						leafVal.Set(&ld.LeafQ)
+						leafVal.Set(&ld.LeafQBase)
 					}
 					var term koalabear.Element
 					term.Mul(&leafVal, &gammaPow)
@@ -706,11 +1143,106 @@ func checkQuery(s int, fq Query,
 			}
 
 			if isLeafP {
-				if !expectedNext.Equal(&nextLayer.LeafP) {
+				if !expectedNext.Equal(&nextLayer.LeafPBase) {
 					return fmt.Errorf("round %d: folded value mismatch at round %d LeafP", j, j+1)
 				}
 			} else {
-				if !expectedNext.Equal(&nextLayer.LeafQ) {
+				if !expectedNext.Equal(&nextLayer.LeafQBase) {
+					return fmt.Errorf("round %d: folded value mismatch at round %d LeafQ", j, j+1)
+				}
+			}
+		} else {
+			finalVal := finalPoly[s%len(finalPoly)]
+			if !expected.Equal(&finalVal) {
+				return fmt.Errorf("round %d (final): folded value does not match FinalPoly", j)
+			}
+		}
+	}
+
+	return nil
+}
+
+func checkQueryExt(s int, fq Query,
+	levelQueriesForQuery []QueriesAtLevel,
+	levelRoots [][][]byte,
+	levelAtRound map[int]int,
+	gammas []ext.E4,
+	roots [][]byte,
+	finalPoly []ext.E4,
+	alphas []ext.E4,
+	p Params) error {
+
+	for lIdx, lqList := range levelQueriesForQuery {
+		for i, ld := range lqList {
+			if ld.Field != field.Ext {
+				return fmt.Errorf("level %d poly %d: expected ext query layer, got %s", lIdx+1, i, ld.Field)
+			}
+			pair := []commitment.PairExt{{ld.LeafPExt, ld.LeafQExt}}
+			leafData := commitment.SerializeRawLeaf(nil, pair)
+			if !merkle.Verify(levelRoots[lIdx][i], ld.Path, leafData, p.LeafHasher, p.NodeHasher) {
+				return fmt.Errorf("level %d poly %d: Merkle proof invalid", lIdx+1, i)
+			}
+		}
+	}
+
+	for j := 0; j < p.numRounds; j++ {
+		Nj := int(p.domainsLight[j].cardinality)
+		base := s % (Nj / 2)
+		layer := fq.Layers[j]
+		if layer.Field != field.Ext {
+			return fmt.Errorf("round %d: expected ext query layer, got %s", j, layer.Field)
+		}
+
+		pair := []commitment.PairExt{{layer.LeafPExt, layer.LeafQExt}}
+		leafData := commitment.SerializeRawLeaf(nil, pair)
+		if !merkle.Verify(roots[j], layer.Path, leafData, p.LeafHasher, p.NodeHasher) {
+			return fmt.Errorf("round %d: Merkle proof invalid (base=%d)", j, base)
+		}
+
+		var xInv koalabear.Element
+		xInv.Exp(p.domainsLight[j].generator, big.NewInt(int64(Nj-base)))
+
+		var sum, diff, expected ext.E4
+		sum.Add(&layer.LeafPExt, &layer.LeafQExt)
+		sum.MulByElement(&sum, &p.invTwo)
+		diff.Sub(&layer.LeafPExt, &layer.LeafQExt)
+		diff.MulByElement(&diff, &p.invTwo)
+		diff.MulByElement(&diff, &xInv)
+		diff.Mul(&diff, &alphas[j])
+		expected.Add(&sum, &diff)
+
+		if j < p.numRounds-1 {
+			Nj1 := Nj / 2
+			nextLayer := fq.Layers[j+1]
+			isLeafP := base < Nj1/2
+
+			var expectedNext ext.E4
+			expectedNext.Set(&expected)
+
+			if li, ok := levelAtRound[j+1]; ok {
+				gamma := gammas[li]
+				var gammaPow ext.E4
+				gammaPow.Set(&gamma)
+				for _, ld := range levelQueriesForQuery[li-1] {
+					var leafVal ext.E4
+					if isLeafP {
+						leafVal.Set(&ld.LeafPExt)
+					} else {
+						leafVal.Set(&ld.LeafQExt)
+					}
+					var term ext.E4
+					term.Mul(&leafVal, &gammaPow)
+					expectedNext.Add(&expectedNext, &term)
+					gammaPow.Mul(&gammaPow, &gamma)
+				}
+			}
+
+			if isLeafP {
+				if !expectedNext.Equal(&nextLayer.LeafPExt) {
+					return fmt.Errorf("round %d: folded value mismatch at round %d LeafP", j, j+1)
+				}
+			} else {
+				if !expectedNext.Equal(&nextLayer.LeafQExt) {
 					return fmt.Errorf("round %d: folded value mismatch at round %d LeafQ", j, j+1)
 				}
 			}

@@ -56,3 +56,22 @@ func (encoder *Encoder) Encode(p poly.Polynomial, d *fft.Domain) poly.Polynomial
 	// return _p
 	return _p
 }
+
+// EncodeExt evaluates an extension-field polynomial on the encoder domain.
+// The input p is in Lagrange normal form over d; the output is a fresh
+// extension polynomial in Lagrange normal form over encoder.Domain.
+func (encoder *Encoder) EncodeExt(p poly.ExtPolynomial, d *fft.Domain) poly.ExtPolynomial {
+	n := len(p)
+
+	N := encoder.Domain.Cardinality
+	_p := make(poly.ExtPolynomial, N)
+	copy(_p, p)
+
+	d.FFTInverseExt(_p[:n], fft.DIF)
+	utils.BitReverse(_p[:n])
+
+	encoder.Domain.FFTExt(_p, fft.DIF)
+	utils.BitReverse(_p)
+
+	return _p
+}

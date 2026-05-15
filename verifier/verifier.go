@@ -21,9 +21,11 @@ import (
 
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/fri"
@@ -55,7 +57,7 @@ type verifierRunTime struct {
 	friParams    fri.Params
 	publicInputs map[string]proof.PublicInput
 	program      board.Program
-	zeta         koalabear.Element
+	zeta         ext.E4
 	setup        setup.PublicKeyRoots
 	fs           *fiatshamir.Transcript
 
@@ -69,7 +71,6 @@ type verifierRunTime struct {
 }
 
 func newVerifierRuntime(program board.Program, setup setup.PublicKeyRoots, publicInputs map[string]proof.PublicInput, prf proof.Proof, config Config) (verifierRunTime, error) {
-
 	res := verifierRunTime{
 		config:       config,
 		proof:        prf,
@@ -128,6 +129,29 @@ func newVerifierRuntime(program board.Program, setup setup.PublicKeyRoots, publi
 	return res, nil
 }
 
+func setExtFromBytes(z *ext.E4, b []byte) error {
+	if len(b) < 4*koalabear.Bytes {
+		return fmt.Errorf("need at least %d bytes, got %d", 4*koalabear.Bytes, len(b))
+	}
+	z.B0.A0.SetBytes(b[0*koalabear.Bytes : 1*koalabear.Bytes])
+	z.B0.A1.SetBytes(b[1*koalabear.Bytes : 2*koalabear.Bytes])
+	z.B1.A0.SetBytes(b[2*koalabear.Bytes : 3*koalabear.Bytes])
+	z.B1.A1.SetBytes(b[3*koalabear.Bytes : 4*koalabear.Bytes])
+	return nil
+}
+
+func liftBaseToExt(v koalabear.Element) ext.E4 {
+	var res ext.E4
+	res.Lift(&v)
+	return res
+}
+
+func extFromUint64(v uint64) ext.E4 {
+	var base koalabear.Element
+	base.SetUint64(v)
+	return liftBaseToExt(base)
+}
+
 func (vr *verifierRunTime) deriveChallenges() error {
 
 	// For each FS round, bind every per-size trace root (decreasing N order,
@@ -143,9 +167,11 @@ func (vr *verifierRunTime) deriveChallenges() error {
 		if err != nil {
 			return err
 		}
-		var c koalabear.Element
-		c.SetBytes(bChallenge)
-		vr.proof.ValuesAtZeta[challengeName] = c
+		var c ext.E4
+		if err := setExtFromBytes(&c, bChallenge); err != nil {
+			return err
+		}
+		vr.proof.SetValueAtZetaExt(challengeName, c)
 	}
 	// Bind every per-size AIR-quotient root before computing zeta.
 	for i := vr.layout.AIRBegin; i < vr.layout.AIREnd; i++ {
@@ -155,20 +181,25 @@ func (vr *verifierRunTime) deriveChallenges() error {
 	if err != nil {
 		return err
 	}
-	vr.zeta.SetBytes(bzeta)
+	if err := setExtFromBytes(&vr.zeta, bzeta); err != nil {
+		return err
+	}
 
 	return nil
 }
 
+// TODO the verifier should fetch the public values from the vanishing expressions, and look them up
+// in proof.PublicColumns, but not just trust proof.PublicColumns
 func (vr *verifierRunTime) computePublicColumns() error {
 	for k, pi := range vr.proof.PublicColumns {
-		var lag koalabear.Element
+		var lag ext.E4
 		for _, pe := range pi.Entries {
-			tmp := poly.LagrangeAtZeta(vr.zeta, pi.N, pe.Idx)
-			tmp.Mul(&tmp, &pe.Value)
+			tmp := poly.LagrangeAtZetaExt(vr.zeta, pi.N, pe.Idx)
+			value := pe.ExtValue()
+			tmp.Mul(&tmp, &value)
 			lag.Add(&lag, &tmp)
 		}
-		vr.proof.ValuesAtZeta[k] = lag
+		vr.proof.SetValueAtZetaExt(k, lag)
 	}
 	return nil
 }
@@ -178,19 +209,15 @@ func (vr *verifierRunTime) computeLagrange() error {
 	for _, m := range vr.program.Modules {
 		lags := m.VanishingRelation.Leaves(expr.NewConfig(config...))
 		for _, lag := range lags {
-			_, ok := vr.proof.ValuesAtZeta[lag]
-			if ok {
+			if _, ok := vr.proof.ValueAtZetaExt(lag); ok {
 				continue
 			}
-			var i int
-			i = constants.ParseLagrangeName(lag)
+			i := constants.ParseLagrangeName(lag)
 			if i < 0 {
-				// relative column: stored as -(k+1) where k is the offset from
-				// the last row, so absolute position = N-1-k = N + i.
 				i = m.N + i
 			}
-			v := poly.LagrangeAtZeta(vr.zeta, m.N, i)
-			vr.proof.ValuesAtZeta[lag] = v
+			v := poly.LagrangeAtZetaExt(vr.zeta, m.N, i)
+			vr.proof.SetValueAtZetaExt(lag, v)
 		}
 	}
 	return nil
@@ -198,20 +225,22 @@ func (vr *verifierRunTime) computeLagrange() error {
 
 func (vr *verifierRunTime) checkLogupBus() error {
 	for _, bus := range vr.program.LogupBus {
-		var cumNegative, cumPositive koalabear.Element
+		var cumNegative, cumPositive ext.E4
 		for _, pos := range bus.Positive {
 			if len(vr.proof.PublicColumns[pos].Entries) > 1 {
 				return fmt.Errorf("an extracted value from a logup column should have exactly one entry")
 			}
 			pe := vr.proof.PublicColumns[pos].Entries[0]
-			cumPositive.Add(&cumPositive, &pe.Value)
+			value := pe.ExtValue()
+			cumPositive.Add(&cumPositive, &value)
 		}
 		for _, neg := range bus.Negative {
 			if len(vr.proof.PublicColumns[neg].Entries) > 1 {
 				return fmt.Errorf("an extracted value from a logup column should have exactly one entry")
 			}
 			pe := vr.proof.PublicColumns[neg].Entries[0]
-			cumNegative.Add(&cumNegative, &pe.Value)
+			value := pe.ExtValue()
+			cumNegative.Add(&cumNegative, &value)
 		}
 		cumPositive.Sub(&cumPositive, &cumNegative)
 		if !cumPositive.IsZero() {
@@ -223,36 +252,31 @@ func (vr *verifierRunTime) checkLogupBus() error {
 
 // checkAIRRelations checks the air relations per module
 func (vr *verifierRunTime) checkAIRRelations() error {
+	valuesAtZeta := vr.proof.ExtValuesAtZeta()
 
 	for moduleName, m := range vr.program.Modules {
-
-		// Compute Q(zeta) = chunk_0(zeta) + zeta^N * chunk_1(zeta) + zeta^(2N) * chunk_2(zeta) + ...
-		// The i-th chunk is stored in proof.ValuesAtZeta under the key "moduleName_i".
-		var qZeta koalabear.Element
-		var zetaPowIN koalabear.Element
+		var qZeta ext.E4
+		var zetaPowIN ext.E4
 		zetaPowIN.SetOne()
-		var zetaN koalabear.Element
+		var zetaN ext.E4
 		zetaN.Exp(vr.zeta, big.NewInt(int64(m.N)))
 		for i := 0; ; i++ {
 			chunkName := constants.QuotientChunkName(moduleName, i)
-			chunkVal, ok := vr.proof.ValuesAtZeta[chunkName]
+			chunkVal, ok := vr.proof.ValueAtZetaExt(chunkName)
 			if !ok {
 				break
 			}
-			var term koalabear.Element
+			var term ext.E4
 			term.Mul(&zetaPowIN, &chunkVal)
 			qZeta.Add(&qZeta, &term)
 			zetaPowIN.Mul(&zetaPowIN, &zetaN)
 		}
 
-		// Compute V(zeta): evaluate the vanishing relation DAG at zeta using ValuesAtZeta.
-		vZeta := m.VanishingRelation.Eval(vr.proof.ValuesAtZeta)
+		vZeta := m.VanishingRelation.EvalExt(valuesAtZeta)
 
-		// Check V(zeta) == (zeta^N - 1) * Q(zeta)
-		one := koalabear.One()
-		var zetaNMinusOne koalabear.Element
+		var one, zetaNMinusOne, rhs ext.E4
+		one.SetOne()
 		zetaNMinusOne.Sub(&zetaN, &one)
-		var rhs koalabear.Element
 		rhs.Mul(&zetaNMinusOne, &qZeta)
 
 		if !vZeta.Equal(&rhs) {
@@ -290,14 +314,9 @@ func (vr *verifierRunTime) checkFRIProof() error {
 }
 
 // verifyWMerkleProof checks wp opens to its leaf data under root, using the
-// same paired-leaf serialisation as RSCommit.Commit (pair k contributes
-// pair[0] || pair[1] to the leaf buffer at offset 2k).
+// same base-then-ext paired-leaf serialisation as RSCommit.Commit.
 func verifyWMerkleProof(root []byte, wp commitment.WMerkleProof) bool {
-	buf := make([]byte, 2*len(wp.RawLeaf)*koalabear.Bytes)
-	for k, pair := range wp.RawLeaf {
-		copy(buf[2*k*koalabear.Bytes:], pair[0].Marshal())
-		copy(buf[(2*k+1)*koalabear.Bytes:], pair[1].Marshal())
-	}
+	buf := commitment.SerializeRawLeaf(wp.RawLeafBase, wp.RawLeafExt)
 	return merkle.Verify(root, wp.Proof, buf, commitment.LeafHash, commitment.NodeHash)
 }
 
@@ -330,13 +349,9 @@ func (vr *verifierRunTime) checkMerkleProofsPointSampling() error {
 func (vr *verifierRunTime) checkFRIBridge() error {
 	NQ := constants.NUM_QUERIES
 
-	// Same iteration order as the prover (sizes decreasing, shifts increasing,
-	// names sorted by leaf-key) — built from `program` so module-size changes
-	// via SetSize are picked up.
 	dqLayout := prover.BuildDeepQuotientLayout(vr.program)
 	sizes := dqLayout.Sizes
 
-	// Per-size canonical domain (used to compute z_s = zeta · ω_N^shift).
 	domainBySize := make(map[int]*fft.Domain, len(sizes))
 	for _, m := range vr.program.Modules {
 		if _, ok := domainBySize[m.N]; !ok {
@@ -344,62 +359,63 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 		}
 	}
 
-	// Folding challenge — must match the prover's hard-coded value.
-	// TODO derive from FS, same as prover.
-	var alpha koalabear.Element
-	alpha.SetUint64(10)
+	alpha := extFromUint64(10)
 
-	// samplePair returns the (LeafP, LeafQ) pair for a given Slot at query q.
-	samplePair := func(slot prover.Slot, q int) (koalabear.Element, koalabear.Element, error) {
+	samplePair := func(slot prover.Slot, q int) (ext.E4, ext.E4, error) {
 		if slot.TreeIdx >= len(vr.proof.PointSamplings[q]) {
-			return koalabear.Element{}, koalabear.Element{}, fmt.Errorf("checkFRIBridge: tree index %d out of range", slot.TreeIdx)
+			return ext.E4{}, ext.E4{}, fmt.Errorf("checkFRIBridge: tree index %d out of range", slot.TreeIdx)
 		}
 		wp := vr.proof.PointSamplings[q][slot.TreeIdx]
-		if slot.PolyIdx >= len(wp.RawLeaf) {
-			return koalabear.Element{}, koalabear.Element{}, fmt.Errorf("checkFRIBridge: poly index %d out of range (have %d)", slot.PolyIdx, len(wp.RawLeaf))
+		if slot.Field == field.Ext {
+			rawIdx := slot.PolyIdx
+			if rawIdx >= len(wp.RawLeafExt) {
+				return ext.E4{}, ext.E4{}, fmt.Errorf("checkFRIBridge: ext raw leaf index %d out of range for slot %+v (have %d)", rawIdx, slot, len(wp.RawLeafExt))
+			}
+			return wp.RawLeafExt[rawIdx][0], wp.RawLeafExt[rawIdx][1], nil
 		}
-		return wp.RawLeaf[slot.PolyIdx][0], wp.RawLeaf[slot.PolyIdx][1], nil
+
+		rawIdx := slot.PolyIdx
+		if rawIdx >= len(wp.RawLeafBase) {
+			return ext.E4{}, ext.E4{}, fmt.Errorf("checkFRIBridge: base raw leaf index %d out of range for slot %+v (have %d)", rawIdx, slot, len(wp.RawLeafBase))
+		}
+		return liftBaseToExt(wp.RawLeafBase[rawIdx][0]), liftBaseToExt(wp.RawLeafBase[rawIdx][1]), nil
 	}
 
 	for q := 0; q < NQ; q++ {
-		// Full-domain FRI query position (the level-0 leaf index).
-		s_full := vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0].Path.LeafIdx
+		sFull := vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0].Path.LeafIdx
 
 		for i, N := range sizes {
 			domainSize := constants.RATE * N
 			halfDomain := domainSize / 2
-			s_l := s_full % halfDomain
+			sL := sFull % halfDomain
 
-			// Sample point for this level: omega_l^{s_l}, where omega_l is
-			// the generator of the size-(RATE*N) FRI domain. fft.NewDomain
-			// is deterministic so this matches what the prover used.
-			// domL := fft.NewDomain(uint64(domainSize))
 			generator, err := koalabear.Generator(uint64(domainSize))
 			if err != nil {
 				return err
 			}
-			var X, negX koalabear.Element
-			X.Exp(generator, big.NewInt(int64(s_l)))
-			negX.Neg(&X)
+			var XBase, negXBase koalabear.Element
+			XBase.Exp(generator, big.NewInt(int64(sL)))
+			negXBase.Neg(&XBase)
+			X := liftBaseToExt(XBase)
+			negX := liftBaseToExt(negXBase)
 
-			// Generator of the size-N domain (NOT RATE*N).
 			domN := domainBySize[N]
 
-			var DQ_P, DQ_Q koalabear.Element
-			var alphaAcc koalabear.Element
+			var DQ_P, DQ_Q ext.E4
+			var alphaAcc ext.E4
 			alphaAcc.SetOne()
 
-			// ── Phase 1: vanishing-relation columns ──
 			for j, shift := range dqLayout.Shifts[i] {
-				var omegaShift, z_s koalabear.Element
+				var omegaShift koalabear.Element
 				omegaShift.Exp(domN.Generator, big.NewInt(int64(shift)))
-				z_s.Mul(&vr.zeta, &omegaShift)
+				z_s := vr.zeta
+				z_s.MulByElement(&z_s, &omegaShift)
 
-				var v_s, C_at_X, C_at_negX koalabear.Element
+				var v_s, C_at_X, C_at_negX ext.E4
 				names := dqLayout.Names[i][j]
 				keys := dqLayout.Keys[i][j]
 				for k := range names {
-					evalAtZ, ok := vr.proof.ValuesAtZeta[keys[k]]
+					evalAtZ, ok := vr.proof.ValueAtZetaExt(keys[k])
 					if !ok {
 						return fmt.Errorf("checkFRIBridge: %q not in ValuesAtZeta", keys[k])
 					}
@@ -412,7 +428,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 						return err
 					}
 
-					var term koalabear.Element
+					var term ext.E4
 					term.Mul(&evalAtZ, &alphaAcc)
 					v_s.Add(&v_s, &term)
 					term.Mul(&leafP, &alphaAcc)
@@ -423,8 +439,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 					alphaAcc.Mul(&alphaAcc, &alpha)
 				}
 
-				// DQ_shift(X) = (v_s - C_s(X)) / (z_s - X)
-				var num, denom koalabear.Element
+				var num, denom ext.E4
 				num.Sub(&v_s, &C_at_X)
 				denom.Sub(&z_s, &X)
 				denom.Inverse(&denom)
@@ -438,11 +453,10 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 				DQ_Q.Add(&DQ_Q, &num)
 			}
 
-			// ── Phase 2: AIR-quotient chunks (merged across modules of size N) ──
 			if len(dqLayout.AIRChunks[i]) > 0 {
-				var v_air, C_at_X, C_at_negX koalabear.Element
+				var v_air, C_at_X, C_at_negX ext.E4
 				for _, chunkName := range dqLayout.AIRChunks[i] {
-					evalAtZ, ok := vr.proof.ValuesAtZeta[chunkName]
+					evalAtZ, ok := vr.proof.ValueAtZetaExt(chunkName)
 					if !ok {
 						return fmt.Errorf("checkFRIBridge: %q not in ValuesAtZeta", chunkName)
 					}
@@ -455,7 +469,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 						return err
 					}
 
-					var term koalabear.Element
+					var term ext.E4
 					term.Mul(&evalAtZ, &alphaAcc)
 					v_air.Add(&v_air, &term)
 					term.Mul(&leafP, &alphaAcc)
@@ -466,7 +480,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 					alphaAcc.Mul(&alphaAcc, &alpha)
 				}
 
-				var num, denom koalabear.Element
+				var num, denom ext.E4
 				num.Sub(&v_air, &C_at_X)
 				denom.Sub(&vr.zeta, &X)
 				denom.Inverse(&denom)
@@ -480,15 +494,21 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 				DQ_Q.Add(&DQ_Q, &num)
 			}
 
-			// Compare DQ_N at (X, -X) with the FRI level-i layer-0 leaves.
-			var actualP, actualQ koalabear.Element
+			var actualP, actualQ ext.E4
 			if i == 0 {
-				actualP = vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0].LeafP
-				actualQ = vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0].LeafQ
+				layer := vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0]
+				if layer.Field != field.Ext {
+					return fmt.Errorf("checkFRIBridge: expected ext FRI query layer, got %s", layer.Field)
+				}
+				actualP = layer.LeafPExt
+				actualQ = layer.LeafQExt
 			} else {
 				lq := vr.proof.DeepQuotientFriProof.LevelQueries[i-1][q][0]
-				actualP = lq.LeafP
-				actualQ = lq.LeafQ
+				if lq.Field != field.Ext {
+					return fmt.Errorf("checkFRIBridge: expected ext FRI level query, got %s", lq.Field)
+				}
+				actualP = lq.LeafPExt
+				actualQ = lq.LeafQExt
 			}
 			if !DQ_P.Equal(&actualP) {
 				return fmt.Errorf("checkFRIBridge: query %d level %d (N=%d): DQ(ω_l^s) mismatch: got %s, want %s", q, i, N, DQ_P.String(), actualP.String())

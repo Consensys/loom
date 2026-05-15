@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
@@ -30,22 +31,31 @@ type RSCommit struct {
 }
 
 type WMerkleTree struct {
-	Tree     *merkle.Tree
-	UnhashedLeafs [][]Pair // UnhashedLeafs[i] = { .. {f_k(w^i), f_k(-w^i)}, .. }
+	Tree              *merkle.Tree
+	numLeaves         int
+	UnhashedLeafsBase [][]PairBase // UnhashedLeafsBase[i][j] = {f_j(w^i), f_j(-w^i)}
+	UnhashedLeafsExt  [][]PairExt  // UnhashedLeafsExt[i][j] = {f_j(w^i), f_j(-w^i)}
 }
 
-// PointSampling contains the pair evaluation {f(w^i),f(-w^i)} for batch of polynomials f,
-// and a given point w^i, where the i is Proof.LeafIdx
+// PointSampling contains the pair evaluation {f(w^i),f(-w^i)} for batches of
+// base and extension polynomials at a given point w^i, where i is
+// Proof.LeafIdx.
 type WMerkleProof struct {
-	RawLeaf []Pair
-	Proof   merkle.Proof
+	RawLeafBase []PairBase
+	RawLeafExt  []PairExt
+	Proof       merkle.Proof
 }
 
 func (wt WMerkleTree) Root() []byte {
 	return wt.Tree.Root()
 }
 
-type Pair = [2]koalabear.Element // used to store the pairs {f_k(w^i), f_k(-w^i)}
+func (wt WMerkleTree) NumLeaves() int {
+	return wt.numLeaves
+}
+
+type PairBase = [2]koalabear.Element // used to store the pairs {f_k(w^i), f_k(-w^i)}
+type PairExt = [2]ext.E4             // used to store the pairs {f_k(w^i), f_k(-w^i)}
 
 func NewRSCommit(N uint64, rate uint64, leafHasher merkle.LeafHasher, nodehasher merkle.NodeHasher) RSCommit {
 	d := fft.NewDomain(rate * N)
@@ -70,17 +80,15 @@ func NodeHash(left, right []byte) []byte {
 	return h.Sum(nil)
 }
 
-// Commit to the polynomials p. The polynomials in p are assumed to be in Lagrange form, and might be of
-// different sizes. It is assumed that the maximum size is < rs.N
-// the number of leaves is rs.N/2, the i-th leaf is
-// ( .., {p_j(w^i), p_j(-w^i)}, {p_j+1(w^i), p_j+1(-w^i)}.. ) that is the concatenation of pairs {p_j(w^i), p_j(-w^i)} for j form 1 to len(p)
-func (rs *RSCommit) Commit(p []poly.Polynomial) (WMerkleTree, error) {
-
+// Commit commits to base and extension polynomials in one Merkle tree. Inputs
+// are assumed to be in Lagrange form and may have different sizes. Each leaf is
+// the byte serialization of all base pairs followed by all extension pairs.
+func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolynomial) (WMerkleTree, error) {
 	domainsPool := map[int]*fft.Domain{}
 
-	// 1- encode every polynomial
-	_p := make([]poly.Polynomial, len(p))
-	for i, pol := range p {
+	// 1- encode every polynomial on its rail
+	encodedBase := make([]poly.Polynomial, len(basePolys))
+	for i, pol := range basePolys {
 		n := len(pol)
 		_, ok := domainsPool[n]
 		if !ok {
@@ -88,30 +96,102 @@ func (rs *RSCommit) Commit(p []poly.Polynomial) (WMerkleTree, error) {
 			domainsPool[n] = d
 		}
 		d := domainsPool[n]
-		_p[i] = rs.Encoder.Encode(pol, d)
+		encodedBase[i] = rs.Encoder.Encode(pol, d)
+	}
+
+	encodedExt := make([]poly.ExtPolynomial, len(extPolys))
+	for i, pol := range extPolys {
+		n := len(pol)
+		_, ok := domainsPool[n]
+		if !ok {
+			d := fft.NewDomain(uint64(n))
+			domainsPool[n] = d
+		}
+		d := domainsPool[n]
+		encodedExt[i] = rs.Encoder.EncodeExt(pol, d)
 	}
 
 	// 2- build the merkle tree, with rs.N/2 leafs
-	// the i-th leaf is ( .., {p_j(w^i), p_j(-w^i)}, {p_j+1(w^i), p_j+1(-w^i)}.. )
+	// the i-th leaf is base pairs followed by extension pairs.
 	N := rs.Encoder.Domain.Cardinality
 	halfN := int(N >> 1)
 	tree, err := merkle.New(halfN, LeafHash, NodeHash)
 	if err != nil {
 		return WMerkleTree{}, err
 	}
-	wTree := WMerkleTree{Tree: tree, UnhashedLeafs: make([][]Pair, halfN)}
-	buf := make([]byte, 2*koalabear.Bytes*len(_p))
+	wTree := WMerkleTree{Tree: tree, numLeaves: halfN}
+	if len(encodedBase) > 0 {
+		wTree.UnhashedLeafsBase = make([][]PairBase, halfN)
+	}
+	if len(encodedExt) > 0 {
+		wTree.UnhashedLeafsExt = make([][]PairExt, halfN)
+	}
 	for i := 0; i < halfN; i++ {
-		wTree.UnhashedLeafs[i] = make([]Pair, len(_p))
-		for j := 0; j < len(_p); j++ {
-			wTree.UnhashedLeafs[i][j][0].Set(&_p[j][i])
-			wTree.UnhashedLeafs[i][j][1].Set(&_p[j][i+halfN])
-			copy(buf[2*j*koalabear.Bytes:], _p[j][i].Marshal())
-			copy(buf[(2*j+1)*koalabear.Bytes:], _p[j][i+halfN].Marshal())
+		if len(encodedBase) > 0 {
+			wTree.UnhashedLeafsBase[i] = make([]PairBase, len(encodedBase))
+			for j := range encodedBase {
+				wTree.UnhashedLeafsBase[i][j][0].Set(&encodedBase[j][i])
+				wTree.UnhashedLeafsBase[i][j][1].Set(&encodedBase[j][i+halfN])
+			}
 		}
-		tree.BuildIthLeaf(buf, i)
+		if len(encodedExt) > 0 {
+			wTree.UnhashedLeafsExt[i] = make([]PairExt, len(encodedExt))
+			for j := range encodedExt {
+				wTree.UnhashedLeafsExt[i][j][0].Set(&encodedExt[j][i])
+				wTree.UnhashedLeafsExt[i][j][1].Set(&encodedExt[j][i+halfN])
+			}
+		}
+		tree.BuildIthLeaf(SerializeRawLeaf(wTree.baseLeaf(i), wTree.extLeaf(i)), i)
 	}
 	tree.BuildNodes()
 
 	return wTree, nil
+}
+
+func (wt WMerkleTree) baseLeaf(i int) []PairBase {
+	if len(wt.UnhashedLeafsBase) == 0 {
+		return nil
+	}
+	return wt.UnhashedLeafsBase[i]
+}
+
+func (wt WMerkleTree) extLeaf(i int) []PairExt {
+	if len(wt.UnhashedLeafsExt) == 0 {
+		return nil
+	}
+	return wt.UnhashedLeafsExt[i]
+}
+
+// SerializeRawLeaf encodes a dual-rail Merkle leaf as base pairs followed by
+// extension pairs. Extension elements use gnark-crypto's coordinate order:
+// B0.A0, B0.A1, B1.A0, B1.A1.
+func SerializeRawLeaf(base []PairBase, ext []PairExt) []byte {
+	buf := make([]byte, rawLeafSize(base, ext))
+	offset := 0
+	for _, pair := range base {
+		offset = putBaseElement(buf, offset, &pair[0])
+		offset = putBaseElement(buf, offset, &pair[1])
+	}
+	for _, pair := range ext {
+		offset = putExtElement(buf, offset, &pair[0])
+		offset = putExtElement(buf, offset, &pair[1])
+	}
+	return buf
+}
+
+func rawLeafSize(base []PairBase, ext []PairExt) int {
+	return 2*len(base)*koalabear.Bytes + 8*len(ext)*koalabear.Bytes
+}
+
+func putBaseElement(buf []byte, offset int, e *koalabear.Element) int {
+	copy(buf[offset:], e.Marshal())
+	return offset + koalabear.Bytes
+}
+
+func putExtElement(buf []byte, offset int, e *ext.E4) int {
+	offset = putBaseElement(buf, offset, &e.B0.A0)
+	offset = putBaseElement(buf, offset, &e.B0.A1)
+	offset = putBaseElement(buf, offset, &e.B1.A0)
+	offset = putBaseElement(buf, offset, &e.B1.A1)
+	return offset
 }

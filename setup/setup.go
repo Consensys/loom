@@ -14,9 +14,11 @@
 package setup
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/consensys/loom/board"
+	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/poly"
@@ -43,36 +45,52 @@ func Setup(t trace.Trace, program board.Program) (PublicKey, error) {
 		return nil, nil
 	}
 
-	// Group public column names by their owning module's domain size, then
+	// Group public columns by their owning module's domain size, then
 	// sort each group by name so the polynomial order inside the per-size
 	// commitment tree matches prover.BuildLayout (which sorts setup columns
-	// by name when assigning PolyIdx). Without this, the verifier's
+	// by name before assigning rail-local PolyIdx). Without this, the verifier's
 	// layout.ColSlot[name].PolyIdx points at the wrong polynomial in the
 	// setup tree.
-	namesByN := map[int][]string{}
+	colsByN := map[int][]board.ColumnRef{}
 	for _, c := range program.PublicColumns {
 		m, ok := program.Modules[c.Module]
 		if !ok {
 			continue
 		}
-		namesByN[m.N] = append(namesByN[m.N], c.Name)
+		colsByN[m.N] = append(colsByN[m.N], c)
 	}
-	sizes := make([]int, 0, len(namesByN))
-	for n := range namesByN {
+	sizes := make([]int, 0, len(colsByN))
+	for n := range colsByN {
 		sizes = append(sizes, n)
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
 
 	res := make(PublicKey, len(sizes))
 	for i, N := range sizes {
-		names := namesByN[N]
-		sort.Strings(names)
-		cols := make([]poly.Polynomial, len(names))
-		for j, name := range names {
-			cols[j] = t[name]
+		refs := colsByN[N]
+		sort.Slice(refs, func(i, j int) bool { return refs[i].Name < refs[j].Name })
+		basePublic := make([]poly.Polynomial, 0, len(refs))
+		extPublic := make([]poly.ExtPolynomial, 0, len(refs))
+		for _, ref := range refs {
+			if ref.Field == field.Base {
+				p, ok := t.Base[ref.Name]
+				if !ok {
+					return nil, fmt.Errorf("setup: base public column %q not found", ref.Name)
+				}
+				basePublic = append(basePublic, p)
+			}
+		}
+		for _, ref := range refs {
+			if ref.Field == field.Ext {
+				p, ok := t.Ext[ref.Name]
+				if !ok {
+					return nil, fmt.Errorf("setup: extension public column %q not found", ref.Name)
+				}
+				extPublic = append(extPublic, p)
+			}
 		}
 		committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
-		tree, err := committer.Commit(cols)
+		tree, err := committer.Commit(basePublic, extPublic)
 		if err != nil {
 			return nil, err
 		}

@@ -18,6 +18,7 @@ import (
 	"math"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom/field"
 )
 
 const NegInf = math.MinInt
@@ -38,6 +39,7 @@ type Leaf struct {
 	Idx   int // used for EvalPointWise, as a lookup to avoid maps
 	Shift int
 	Name  string
+	Field field.Kind
 	Value koalabear.Element // only set for Const type
 }
 
@@ -142,6 +144,10 @@ func Col(name string) *Leaf {
 	return &Leaf{Type: CommittedColumn, Name: name}
 }
 
+func ExtCol(name string) *Leaf {
+	return &Leaf{Type: CommittedColumn, Name: name, Field: field.Ext}
+}
+
 func Public(name string) *Leaf {
 	return &Leaf{Type: PublicColumn, Name: name}
 }
@@ -150,16 +156,55 @@ func Rot(name string, shift int) *Leaf {
 	return &Leaf{Type: RotatedColumn, Shift: shift, Name: name}
 }
 
+func ExtRot(name string, shift int) *Leaf {
+	return &Leaf{Type: RotatedColumn, Shift: shift, Name: name, Field: field.Ext}
+}
+
 func Lagrange(name string) *Leaf {
 	return &Leaf{Type: LagrangeColumn, Name: name}
 }
 
 func Challenge(name string) *Leaf {
-	return &Leaf{Type: ChallengeColumn, Name: name}
+	return &Leaf{Type: ChallengeColumn, Name: name, Field: field.Ext}
 }
 
 func Const(value koalabear.Element) *Leaf {
 	return &Leaf{Type: ConstantColumn, Value: value}
+}
+
+func (l *Leaf) FieldKind() field.Kind {
+	if l.Type == ChallengeColumn {
+		return field.Ext
+	}
+	return l.Field
+}
+
+func FieldOf(e Expr) field.Kind {
+	return FieldOfWithColumnFields(e, nil)
+}
+
+func FieldOfWithColumnFields(e Expr, columnFields map[string]field.Kind) field.Kind {
+	switch v := e.(type) {
+	case *Leaf:
+		f := v.FieldKind()
+		switch v.Type {
+		case CommittedColumn, RotatedColumn, PublicColumn:
+			if columnFields != nil {
+				f = field.Join(f, columnFields[v.Name])
+			}
+		}
+		return f
+	case *Add:
+		return field.Join(FieldOfWithColumnFields(v.Left, columnFields), FieldOfWithColumnFields(v.Right, columnFields))
+	case *Sub:
+		return field.Join(FieldOfWithColumnFields(v.Left, columnFields), FieldOfWithColumnFields(v.Right, columnFields))
+	case *Mul:
+		return field.Join(FieldOfWithColumnFields(v.Left, columnFields), FieldOfWithColumnFields(v.Right, columnFields))
+	case *Pow:
+		return FieldOfWithColumnFields(v.Base, columnFields)
+	default:
+		panic(fmt.Sprintf("FieldOfWithColumnFields: unknown Expr type %T", e))
+	}
 }
 
 func (l *Leaf) String() string {

@@ -21,10 +21,12 @@ import (
 
 	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/gnark-crypto/utils"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/fri"
@@ -77,7 +79,7 @@ type proverRuntime struct {
 	airTrace       trace.Trace
 	publicInputs   proof.PublicInputs
 	program        board.Program
-	zeta           koalabear.Element
+	zeta           ext.E4
 	mu             sync.Mutex
 	setup          setup.PublicKey
 	queryPositions []int
@@ -85,7 +87,6 @@ type proverRuntime struct {
 }
 
 func newProverRuntime(t trace.Trace, setup setup.PublicKey, publicInputs proof.PublicInputs, program board.Program, config Config) (proverRuntime, error) {
-
 	res := proverRuntime{
 		Proof:        proof.NewProof(),
 		config:       config,
@@ -93,7 +94,7 @@ func newProverRuntime(t trace.Trace, setup setup.PublicKey, publicInputs proof.P
 		publicInputs: publicInputs,
 		program:      program,
 		setup:        setup,
-		airTrace:     make(trace.Trace),
+		airTrace:     trace.New(),
 		mu:           sync.Mutex{}, // mutex to protect the trace when reading/writing (in case of parallelisation)
 	}
 
@@ -147,6 +148,112 @@ func (pr *proverRuntime) commitIdxOf(treeIdx int) int {
 	return treeIdx - pr.layout.SetupEnd
 }
 
+func setExtFromBytes(z *ext.E4, b []byte) error {
+	if len(b) < 4*koalabear.Bytes {
+		return fmt.Errorf("need at least %d bytes, got %d", 4*koalabear.Bytes, len(b))
+	}
+	z.B0.A0.SetBytes(b[0*koalabear.Bytes : 1*koalabear.Bytes])
+	z.B0.A1.SetBytes(b[1*koalabear.Bytes : 2*koalabear.Bytes])
+	z.B1.A0.SetBytes(b[2*koalabear.Bytes : 3*koalabear.Bytes])
+	z.B1.A1.SetBytes(b[3*koalabear.Bytes : 4*koalabear.Bytes])
+	return nil
+}
+
+func liftBaseToExt(v koalabear.Element) ext.E4 {
+	var res ext.E4
+	res.Lift(&v)
+	return res
+}
+
+func liftPolynomialToExt(p poly.Polynomial) poly.ExtPolynomial {
+	res := make(poly.ExtPolynomial, len(p))
+	for i := range p {
+		res[i].Lift(&p[i])
+	}
+	return res
+}
+
+func extFromUint64(v uint64) ext.E4 {
+	var base koalabear.Element
+	base.SetUint64(v)
+	return liftBaseToExt(base)
+}
+
+type mixedCommitGroup struct {
+	base []poly.Polynomial
+	ext  []poly.ExtPolynomial
+}
+
+func traceColumnAsExt(t trace.Trace, name string) (poly.ExtPolynomial, bool) {
+	if p, ok := t.Ext[name]; ok {
+		return p, true
+	}
+	if p, ok := t.Base[name]; ok {
+		return liftPolynomialToExt(p), true
+	}
+	return nil, false
+}
+
+func (pr *proverRuntime) commitTraceRound(roundIdx int, challengeName string) error {
+	deps := pr.program.FScolumnsDependencies[roundIdx]
+	polysByN := map[int]*mixedCommitGroup{}
+
+	pr.mu.Lock()
+	for _, dep := range deps {
+		m, ok := pr.program.Modules[dep.Module]
+		if !ok {
+			pr.mu.Unlock()
+			return fmt.Errorf("ExecuteSteps: column %q references unknown module %q", dep.Name, dep.Module)
+		}
+		group := polysByN[m.N]
+		if group == nil {
+			group = &mixedCommitGroup{}
+			polysByN[m.N] = group
+		}
+		if dep.Field == field.Ext {
+			p, ok := traceColumnAsExt(pr.t, dep.Name)
+			if !ok {
+				pr.mu.Unlock()
+				return fmt.Errorf("ExecuteSteps: extension column %q not found in trace", dep.Name)
+			}
+			group.ext = append(group.ext, p)
+			continue
+		}
+		p, ok := pr.t.Base[dep.Name]
+		if !ok {
+			pr.mu.Unlock()
+			return fmt.Errorf("ExecuteSteps: base column %q not found in trace", dep.Name)
+		}
+		group.base = append(group.base, p)
+	}
+	pr.mu.Unlock()
+
+	sizes := make([]int, 0, len(polysByN))
+	for n := range polysByN {
+		sizes = append(sizes, n)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
+
+	base := pr.layout.TraceBegin[roundIdx]
+	for i, N := range sizes {
+		group := polysByN[N]
+		committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
+		tree, err := committer.Commit(group.base, group.ext)
+		if err != nil {
+			return err
+		}
+		treeIdx := base + i
+		pr.allTrees[treeIdx] = tree
+		root := tree.Root()
+		pr.Proof.Commitments[pr.commitIdxOf(treeIdx)] = root
+		if err := pr.fs.Bind(challengeName, root); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (pr *proverRuntime) ExecuteSteps() error {
 
 	// 1 - for each module in program, execute the list of Gen() functions in GenCol
@@ -166,51 +273,11 @@ func (pr *proverRuntime) ExecuteSteps() error {
 			if ok {
 				challengeName := constants.CanonicalChallengeName(roundIdx)
 
-				// Fetch trace polynomials for this round, grouping by their
-				// owning module's domain size so we can build one commitment
-				// per size (multi-degree commitment scheme). Group order
-				// matches Layout (decreasing N, stable within a size).
-				deps := pr.program.FScolumnsDependencies[roundIdx]
-				polysByN := map[int][]poly.Polynomial{}
-				pr.mu.Lock()
-				for _, dep := range deps {
-					m, ok := pr.program.Modules[dep.Module]
-					if !ok {
-						pr.mu.Unlock()
-						return fmt.Errorf("ExecuteSteps: column %q references unknown module %q", dep.Name, dep.Module)
-					}
-					polysByN[m.N] = append(polysByN[m.N], pr.t[dep.Name])
-				}
-				pr.mu.Unlock()
-
-				// Sizes in decreasing N order (consistent with Layout).
-				sizes := make([]int, 0, len(polysByN))
-				for n := range polysByN {
-					sizes = append(sizes, n)
-				}
-				sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
-
-				// Commit per size; place trees and roots at the canonical
-				// layout offsets for this FS round.
-				base := pr.layout.TraceBegin[roundIdx]
-				for i, N := range sizes {
-					committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
-					tree, err := committer.Commit(polysByN[N])
-					if err != nil {
-						return err
-					}
-					treeIdx := base + i
-					pr.allTrees[treeIdx] = tree
-					root := tree.Root()
-					pr.Proof.Commitments[pr.commitIdxOf(treeIdx)] = root
-					if err := pr.fs.Bind(challengeName, root); err != nil {
-						return err
-					}
+				if err := pr.commitTraceRound(roundIdx, challengeName); err != nil {
+					return err
 				}
 
-				// derive 'challengeName' using fs, or sample a random element if EmulateFS is set,
-				// then store the value in the trace under challengeName as a polynomial of size 1
-				var challengeVal koalabear.Element
+				var challengeVal ext.E4
 				if pr.config.EmulateFS {
 					challengeVal.MustSetRandom()
 				} else {
@@ -218,11 +285,13 @@ func (pr *proverRuntime) ExecuteSteps() error {
 					if err != nil {
 						return err
 					}
-					challengeVal.SetBytes(challengeBytes)
+					if err := setExtFromBytes(&challengeVal, challengeBytes); err != nil {
+						return err
+					}
 				}
 
 				pr.mu.Lock()
-				pr.t[challengeName] = []koalabear.Element{challengeVal}
+				pr.t.SetExt(challengeName, []ext.E4{challengeVal})
 				pr.mu.Unlock()
 
 				roundIdx++
@@ -240,37 +309,50 @@ func (pr *proverRuntime) ExecuteSteps() error {
 }
 
 func (pr *proverRuntime) ComputeAIRQuotients() error {
-
-	// 1 - Compute the AIR quotient for each module in the Program.
-	// The quotient is written in canonical (coefficient) form, split into chunks
-	// of size n, and stored as Lagrange-normal polynomials in a dedicated trace.
-	// We also keep a map from chunk name to its domain for later evaluation at zeta.
 	chunkDomains := make(map[string]*fft.Domain)
 
 	for moduleName, module := range pr.program.Modules {
-		// Skip modules with a trivially-zero VanishingRelation (no constraints).
-		// The zero polynomial is vacuously divisible by (X^N-1), quotient = 0, nothing to commit.
 		if module.VanishingRelation.Degree() <= 0 {
 			continue
 		}
-		// compute quotient: VanishingRelation / (X^n - 1), returned in coset-Lagrange form
-		quotient, err := poly.ComputeQuotient(pr.t, *module.VanishingRelation, module.N)
+
+		N := module.N
+		if module.VanishingRelation.Root.Field == field.Ext {
+			quotient, err := poly.ComputeQuotientMixed(pr.t.Base, pr.t.Ext, *module.VanishingRelation, N)
+			if err != nil {
+				return err
+			}
+
+			poly.CosetExtLagrangeToLagrangeNormal(quotient)
+			bigSize := len(quotient)
+			bigD := fft.NewDomain(uint64(bigSize))
+			bigD.FFTInverseExt(quotient, fft.DIF)
+			utils.BitReverse(quotient)
+
+			numChunks := bigSize / N
+			for i := 0; i < numChunks; i++ {
+				chunk := make(poly.ExtPolynomial, N)
+				copy(chunk, quotient[i*N:(i+1)*N])
+				module.D.FFTExt(chunk, fft.DIF)
+				utils.BitReverse(chunk)
+				chunkName := constants.QuotientChunkName(moduleName, i)
+				pr.airTrace.SetExt(chunkName, chunk)
+				chunkDomains[chunkName] = module.D
+			}
+			continue
+		}
+
+		quotient, err := poly.ComputeQuotient(pr.t.Base, *module.VanishingRelation, N)
 		if err != nil {
 			return err
 		}
 
-		// convert from coset-Lagrange to standard Lagrange Normal form
-		// TODO add a method to convert the quotient to canonical directly
 		poly.CosetLagrangeToLagrangeNormal(quotient)
-
-		// convert from Lagrange Normal to canonical (coefficient) form via IFFT
 		bigSize := len(quotient)
 		bigD := fft.NewDomain(uint64(bigSize))
 		bigD.FFTInverse(quotient, fft.DIF)
-		utils.BitReverse(quotient) // quotient[k] = k-th coefficient of H
+		utils.BitReverse(quotient)
 
-		// split into chunks of size N; convert each chunk back to Lagrange Normal for commitment
-		N := module.N
 		numChunks := bigSize / N
 		for i := 0; i < numChunks; i++ {
 			chunk := make(poly.Polynomial, N)
@@ -278,47 +360,57 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 			module.D.FFT(chunk, fft.DIF)
 			utils.BitReverse(chunk)
 			chunkName := constants.QuotientChunkName(moduleName, i)
-			pr.airTrace[chunkName] = chunk
+			pr.airTrace.SetBase(chunkName, chunk)
 			chunkDomains[chunkName] = module.D
 		}
 	}
 
-	// 2 - Group AIR-quotient chunks by their owning module's domain size, in
-	// deterministic order. Within a size group: modules sorted by name
-	// (ascending), then their chunks in index order. Sizes are processed in
-	// decreasing-N order so that airTrees and AIRQuotientsCommitment line up
-	// with the rest of the multi-degree commitment scheme.
-	chunksByN := map[int][]poly.Polynomial{}
+	chunksByN := map[int]*mixedCommitGroup{}
 	moduleNames := make([]string, 0, len(pr.program.Modules))
 	for name := range pr.program.Modules {
 		moduleNames = append(moduleNames, name)
 	}
 	sort.Strings(moduleNames)
 	for _, moduleName := range moduleNames {
-		N := pr.program.Modules[moduleName].N
+		module := pr.program.Modules[moduleName]
+		N := module.N
 		for i := 0; ; i++ {
 			chunkName := constants.QuotientChunkName(moduleName, i)
-			chunk, ok := pr.airTrace[chunkName]
-			if !ok {
-				break
+			group := chunksByN[N]
+			if group == nil {
+				group = &mixedCommitGroup{}
+				chunksByN[N] = group
 			}
-			chunksByN[N] = append(chunksByN[N], chunk)
+			if chunk, ok := pr.airTrace.Base[chunkName]; ok {
+				group.base = append(group.base, chunk)
+				continue
+			}
+			if chunk, ok := pr.airTrace.Ext[chunkName]; ok {
+				group.ext = append(group.ext, chunk)
+				continue
+			}
+			if group.base == nil && group.ext == nil {
+				delete(chunksByN, N)
+			}
+			break
 		}
 	}
 	sizes := make([]int, 0, len(chunksByN))
-	for n := range chunksByN {
+	for n, group := range chunksByN {
+		if len(group.base) == 0 && len(group.ext) == 0 {
+			continue
+		}
 		sizes = append(sizes, n)
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
 
-	// Place AIR trees at canonical layout offsets and write their roots
-	// into proof.Commitments. Bind every root to __zeta in the same order.
 	if len(sizes) != pr.layout.AIREnd-pr.layout.AIRBegin {
 		return fmt.Errorf("ComputeAIRQuotients: %d AIR size groups, layout expects %d", len(sizes), pr.layout.AIREnd-pr.layout.AIRBegin)
 	}
 	for i, N := range sizes {
+		group := chunksByN[N]
 		committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
-		tree, err := committer.Commit(chunksByN[N])
+		tree, err := committer.Commit(group.base, group.ext)
 		if err != nil {
 			return err
 		}
@@ -331,21 +423,23 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 		}
 	}
 
-	var zetaVal koalabear.Element
 	if pr.config.EmulateFS {
-		zetaVal.MustSetRandom()
+		pr.zeta.MustSetRandom()
 	} else {
 		zetaBytes, err := pr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
 		if err != nil {
 			return err
 		}
-		zetaVal.SetBytes(zetaBytes)
+		if err := setExtFromBytes(&pr.zeta, zetaBytes); err != nil {
+			return err
+		}
 	}
-	pr.zeta = zetaVal
 
-	// evaluate each quotient chunk at zeta and store in ValuesAtZeta
-	for chunkName, chunkPoly := range pr.airTrace {
-		pr.Proof.ValuesAtZeta[chunkName] = poly.Evaluate(chunkPoly, chunkDomains[chunkName], pr.zeta)
+	for chunkName, chunkPoly := range pr.airTrace.Base {
+		pr.Proof.SetValueAtZetaExt(chunkName, poly.EvaluateAtExt(chunkPoly, chunkDomains[chunkName], pr.zeta))
+	}
+	for chunkName, chunkPoly := range pr.airTrace.Ext {
+		pr.Proof.SetValueAtZetaExt(chunkName, poly.ExtEvaluateAtExt(chunkPoly, chunkDomains[chunkName], pr.zeta))
 	}
 
 	return nil
@@ -354,15 +448,11 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 // ComputeEvaluationsAtZeta computes the evaluations at zeta of every polynomial
 // appearing in every vanishing relation of every module.
 func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
-
-	// only CommittedColumn and RotatedColumn leaves need to be opened
 	config := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutPublicColumns())
 
 	for _, module := range pr.program.Modules {
 		leaves := module.VanishingRelation.LeavesFull(config)
 		for _, leaf := range leaves {
-			// compute the evaluation point: zeta for committed columns,
-			// omega^shift * zeta for rotated columns
 			evalPoint := pr.zeta
 			if leaf.Type == expr.RotatedColumn {
 				shift := ((leaf.Shift % module.N) + module.N) % module.N
@@ -371,125 +461,129 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 				for k := 0; k < shift; k++ {
 					omegaPow.Mul(&omegaPow, &module.D.Generator)
 				}
-				evalPoint.Mul(&evalPoint, &omegaPow)
+				evalPoint.MulByElement(&evalPoint, &omegaPow)
 			}
 
-			// fetch the polynomial from the trace using the leaf's bare name
-			p, ok := pr.t[leaf.Name]
+			if p, ok := pr.t.Ext[leaf.Name]; ok {
+				val := poly.ExtEvaluateAtExt(p, module.D, evalPoint)
+				pr.Proof.SetValueAtZetaExt(leaf.String(), val)
+				continue
+			}
+			p, ok := pr.t.Base[leaf.Name]
 			if !ok {
 				return fmt.Errorf("ComputeEvaluationsAtZeta: column %q not found in trace", leaf.Name)
 			}
-
-			// evaluate using poly.Evaluate (Lagrange interpolation on module.D)
-			val := poly.Evaluate(p, module.D, evalPoint)
-
-			// store result using leaf.String() as key
-			pr.Proof.ValuesAtZeta[leaf.String()] = val
+			val := poly.EvaluateAtExt(p, module.D, evalPoint)
+			pr.Proof.SetValueAtZetaExt(leaf.String(), val)
 		}
 	}
 	return nil
 }
 
 func (pr *proverRuntime) ComputeDeepQuotient() error {
-
-	// Iteration order (sizes decreasing, shifts increasing, names sorted by
-	// leaf.String() key) is precomputed once. The verifier's checkFRIBridge
-	// walks the same layout, so accumulation orders match by construction.
 	dqLayout := BuildDeepQuotientLayout(pr.program)
 	sizes := dqLayout.Sizes
 
-	// Per-size canonical domain (used for shift evaluation z_s and as the
-	// FFT domain passed to poly.DeepQuotient). All modules of the same size
-	// share a structurally identical domain; pick any module of that size.
 	domainBySize := make(map[int]*fft.Domain, len(sizes))
-	for name, m := range pr.program.Modules {
-		_ = name
+	for _, m := range pr.program.Modules {
 		if _, ok := domainBySize[m.N]; !ok {
 			domainBySize[m.N] = m.D
 		}
 	}
 
-	// for now we emulate the folding challenge
-	var alpha koalabear.Element
-	// TODO make it random via FS
-	alpha.SetUint64(10)
-
-	// One DEEP quotient per size, combining vanishing-relation columns and AIR
-	// quotient chunks of all modules of that size. alphaAcc is reset to 1 for
-	// each size — different sizes are mixed by FRI's level-batching γ_l later.
-	deepQuotients := make(map[int]poly.Polynomial, len(sizes))
+	// TODO sample alpha with FS, hardcoded for now
+	alpha := extFromUint64(10)
+	deepQuotients := make(map[int]poly.ExtPolynomial, len(sizes))
 
 	for i, N := range sizes {
-		deepQuotient := make(poly.Polynomial, N)
+		deepQuotient := make(poly.ExtPolynomial, N)
 
-		var alphaAcc koalabear.Element
+		var alphaAcc ext.E4
 		alphaAcc.SetOne()
 
 		domainN := domainBySize[N]
 
-		// ── Phase 1: vanishing-relation columns ────────────────────────────────
 		for j, shift := range dqLayout.Shifts[i] {
-			// evaluation point z_s = omega^shift * zeta
 			var omegaShift koalabear.Element
 			omegaShift.SetOne()
 			for k := 0; k < shift; k++ {
 				omegaShift.Mul(&omegaShift, &domainN.Generator)
 			}
-			var z_s koalabear.Element
-			z_s.Mul(&pr.zeta, &omegaShift)
+			z_s := pr.zeta
+			z_s.MulByElement(&z_s, &omegaShift)
 
-			// fold: C_s(X) = Σ_i alphaAcc_i * C_i(X); v_s = C_s(z_s)
-			C_s := make(poly.Polynomial, N)
-			var v_s koalabear.Element
+			C_s := make(poly.ExtPolynomial, N)
+			var v_s ext.E4
 			names := dqLayout.Names[i][j]
 			keys := dqLayout.Keys[i][j]
 			for k := range names {
-				col := pr.t[names[k]]
-				evalAtZ, ok := pr.Proof.ValuesAtZeta[keys[k]]
+				evalAtZ, ok := pr.Proof.ValueAtZetaExt(keys[k])
 				if !ok {
 					return fmt.Errorf("ComputeDeepQuotient: %q not found in ValuesAtZeta", keys[k])
 				}
+				colExt, hasExt := pr.t.Ext[names[k]]
+				colBase, hasBase := pr.t.Base[names[k]]
+				if !hasExt && !hasBase {
+					return fmt.Errorf("ComputeDeepQuotient: column %q not found in trace", names[k])
+				}
 				for x := 0; x < N; x++ {
-					var term koalabear.Element
-					if len(col) == 1 {
-						term = col[0] // constant polynomial
+					var value, term ext.E4
+					if hasExt {
+						if len(colExt) == 1 {
+							value.Set(&colExt[0])
+						} else {
+							value.Set(&colExt[x])
+						}
+					} else if len(colBase) == 1 {
+						value.Lift(&colBase[0])
 					} else {
-						term = col[x]
+						value.Lift(&colBase[x])
 					}
-					term.Mul(&term, &alphaAcc)
+					term.Mul(&value, &alphaAcc)
 					C_s[x].Add(&C_s[x], &term)
 				}
-				var term koalabear.Element
+				var term ext.E4
 				term.Mul(&evalAtZ, &alphaAcc)
 				v_s.Add(&v_s, &term)
 				alphaAcc.Mul(&alphaAcc, &alpha)
 			}
 
-			DQ_s := poly.DeepQuotient(C_s, v_s, z_s, domainN)
+			DQ_s := poly.DeepQuotientExt(C_s, v_s, z_s, domainN)
 			for x := 0; x < N; x++ {
 				deepQuotient[x].Add(&deepQuotient[x], &DQ_s[x])
 			}
 		}
 
-		// ── Phase 2: AIR quotient chunks (merged across modules of size N) ────
 		if len(dqLayout.AIRChunks[i]) > 0 {
-			C_s := make(poly.Polynomial, N)
-			var v_s koalabear.Element
+			C_s := make(poly.ExtPolynomial, N)
+			var v_s ext.E4
 			for _, chunkName := range dqLayout.AIRChunks[i] {
-				chunk := pr.airTrace[chunkName]
-				evalAtZ := pr.Proof.ValuesAtZeta[chunkName]
+				evalAtZ, ok := pr.Proof.ValueAtZetaExt(chunkName)
+				if !ok {
+					return fmt.Errorf("ComputeDeepQuotient: %q not found in ValuesAtZeta", chunkName)
+				}
+				chunkExt, hasExt := pr.airTrace.Ext[chunkName]
+				chunkBase, hasBase := pr.airTrace.Base[chunkName]
+				if !hasExt && !hasBase {
+					return fmt.Errorf("ComputeDeepQuotient: AIR chunk %q not found in trace", chunkName)
+				}
 				for x := 0; x < N; x++ {
-					var term koalabear.Element
-					term.Mul(&chunk[x], &alphaAcc)
+					var value, term ext.E4
+					if hasExt {
+						value.Set(&chunkExt[x])
+					} else {
+						value.Lift(&chunkBase[x])
+					}
+					term.Mul(&value, &alphaAcc)
 					C_s[x].Add(&C_s[x], &term)
 				}
-				var term koalabear.Element
+				var term ext.E4
 				term.Mul(&evalAtZ, &alphaAcc)
 				v_s.Add(&v_s, &term)
 				alphaAcc.Mul(&alphaAcc, &alpha)
 			}
 
-			DQ_air := poly.DeepQuotient(C_s, v_s, pr.zeta, domainN)
+			DQ_air := poly.DeepQuotientExt(C_s, v_s, pr.zeta, domainN)
 			for x := 0; x < N; x++ {
 				deepQuotient[x].Add(&deepQuotient[x], &DQ_air[x])
 			}
@@ -498,29 +592,23 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 		deepQuotients[N] = deepQuotient
 	}
 
-	// ── Build FRI levels: encode each per-size deep quotient and its tree ────
 	levels := make([]fri.Level, len(sizes))
 	for li, N := range sizes {
-		// RS-encode at size N → length RATE*N.
 		encoder := reedsolomon.NewEncoder(uint64(constants.RATE) * uint64(N))
-		encoded := encoder.Encode(deepQuotients[N], domainBySize[N])
+		encoded := encoder.EncodeExt(deepQuotients[N], domainBySize[N])
 
-		tree, err := pr.friParams.BuildLevelTree(encoded)
+		tree, err := pr.friParams.BuildLevelTreeExt(encoded)
 		if err != nil {
-			return fmt.Errorf("ComputeDeepQuotient: BuildLevelTree N=%d: %w", N, err)
+			return fmt.Errorf("ComputeDeepQuotient: BuildLevelTreeExt N=%d: %w", N, err)
 		}
 
 		levels[li] = fri.Level{
 			D:     N,
-			Evals: [][]koalabear.Element{encoded},
+			Evals: fri.LevelEvals{Ext: [][]ext.E4{encoded}},
 			Trees: []*merkle.Tree{tree},
 		}
 	}
 
-	// Expose every level's tree root as DeepQuotientCommitment[l] (same order
-	// as `levels`, i.e. decreasing N). The verifier passes these to fri.Verify
-	// as levelRoots; the polynomial-commitment bridge that ties them back to
-	// the trace and AIR commitments is left for later.
 	pr.Proof.DeepQuotientCommitment = make([][]byte, len(levels))
 	for li := range levels {
 		pr.Proof.DeepQuotientCommitment[li] = levels[li].Trees[0].Root()
@@ -539,21 +627,33 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 // query position `s`, reduced mod the tree's paired-leaf count (=
 // encoded_size/2 = RATE·N/2).
 func openWMerkleAt(tree commitment.WMerkleTree, s int) (commitment.WMerkleProof, error) {
-	pos := s % len(tree.UnhashedLeafs)
+	leafCount := tree.NumLeaves()
+	if leafCount == 0 {
+		return commitment.WMerkleProof{}, fmt.Errorf("empty WMerkleTree")
+	}
+	pos := s % leafCount
 	pth, err := tree.Tree.OpenProof(pos)
 	if err != nil {
 		return commitment.WMerkleProof{}, err
 	}
-	rawLeaf := make([]commitment.Pair, len(tree.UnhashedLeafs[pos]))
-	copy(rawLeaf, tree.UnhashedLeafs[pos])
-	return commitment.WMerkleProof{RawLeaf: rawLeaf, Proof: pth}, nil
+	var rawLeafBase []commitment.PairBase
+	if len(tree.UnhashedLeafsBase) > 0 {
+		rawLeafBase = make([]commitment.PairBase, len(tree.UnhashedLeafsBase[pos]))
+		copy(rawLeafBase, tree.UnhashedLeafsBase[pos])
+	}
+	var rawLeafExt []commitment.PairExt
+	if len(tree.UnhashedLeafsExt) > 0 {
+		rawLeafExt = make([]commitment.PairExt, len(tree.UnhashedLeafsExt[pos]))
+		copy(rawLeafExt, tree.UnhashedLeafsExt[pos])
+	}
+	return commitment.WMerkleProof{RawLeafBase: rawLeafBase, RawLeafExt: rawLeafExt, Proof: pth}, nil
 }
 
 // SampleEvaluations opens every committed polynomial at every FRI query
 // position so the verifier can bridge the FRI proof back to the column
 // commitments. Trees are walked in the canonical layout order
 // (setup → trace per round → AIR), and each tree is opened at
-// `s mod len(tree.UnhashedLeafs)` (= s reduced mod RATE·N/2 for the tree's size N).
+// `s mod tree.NumLeaves()` (= s reduced mod RATE·N/2 for the tree's size N).
 func (pr *proverRuntime) SampleEvaluations() error {
 	NQ := len(pr.queryPositions)
 	pr.Proof.PointSamplings = make([][]commitment.WMerkleProof, NQ)

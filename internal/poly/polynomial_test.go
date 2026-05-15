@@ -42,8 +42,8 @@ func checkPointwise(t *testing.T, R Polynomial, expected []koalabear.Element) {
 	}
 }
 
-// hornerEval evaluates a canonical-form polynomial at z using Horner's method.
-func hornerEval(coeffs []koalabear.Element, z koalabear.Element) koalabear.Element {
+// canonicalEval evaluates a canonical-form polynomial at z using Horner's method.
+func canonicalEval(coeffs []koalabear.Element, z koalabear.Element) koalabear.Element {
 	if len(coeffs) == 0 {
 		return koalabear.Element{}
 	}
@@ -70,7 +70,7 @@ func evalLagrangeNormalAt(p Polynomial, z koalabear.Element) koalabear.Element {
 	coeffs := make([]koalabear.Element, len(p))
 	copy(coeffs, p)
 	lagrangeNormalToCanonical(coeffs)
-	return hornerEval(coeffs, z)
+	return canonicalEval(coeffs, z)
 }
 
 func TestLagrangeAtZeta(t *testing.T) {
@@ -89,7 +89,7 @@ func TestLagrangeAtZeta(t *testing.T) {
 		}
 		d.FFTInverse(p, fft.DIF)
 		fft.BitReverse(p)
-		expected := hornerEval(p, zeta)
+		expected := canonicalEval(p, zeta)
 		computed := LagrangeAtZeta(zeta, n, i)
 		if !expected.Equal(&computed) {
 			t.Errorf("expected %s, got %s", expected.String(), computed.String())
@@ -672,7 +672,7 @@ func verifyQuotientIdentity(t *testing.T, Pi map[string]Polynomial, E expr.Expr,
 	copy(qCopy, Q)
 	CosetLagrangeToLagrangeNormal(qCopy)
 	lagrangeNormalToCanonical(qCopy)
-	qAtX := hornerEval(qCopy, x)
+	qAtX := canonicalEval(qCopy, x)
 
 	// x^N - 1
 	var xN, one koalabear.Element

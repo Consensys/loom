@@ -342,12 +342,15 @@ func benchProver(b *testing.B, ns []int, skipFRI bool) {
 	b.ResetTimer()
 	for b.Loop() {
 		// prover.Prove mutates the input trace (adds challenge / GP /
-		// multiplicity columns), so each iteration needs a fresh map. The
+		// multiplicity columns), so each iteration needs a fresh trace. The
 		// column slices themselves are not mutated and can be shared.
 		b.StopTimer()
-		fresh := make(trace.Trace, len(fullTrace))
-		for k, v := range fullTrace {
-			fresh[k] = v
+		fresh := trace.New(len(fullTrace.Base))
+		for k, v := range fullTrace.Base {
+			fresh.SetBase(k, v)
+		}
+		for k, v := range fullTrace.Ext {
+			fresh.SetExt(k, v)
 		}
 		b.StartTimer()
 		if _, err := prover.Prove(fresh, nil, nil, program, opts...); err != nil {

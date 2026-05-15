@@ -16,20 +16,80 @@ package trace
 import (
 	"fmt"
 
+	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/poly"
 )
 
 // RawTrace list of columns with the size N of each column
 // type RawTrace = map[string]*poly.Polynomial
 
-// RawTrace contains a list of columns, which are interpreted as interpolated polynomials.
-// E.g: RawTrace[i] is a polynomial such that RawTrace[i](\omega^j) = RawTrace[i][j]
-type Trace = map[string]poly.Polynomial
+// ExtPolynomial is a column whose coefficients live in the Koalabear E4
+// extension field.
+type ExtPolynomial = poly.ExtPolynomial
 
-func RegisterColumn(t Trace, name string, c poly.Polynomial) error {
-	if _, ok := t[name]; ok {
+// Trace contains base-field and extension-field columns. Base columns are the
+// user-supplied trace and the current runtime path; extension columns are
+// added by later mixed-field refactor steps.
+type Trace struct {
+	Base map[string]poly.Polynomial
+	Ext  map[string]ExtPolynomial
+}
+
+func New(capacity ...int) Trace {
+	baseCap := 0
+	if len(capacity) > 0 {
+		baseCap = capacity[0]
+	}
+	return Trace{
+		Base: make(map[string]poly.Polynomial, baseCap),
+		Ext:  make(map[string]ExtPolynomial),
+	}
+}
+
+func (t Trace) GetField(name string) (field.Kind, bool) {
+	if _, ok := t.Ext[name]; ok {
+		return field.Ext, true
+	}
+	if _, ok := t.Base[name]; ok {
+		return field.Base, true
+	}
+	return field.Base, false
+}
+
+// checked registration
+func (t Trace) PutBase(name string, c poly.Polynomial) error {
+	if _, ok := t.Base[name]; ok {
 		return fmt.Errorf("%s already registered in the trace", name)
 	}
-	t[name] = c
+	if _, ok := t.Ext[name]; ok {
+		return fmt.Errorf("%s already registered in the trace", name)
+	}
+	t.Base[name] = c
 	return nil
+}
+
+// raw map assignment
+func (t Trace) SetBase(name string, c poly.Polynomial) {
+	t.Base[name] = c
+}
+
+// checked registration
+func (t Trace) PutExt(name string, c ExtPolynomial) error {
+	if _, ok := t.Base[name]; ok {
+		return fmt.Errorf("%s already registered in the trace", name)
+	}
+	if _, ok := t.Ext[name]; ok {
+		return fmt.Errorf("%s already registered in the trace", name)
+	}
+	t.Ext[name] = c
+	return nil
+}
+
+// raw map assignment
+func (t Trace) SetExt(name string, c ExtPolynomial) {
+	t.Ext[name] = c
+}
+
+func RegisterColumn(t Trace, name string, c poly.Polynomial) error {
+	return t.PutBase(name, c)
 }

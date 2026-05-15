@@ -17,7 +17,9 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/field"
 )
 
 // u64Vals builds a vals map from alternating (name, uint64) pairs.
@@ -50,6 +52,29 @@ func checkFlatDAGEval(t *testing.T, expr expr.Expr, vals map[string]koalabear.El
 	if !got.Equal(&want) {
 		t.Errorf("Flattened DAG Eval mismatch for %s: got %s, want %s", expr.String(), got.String(), want.String())
 	}
+}
+
+func e4FromU64(a0, a1, b0, b1 uint64) ext.E4 {
+	var z ext.E4
+	z.B0.A0.SetUint64(a0)
+	z.B0.A1.SetUint64(a1)
+	z.B1.A0.SetUint64(b0)
+	z.B1.A1.SetUint64(b1)
+	return z
+}
+
+func liftE4(v koalabear.Element) ext.E4 {
+	var z ext.E4
+	z.Lift(&v)
+	return z
+}
+
+func u64Poly(vals ...uint64) []koalabear.Element {
+	p := make([]koalabear.Element, len(vals))
+	for i, v := range vals {
+		p[i].SetUint64(v)
+	}
+	return p
 }
 
 // TestDAGEvalLeaves checks that every leaf kind evaluates correctly via the DAG.
@@ -281,6 +306,216 @@ func TestDAGDegree(t *testing.T) {
 				t.Errorf("Expr.Degree() = %d, want %d (test case has wrong want?)", exprDeg, tc.want)
 			}
 		})
+	}
+}
+
+func TestDAGFieldInference(t *testing.T) {
+	tests := []struct {
+		name string
+		expr expr.Expr
+		want field.Kind
+	}{
+		{"BaseColumn", expr.Col("x"), field.Base},
+		{"ExtColumn", expr.ExtCol("x"), field.Ext},
+		{"Challenge", expr.Challenge("gamma"), field.Ext},
+		{"BaseExpression", expr.Col("x").Add(expr.Col("y")), field.Base},
+		{"ChallengeExpression", expr.Col("x").Mul(expr.Challenge("gamma")), field.Ext},
+		{"ExtColumnExpression", expr.ExtCol("x").Sub(expr.Col("y")).Pow(3), field.Ext},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			d := ExprToDAG(tc.expr)
+			if got := d.Root.Field; got != tc.want {
+				t.Fatalf("root field = %s, want %s", got, tc.want)
+			}
+
+			flat := d.Flatten()
+			if got := flat.Root.Field; got != tc.want {
+				t.Fatalf("flattened root field = %s, want %s", got, tc.want)
+			}
+
+			factored := flat.Factorize()
+			if got := factored.Root.Field; got != tc.want {
+				t.Fatalf("factored root field = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDAGEvalMixedBaseOnly(t *testing.T) {
+	vals := u64Vals("x", uint64(3), "y", uint64(5))
+	ex := expr.Col("x").Mul(expr.Col("y")).Add(expr.Col("x").Pow(2))
+
+	got := ExprToDAG(ex).EvalMixed(vals, nil)
+	want := liftE4(ex.Evaluate(vals))
+	if !got.Equal(&want) {
+		t.Fatalf("EvalMixed = %s, want %s", got.String(), want.String())
+	}
+}
+
+func TestDAGEvalMixedWithExtensionChallenge(t *testing.T) {
+	var x, two koalabear.Element
+	x.SetUint64(7)
+	two.SetUint64(2)
+	gamma := e4FromU64(3, 4, 5, 6)
+
+	ex := expr.Col("x").Mul(expr.Challenge("gamma")).Add(expr.Const(two))
+	got := ExprToDAG(ex).EvalMixed(
+		map[string]koalabear.Element{"x": x},
+		map[string]ext.E4{"gamma": gamma},
+	)
+
+	xExt := liftE4(x)
+	twoExt := liftE4(two)
+	var want ext.E4
+	want.Mul(&xExt, &gamma)
+	want.Add(&want, &twoExt)
+
+	if !got.Equal(&want) {
+		t.Fatalf("EvalMixed = %s, want %s", got.String(), want.String())
+	}
+}
+
+func TestDAGEvalMixedWithColumnFieldRegistry(t *testing.T) {
+	logup := e4FromU64(9, 1, 2, 3)
+	var x koalabear.Element
+	x.SetUint64(4)
+
+	ex := expr.Col("logup").Add(expr.Col("x"))
+	d := ExprToDAGWithColumnFields(ex, map[string]field.Kind{"logup": field.Ext})
+	got := d.EvalMixed(
+		map[string]koalabear.Element{"x": x},
+		map[string]ext.E4{"logup": logup},
+	)
+
+	xExt := liftE4(x)
+	var want ext.E4
+	want.Add(&logup, &xExt)
+	if !got.Equal(&want) {
+		t.Fatalf("EvalMixed = %s, want %s", got.String(), want.String())
+	}
+}
+
+func TestDAGEvalMixedExtLeafBaseFallback(t *testing.T) {
+	var gamma koalabear.Element
+	gamma.SetUint64(11)
+
+	got := ExprToDAG(expr.Challenge("gamma")).EvalMixed(
+		map[string]koalabear.Element{"gamma": gamma},
+		nil,
+	)
+	want := liftE4(gamma)
+	if !got.Equal(&want) {
+		t.Fatalf("EvalMixed = %s, want %s", got.String(), want.String())
+	}
+}
+
+func TestDAGEvalMixedMissingVariablePanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected missing variable panic")
+		}
+	}()
+
+	_ = ExprToDAG(expr.Challenge("gamma")).EvalMixed(nil, nil)
+}
+
+func TestDAGEvalWithCacheVarsMixed(t *testing.T) {
+	var x, two koalabear.Element
+	x.SetUint64(7)
+	two.SetUint64(2)
+	gamma := e4FromU64(3, 4, 5, 6)
+	logup := e4FromU64(9, 1, 2, 3)
+
+	ex := expr.Col("x").
+		Mul(expr.Challenge("gamma")).
+		Add(expr.ExtCol("logup")).
+		Sub(expr.Const(two))
+	d := ExprToDAG(ex)
+
+	baseVars := make([]koalabear.Element, len(d.VarIndex))
+	extVars := make([]ext.E4, len(d.VarIndex))
+	baseVars[d.VarIndex["x"]] = x
+	extVars[d.VarIndex["gamma"]] = gamma
+	extVars[d.VarIndex["logup"]] = logup
+
+	got := d.EvalWithCacheVarsMixed(
+		baseVars,
+		extVars,
+		make([]koalabear.Element, len(d.Nodes)),
+		make([]ext.E4, len(d.Nodes)),
+	)
+
+	xExt := liftE4(x)
+	twoExt := liftE4(two)
+	var want ext.E4
+	want.Mul(&xExt, &gamma)
+	want.Add(&want, &logup)
+	want.Sub(&want, &twoExt)
+
+	if !got.Equal(&want) {
+		t.Fatalf("EvalWithCacheVarsMixed = %s, want %s", got.String(), want.String())
+	}
+}
+
+func TestDAGEvalOnAllEntriesMixed(t *testing.T) {
+	const N = 4
+
+	x := u64Poly(1, 2, 3, 4)
+	gamma := e4FromU64(3, 4, 5, 6)
+	logup := []ext.E4{
+		e4FromU64(10, 1, 0, 0),
+		e4FromU64(11, 2, 1, 0),
+		e4FromU64(12, 3, 0, 1),
+		e4FromU64(13, 4, 2, 1),
+	}
+	var two koalabear.Element
+	two.SetUint64(2)
+
+	ex := expr.Rot("x", 1).
+		Mul(expr.Challenge("gamma")).
+		Add(expr.ExtCol("logup").Pow(2)).
+		Sub(expr.Const(two))
+	d := ExprToDAG(ex)
+	if d.Root.Field != field.Ext {
+		t.Fatalf("root field = %s, want %s", d.Root.Field, field.Ext)
+	}
+
+	for _, n := range d.Nodes {
+		if n.Kind != KindLeaf || n.IsConst {
+			continue
+		}
+		switch n.Leaf.Name {
+		case "x":
+			n.Leaf.Idx = 0
+		case "gamma":
+			n.Leaf.Idx = 0
+		case "logup":
+			n.Leaf.Idx = 1
+		default:
+			t.Fatalf("unexpected leaf %q", n.Leaf.Name)
+		}
+	}
+
+	got := d.EvalOnAllEntriesMixed(
+		[][]koalabear.Element{x},
+		[][]ext.E4{{gamma}, logup},
+		N,
+	)
+
+	twoExt := liftE4(two)
+	for j := range N {
+		xRot := liftE4(x[(j+1)%N])
+		var want, term, square ext.E4
+		term.Mul(&xRot, &gamma)
+		square.Mul(&logup[j], &logup[j])
+		want.Add(&term, &square)
+		want.Sub(&want, &twoExt)
+
+		if !got[j].Equal(&want) {
+			t.Fatalf("row %d: EvalOnAllEntriesMixed = %s, want %s", j, got[j].String(), want.String())
+		}
 	}
 }
 
