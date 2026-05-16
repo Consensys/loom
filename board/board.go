@@ -162,28 +162,28 @@ func (b *Builder) addExposeIthValueConstraint(module string, E expr.Expr, output
 	m.AssertEqualAt(E, v, pos)
 }
 
-// AddExposeLastEntryStep syntactic sugar for AddExposeRelativeIthEntryStep(module, E, out, 0)
+// AddExposeLastEntryStep syntactic sugar for AddExposeRelativeIthValueStep(module, E, out, 0)
 func (b *Builder) AddExposeLastEntryStep(module string, E expr.Expr, out string) {
-	ctx := ExposeRelativeIthEntryCtx{Pos: 0, Module: module}
+	ctx := ExposeRelativeIthValueCtx{Pos: 0, Module: module}
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  []expr.Expr{E},
 		Outs: []string{out},
-		Step: ExposeRelativeIthEntryStep,
+		Step: ExposeRelativeIthValueStep,
 	}
 	b.Steps = append(b.Steps, pvStep)
 	b.addExposeRelativeIthValuePublicConstraint(module, E, out, 0)
 }
 
-// AddExposeIthEntry adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
+// AddExposeIthValue adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
 // the 1 entry column expr[pos] is registered in the trace
-func (b *Builder) AddExposeRelativeIthEntryStep(module string, E expr.Expr, out string, pos int) {
-	ctx := ExposeRelativeIthEntryCtx{Pos: pos, Module: module}
+func (b *Builder) AddExposeRelativeIthValueStep(module string, E expr.Expr, out string, pos int) {
+	ctx := ExposeRelativeIthValueCtx{Pos: pos, Module: module}
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  []expr.Expr{E},
 		Outs: []string{out},
-		Step: ExposeRelativeIthEntryStep,
+		Step: ExposeRelativeIthValueStep,
 	}
 	b.Steps = append(b.Steps, pvStep)
 	b.addExposeRelativeIthValuePublicConstraint(module, E, out, pos)
@@ -195,15 +195,15 @@ func (b *Builder) addExposeRelativeIthValuePublicConstraint(module string, E exp
 	m.AssertEqualRelativeAt(E, v, pos)
 }
 
-// AddExposeIthEntryStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
+// AddExposeIthValueStep adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
 // the 1 entry column expr[pos] is registered in the trace
-func (b *Builder) AddExposeIthEntryStep(module string, E expr.Expr, out string, pos int) {
-	ctx := ExposeIthEntryCtx{Pos: pos}
+func (b *Builder) AddExposeIthValueStep(module string, E expr.Expr, out string, pos int) {
+	ctx := ExposeIthValueCtx{Pos: pos}
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  []expr.Expr{E},
 		Outs: []string{out},
-		Step: ExposeIthEntry,
+		Step: ExposeIthValue,
 	}
 	b.Steps = append(b.Steps, pvStep)
 	b.addExposeIthValueConstraint(module, E, out, pos)
