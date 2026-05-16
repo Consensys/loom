@@ -81,7 +81,7 @@ func MakeEntriesPublicStep(ins []expr.Expr, outs []string, t trace.Trace, prog *
 			publicColumnInfo.Entries[j].Idx = i
 			publicColumnInfo.Entries[j].SetExt(res[i])
 		}
-		proof.PublicColumns[out] = publicColumnInfo
+		proof.ExposedValues[out] = publicColumnInfo
 
 		sparseCol := make(trace.ExtPolynomial, _ctx.N)
 		for _, i := range _ctx.Idx {
@@ -106,7 +106,7 @@ func MakeEntriesPublicStep(ins []expr.Expr, outs []string, t trace.Trace, prog *
 		publicColumnInfo.Entries[j].Idx = i
 		publicColumnInfo.Entries[j].SetBase(res[i])
 	}
-	proof.PublicColumns[out] = publicColumnInfo
+	proof.ExposedValues[out] = publicColumnInfo
 
 	// The constraint L_pos*(E - Public(out))=0 requires Public(out) to be the sparse
 	// polynomial with E[pos] at index pos and 0 elsewhere, matching what computePublicColumns
@@ -157,7 +157,7 @@ func ExposeRelativeIthEntryStep(ins []expr.Expr, outs []string, t trace.Trace, p
 		publicColumnInfo.Entries = make([]PublicEntry, 1)
 		publicColumnInfo.Entries[0].Idx = pos
 		publicColumnInfo.Entries[0].SetExt(res[pos])
-		proof.PublicColumns[out] = publicColumnInfo
+		proof.ExposedValues[out] = publicColumnInfo
 
 		sparseCol := make(trace.ExtPolynomial, m.N)
 		sparseCol[pos].Set(&res[pos])
@@ -178,7 +178,7 @@ func ExposeRelativeIthEntryStep(ins []expr.Expr, outs []string, t trace.Trace, p
 	publicColumnInfo.Entries = make([]PublicEntry, 1)
 	publicColumnInfo.Entries[0].Idx = pos
 	publicColumnInfo.Entries[0].SetBase(res[pos])
-	proof.PublicColumns[out] = publicColumnInfo
+	proof.ExposedValues[out] = publicColumnInfo
 
 	// The constraint L_pos*(E - Public(out))=0 requires Public(out) to be the sparse
 	// polynomial with E[m.N-1-_ctx.Pos] at index m.N-1-_ctx.Pos and 0 elsewhere, matching what computePublicColumns
@@ -219,7 +219,7 @@ func ExposeIthEntry(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, 
 		publicColumnInfo.Entries = make([]PublicEntry, 1)
 		publicColumnInfo.Entries[0].Idx = _ctx.Pos
 		publicColumnInfo.Entries[0].SetExt(res[_ctx.Pos])
-		proof.PublicColumns[out] = publicColumnInfo
+		proof.ExposedValues[out] = publicColumnInfo
 
 		sparseCol := make(trace.ExtPolynomial, m.N)
 		sparseCol[_ctx.Pos].Set(&res[_ctx.Pos])
@@ -240,7 +240,7 @@ func ExposeIthEntry(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, 
 	publicColumnInfo.Entries = make([]PublicEntry, 1)
 	publicColumnInfo.Entries[0].Idx = _ctx.Pos
 	publicColumnInfo.Entries[0].SetBase(res[_ctx.Pos])
-	proof.PublicColumns[out] = publicColumnInfo
+	proof.ExposedValues[out] = publicColumnInfo
 
 	// The constraint L_pos*(E - Public(out))=0 requires Public(out) to be the sparse
 	// polynomial with E[pos] at index pos and 0 elsewhere, matching what computePublicColumns

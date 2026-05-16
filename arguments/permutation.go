@@ -174,12 +174,15 @@ func CopyConstraint(builder *board.Builder, module string, A []expr.Expr, S boar
 	AID := make([][]expr.Expr, len(A))
 	APermuted := make([][]expr.Expr, len(A))
 	for i := 0; i < len(A); i++ {
+
 		AID[i] = make([]expr.Expr, 2)
-		APermuted[i] = make([]expr.Expr, 2)
 		AID[i][0] = A[i]
 		AID[i][1] = expr.Col(m.NameIthIDSupport(i))
+
+		APermuted[i] = make([]expr.Expr, 2)
 		APermuted[i][0] = A[i]
 		APermuted[i][1] = expr.Col(S.NameIthPermutationChunk(i))
+
 	}
 
 	// 3 - the case is now reduced to PermutationTupleWithinModule

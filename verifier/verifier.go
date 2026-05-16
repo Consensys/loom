@@ -200,7 +200,7 @@ func (vr *verifierRunTime) deriveDeepAlpha() error {
 // TODO the verifier should fetch the public values from the vanishing expressions, and look them up
 // in proof.PublicColumns, but not just trust proof.PublicColumns
 func (vr *verifierRunTime) computePublicColumns() error {
-	for k, pi := range vr.proof.PublicColumns {
+	for k, pi := range vr.proof.ExposedValues {
 		var lag ext.E4
 		for _, pe := range pi.Entries {
 			tmp := poly.LagrangeAtZetaExt(vr.zeta, pi.N, pe.Idx)
@@ -236,18 +236,18 @@ func (vr *verifierRunTime) checkLogupBus() error {
 	for _, bus := range vr.program.LogupBus {
 		var cumNegative, cumPositive ext.E4
 		for _, pos := range bus.Positive {
-			if len(vr.proof.PublicColumns[pos].Entries) > 1 {
+			if len(vr.proof.ExposedValues[pos].Entries) > 1 {
 				return fmt.Errorf("an extracted value from a logup column should have exactly one entry")
 			}
-			pe := vr.proof.PublicColumns[pos].Entries[0]
+			pe := vr.proof.ExposedValues[pos].Entries[0]
 			value := pe.ExtValue()
 			cumPositive.Add(&cumPositive, &value)
 		}
 		for _, neg := range bus.Negative {
-			if len(vr.proof.PublicColumns[neg].Entries) > 1 {
+			if len(vr.proof.ExposedValues[neg].Entries) > 1 {
 				return fmt.Errorf("an extracted value from a logup column should have exactly one entry")
 			}
-			pe := vr.proof.PublicColumns[neg].Entries[0]
+			pe := vr.proof.ExposedValues[neg].Entries[0]
 			value := pe.ExtValue()
 			cumNegative.Add(&cumNegative, &value)
 		}

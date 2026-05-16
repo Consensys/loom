@@ -29,7 +29,7 @@ type Commitment struct {
 
 type Proof struct {
 	ValuesAtZeta  map[string]extensions.E4 // map string -> evaluation of the column whose String() is the key at zeta
-	PublicColumns map[string]PublicInput   // extracted values from columns of the trace, those values are passed as public inputs
+	ExposedValues map[string]PublicInput   // map column nam -> public entries
 
 	// Commitments holds the Merkle roots of every WMerkleTree the prover
 	// commits during the protocol, in canonical order:
@@ -53,7 +53,7 @@ type Proof struct {
 func NewProof() Proof {
 	var res Proof
 	res.ValuesAtZeta = make(map[string]extensions.E4)
-	res.PublicColumns = make(map[string]PublicInput)
+	res.ExposedValues = make(map[string]PublicInput)
 	return res
 }
 

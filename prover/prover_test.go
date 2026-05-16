@@ -89,17 +89,17 @@ func TestVanishingRelationsAndLogupBus(t *testing.T) {
 	for _, bus := range program.LogupBus {
 		var cumNegative, cumPositive koalabear.Element
 		for _, pos := range bus.Positive {
-			if len(proof.PublicColumns[pos].Entries) > 1 {
+			if len(proof.ExposedValues[pos].Entries) > 1 {
 				t.Fatal("an extracted value from a logup column should have exactly one entry")
 			}
-			pe := proof.PublicColumns[pos].Entries[0]
+			pe := proof.ExposedValues[pos].Entries[0]
 			cumPositive.Add(&cumPositive, &pe.Value)
 		}
 		for _, neg := range bus.Negative {
-			if len(proof.PublicColumns[neg].Entries) > 1 {
+			if len(proof.ExposedValues[neg].Entries) > 1 {
 				t.Fatal("an extracted value from a logup column should have exactly one entry")
 			}
-			pe := proof.PublicColumns[neg].Entries[0]
+			pe := proof.ExposedValues[neg].Entries[0]
 			cumNegative.Add(&cumNegative, &pe.Value)
 		}
 		cumPositive.Sub(&cumPositive, &cumNegative)
