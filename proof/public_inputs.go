@@ -51,7 +51,11 @@ type PublicInput struct {
 	Entries []PublicEntry
 }
 
+// PublicInputs public values
 type PublicInputs map[string]PublicInput
+
+// ExposedValues values made public by the prover
+type ExposedValues map[string]PublicInput
 
 // Bus stores the running sums of the sender and receiver
 // participating in a log derivative based interaction, for instance a lookup

@@ -471,7 +471,7 @@ func inferStepOutputFields(step ProverStep, columnFields map[string]field.Kind) 
 		for i := range res {
 			res[i] = f
 		}
-	case MakeEntriesPublicCtx, ExposeIthEntryCtx, ExposeRelativeIthEntryCtx:
+	case ExposeEntriesCtx, ExposeIthEntryCtx, ExposeRelativeIthEntryCtx:
 		f := field.Base
 		if len(step.Ins) > 0 {
 			f = expr.FieldOfWithColumnFields(step.Ins[0], columnFields)

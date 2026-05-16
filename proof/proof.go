@@ -29,7 +29,7 @@ type Commitment struct {
 
 type Proof struct {
 	ValuesAtZeta  map[string]extensions.E4 // map string -> evaluation of the column whose String() is the key at zeta
-	ExposedValues map[string]PublicInput   // map column nam -> public entries
+	ExposedValues ExposedValues            // map column name -> values exposed to the verifier
 
 	// Commitments holds the Merkle roots of every WMerkleTree the prover
 	// commits during the protocol, in canonical order:

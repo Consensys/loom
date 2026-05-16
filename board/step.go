@@ -54,16 +54,16 @@ func shouldRunExtStep(prog *Program, out string) bool {
 	return prog.ColumnFields[out] == field.Ext
 }
 
-type MakeEntriesPublicCtx struct {
+type ExposeEntriesCtx struct {
 	Idx []int // indices of the entries to make public
 	N   int
 }
 
-func MakeEntriesPublicStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
+func ExposeEntriesStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Program, proof *proof.Proof, mu *sync.Mutex, ctx StepContext) error {
 
-	_ctx, ok := ctx.(MakeEntriesPublicCtx)
+	_ctx, ok := ctx.(ExposeEntriesCtx)
 	if !ok {
-		return fmt.Errorf("[MakeEntriesPublicStep] wrong context type")
+		return fmt.Errorf("[ExposeEntriesStep] wrong context type")
 	}
 
 	out := outs[0]
@@ -88,7 +88,7 @@ func MakeEntriesPublicStep(ins []expr.Expr, outs []string, t trace.Trace, prog *
 			sparseCol[i].Set(&res[i])
 		}
 		if err := t.PutExt(out, sparseCol); err != nil {
-			panic(fmt.Sprintf("[MakeEntriesPublicStep] register public column %s: %v", out, err))
+			panic(fmt.Sprintf("[ExposeEntriesStep] register public column %s: %v", out, err))
 		}
 
 		return nil

@@ -141,12 +141,12 @@ func (b *Builder) addMakeEntriesPublicConstraint(module string, E expr.Expr, sel
 
 func (b *Builder) AddMakeEntriesPublicStep(module string, E expr.Expr, selector, out string, idx []int) {
 	m := b.Modules[module]
-	ctx := MakeEntriesPublicCtx{Idx: idx, N: m.N}
+	ctx := ExposeEntriesCtx{Idx: idx, N: m.N}
 	pvStep := ProverStep{
 		Ctx:  ctx,
 		Ins:  []expr.Expr{E},
 		Outs: []string{out},
-		Step: MakeEntriesPublicStep,
+		Step: ExposeEntriesStep,
 	}
 	b.Steps = append(b.Steps, pvStep)
 
