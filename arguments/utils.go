@@ -36,12 +36,12 @@ func AddLogupEqualityCheck(builder *board.Builder, logupS, logupT []board.Column
 		for i, ls := range logupS {
 			lsName := fmt.Sprintf("%s.%s_%d", ls.Module, ls.In.String(), 0)
 			positives[i] = lsName
-			builder.AddExposeRelativeIthEntryStep(ls.Module, ls.In, lsName, 0) // this step makes ls.In[N-1] accessible to the verifier
+			builder.AddExposeLastEntryStep(ls.Module, ls.In, lsName) // this step makes ls.In[N-1] accessible to the verifier
 		}
 		for i, lt := range logupT {
 			ltName := fmt.Sprintf("%s.%s_%d", lt.Module, lt.In.String(), 0)
 			negatives[i] = ltName
-			builder.AddExposeRelativeIthEntryStep(lt.Module, lt.In, ltName, 0) // this step makes lt.In[N-1] accessible to the verifier
+			builder.AddExposeLastEntryStep(lt.Module, lt.In, ltName) // this step makes lt.In[N-1] accessible to the verifier
 		}
 		builder.AddLogupBus(board.NewLogupBus(positives, negatives))
 	}
