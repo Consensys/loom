@@ -53,7 +53,7 @@ type Proof struct {
 func NewProof() Proof {
 	var res Proof
 	res.ValuesAtZeta = make(map[string]extensions.E4)
-	res.ExposedValues = make(map[string]PublicInput)
+	res.ExposedValues = make(map[string]ExposedValue)
 	return res
 }
 

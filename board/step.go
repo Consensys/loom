@@ -74,7 +74,7 @@ func ExposeEntriesStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Prog
 			return err
 		}
 
-		var publicColumnInfo PublicInput
+		var publicColumnInfo ExposedValue
 		publicColumnInfo.N = _ctx.N
 		publicColumnInfo.Entries = make([]PublicEntry, len(_ctx.Idx))
 		for j, i := range _ctx.Idx {
@@ -99,7 +99,7 @@ func ExposeEntriesStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Prog
 		return err
 	}
 
-	var publicColumnInfo PublicInput
+	var publicColumnInfo ExposedValue
 	publicColumnInfo.N = _ctx.N
 	publicColumnInfo.Entries = make([]PublicEntry, len(_ctx.Idx))
 	for j, i := range _ctx.Idx {
@@ -152,7 +152,7 @@ func ExposeRelativeIthEntryStep(ins []expr.Expr, outs []string, t trace.Trace, p
 			return err
 		}
 
-		var publicColumnInfo PublicInput
+		var publicColumnInfo ExposedValue
 		publicColumnInfo.N = m.N
 		publicColumnInfo.Entries = make([]PublicEntry, 1)
 		publicColumnInfo.Entries[0].Idx = pos
@@ -173,7 +173,7 @@ func ExposeRelativeIthEntryStep(ins []expr.Expr, outs []string, t trace.Trace, p
 		return err
 	}
 
-	var publicColumnInfo PublicInput
+	var publicColumnInfo ExposedValue
 	publicColumnInfo.N = m.N
 	publicColumnInfo.Entries = make([]PublicEntry, 1)
 	publicColumnInfo.Entries[0].Idx = pos
@@ -214,7 +214,7 @@ func ExposeIthEntry(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, 
 			return err
 		}
 
-		var publicColumnInfo PublicInput
+		var publicColumnInfo ExposedValue
 		publicColumnInfo.N = m.N
 		publicColumnInfo.Entries = make([]PublicEntry, 1)
 		publicColumnInfo.Entries[0].Idx = _ctx.Pos
@@ -235,7 +235,7 @@ func ExposeIthEntry(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, 
 		return err
 	}
 
-	var publicColumnInfo PublicInput
+	var publicColumnInfo ExposedValue
 	publicColumnInfo.N = m.N
 	publicColumnInfo.Entries = make([]PublicEntry, 1)
 	publicColumnInfo.Entries[0].Idx = _ctx.Pos
