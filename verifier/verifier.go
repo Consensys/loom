@@ -199,17 +199,34 @@ func (vr *verifierRunTime) deriveDeepAlpha() error {
 
 // TODO the verifier should fetch the public values from the vanishing expressions, and look them up
 // in proof.PublicColumns, but not just trust proof.PublicColumns
-func (vr *verifierRunTime) computePublicColumns() error {
-	for k, pi := range vr.proof.ExposedValues {
-		var lag ext.E4
-		for _, pe := range pi.Entries {
-			tmp := poly.LagrangeAtZetaExt(vr.zeta, pi.N, pe.Idx)
-			value := pe.ExtValue()
-			tmp.Mul(&tmp, &value)
-			lag.Add(&lag, &tmp)
+func (vr *verifierRunTime) computeExposedColumns() error {
+	for _, m := range vr.program.Modules {
+		leafs := m.VanishingRelation.Leaves(expr.NewConfig(expr.OnlyExposedColumns...))
+		for _, leaf := range leafs {
+			pi, ok := vr.proof.ExposedValues[leaf]
+			if !ok {
+				return fmt.Errorf("computeExposedColumns: %s not found in proof.ExposedValues", leaf)
+			}
+			var lag ext.E4
+			for _, pe := range pi.Entries {
+				tmp := poly.LagrangeAtZetaExt(vr.zeta, m.N, pe.Idx)
+				value := pe.ExtValue()
+				tmp.Mul(&tmp, &value)
+				lag.Add(&lag, &tmp)
+			}
+			vr.proof.SetValueAtZetaExt(leaf, lag)
 		}
-		vr.proof.SetValueAtZetaExt(k, lag)
 	}
+	// for k, pi := range vr.proof.ExposedValues {
+	// 	var lag ext.E4
+	// 	for _, pe := range pi.Entries {
+	// 		tmp := poly.LagrangeAtZetaExt(vr.zeta, pi.N, pe.Idx)
+	// 		value := pe.ExtValue()
+	// 		tmp.Mul(&tmp, &value)
+	// 		lag.Add(&lag, &tmp)
+	// 	}
+	// 	vr.proof.SetValueAtZetaExt(k, lag)
+	// }
 	return nil
 }
 
@@ -551,7 +568,7 @@ func Verify(publicInputs map[string]proof.PublicInput, setup setup.PublicKeyRoot
 	}
 
 	// 2 - populate proof.ValuesAtZeta with the public columns and lagrange columns
-	err = vr.computePublicColumns()
+	err = vr.computeExposedColumns()
 	if err != nil {
 		return err
 	}

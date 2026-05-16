@@ -47,7 +47,7 @@ func (e PublicEntry) ExtValue() extensions.E4 {
 }
 
 type PublicInput struct {
-	N       int // N = size of the module that the public column corresponding to this publicEntry belongs to
+	// N       int // N = size of the module that the public column corresponding to this publicEntry belongs to
 	Entries []PublicEntry
 }
 

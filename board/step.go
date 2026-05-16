@@ -75,7 +75,7 @@ func ExposeEntriesStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Prog
 		}
 
 		var publicColumnInfo ExposedValue
-		publicColumnInfo.N = _ctx.N
+		// publicColumnInfo.N = _ctx.N
 		publicColumnInfo.Entries = make([]PublicEntry, len(_ctx.Idx))
 		for j, i := range _ctx.Idx {
 			publicColumnInfo.Entries[j].Idx = i
@@ -100,7 +100,7 @@ func ExposeEntriesStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Prog
 	}
 
 	var publicColumnInfo ExposedValue
-	publicColumnInfo.N = _ctx.N
+	// publicColumnInfo.N = _ctx.N
 	publicColumnInfo.Entries = make([]PublicEntry, len(_ctx.Idx))
 	for j, i := range _ctx.Idx {
 		publicColumnInfo.Entries[j].Idx = i
@@ -153,7 +153,7 @@ func ExposeRelativeIthEntryStep(ins []expr.Expr, outs []string, t trace.Trace, p
 		}
 
 		var publicColumnInfo ExposedValue
-		publicColumnInfo.N = m.N
+		// publicColumnInfo.N = m.N
 		publicColumnInfo.Entries = make([]PublicEntry, 1)
 		publicColumnInfo.Entries[0].Idx = pos
 		publicColumnInfo.Entries[0].SetExt(res[pos])
@@ -174,7 +174,7 @@ func ExposeRelativeIthEntryStep(ins []expr.Expr, outs []string, t trace.Trace, p
 	}
 
 	var publicColumnInfo ExposedValue
-	publicColumnInfo.N = m.N
+	// publicColumnInfo.N = m.N
 	publicColumnInfo.Entries = make([]PublicEntry, 1)
 	publicColumnInfo.Entries[0].Idx = pos
 	publicColumnInfo.Entries[0].SetBase(res[pos])
@@ -215,7 +215,7 @@ func ExposeIthEntry(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, 
 		}
 
 		var publicColumnInfo ExposedValue
-		publicColumnInfo.N = m.N
+		// publicColumnInfo.N = m.N
 		publicColumnInfo.Entries = make([]PublicEntry, 1)
 		publicColumnInfo.Entries[0].Idx = _ctx.Pos
 		publicColumnInfo.Entries[0].SetExt(res[_ctx.Pos])
@@ -236,7 +236,7 @@ func ExposeIthEntry(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, 
 	}
 
 	var publicColumnInfo ExposedValue
-	publicColumnInfo.N = m.N
+	// publicColumnInfo.N = m.N
 	publicColumnInfo.Entries = make([]PublicEntry, 1)
 	publicColumnInfo.Entries[0].Idx = _ctx.Pos
 	publicColumnInfo.Entries[0].SetBase(res[_ctx.Pos])

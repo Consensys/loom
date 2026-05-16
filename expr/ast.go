@@ -97,8 +97,9 @@ func NewConfig(opts ...Option) Config {
 	return res
 }
 
-var OnlyLagranges = []Option{WithoutChallenges(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns()}
 var OnlyChallenges = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns()}
+var OnlyLagranges = []Option{WithoutChallenges(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns()}
+var OnlyExposedColumns = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutChallenges()}
 
 type Expr interface {
 	Degree() int
@@ -261,6 +262,11 @@ func (l *Leaf) Leaves(config Config) []string {
 		return []string{l.Name}
 	case ChallengeColumn:
 		if config.WoChallenges {
+			return []string{}
+		}
+		return []string{l.Name}
+	case ExposedColumn:
+		if config.WoExposedColumns {
 			return []string{}
 		}
 		return []string{l.Name}
