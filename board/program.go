@@ -240,7 +240,7 @@ func Compile(b *Builder) (Program, error) {
 	// --- Phase 7: Collapse FS steps of the same round (level) into one canonical step. ---
 
 	// Config: keep CommittedColumn and RotatedColumn; discard LagrangeColumn, ChallengeColumn and PublicColumns.
-	noLagrangeNoChallengeNoPublicCols := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutPublicColumns())
+	noLagrangeNoChallengeNoExposedCols := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutExposedColumns())
 
 	// Step 7a: Identify which levels are FS steps and assign round indices in level order.
 	// from the preivous Phase, a level either contains only FS, or no FS at all
@@ -303,7 +303,7 @@ func Compile(b *Builder) (Program, error) {
 	columnModule := map[string]string{}
 	for moduleName, m := range b.Modules {
 		for _, rel := range m.Relations {
-			for _, leaf := range rel.LeavesFull(noLagrangeNoChallengeNoPublicCols) {
+			for _, leaf := range rel.LeavesFull(noLagrangeNoChallengeNoExposedCols) {
 				columnModule[leaf.Name] = moduleName
 			}
 		}
@@ -326,7 +326,7 @@ func Compile(b *Builder) (Program, error) {
 				continue
 			}
 			for _, inp := range step.Ins {
-				for _, leaf := range inp.LeavesFull(noLagrangeNoChallengeNoPublicCols) {
+				for _, leaf := range inp.LeavesFull(noLagrangeNoChallengeNoExposedCols) {
 					if !prevCovered[leaf.Name] {
 						prevCovered[leaf.Name] = true
 						mod, ok := columnModule[leaf.Name]
@@ -358,7 +358,7 @@ func Compile(b *Builder) (Program, error) {
 	lastRound := numRounds - 1
 	for moduleName, m := range b.Modules {
 		for _, rel := range m.Relations {
-			for _, leaf := range rel.LeavesFull(noLagrangeNoChallengeNoPublicCols) {
+			for _, leaf := range rel.LeavesFull(noLagrangeNoChallengeNoExposedCols) {
 				if !prevCovered[leaf.Name] {
 					prevCovered[leaf.Name] = true
 					res.FScolumnsDependencies[lastRound] = append(res.FScolumnsDependencies[lastRound], ColumnRef{Name: leaf.Name, Module: moduleName})

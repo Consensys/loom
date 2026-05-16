@@ -248,7 +248,7 @@ type DEEPquotientLayout struct {
 // between Compile and Prove (via program.SetSize); the layout reflects the
 // current sizes.
 func BuildDeepQuotientLayout(program board.Program) DEEPquotientLayout {
-	leafConfig := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutPublicColumns())
+	leafConfig := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutExposedColumns())
 
 	// Group module names by size, deterministic within a size.
 	modulesByN := map[int][]string{}

@@ -450,7 +450,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 // ComputeEvaluationsAtZeta computes the evaluations at zeta of every polynomial
 // appearing in every vanishing relation of every module.
 func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
-	config := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutPublicColumns())
+	config := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutExposedColumns())
 
 	for _, module := range pr.program.Modules {
 		leaves := module.VanishingRelation.LeavesFull(config)

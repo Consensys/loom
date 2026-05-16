@@ -31,7 +31,7 @@ const (
 	LagrangeColumn
 	ChallengeColumn
 	ConstantColumn
-	PublicColumn // column containing only public values, used for local openings, when the verifier needs to know the entries of a particular column
+	ExposedColumn // column containing only public values, used for local openings, when the verifier needs to know the entries of a particular column
 )
 
 type Leaf struct {
@@ -49,7 +49,7 @@ type Config struct {
 	WoLagrangeumns     bool
 	WoRotatedColumns   bool
 	WoChallenges       bool
-	WoPublicColumns    bool
+	WoExposedColumns   bool
 }
 
 type Option func(*Config)
@@ -82,10 +82,10 @@ func WithoutChallenges() Option {
 	}
 }
 
-// Leaves() doesnt return the PublicColumns
-func WithoutPublicColumns() Option {
+// Leaves() doesnt return the ExposedColumns
+func WithoutExposedColumns() Option {
 	return func(c *Config) {
-		c.WoPublicColumns = true
+		c.WoExposedColumns = true
 	}
 }
 
@@ -97,8 +97,8 @@ func NewConfig(opts ...Option) Config {
 	return res
 }
 
-var OnlyLagranges = []Option{WithoutChallenges(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutPublicColumns()}
-var OnlyChallenges = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutPublicColumns()}
+var OnlyLagranges = []Option{WithoutChallenges(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns()}
+var OnlyChallenges = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns()}
 
 type Expr interface {
 	Degree() int
@@ -148,8 +148,8 @@ func ExtCol(name string) *Leaf {
 	return &Leaf{Type: CommittedColumn, Name: name, Field: field.Ext}
 }
 
-func Public(name string) *Leaf {
-	return &Leaf{Type: PublicColumn, Name: name}
+func Exposed(name string) *Leaf {
+	return &Leaf{Type: ExposedColumn, Name: name}
 }
 
 func Rot(name string, shift int) *Leaf {
@@ -188,7 +188,7 @@ func FieldOfWithColumnFields(e Expr, columnFields map[string]field.Kind) field.K
 	case *Leaf:
 		f := v.FieldKind()
 		switch v.Type {
-		case CommittedColumn, RotatedColumn, PublicColumn:
+		case CommittedColumn, RotatedColumn, ExposedColumn:
 			if columnFields != nil {
 				f = field.Join(f, columnFields[v.Name])
 			}
@@ -534,8 +534,8 @@ func (l *Leaf) LeavesFull(config Config) []*Leaf {
 		if config.WoChallenges {
 			return nil
 		}
-	case PublicColumn:
-		if config.WoPublicColumns {
+	case ExposedColumn:
+		if config.WoExposedColumns {
 			return nil
 		}
 	case ConstantColumn:

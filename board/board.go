@@ -132,7 +132,7 @@ func (b *Builder) AddFiatShamirStep(E []expr.Expr, out string) {
 
 func (b *Builder) addExposeValuesConstraint(module string, E expr.Expr, sel, out string) {
 	selExpr := expr.Col(sel)
-	outExpr := expr.Public(out)
+	outExpr := expr.Exposed(out)
 	rel := E.Mul(selExpr).Sub(outExpr)
 	m := b.Modules[module]
 	m.AssertZero(rel)
@@ -158,7 +158,7 @@ func (b *Builder) AddExposeValuesStep(module string, E expr.Expr, selector, out 
 
 func (b *Builder) addExposeIthValueConstraint(module string, E expr.Expr, output string, pos int) {
 	m := b.Modules[module]
-	v := expr.Public(output)
+	v := expr.Exposed(output)
 	m.AssertEqualAt(E, v, pos)
 }
 
@@ -191,7 +191,7 @@ func (b *Builder) AddExposeRelativeIthEntryStep(module string, E expr.Expr, out 
 
 func (b *Builder) addExposeRelativeIthValuePublicConstraint(module string, E expr.Expr, output string, pos int) {
 	m := b.Modules[module]
-	v := expr.Public(output)
+	v := expr.Exposed(output)
 	m.AssertEqualRelativeAt(E, v, pos)
 }
 
