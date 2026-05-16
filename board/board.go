@@ -130,7 +130,7 @@ func (b *Builder) AddFiatShamirStep(E []expr.Expr, out string) {
 	b.Steps = append(b.Steps, pvStep)
 }
 
-func (b *Builder) addMakeEntriesPublicConstraint(module string, E expr.Expr, sel, out string) {
+func (b *Builder) addExposeValuesConstraint(module string, E expr.Expr, sel, out string) {
 	selExpr := expr.Col(sel)
 	outExpr := expr.Public(out)
 	rel := E.Mul(selExpr).Sub(outExpr)
@@ -139,7 +139,7 @@ func (b *Builder) addMakeEntriesPublicConstraint(module string, E expr.Expr, sel
 	b.Modules[module] = m
 }
 
-func (b *Builder) AddMakeEntriesPublicStep(module string, E expr.Expr, selector, out string, idx []int) {
+func (b *Builder) AddExposeValuesStep(module string, E expr.Expr, selector, out string, idx []int) {
 	m := b.Modules[module]
 	ctx := ExposeEntriesCtx{Idx: idx, N: m.N}
 	pvStep := ProverStep{
@@ -153,10 +153,10 @@ func (b *Builder) AddMakeEntriesPublicStep(module string, E expr.Expr, selector,
 	genSel := SelectorGen{Idx: idx, Name: selector}
 	m.GenCol = append(m.GenCol, genSel)
 	b.Modules[module] = m
-	b.addMakeEntriesPublicConstraint(module, E, selector, out)
+	b.addExposeValuesConstraint(module, E, selector, out)
 }
 
-func (b *Builder) addMakeIthValuePublicConstraint(module string, E expr.Expr, output string, pos int) {
+func (b *Builder) addExposeIthValueConstraint(module string, E expr.Expr, output string, pos int) {
 	m := b.Modules[module]
 	v := expr.Public(output)
 	m.AssertEqualAt(E, v, pos)
@@ -172,7 +172,7 @@ func (b *Builder) AddExposeLastEntryStep(module string, E expr.Expr, out string)
 		Step: ExposeRelativeIthEntryStep,
 	}
 	b.Steps = append(b.Steps, pvStep)
-	b.addMakeRelativeIthValuePublicConstraint(module, E, out, 0)
+	b.addExposeRelativeIthValuePublicConstraint(module, E, out, 0)
 }
 
 // AddExposeIthEntry adds a constraint Lagrange_pos * (expr - expr[pos]), and stores expr[pos] in the proof so the verifier has access to it
@@ -186,10 +186,10 @@ func (b *Builder) AddExposeRelativeIthEntryStep(module string, E expr.Expr, out 
 		Step: ExposeRelativeIthEntryStep,
 	}
 	b.Steps = append(b.Steps, pvStep)
-	b.addMakeRelativeIthValuePublicConstraint(module, E, out, pos)
+	b.addExposeRelativeIthValuePublicConstraint(module, E, out, pos)
 }
 
-func (b *Builder) addMakeRelativeIthValuePublicConstraint(module string, E expr.Expr, output string, pos int) {
+func (b *Builder) addExposeRelativeIthValuePublicConstraint(module string, E expr.Expr, output string, pos int) {
 	m := b.Modules[module]
 	v := expr.Public(output)
 	m.AssertEqualRelativeAt(E, v, pos)
@@ -206,7 +206,7 @@ func (b *Builder) AddExposeIthEntryStep(module string, E expr.Expr, out string, 
 		Step: ExposeIthEntry,
 	}
 	b.Steps = append(b.Steps, pvStep)
-	b.addMakeIthValuePublicConstraint(module, E, out, pos)
+	b.addExposeIthValueConstraint(module, E, out, pos)
 }
 
 // S ⊂ T, the ouptut is in T's module
