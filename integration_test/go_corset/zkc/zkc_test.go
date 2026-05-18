@@ -27,10 +27,9 @@ import (
 	"github.com/consensys/go-corset/pkg/zkc/compiler/codegen"
 	zkc_constraints "github.com/consensys/go-corset/pkg/zkc/constraints"
 	zkc_util "github.com/consensys/go-corset/pkg/zkc/util"
+	"github.com/consensys/loom"
 	"github.com/consensys/loom/board"
 	gocorset "github.com/consensys/loom/integration_test/go_corset"
-	"github.com/consensys/loom/prover"
-	"github.com/consensys/loom/verifier"
 )
 
 var zkcIntegrationCases = []struct {
@@ -150,12 +149,15 @@ func runZkcIntegration(
 
 		gocorset.SetSize(&pg, loomTrace)
 
-		prf, err := prover.Prove(loomTrace, nil, nil, pg)
+		statement := loom.Statement{Program: pg}
+		witness := loom.Witness{Trace: loomTrace}
+
+		prf, err := loom.Prove(statement, witness)
 		if err != nil {
 			t.Fatalf("prove[%d]: %v", i, err)
 		}
 
-		if err := verifier.Verify(nil, nil, pg, prf); err != nil {
+		if err := loom.Verify(statement, prf); err != nil {
 			t.Fatalf("verify[%d]: %v", i, err)
 		}
 	}

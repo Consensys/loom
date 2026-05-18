@@ -17,7 +17,9 @@ Fiat-Shamir challenges, including lookup/permutation challenges, canonical trace
 | Builder | `board.Builder` | Accumulates modules, relations, and derivation steps before compilation |
 | Module | `board.Module` | A named constraint domain; all columns within it share the same N |
 | Program | `board.Program` | Compiled IOP: level-ordered step schedule + folded vanishing relations |
-| Public openings | `proof.Proof.PublicColumns` / `proof.PublicInput` | Values exposed by board steps such as `AddExposeIthEntryStep` and checked through sparse public columns |
+| Statement | `loom.Statement` | Verifier-owned data: program, setup roots, and public inputs |
+| Witness | `loom.Witness` | Prover-owned data: trace and setup key |
+| Exposed values | `proof.Proof.ExposedValues` / `proof.ExposedValue` | Values produced by board steps such as `AddExposeIthValueStep` and carried by the proof |
 
 ## Workflow
 
@@ -27,8 +29,10 @@ Fiat-Shamir challenges, including lookup/permutation challenges, canonical trace
 3. Attach standard arguments (permutation, lookup, …) from the arguments/ package
 4. board.Compile(&builder) → Program
 5. setup.Setup(trace, program) → setup.PublicKey, if the program has precommitted public columns
-6. prover.Prove(trace, publicKey, publicInputs, program) → Proof
-7. verifier.Verify(publicInputs, setup.Roots(publicKey), program, proof)
+6. Build a `loom.Statement` from the program, setup roots, and public inputs
+7. Build a `loom.Witness` from the trace and setup key
+8. loom.Prove(statement, witness) → Proof
+9. loom.Verify(statement, proof)
 ```
 
 ## Example: PLONK gate + copy constraint
@@ -54,8 +58,10 @@ arguments.CopyConstraint(&builder, "plonk", []expr.Expr{
 }, S)  // S is a board.PermutationGen
 
 pg, err := board.Compile(&builder)
-prf, err := prover.Prove(trace, nil, nil, pg)
-err = verifier.Verify(nil, nil, pg, prf)
+statement := loom.Statement{Program: pg}
+witness := loom.Witness{Trace: trace}
+prf, err := loom.Prove(statement, witness)
+err = loom.Verify(statement, prf)
 ```
 
 ## Standard arguments (`arguments/`)
@@ -81,11 +87,10 @@ err = verifier.Verify(nil, nil, pg, prf)
 
 ## Public values
 
-Values exposed with `board.AddExposeIthEntryStep`, `board.AddExposeRelativeIthEntryStep`, `board.AddExposeLastEntryStep`, and `board.AddMakeEntriesPublicStep` are stored in `proof.Proof.PublicColumns`. The verifier reconstructs their sparse public columns at `__zeta` and checks the constraints that bind them to the private trace.
+Values exposed with `board.AddExposeIthValueStep`, `board.AddExposeRelativeIthValueStep`, `board.AddExposeLastEntryStep`, and `board.AddExposeValuesStep` are stored in `proof.Proof.ExposedValues`. The verifier reconstructs their sparse columns at `__zeta` and checks the constraints that bind them to the private trace.
 
 ```go
-publicColumn := proof.PublicInput{
-    N: 16,
+exposedValue := proof.ExposedValue{
     Entries: []proof.PublicEntry{
         {Idx: 0, Value: zeroElement},
         {Idx: 5, Value: someElement},
@@ -93,14 +98,16 @@ publicColumn := proof.PublicInput{
 }
 ```
 
-The `publicInputs` parameters on `prover.Prove` and `verifier.Verify` are still part of the API, but the current prover/verifier path uses the public values carried in `Proof.PublicColumns`.
+The `PublicInputs` field on `loom.Statement` is reserved for verifier-supplied statement values. Prover-produced values should stay in `Proof.ExposedValues`.
 
 For columns that require a setup commitment (e.g. PLONK selector columns), mark them with `builder.MakeColumnPublic` and use `setup.Setup` to pre-commit them:
 
 ```go
-pk, err  := setup.Setup(trace, pg)
-prf, err := prover.Prove(trace, pk, nil, pg)
-err       = verifier.Verify(nil, setup.Roots(pk), pg, prf)
+pk, err := setup.Setup(trace, pg)
+statement := loom.Statement{Program: pg, SetupRoots: setup.Roots(pk)}
+witness := loom.Witness{Trace: trace, Setup: pk}
+prf, err := loom.Prove(statement, witness)
+err = loom.Verify(statement, prf)
 ```
 
 ## Development
@@ -108,10 +115,10 @@ err       = verifier.Verify(nil, setup.Roots(pk), pg, prf)
 ```sh
 go mod download
 go test ./integration_test/go_corset/zkc   # current Go-Corset/zkc integration path
-go test ./...                              # full suite, including older Lisp fixtures
+go test ./...                              # full suite
 ```
 
-Go-Corset integration tests are split by frontend. Current zkc fixtures live in `integration_test/go_corset/zkc/testdata`; the older Lisp fixtures live under `integration_test/go_corset/lisp`.
+Current Go-Corset/zkc fixtures live in `integration_test/go_corset/zkc/testdata`.
 
 ## Visualisation (`viz/`)
 

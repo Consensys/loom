@@ -33,6 +33,7 @@ import (
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/prover"
+
 	"github.com/consensys/loom/setup"
 )
 
