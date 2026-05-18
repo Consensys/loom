@@ -273,8 +273,11 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 }
 
 // Key returns a compact debug ID for nodes interned during ExprToDAG
-// construction. Nodes produced by later rewrites such as Flatten or Factorize
-// are intentionally keyless and return the empty string.
+// construction. It is only stable within a single DAG build: two independent
+// DAGs containing the same expression may assign different keys to equivalent
+// nodes. Use it for local debugging only, not as a persistent or cross-DAG
+// content identifier. Nodes produced by later rewrites such as Flatten or
+// Factorize are intentionally keyless and return the empty string.
 func (d *DAGNode) Key() string {
 	if d.structID == 0 {
 		return ""
