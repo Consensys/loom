@@ -46,6 +46,20 @@ type ProverOption = prover.Option
 // VerifierOption configures Verify.
 type VerifierOption = verifier.Option
 
+type PublicKey = setup.PublicKey
+
+type PublicKeyRoots = setup.PublicKeyRoots
+
+// Setup produces the Merkle trees of the precommitted columns + their roots.
+func Setup(t trace.Trace, program board.Program) (PublicKey, PublicKeyRoots, error) {
+	pk, err := setup.Setup(t, program)
+	if err != nil {
+		return pk, nil, err
+	}
+	pkRoots := setup.Roots(pk)
+	return pk, pkRoots, nil
+}
+
 // Prove produces a proof for statement using witness.
 func Prove(statement Statement, witness Witness, opts ...ProverOption) (proof.Proof, error) {
 	if err := checkSetupRoots(statement.SetupRoots, witness.Setup); err != nil {

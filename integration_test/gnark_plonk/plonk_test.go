@@ -17,11 +17,11 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	"github.com/consensys/loom"
 	"github.com/consensys/loom/arguments"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/prover"
-	"github.com/consensys/loom/setup"
 	"github.com/consensys/loom/trace"
 	"github.com/consensys/loom/verifier"
 	"github.com/consensys/loom/viz"
@@ -120,13 +120,16 @@ func TestVerifierPlonk(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		proof, err := prover.Prove(tr, nil, nil, program)
+		stmt := loom.Statement{Program: program}
+		witness := loom.Witness{Trace: tr}
+
+		proof, err := loom.Prove(stmt, witness)
 		if err != nil {
 			t.Fatal(err)
 		}
 		viz.ViewDag(program, "dag_plonk.html")
 
-		err = verifier.Verify(nil, nil, program, proof)
+		err = loom.Verify(stmt, proof)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -163,19 +166,19 @@ func TestVerifierPlonk(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		pk, err := setup.Setup(tr, program)
+		pk, pkRoots, err := loom.Setup(tr, program)
 		if err != nil {
 			t.Fatal(err)
 		}
-
-		proof, err := prover.Prove(tr, pk, nil, program)
+		stmt := loom.Statement{Program: program, SetupRoots: pkRoots}
+		witness := loom.Witness{Trace: tr, Setup: pk}
+		proof, err := loom.Prove(stmt, witness)
 		if err != nil {
 			t.Fatal(err)
 		}
 		viz.ViewDag(program, "dag_plonk.html")
 
-		roots := setup.Roots(pk)
-		err = verifier.Verify(nil, roots, program, proof)
+		err = loom.Verify(stmt, proof)
 		if err != nil {
 			t.Fatal(err)
 		}
