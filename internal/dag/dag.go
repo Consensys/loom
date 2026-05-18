@@ -15,32 +15,13 @@ package dag
 
 import (
 	"fmt"
-	"hash/fnv"
 	"strconv"
-	"strings"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/field"
 )
-
-// fnvKey computes an FNV-64a hash of s and returns it as a 16-char hex string.
-// Used to build O(1)-length compound node keys that are content-based (and
-// therefore globally unique across separate ExprToDAG calls) without the O(n²)
-// string-growth that results from naively concatenating children's full keys.
-func fnvKey(s string) string {
-	h := fnv.New64a()
-	h.Write([]byte(s))
-	return strconv.FormatUint(h.Sum64(), 16)
-}
-
-// fnvKeyUint computes an FNV-64a hash of s as uint64 (for ordering).
-func fnvKeyUint(s string) uint64 {
-	h := fnv.New64a()
-	h.Write([]byte(s))
-	return h.Sum64()
-}
 
 // NodeKind identifies the type of an expression DAG node.
 type NodeKind int
@@ -58,8 +39,9 @@ const (
 // shared sub-expressions.
 //
 // For commutative operators (Add, Mul), the expression (a op b) and (b op a)
-// are represented by the same node: Children are stored in canonical key order
-// so that the node is unique regardless of operand order in the source tree.
+// are represented by the same node: Children are stored in canonical structural
+// ID order so that the node is unique regardless of operand order in the source
+// tree.
 type DAGNode struct {
 	Kind     NodeKind
 	Leaf     *expr.Leaf        // non-nil iff Kind == KindLeaf; stored as concrete type to avoid interface dispatch in hot eval path
@@ -71,7 +53,8 @@ type DAGNode struct {
 	IsConst  bool              // true iff Kind == KindLeaf and the leaf is a Const
 	ConstVal koalabear.Element // valid iff IsConst; avoids the l.Type==Const branch in the hot eval path
 
-	key string // canonical key used for deduplication (unexported)
+	structID int    // non-zero iff the node was interned during ExprToDAG construction
+	key      string // lazily materialized debug key derived from structID
 }
 
 // DAG is the directed acyclic graph form of an Expr. Sub-expressions that are
@@ -92,7 +75,8 @@ func ExprToDAG(e expr.Expr) *DAG {
 
 func ExprToDAGWithColumnFields(e expr.Expr, columnFields map[string]field.Kind) *DAG {
 	b := &dagBuilder{
-		cache:        make(map[string]*DAGNode),
+		cache:        make(map[nodeKey]*DAGNode),
+		leafIDs:      make(map[leafKey]int),
 		varIndex:     make(map[string]int),
 		columnFields: columnFields,
 	}
@@ -100,11 +84,31 @@ func ExprToDAGWithColumnFields(e expr.Expr, columnFields map[string]field.Kind) 
 	return &DAG{Root: root, Nodes: b.ordered, VarIndex: b.varIndex}
 }
 
+type leafKey struct {
+	typ   expr.LeafType
+	shift int
+	name  string
+	field field.Kind
+	value koalabear.Element
+}
+
+type nodeKey struct {
+	kind  NodeKind
+	left  int
+	right int
+	exp   uint32
+	leaf  int
+	field field.Kind
+}
+
 type dagBuilder struct {
-	cache        map[string]*DAGNode
+	cache        map[nodeKey]*DAGNode
+	leafIDs      map[leafKey]int
 	ordered      []*DAGNode
 	varIndex     map[string]int
 	columnFields map[string]field.Kind
+	nextLeafID   int
+	nextNodeID   int
 }
 
 func (b *dagBuilder) assignVarIdx(name string) int {
@@ -116,16 +120,33 @@ func (b *dagBuilder) assignVarIdx(name string) int {
 	return idx
 }
 
+func (b *dagBuilder) assignLeafID(l *expr.Leaf) int {
+	key := leafKey{
+		typ:   l.Type,
+		shift: l.Shift,
+		name:  l.Name,
+		field: l.FieldKind(),
+		value: l.Value,
+	}
+	if id, ok := b.leafIDs[key]; ok {
+		return id
+	}
+	b.nextLeafID++
+	b.leafIDs[key] = b.nextLeafID
+	return b.nextLeafID
+}
+
 // intern returns the cached node for key, or creates it via make(), records
 // it, and appends it to the topological slice. Children must already be in
 // b.ordered when intern is called, which is guaranteed by the post-order
 // traversal in build().
-func (b *dagBuilder) intern(key string, make func() *DAGNode) *DAGNode {
+func (b *dagBuilder) intern(key nodeKey, make func() *DAGNode) *DAGNode {
 	if n, ok := b.cache[key]; ok {
 		return n
 	}
 	n := make()
-	n.key = key
+	b.nextNodeID++
+	n.structID = b.nextNodeID
 	n.Index = len(b.ordered)
 	b.cache[key] = n
 	b.ordered = append(b.ordered, n)
@@ -175,20 +196,7 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 		switch v := e.(type) {
 		case *expr.Leaf:
 			lv := b.leafWithInferredField(v)
-			var prefix string
-			switch lv.Type {
-			case expr.RotatedColumn:
-				prefix = "shifted"
-			case expr.CommittedColumn:
-				prefix = "col"
-			case expr.ChallengeColumn:
-				prefix = "chal"
-			case expr.LagrangeColumn:
-				prefix = "comp"
-			case expr.ConstantColumn:
-				prefix = "const"
-			}
-			key := dagKey(prefix, lv.String(), lv.FieldKind().String())
+			key := nodeKey{kind: KindLeaf, leaf: b.assignLeafID(lv), field: lv.FieldKind()}
 			result[e] = b.intern(key, func() *DAGNode {
 				n := &DAGNode{Kind: KindLeaf, Leaf: lv, VarIdx: b.assignVarIdx(lv.String()), Field: lv.FieldKind()}
 				if lv.Type == expr.ConstantColumn {
@@ -203,12 +211,12 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 				stack = append(stack, frame{e, true}, frame{v.Left, false}, frame{v.Right, false})
 			} else {
 				left, right := result[v.Left], result[v.Right]
-				lh, rh := fnvKeyUint(left.key), fnvKeyUint(right.key)
-				if lh > rh { // canonical order by content hash
+				leftID, rightID := left.structID, right.structID
+				if leftID > rightID { // Add is commutative: canonical order by structural ID.
 					left, right = right, left
-					lh, rh = rh, lh
+					leftID, rightID = rightID, leftID
 				}
-				key := dagKey("add", strconv.FormatUint(lh, 16), strconv.FormatUint(rh, 16))
+				key := nodeKey{kind: KindAdd, left: leftID, right: rightID, field: inferField(left, right)}
 				l, r := left, right
 				result[e] = b.intern(key, func() *DAGNode {
 					return &DAGNode{Kind: KindAdd, Children: []*DAGNode{l, r}, Field: inferField(l, r)}
@@ -220,7 +228,7 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 				stack = append(stack, frame{e, true}, frame{v.Left, false}, frame{v.Right, false})
 			} else {
 				left, right := result[v.Left], result[v.Right]
-				key := dagKey("sub", fnvKey(left.key), fnvKey(right.key)) // Sub is not commutative; order is preserved
+				key := nodeKey{kind: KindSub, left: left.structID, right: right.structID, field: inferField(left, right)}
 				l, r := left, right
 				result[e] = b.intern(key, func() *DAGNode {
 					return &DAGNode{Kind: KindSub, Children: []*DAGNode{l, r}, Field: inferField(l, r)}
@@ -232,12 +240,12 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 				stack = append(stack, frame{e, true}, frame{v.Left, false}, frame{v.Right, false})
 			} else {
 				left, right := result[v.Left], result[v.Right]
-				lh, rh := fnvKeyUint(left.key), fnvKeyUint(right.key)
-				if lh > rh { // canonical order by content hash
+				leftID, rightID := left.structID, right.structID
+				if leftID > rightID { // Mul is commutative: canonical order by structural ID.
 					left, right = right, left
-					lh, rh = rh, lh
+					leftID, rightID = rightID, leftID
 				}
-				key := dagKey("mul", strconv.FormatUint(lh, 16), strconv.FormatUint(rh, 16))
+				key := nodeKey{kind: KindMul, left: leftID, right: rightID, field: inferField(left, right)}
 				l, r := left, right
 				result[e] = b.intern(key, func() *DAGNode {
 					return &DAGNode{Kind: KindMul, Children: []*DAGNode{l, r}, Field: inferField(l, r)}
@@ -249,7 +257,7 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 				stack = append(stack, frame{e, true}, frame{v.Base, false})
 			} else {
 				base := result[v.Base]
-				key := dagKey("pow", fnvKey(base.key), strconv.Itoa(int(v.Exp)))
+				key := nodeKey{kind: KindPow, left: base.structID, exp: v.Exp, field: base.Field}
 				bs, exp := base, v.Exp
 				result[e] = b.intern(key, func() *DAGNode {
 					return &DAGNode{Kind: KindPow, Children: []*DAGNode{bs}, Exp: exp, Field: bs.Field}
@@ -264,8 +272,16 @@ func (b *dagBuilder) build(root expr.Expr) *DAGNode {
 	return result[root]
 }
 
-// Key returns a unique ID characterising the node
+// Key returns a compact debug ID for nodes interned during ExprToDAG
+// construction. Nodes produced by later rewrites such as Flatten or Factorize
+// are intentionally keyless and return the empty string.
 func (d *DAGNode) Key() string {
+	if d.structID == 0 {
+		return ""
+	}
+	if d.key == "" {
+		d.key = "node:" + strconv.Itoa(d.structID)
+	}
 	return d.key
 }
 
@@ -333,7 +349,7 @@ func (d *DAG) Flatten() *DAG {
 // The rule is applied greedily: at each Add node the factor that appears in
 // the largest number of Mul children is extracted first, then the rule is
 // re-applied to the residual terms. Only factors that are nodes with a
-// non-empty key (i.e. nodes from the original ExprToDAG construction) are
+// structural ID (i.e. nodes from the original ExprToDAG construction) are
 // considered, so newly-created intermediate nodes are never spuriously
 // identified as a common factor.
 func (d *DAG) Factorize() *DAG {
@@ -395,9 +411,9 @@ func factorizeRewrite(n *DAGNode, rewritten map[*DAGNode]*DAGNode) *DAGNode {
 			}
 		}
 		if !changed {
-			return n // unchanged: preserve key for factor lookup
+			return n // unchanged: preserve structID for factor lookup
 		}
-		return &DAGNode{Kind: KindMul, Children: children, Field: inferField(children...)} // key intentionally empty
+		return &DAGNode{Kind: KindMul, Children: children, Field: inferField(children...)} // structID intentionally empty
 
 	case KindSub:
 		l, r := rewritten[n.Children[0]], rewritten[n.Children[1]]
@@ -424,43 +440,43 @@ func factorizeRewrite(n *DAGNode, rewritten map[*DAGNode]*DAGNode) *DAGNode {
 // Pow, Sub) are carried through unchanged, which avoids the need to introduce
 // a Const(1) node for the case where a term reduces to the identity.
 //
-// Factor candidates are restricted to nodes whose key is non-empty: this
+// Factor candidates are restricted to nodes whose structID is non-zero: this
 // ensures that only nodes from the original DAG construction are used as
 // factors, preventing newly-created intermediate nodes from being spuriously
 // matched.
 func factorizeAddChildren(children []*DAGNode) *DAGNode {
-	// Count how many KindMul children contain each factor (by key).
-	factorCount := make(map[string]int)
-	factorByKey := make(map[string]*DAGNode)
+	// Count how many KindMul children contain each factor (by structural ID).
+	factorCount := make(map[int]int)
+	factorByID := make(map[int]*DAGNode)
 	for _, c := range children {
 		if c.Kind != KindMul {
 			continue
 		}
-		seen := make(map[string]bool)
+		seen := make(map[int]bool)
 		for _, f := range c.Children {
-			if f.key == "" {
-				continue // skip keyless intermediate nodes
+			if f.structID == 0 {
+				continue // skip rewritten intermediate nodes
 			}
-			if !seen[f.key] {
-				seen[f.key] = true
-				factorCount[f.key]++
-				factorByKey[f.key] = f
+			if !seen[f.structID] {
+				seen[f.structID] = true
+				factorCount[f.structID]++
+				factorByID[f.structID] = f
 			}
 		}
 	}
 
 	// Pick the factor with the highest count (≥ 2 to be worth extracting).
-	bestKey, bestCount := "", 1
-	for k, cnt := range factorCount {
+	bestID, bestCount := 0, 1
+	for id, cnt := range factorCount {
 		if cnt > bestCount {
-			bestCount, bestKey = cnt, k
+			bestCount, bestID = cnt, id
 		}
 	}
-	if bestKey == "" {
+	if bestID == 0 {
 		return &DAGNode{Kind: KindAdd, Children: children, Field: inferField(children...)}
 	}
 
-	factor := factorByKey[bestKey]
+	factor := factorByID[bestID]
 
 	// Partition children: Mul children that contain the factor go into
 	// withFactor (with the factor removed); all others go into withoutFactor.
@@ -470,7 +486,7 @@ func factorizeAddChildren(children []*DAGNode) *DAGNode {
 			// Find the first occurrence of the factor in this Mul's children.
 			idx := -1
 			for i, f := range c.Children {
-				if f.key == bestKey {
+				if f.structID == bestID {
 					idx = i
 					break
 				}
@@ -1474,19 +1490,4 @@ func dagNodeDegree(n *DAGNode, degrees map[*DAGNode]int) int {
 		return degrees[n.Children[0]] * int(n.Exp)
 	}
 	panic(fmt.Sprintf("Degree: unknown NodeKind %d", n.Kind))
-}
-
-// dagKey builds a collision-free canonical string key from the given parts.
-// Each part is encoded with %q (Go string literal syntax), escaping any
-// embedded special characters including double quotes and backslashes.
-// Adjacent %q-encoded strings are uniquely decodable without an explicit
-// separator, so the overall key is collision-free regardless of part content.
-func dagKey(parts ...string) string {
-	var b strings.Builder
-	for _, p := range parts {
-		b.WriteString(strconv.Itoa(len(p)))
-		b.WriteByte(':')
-		b.WriteString(p)
-	}
-	return b.String()
 }
