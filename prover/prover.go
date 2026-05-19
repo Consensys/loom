@@ -33,6 +33,7 @@ import (
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/internal/reedsolomon"
 	"github.com/consensys/loom/proof"
+	"github.com/consensys/loom/public"
 	"github.com/consensys/loom/setup"
 	"github.com/consensys/loom/trace"
 )
@@ -76,7 +77,7 @@ type proverRuntime struct {
 
 	t              trace.Trace
 	airTrace       trace.Trace
-	publicInputs   proof.PublicInputs
+	publicInputs   public.Inputs
 	program        board.Program
 	zeta           ext.E4 // point of evaluation to check the AIR relation with SZ
 	alpha          ext.E4 // folding challenge for N-grouped polynomials, used to build the DEEP quotient
@@ -86,7 +87,7 @@ type proverRuntime struct {
 	fs             *fiatshamir.Transcript
 }
 
-func newProverRuntime(t trace.Trace, setup setup.PublicKey, publicInputs proof.PublicInputs, program board.Program, config Config) (proverRuntime, error) {
+func newProverRuntime(t trace.Trace, setup setup.PublicKey, publicInputs public.Inputs, program board.Program, config Config) (proverRuntime, error) {
 	res := proverRuntime{
 		Proof:        proof.NewProof(),
 		config:       config,
@@ -450,7 +451,12 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 // ComputeEvaluationsAtZeta computes the evaluations at zeta of every polynomial
 // appearing in every vanishing relation of every module.
 func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
-	config := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutExposedColumns())
+	config := expr.NewConfig(
+		expr.WithoutLagrangeColumns(),
+		expr.WithoutChallenges(),
+		expr.WithoutExposedColumns(),
+		expr.WithoutPublicColumns(),
+	)
 
 	for _, module := range pr.program.Modules {
 		leaves := module.VanishingRelation.LeavesFull(config)
@@ -675,7 +681,7 @@ func (pr *proverRuntime) SampleEvaluations() error {
 }
 
 // TODO publicInputs are not used
-func Prove(t trace.Trace, setup setup.PublicKey, publicInputs proof.PublicInputs, program board.Program, opts ...Option) (proof.Proof, error) {
+func Prove(t trace.Trace, setup setup.PublicKey, publicInputs public.Inputs, program board.Program, opts ...Option) (proof.Proof, error) {
 
 	var config Config
 	for _, opt := range opts {

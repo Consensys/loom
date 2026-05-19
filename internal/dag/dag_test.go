@@ -204,6 +204,7 @@ func TestDAGLeaves(t *testing.T) {
 	woCC := expr.NewConfig(expr.WithoutCommittedColumns())
 	woChal := expr.NewConfig(expr.WithoutChallenges())
 	woComp := expr.NewConfig(expr.WithoutLagrangeColumns())
+	woPub := expr.NewConfig(expr.WithoutPublicColumns())
 
 	mixed := expr.Col("x").
 		Mul(expr.Challenge("gamma")).
@@ -221,12 +222,14 @@ func TestDAGLeaves(t *testing.T) {
 		{"CommittedColumn/all", expr.Col("x"), all, []string{"x"}},
 		{"Challenge/all", expr.Challenge("alpha"), all, []string{"alpha"}},
 		{"LagrangeColumn/all", expr.Lagrange("L0"), all, []string{lagrangeName}},
+		{"PublicInputColumn/all", expr.PublicInput("pub"), all, []string{"pub"}},
 		{"Const/all", expr.Const(c), all, []string{}}, // Const never included
 
 		// Filtering individual leaf kinds
 		{"CommittedColumn/woCC", expr.Col("x"), woCC, []string{}},
 		{"Challenge/woChal", expr.Challenge("alpha"), woChal, []string{}},
 		{"LagrangeColumn/woComp", expr.Lagrange("L0"), woComp, []string{}},
+		{"PublicInputColumn/woPub", expr.PublicInput("pub"), woPub, []string{}},
 
 		// DAG deduplication
 		{"SharedLeaf", // a+a → col:a once
@@ -267,6 +270,7 @@ func TestDAGDegree(t *testing.T) {
 		// Leaves
 		{"CommittedColumn", expr.Col("x"), 1},
 		{"LagrangeColumn", expr.Lagrange("L0"), 1},
+		{"PublicInputColumn", expr.PublicInput("pub"), 1},
 		{"Challenge", expr.Challenge("alpha"), 0},    // Challenge is degree 0
 		{"ConstNonZero", expr.Const(one), 0},         // non-zero constant
 		{"ConstZero", expr.Const(zero), expr.NegInf}, // zero polynomial
@@ -318,6 +322,8 @@ func TestDAGFieldInference(t *testing.T) {
 		{"BaseColumn", expr.Col("x"), field.Base},
 		{"ExtColumn", expr.ExtCol("x"), field.Ext},
 		{"Challenge", expr.Challenge("gamma"), field.Ext},
+		{"PublicInput", expr.PublicInput("pub"), field.Base},
+		{"PublicInputExt", expr.PublicInputExt("pub"), field.Ext},
 		{"BaseExpression", expr.Col("x").Add(expr.Col("y")), field.Base},
 		{"ChallengeExpression", expr.Col("x").Mul(expr.Challenge("gamma")), field.Ext},
 		{"ExtColumnExpression", expr.ExtCol("x").Sub(expr.Col("y")).Pow(3), field.Ext},

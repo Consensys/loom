@@ -70,6 +70,8 @@ func TestFieldMetadata(t *testing.T) {
 		{"ChallengeExpression", Col("x").Mul(Challenge("gamma")), field.Ext},
 		{"ExtColumnExpression", ExtCol("x").Sub(Col("y")).Pow(2), field.Ext},
 		{"ColumnRegistryExpression", Col("logup").Add(Col("x")), field.Ext},
+		{"PublicInput", PublicInput("x"), field.Base},
+		{"PublicInputExt", PublicInputExt("x"), field.Ext},
 	}
 
 	for _, tc := range tests {
@@ -112,6 +114,7 @@ func TestLeaves(t *testing.T) {
 	all := NewConfig()
 	woCC := NewConfig(WithoutLagrangeColumns())
 	woChal := NewConfig(WithoutChallenges())
+	woPub := NewConfig(WithoutPublicColumns())
 	woAll := NewConfig(WithoutLagrangeColumns(), WithoutChallenges())
 
 	// --- Leaf nodes ---
@@ -131,6 +134,10 @@ func TestLeaves(t *testing.T) {
 	// Challenge: present by default, absent when excluded
 	AssertSameSet(t, Challenge("beta").Leaves(all), []string{"beta"})
 	AssertSameSet(t, Challenge("beta").Leaves(woChal), []string{})
+
+	// PublicInputColumn: present by default, absent when excluded
+	AssertSameSet(t, PublicInput("pub").Leaves(all), []string{"pub"})
+	AssertSameSet(t, PublicInput("pub").Leaves(woPub), []string{})
 
 	// --- Composite expressions ---
 
@@ -170,6 +177,12 @@ func TestLeaves(t *testing.T) {
 	AssertSameSet(t, e.Leaves(woCC), []string{"x", "y", "alpha"})
 	AssertSameSet(t, e.Leaves(woChal), []string{"x", "L0", "y"})
 	AssertSameSet(t, e.Leaves(woAll), []string{"x", "y"})
+
+	// Public input columns are filtered independently from committed columns.
+	e = PublicInput("pub").Add(Col("x"))
+	AssertSameSet(t, e.Leaves(all), []string{"pub", "x"})
+	AssertSameSet(t, e.Leaves(woPub), []string{"x"})
+	AssertSameSet(t, e.Leaves(NewConfig(OnlyPublicColumns...)), []string{"pub"})
 
 	// Same LagrangeColumn appearing multiple times — deduplicated
 	e = Lagrange("L0").Add(Lagrange("L0"))

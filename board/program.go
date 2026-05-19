@@ -239,8 +239,13 @@ func Compile(b *Builder) (Program, error) {
 
 	// --- Phase 7: Collapse FS steps of the same round (level) into one canonical step. ---
 
-	// Config: keep CommittedColumn and RotatedColumn; discard LagrangeColumn, ChallengeColumn and PublicColumns.
-	noLagrangeNoChallengeNoExposedCols := expr.NewConfig(expr.WithoutLagrangeColumns(), expr.WithoutChallenges(), expr.WithoutExposedColumns())
+	// Config: keep CommittedColumn and RotatedColumn; discard virtual verifier-side leaves.
+	noLagrangeNoChallengeNoExposedCols := expr.NewConfig(
+		expr.WithoutLagrangeColumns(),
+		expr.WithoutChallenges(),
+		expr.WithoutExposedColumns(),
+		expr.WithoutPublicColumns(),
+	)
 
 	// Step 7a: Identify which levels are FS steps and assign round indices in level order.
 	// from the preivous Phase, a level either contains only FS, or no FS at all

@@ -25,7 +25,8 @@ import (
 
 type LogupBus = proof.LogupBus
 type Proof = proof.Proof
-type PublicEntry = proof.PublicEntry
+
+type ExposedEntry = proof.ExposedEntry
 type ExposedValue = proof.ExposedValue
 
 func NewLogupBus(positive, negative []string) LogupBus {

@@ -33,6 +33,7 @@ import (
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/prover"
+	"github.com/consensys/loom/public"
 
 	"github.com/consensys/loom/setup"
 )
@@ -56,7 +57,7 @@ type verifierRunTime struct {
 	config       Config
 	proof        proof.Proof
 	friParams    fri.Params
-	publicInputs map[string]proof.PublicInput
+	publicInputs public.Inputs
 	program      board.Program
 	zeta         ext.E4 // point of evaluation to check the AIR relation with SZ
 	alpha        ext.E4 // folding challenge for N-grouped polynomials, used to build the DEEP quotient
@@ -73,7 +74,7 @@ type verifierRunTime struct {
 	roots [][]byte
 }
 
-func newVerifierRuntime(program board.Program, setup setup.PublicKeyRoots, publicInputs map[string]proof.PublicInput, prf proof.Proof, config Config) (verifierRunTime, error) {
+func newVerifierRuntime(program board.Program, setup setup.PublicKeyRoots, publicInputs public.Inputs, prf proof.Proof, config Config) (verifierRunTime, error) {
 	res := verifierRunTime{
 		config:       config,
 		proof:        prf,
@@ -547,7 +548,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 	return nil
 }
 
-func Verify(publicInputs map[string]proof.PublicInput, setup setup.PublicKeyRoots, program board.Program, proof proof.Proof, opts ...Option) error {
+func Verify(publicInputs public.Inputs, setup setup.PublicKeyRoots, program board.Program, proof proof.Proof, opts ...Option) error {
 
 	var config Config
 	for _, opt := range opts {

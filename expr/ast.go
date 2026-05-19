@@ -31,7 +31,8 @@ const (
 	LagrangeColumn
 	ChallengeColumn
 	ConstantColumn
-	ExposedColumn // column containing only public values, used for local openings, when the verifier needs to know the entries of a particular column
+	ExposedColumn     // prover-exposed local values, carried by the proof
+	PublicInputColumn // verifier-supplied statement values
 )
 
 type Leaf struct {
@@ -50,6 +51,7 @@ type Config struct {
 	WoRotatedColumns   bool
 	WoChallenges       bool
 	WoExposedColumns   bool
+	WoPublicColumns    bool
 }
 
 type Option func(*Config)
@@ -89,6 +91,13 @@ func WithoutExposedColumns() Option {
 	}
 }
 
+// Leaves() doesnt return the PublicInputColumns
+func WithoutPublicColumns() Option {
+	return func(c *Config) {
+		c.WoPublicColumns = true
+	}
+}
+
 func NewConfig(opts ...Option) Config {
 	var res Config
 	for _, opt := range opts {
@@ -97,9 +106,10 @@ func NewConfig(opts ...Option) Config {
 	return res
 }
 
-var OnlyChallenges = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns()}
-var OnlyLagranges = []Option{WithoutChallenges(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns()}
-var OnlyExposedColumns = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutChallenges()}
+var OnlyChallenges = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns(), WithoutPublicColumns()}
+var OnlyLagranges = []Option{WithoutChallenges(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns(), WithoutPublicColumns()}
+var OnlyExposedColumns = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutChallenges(), WithoutPublicColumns()}
+var OnlyPublicColumns = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutChallenges(), WithoutExposedColumns()}
 
 type Expr interface {
 	Degree() int
@@ -151,6 +161,14 @@ func ExtCol(name string) *Leaf {
 
 func Exposed(name string) *Leaf {
 	return &Leaf{Type: ExposedColumn, Name: name}
+}
+
+func PublicInput(name string) *Leaf {
+	return &Leaf{Type: PublicInputColumn, Name: name}
+}
+
+func PublicInputExt(name string) *Leaf {
+	return &Leaf{Type: PublicInputColumn, Name: name, Field: field.Ext}
 }
 
 func Rot(name string, shift int) *Leaf {
@@ -267,6 +285,11 @@ func (l *Leaf) Leaves(config Config) []string {
 		return []string{l.Name}
 	case ExposedColumn:
 		if config.WoExposedColumns {
+			return []string{}
+		}
+		return []string{l.Name}
+	case PublicInputColumn:
+		if config.WoPublicColumns {
 			return []string{}
 		}
 		return []string{l.Name}
@@ -542,6 +565,10 @@ func (l *Leaf) LeavesFull(config Config) []*Leaf {
 		}
 	case ExposedColumn:
 		if config.WoExposedColumns {
+			return nil
+		}
+	case PublicInputColumn:
+		if config.WoPublicColumns {
 			return nil
 		}
 	case ConstantColumn:

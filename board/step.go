@@ -76,7 +76,7 @@ func ExposeEntriesStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Prog
 
 		var publicColumnInfo ExposedValue
 		// publicColumnInfo.N = _ctx.N
-		publicColumnInfo.Entries = make([]PublicEntry, len(_ctx.Idx))
+		publicColumnInfo.Entries = make([]ExposedEntry, len(_ctx.Idx))
 		for j, i := range _ctx.Idx {
 			publicColumnInfo.Entries[j].Idx = i
 			publicColumnInfo.Entries[j].SetExt(res[i])
@@ -101,7 +101,7 @@ func ExposeEntriesStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Prog
 
 	var publicColumnInfo ExposedValue
 	// publicColumnInfo.N = _ctx.N
-	publicColumnInfo.Entries = make([]PublicEntry, len(_ctx.Idx))
+	publicColumnInfo.Entries = make([]ExposedEntry, len(_ctx.Idx))
 	for j, i := range _ctx.Idx {
 		publicColumnInfo.Entries[j].Idx = i
 		publicColumnInfo.Entries[j].SetBase(res[i])
@@ -154,7 +154,7 @@ func ExposeRelativeIthValueStep(ins []expr.Expr, outs []string, t trace.Trace, p
 
 		var publicColumnInfo ExposedValue
 		// publicColumnInfo.N = m.N
-		publicColumnInfo.Entries = make([]PublicEntry, 1)
+		publicColumnInfo.Entries = make([]ExposedEntry, 1)
 		publicColumnInfo.Entries[0].Idx = pos
 		publicColumnInfo.Entries[0].SetExt(res[pos])
 		proof.ExposedValues[out] = publicColumnInfo
@@ -175,7 +175,7 @@ func ExposeRelativeIthValueStep(ins []expr.Expr, outs []string, t trace.Trace, p
 
 	var publicColumnInfo ExposedValue
 	// publicColumnInfo.N = m.N
-	publicColumnInfo.Entries = make([]PublicEntry, 1)
+	publicColumnInfo.Entries = make([]ExposedEntry, 1)
 	publicColumnInfo.Entries[0].Idx = pos
 	publicColumnInfo.Entries[0].SetBase(res[pos])
 	proof.ExposedValues[out] = publicColumnInfo
@@ -216,7 +216,7 @@ func ExposeIthValue(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, 
 
 		var publicColumnInfo ExposedValue
 		// publicColumnInfo.N = m.N
-		publicColumnInfo.Entries = make([]PublicEntry, 1)
+		publicColumnInfo.Entries = make([]ExposedEntry, 1)
 		publicColumnInfo.Entries[0].Idx = _ctx.Pos
 		publicColumnInfo.Entries[0].SetExt(res[_ctx.Pos])
 		proof.ExposedValues[out] = publicColumnInfo
@@ -237,7 +237,7 @@ func ExposeIthValue(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, 
 
 	var publicColumnInfo ExposedValue
 	// publicColumnInfo.N = m.N
-	publicColumnInfo.Entries = make([]PublicEntry, 1)
+	publicColumnInfo.Entries = make([]ExposedEntry, 1)
 	publicColumnInfo.Entries[0].Idx = _ctx.Pos
 	publicColumnInfo.Entries[0].SetBase(res[_ctx.Pos])
 	proof.ExposedValues[out] = publicColumnInfo

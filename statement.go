@@ -20,6 +20,7 @@ import (
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/prover"
+	"github.com/consensys/loom/public"
 	"github.com/consensys/loom/setup"
 	"github.com/consensys/loom/trace"
 	"github.com/consensys/loom/verifier"
@@ -30,8 +31,8 @@ import (
 // belong here.
 type Statement struct {
 	Program      board.Program
-	SetupRoots   setup.PublicKeyRoots
-	PublicInputs proof.PublicInputs
+	SetupRoots   PublicKeyRoots
+	PublicInputs PublicInputs
 }
 
 // Witness contains prover-owned data used to produce a proof for a Statement.
@@ -39,6 +40,8 @@ type Witness struct {
 	Trace trace.Trace
 	Setup setup.PublicKey
 }
+
+type PublicInputs = public.Inputs
 
 // ProverOption configures Prove.
 type ProverOption = prover.Option
