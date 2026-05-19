@@ -17,9 +17,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
+	gnark_kb "github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/go-corset/pkg/util/field"
 	gocorset_kb "github.com/consensys/go-corset/pkg/util/field/koalabear"
 	"github.com/consensys/go-corset/pkg/util/source"
@@ -30,6 +32,7 @@ import (
 	"github.com/consensys/loom"
 	"github.com/consensys/loom/board"
 	gocorset "github.com/consensys/loom/integration_test/go_corset"
+	"github.com/consensys/loom/public"
 )
 
 var zkcIntegrationCases = []struct {
@@ -116,10 +119,17 @@ func runZkcIntegration(
 	t.Helper()
 
 	airSchema := binf.AirConstraints()
+	manifest, err := gocorset.NewZkcManifest(binf)
+	if err != nil {
+		t.Fatalf("NewZkcManifest: %v", err)
+	}
 
 	builder := board.NewBuilder()
 	bridge := gocorset.NewCorsetBridge(&builder, &airSchema)
 	bridge.SetupModules()
+	if err := manifest.ApplyToBridge(bridge); err != nil {
+		t.Fatalf("manifest.ApplyToBridge: %v", err)
+	}
 	gocorset.ScanConstraints(bridge)
 	pg, err := board.Compile(bridge.Builder)
 	if err != nil {
@@ -136,6 +146,10 @@ func runZkcIntegration(
 		if err != nil {
 			t.Fatalf("input[%d]: %v", i, err)
 		}
+		publicInputs, err := manifest.PublicInputsFromZkcInput(input)
+		if err != nil {
+			t.Fatalf("public inputs[%d]: %v", i, err)
+		}
 
 		expandedTrace, errs := binf.Trace(input, traceConfig)
 		if len(errs) > 0 {
@@ -148,9 +162,17 @@ func runZkcIntegration(
 		}
 
 		gocorset.SetSize(&pg, loomTrace)
+		setup, setupRoots, err := loom.Setup(loomTrace, pg)
+		if err != nil {
+			t.Fatalf("setup[%d]: %v", i, err)
+		}
 
-		statement := loom.Statement{Program: pg}
-		witness := loom.Witness{Trace: loomTrace}
+		statement := loom.Statement{
+			Program:      pg,
+			SetupRoots:   setupRoots,
+			PublicInputs: publicInputs,
+		}
+		witness := loom.Witness{Trace: loomTrace, Setup: setup}
 
 		prf, err := loom.Prove(statement, witness)
 		if err != nil {
@@ -159,6 +181,17 @@ func runZkcIntegration(
 
 		if err := loom.Verify(statement, prf); err != nil {
 			t.Fatalf("verify[%d]: %v", i, err)
+		}
+
+		if i == 0 {
+			badPublicInputs := clonePublicInputs(publicInputs)
+			if tamperFirstPublicInput(badPublicInputs) {
+				badStatement := statement
+				badStatement.PublicInputs = badPublicInputs
+				if err := loom.Verify(badStatement, prf); err == nil {
+					t.Fatalf("verify[%d]: accepted tampered public input", i)
+				}
+			}
 		}
 	}
 }
@@ -169,4 +202,34 @@ func formatSyntaxErrors(errs []source.SyntaxError) string {
 		msgs[i] = err.Error()
 	}
 	return strings.Join(msgs, "; ")
+}
+
+func clonePublicInputs(inputs public.Inputs) public.Inputs {
+	res := make(public.Inputs, len(inputs))
+	for name, input := range inputs {
+		entries := append([]public.Entry(nil), input.Entries...)
+		res[name] = public.Input{Module: input.Module, Entries: entries}
+	}
+	return res
+}
+
+func tamperFirstPublicInput(inputs public.Inputs) bool {
+	names := make([]string, 0, len(inputs))
+	for name := range inputs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	one := gnark_kb.One()
+	for _, name := range names {
+		input := inputs[name]
+		if len(input.Entries) == 0 {
+			continue
+		}
+		input.Entries[0].Value.Add(&input.Entries[0].Value, &one)
+		input.Entries[0].SetBase(input.Entries[0].Value)
+		inputs[name] = input
+		return true
+	}
+	return false
 }
