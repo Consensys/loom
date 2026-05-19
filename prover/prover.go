@@ -84,7 +84,7 @@ type proverRuntime struct {
 	program        board.Program
 	zeta           ext.E4 // point of evaluation to check the AIR relation with SZ
 	alpha          ext.E4 // folding challenge for N-grouped polynomials, used to build the DEEP quotient
-	mu             sync.Mutex
+	mu             *sync.Mutex
 	setup          setup.ProvingKey
 	queryPositions []int
 	fs             *fiatshamir.Transcript
@@ -108,7 +108,7 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 		program:      program,
 		setup:        provingKey,
 		airTrace:     trace.New(),
-		mu:           sync.Mutex{}, // mutex to protect the trace when reading/writing (in case of parallelisation)
+		mu:           new(sync.Mutex), // mutex to protect the trace when reading/writing (in case of parallelisation)
 	}
 
 	// Build the canonical commitment layout for this run.
@@ -391,7 +391,7 @@ func (pr *proverRuntime) ExecuteSteps() error {
 
 				continue
 			}
-			err := s.Execute(pr.t, &pr.program, &pr.Proof, &pr.mu)
+			err := s.Execute(pr.t, &pr.program, &pr.Proof, pr.mu)
 			if err != nil {
 				return err
 			}
