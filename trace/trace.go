@@ -89,7 +89,3 @@ func (t Trace) PutExt(name string, c ExtPolynomial) error {
 func (t Trace) SetExt(name string, c ExtPolynomial) {
 	t.Ext[name] = c
 }
-
-func RegisterColumn(t Trace, name string, c poly.Polynomial) error {
-	return t.PutBase(name, c)
-}

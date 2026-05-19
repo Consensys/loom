@@ -22,6 +22,7 @@ import (
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/prover"
+	"github.com/consensys/loom/public"
 	"github.com/consensys/loom/trace"
 	"github.com/consensys/loom/verifier"
 	"github.com/consensys/loom/viz"
@@ -50,6 +51,8 @@ func TestVerifierFibo(t *testing.T) {
 	rangeModule.N = 2 * N
 
 	fibonacciModule := prepareFibonacciModule(N)
+	fibonacciModule.AssertEqualAt(expr.Col("A"), expr.PublicInput("fibonacci.a0"), 0)
+	fibonacciModule.AssertEqualAt(expr.Col("B"), expr.PublicInput("fibonacci.b0"), 0)
 	builder.AddModule(fibonacciModule)
 	builder.AddModule(rangeModule)
 
@@ -81,14 +84,40 @@ func TestVerifierFibo(t *testing.T) {
 	traceRange := prover.TraceRange(N)
 	tr := prover.MergeTrace(traceFrob, traceRange)
 
-	proof, err := prover.Prove(tr, nil, nil, program)
+	publicInputs := fiboPublicInputs(a, b)
+
+	proof, err := prover.Prove(tr, nil, publicInputs, program)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = verifier.Verify(nil, nil, program, proof)
+	err = verifier.Verify(publicInputs, nil, program, proof)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	if err := verifier.Verify(nil, nil, program, proof); err == nil {
+		t.Fatal("expected verifier to reject missing public inputs")
+	}
+
+	var wrongB koalabear.Element
+	wrongB.SetUint64(2)
+	if err := verifier.Verify(fiboPublicInputs(a, wrongB), nil, program, proof); err == nil {
+		t.Fatal("expected verifier to reject incorrect public input")
+	}
+}
+
+func fiboPublicInputs(a0, b0 koalabear.Element) public.Inputs {
+	baseInput := func(module string, idx int, value koalabear.Element) public.Input {
+		var entry public.Entry
+		entry.Idx = idx
+		entry.SetBase(value)
+		return public.Input{Module: module, Entries: []public.Entry{entry}}
+	}
+
+	return public.Inputs{
+		"fibonacci.a0": baseInput("fibonacci", 0, a0),
+		"fibonacci.b0": baseInput("fibonacci", 0, b0),
 	}
 }
 

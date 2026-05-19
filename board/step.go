@@ -115,7 +115,7 @@ func ExposeEntriesStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Prog
 	for _, i := range _ctx.Idx {
 		sparseCol[i].Set(&res[i])
 	}
-	if err := trace.RegisterColumn(t, out, sparseCol); err != nil {
+	if err := t.PutBase(out, sparseCol); err != nil {
 		panic(fmt.Sprintf("[ExposeIthValue] register public column %s: %v", out, err))
 	}
 
@@ -185,7 +185,7 @@ func ExposeRelativeIthValueStep(ins []expr.Expr, outs []string, t trace.Trace, p
 	// reconstructs on the verifier side via Lagrange interpolation.
 	sparseCol := make([]koalabear.Element, m.N)
 	sparseCol[pos].Set(&res[pos])
-	if err := trace.RegisterColumn(t, out, sparseCol); err != nil {
+	if err := t.PutBase(out, sparseCol); err != nil {
 		panic(fmt.Sprintf("[ExposeIthValue] register public column %s: %v", out, err))
 	}
 
@@ -247,7 +247,7 @@ func ExposeIthValue(ins []expr.Expr, outs []string, t trace.Trace, pg *Program, 
 	// reconstructs on the verifier side via Lagrange interpolation.
 	sparseCol := make([]koalabear.Element, m.N)
 	sparseCol[_ctx.Pos].Set(&res[_ctx.Pos])
-	if err := trace.RegisterColumn(t, out, sparseCol); err != nil {
+	if err := t.PutBase(out, sparseCol); err != nil {
 		panic(fmt.Sprintf("[ExposeIthValue] register public column %s: %v", out, err))
 	}
 
@@ -279,7 +279,7 @@ func CountMultiplicityStep(ins []expr.Expr, outs []string, t trace.Trace, _ *Pro
 	}
 
 	for i := 0; i < nbT; i++ {
-		if err := trace.RegisterColumn(t, outs[i], res[i]); err != nil {
+		if err := t.PutBase(outs[i], res[i]); err != nil {
 			panic(fmt.Sprintf("[CountUnionMultiplicityStep] register multiplicity column %s: %v", outs[i], err))
 		}
 	}
@@ -314,7 +314,7 @@ func CountWeightedMultiplicityStep(ins []expr.Expr, outs []string, t trace.Trace
 	}
 
 	for i := 0; i < nbT; i++ {
-		if err := trace.RegisterColumn(t, outs[i], res[i]); err != nil {
+		if err := t.PutBase(outs[i], res[i]); err != nil {
 			panic(fmt.Sprintf("[CountUnionWeightedMultiplicityStep] register multiplicity column %s: %v", outs[i], err))
 		}
 	}
@@ -347,7 +347,7 @@ func LogUpStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Program, pro
 	if err != nil {
 		return err
 	}
-	if err := trace.RegisterColumn(t, out, res); err != nil {
+	if err := t.PutBase(out, res); err != nil {
 		panic(fmt.Sprintf("[_LogUpStep] register logup column %s: %v", out, err))
 	}
 
@@ -379,7 +379,7 @@ func GrandProductStep(ins []expr.Expr, outs []string, t trace.Trace, prog *Progr
 	if err != nil {
 		return err
 	}
-	if err := trace.RegisterColumn(t, out, res); err != nil {
+	if err := t.PutBase(out, res); err != nil {
 		panic(fmt.Sprintf("[_GrandProductStep] register grand product column %s: %v", out, err))
 	}
 

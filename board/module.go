@@ -180,7 +180,7 @@ func (s SelectorGen) Gen(t trace.Trace, m *CompiledModule) error {
 	for _, idx := range s.Idx {
 		res[idx].SetOne()
 	}
-	err := trace.RegisterColumn(t, s.Name, res)
+	err := t.PutBase(s.Name, res)
 	if err != nil {
 		return err
 	}
@@ -215,7 +215,7 @@ func (p PermutationGen) Gen(t trace.Trace, m *CompiledModule) error {
 		return err
 	}
 	for i := 0; i < nbChunks; i++ {
-		err := trace.RegisterColumn(t, m.NameIthIDSupport(i), support[i])
+		err := t.PutBase(m.NameIthIDSupport(i), support[i])
 		if err != nil {
 			return err
 		}
@@ -224,7 +224,7 @@ func (p PermutationGen) Gen(t trace.Trace, m *CompiledModule) error {
 	// 2 - register permutation columns
 	perm := generatePermutation(support, p.S)
 	for i := 0; i < nbChunks; i++ {
-		err := trace.RegisterColumn(t, p.NameIthPermutationChunk(i), perm[i])
+		err := t.PutBase(p.NameIthPermutationChunk(i), perm[i])
 		if err != nil {
 			return err
 		}

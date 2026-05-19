@@ -137,9 +137,52 @@ func newProverRuntime(t trace.Trace, setup setup.PublicKey, publicInputs public.
 	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
 	res.fs.NewChallenge(constants.DEEP_ALPHA)
 
-	// Bind every setup tree's root to challenge_0 (decreasing-N order, set by Setup).
+	// Bind every setup tree's root to challenge_0 (decreasing-N order, set by Setup) + public inputs
 	for _, tree := range setup {
 		res.fs.Bind(constants.CanonicalChallengeName(0), tree.Root())
+	}
+	if len(publicInputs) > 0 {
+		if err := res.fs.Bind(constants.CanonicalChallengeName(0), publicInputs.TranscriptBytes()); err != nil {
+			return res, err
+		}
+	}
+
+	// materialise the public columns to the trace from the public inputs
+	for colName, pi := range publicInputs {
+		m, ok := program.Modules[pi.Module]
+		if !ok {
+			return res, fmt.Errorf("public input %q references unknown module %q", colName, pi.Module)
+		}
+		kind := field.Base
+		for _, e := range pi.Entries {
+			if e.Idx < 0 || e.Idx >= m.N {
+				return res, fmt.Errorf("public input %q entry index %d out of bounds for module %q of size %d", colName, e.Idx, pi.Module, m.N)
+			}
+			kind = field.Join(e.Field, kind)
+		}
+		if kind == field.Base {
+			col := make([]koalabear.Element, m.N)
+			for _, e := range pi.Entries {
+				col[e.Idx].Set(&e.Value)
+			}
+			err := t.PutBase(colName, col)
+			if err != nil {
+				return res, err
+			}
+		} else {
+			col := make([]ext.E4, m.N)
+			for _, e := range pi.Entries {
+				if e.Field == field.Base {
+					col[e.Idx].Lift(&e.Value)
+				} else {
+					col[e.Idx].Set(&e.ValueExt)
+				}
+			}
+			err := t.PutExt(colName, col)
+			if err != nil {
+				return res, err
+			}
+		}
 	}
 
 	return res, nil
@@ -680,7 +723,6 @@ func (pr *proverRuntime) SampleEvaluations() error {
 	return nil
 }
 
-// TODO publicInputs are not used
 func Prove(t trace.Trace, setup setup.PublicKey, publicInputs public.Inputs, program board.Program, opts ...Option) (proof.Proof, error) {
 
 	var config Config

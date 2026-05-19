@@ -113,9 +113,14 @@ func newVerifierRuntime(program board.Program, setup setup.PublicKeyRoots, publi
 	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
 	res.fs.NewChallenge(constants.DEEP_ALPHA)
 
-	// Setup roots are bound to challenge_0 (alongside trace round 0 in deriveChallenges).
+	// Bind every setup tree's root to challenge_0 (decreasing-N order, set by Setup) + public inputs
 	for _, pkr := range setup {
 		res.fs.Bind(constants.CanonicalChallengeName(0), pkr)
+	}
+	if len(publicInputs) > 0 {
+		if err := res.fs.Bind(constants.CanonicalChallengeName(0), publicInputs.TranscriptBytes()); err != nil {
+			return res, err
+		}
 	}
 
 	// find the largest module size N in program (used to size FRI's outer domain)
@@ -219,16 +224,6 @@ func (vr *verifierRunTime) computeExposedColumns() error {
 			vr.proof.SetValueAtZetaExt(leaf, lag)
 		}
 	}
-	// for k, pi := range vr.proof.ExposedValues {
-	// 	var lag ext.E4
-	// 	for _, pe := range pi.Entries {
-	// 		tmp := poly.LagrangeAtZetaExt(vr.zeta, pi.N, pe.Idx)
-	// 		value := pe.ExtValue()
-	// 		tmp.Mul(&tmp, &value)
-	// 		lag.Add(&lag, &tmp)
-	// 	}
-	// 	vr.proof.SetValueAtZetaExt(k, lag)
-	// }
 	return nil
 }
 
@@ -246,6 +241,34 @@ func (vr *verifierRunTime) computeLagrange() error {
 			}
 			v := poly.LagrangeAtZetaExt(vr.zeta, m.N, i)
 			vr.proof.SetValueAtZetaExt(lag, v)
+		}
+	}
+	return nil
+}
+
+func (vr *verifierRunTime) computePublicColumns() error {
+	config := expr.OnlyPublicColumns
+	for _, m := range vr.program.Modules {
+		leafs := m.VanishingRelation.Leaves(expr.NewConfig(config...))
+		for _, leaf := range leafs {
+			pi, ok := vr.publicInputs[leaf]
+			if !ok {
+				return fmt.Errorf("computePublicColumns: %s not found in public inputs", leaf)
+			}
+			if pi.Module != m.Name {
+				return fmt.Errorf("computePublicColumns: %s belongs to module %q, used from module %q", leaf, pi.Module, m.Name)
+			}
+			var val ext.E4
+			for _, pe := range pi.Entries {
+				if pe.Idx < 0 || pe.Idx >= m.N {
+					return fmt.Errorf("computePublicColumns: %s entry index %d out of bounds for module %q of size %d", leaf, pe.Idx, m.Name, m.N)
+				}
+				tmp := poly.LagrangeAtZetaExt(vr.zeta, m.N, pe.Idx)
+				value := pe.ExtValue()
+				tmp.Mul(&tmp, &value)
+				val.Add(&val, &tmp)
+			}
+			vr.proof.SetValueAtZetaExt(leaf, val)
 		}
 	}
 	return nil
@@ -569,12 +592,16 @@ func Verify(publicInputs public.Inputs, setup setup.PublicKeyRoots, program boar
 		return err
 	}
 
-	// 2 - populate proof.ValuesAtZeta with the public columns and lagrange columns
+	// 2 - populate proof.ValuesAtZeta with the exposed values, lagrange columns and public columns
 	err = vr.computeExposedColumns()
 	if err != nil {
 		return err
 	}
 	err = vr.computeLagrange()
+	if err != nil {
+		return err
+	}
+	err = vr.computePublicColumns()
 	if err != nil {
 		return err
 	}
