@@ -34,7 +34,7 @@ type Proof struct {
 	// Commitments holds the Merkle roots of every WMerkleTree the prover
 	// commits during the protocol, in canonical order:
 	//   trace-round-0 (decreasing N) → trace-round-1 → … → trace-round-{r-1} → AIR (decreasing N)
-	// Setup roots are NOT stored here — they live in the verifier's PublicKey.
+	// Setup roots are NOT stored here; they live in the verifier's VerificationKey.
 	Commitments [][]byte
 
 	DeepQuotientFriProof fri.Proof

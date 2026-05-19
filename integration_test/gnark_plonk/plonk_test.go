@@ -23,6 +23,7 @@ import (
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/prover"
 	"github.com/consensys/loom/public"
+	"github.com/consensys/loom/setup"
 	"github.com/consensys/loom/trace"
 	"github.com/consensys/loom/verifier"
 	"github.com/consensys/loom/viz"
@@ -86,23 +87,23 @@ func TestVerifierFibo(t *testing.T) {
 
 	publicInputs := fiboPublicInputs(a, b)
 
-	proof, err := prover.Prove(tr, nil, publicInputs, program)
+	proof, err := prover.Prove(tr, setup.ProvingKey{}, publicInputs, program)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = verifier.Verify(publicInputs, nil, program, proof)
+	err = verifier.Verify(publicInputs, setup.VerificationKey{}, program, proof)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := verifier.Verify(nil, nil, program, proof); err == nil {
+	if err := verifier.Verify(nil, setup.VerificationKey{}, program, proof); err == nil {
 		t.Fatal("expected verifier to reject missing public inputs")
 	}
 
 	var wrongB koalabear.Element
 	wrongB.SetUint64(2)
-	if err := verifier.Verify(fiboPublicInputs(a, wrongB), nil, program, proof); err == nil {
+	if err := verifier.Verify(fiboPublicInputs(a, wrongB), setup.VerificationKey{}, program, proof); err == nil {
 		t.Fatal("expected verifier to reject incorrect public input")
 	}
 }
@@ -195,12 +196,12 @@ func TestVerifierPlonk(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		pk, pkRoots, err := loom.Setup(tr, program)
+		pk, vk, err := loom.Setup(tr, program)
 		if err != nil {
 			t.Fatal(err)
 		}
-		stmt := loom.Statement{Program: program, SetupRoots: pkRoots}
-		witness := loom.Witness{Trace: tr, Setup: pk}
+		stmt := loom.Statement{Program: program, VerificationKey: vk}
+		witness := loom.Witness{Trace: tr, ProvingKey: pk}
 		proof, err := loom.Prove(stmt, witness)
 		if err != nil {
 			t.Fatal(err)
@@ -276,14 +277,14 @@ func TestFiboPlonk(t *testing.T) {
 	fullTrace := prover.MergeTrace(traceFrob, traceRange, tr)
 
 	// prover, verify
-	proof, err := prover.Prove(fullTrace, nil, nil, program)
+	proof, err := prover.Prove(fullTrace, setup.ProvingKey{}, nil, program)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	viz.WriteRawTraceToCSV("trace.csv", fullTrace)
 
-	err = verifier.Verify(nil, nil, program, proof)
+	err = verifier.Verify(nil, setup.VerificationKey{}, program, proof)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +386,7 @@ func benchProver(b *testing.B, ns []int, skipFRI bool) {
 			fresh.SetExt(k, v)
 		}
 		b.StartTimer()
-		if _, err := prover.Prove(fresh, nil, nil, program, opts...); err != nil {
+		if _, err := prover.Prove(fresh, setup.ProvingKey{}, nil, program, opts...); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -440,7 +441,7 @@ func benchVerifier(b *testing.B, ns []int, skipFRI bool) {
 	if skipFRI {
 		optsProver = append(optsProver, prover.SkipFRI())
 	}
-	proof, err := prover.Prove(fullTrace, nil, nil, program, optsProver...)
+	proof, err := prover.Prove(fullTrace, setup.ProvingKey{}, nil, program, optsProver...)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -453,7 +454,7 @@ func benchVerifier(b *testing.B, ns []int, skipFRI bool) {
 	b.ResetTimer()
 	for b.Loop() {
 		b.StartTimer()
-		err := verifier.Verify(nil, nil, program, proof, optsVerifier...)
+		err := verifier.Verify(nil, setup.VerificationKey{}, program, proof, optsVerifier...)
 		if err != nil {
 			b.Fatal(err)
 		}

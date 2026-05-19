@@ -82,31 +82,39 @@ type proverRuntime struct {
 	zeta           ext.E4 // point of evaluation to check the AIR relation with SZ
 	alpha          ext.E4 // folding challenge for N-grouped polynomials, used to build the DEEP quotient
 	mu             sync.Mutex
-	setup          setup.PublicKey
+	setup          setup.ProvingKey
 	queryPositions []int
 	fs             *fiatshamir.Transcript
 }
 
-func newProverRuntime(t trace.Trace, setup setup.PublicKey, publicInputs public.Inputs, program board.Program, config Config) (proverRuntime, error) {
+func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs public.Inputs, program board.Program, config Config) (proverRuntime, error) {
+	var err error
+	if len(provingKey.Trace.Base) > 0 || len(provingKey.Trace.Ext) > 0 {
+		t, err = trace.MergeMatching(t, provingKey.Trace)
+		if err != nil {
+			return proverRuntime{}, fmt.Errorf("newProverRuntime: merge setup trace: %w", err)
+		}
+	}
+
 	res := proverRuntime{
 		Proof:        proof.NewProof(),
 		config:       config,
 		t:            t,
 		publicInputs: publicInputs,
 		program:      program,
-		setup:        setup,
+		setup:        provingKey,
 		airTrace:     trace.New(),
 		mu:           sync.Mutex{}, // mutex to protect the trace when reading/writing (in case of parallelisation)
 	}
 
 	// Build the canonical commitment layout for this run.
-	res.layout = BuildLayout(program, len(setup))
+	res.layout = BuildLayout(program, len(provingKey.Trees))
 
 	// allTrees holds setup trees up front; trace and AIR slots get filled as
 	// commitments happen. proof.Commitments stores ONLY the trace+AIR roots
-	// (setup roots come from the verifier's setup.PublicKey input, not the proof).
+	// (setup roots come from the verifier's VerificationKey input, not the proof).
 	res.allTrees = make([]commitment.WMerkleTree, res.layout.NumTrees)
-	for i, tree := range setup {
+	for i, tree := range provingKey.Trees {
 		res.allTrees[res.layout.SetupBegin+i] = tree
 	}
 	res.Proof.Commitments = make([][]byte, res.layout.NumTrees-res.layout.SetupEnd)
@@ -119,7 +127,6 @@ func newProverRuntime(t trace.Trace, setup setup.PublicKey, publicInputs public.
 		}
 	}
 
-	var err error
 	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, commitment.LeafHash, commitment.NodeHash)
 	if err != nil {
 		return res, err
@@ -138,7 +145,7 @@ func newProverRuntime(t trace.Trace, setup setup.PublicKey, publicInputs public.
 	res.fs.NewChallenge(constants.DEEP_ALPHA)
 
 	// Bind every setup tree's root to challenge_0 (decreasing-N order, set by Setup) + public inputs
-	for _, tree := range setup {
+	for _, tree := range provingKey.Trees {
 		res.fs.Bind(constants.CanonicalChallengeName(0), tree.Root())
 	}
 	if len(publicInputs) > 0 {
@@ -723,7 +730,7 @@ func (pr *proverRuntime) SampleEvaluations() error {
 	return nil
 }
 
-func Prove(t trace.Trace, setup setup.PublicKey, publicInputs public.Inputs, program board.Program, opts ...Option) (proof.Proof, error) {
+func Prove(t trace.Trace, provingKey setup.ProvingKey, publicInputs public.Inputs, program board.Program, opts ...Option) (proof.Proof, error) {
 
 	var config Config
 	for _, opt := range opts {
@@ -733,7 +740,7 @@ func Prove(t trace.Trace, setup setup.PublicKey, publicInputs public.Inputs, pro
 		}
 	}
 
-	pr, err := newProverRuntime(t, setup, publicInputs, program, config)
+	pr, err := newProverRuntime(t, provingKey, publicInputs, program, config)
 	if err != nil {
 		return proof.Proof{}, err
 	}

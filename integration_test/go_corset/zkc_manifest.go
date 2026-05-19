@@ -25,9 +25,11 @@ import (
 	gocorset_kb "github.com/consensys/go-corset/pkg/util/field/koalabear"
 	zkc_constraints "github.com/consensys/go-corset/pkg/zkc/constraints"
 	"github.com/consensys/go-corset/pkg/zkc/vm"
+	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 	loomfield "github.com/consensys/loom/field"
 	"github.com/consensys/loom/public"
+	loomtrace "github.com/consensys/loom/trace"
 )
 
 const zkcPublicInputPrefix = "__public__."
@@ -202,6 +204,52 @@ func (m *FrontendManifest) ApplyToBridge(bridge *CorsetBridge) error {
 	}
 
 	return nil
+}
+
+// SetupTrace returns a trace containing only manifest static columns. The
+// program must already have module sizes set, because setup commitments are
+// grouped by those sizes.
+func (m *FrontendManifest) SetupTrace(program board.Program) (loomtrace.Trace, error) {
+	res := loomtrace.New()
+	if m == nil {
+		return res, nil
+	}
+
+	moduleNames := sortedKeys(m.StaticModules)
+	for _, moduleName := range moduleNames {
+		module, ok := program.Modules[moduleName]
+		if !ok {
+			return loomtrace.Trace{}, fmt.Errorf("FrontendManifest.SetupTrace: module %q not found in program", moduleName)
+		}
+		if module.N <= 0 {
+			return loomtrace.Trace{}, fmt.Errorf("FrontendManifest.SetupTrace: module %q has unset size", moduleName)
+		}
+
+		staticModule := m.StaticModules[moduleName]
+		rows := len(staticModule.Values)
+		if rows > module.N {
+			return loomtrace.Trace{}, fmt.Errorf(
+				"FrontendManifest.SetupTrace: static module %q has %d rows, program size is %d",
+				moduleName,
+				rows,
+				module.N,
+			)
+		}
+		for colIdx, colName := range staticModule.Columns {
+			poly := make([]gnark_kb.Element, module.N)
+			for row := range rows {
+				if colIdx >= len(staticModule.Values[row]) {
+					return loomtrace.Trace{}, fmt.Errorf("FrontendManifest.SetupTrace: static module %q row %d is missing column %d", moduleName, row, colIdx)
+				}
+				poly[row].Set(&staticModule.Values[row][colIdx])
+			}
+			if err := res.PutBase(colName, poly); err != nil {
+				return loomtrace.Trace{}, err
+			}
+		}
+	}
+
+	return res, nil
 }
 
 // PublicInputsFromZkcInput extracts Loom public inputs from the JSON-decoded

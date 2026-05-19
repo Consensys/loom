@@ -162,17 +162,17 @@ func runZkcIntegration(
 		}
 
 		gocorset.SetSize(&pg, loomTrace)
-		setup, setupRoots, err := loom.Setup(loomTrace, pg)
+		provingKey, verificationKey, err := loom.Setup(loomTrace, pg)
 		if err != nil {
 			t.Fatalf("setup[%d]: %v", i, err)
 		}
 
 		statement := loom.Statement{
-			Program:      pg,
-			SetupRoots:   setupRoots,
-			PublicInputs: publicInputs,
+			Program:         pg,
+			VerificationKey: verificationKey,
+			PublicInputs:    publicInputs,
 		}
-		witness := loom.Witness{Trace: loomTrace, Setup: setup}
+		witness := loom.Witness{Trace: loomTrace, ProvingKey: provingKey}
 
 		prf, err := loom.Prove(statement, witness)
 		if err != nil {

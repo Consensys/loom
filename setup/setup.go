@@ -25,24 +25,37 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-type PublicKeyRoots = [][]byte
-
-// PublicKey is the per-size set of WMerkleTrees over the program's public
-// columns: PublicKey[s] is the commitment for the s-th size group, sizes
-// ordered by decreasing N. An empty/nil PublicKey means "no setup".
-type PublicKey = []commitment.WMerkleTree
-
-func Roots(pk PublicKey) PublicKeyRoots {
-	res := make([][]byte, len(pk))
-	for i, tree := range pk {
-		res[i] = tree.Root()
-	}
-	return res
+// ProvingKey is the prover-side setup material. Trees contain the setup
+// commitments and Trace contains the fixed columns in Lagrange form, so the
+// prover can evaluate setup columns without carrying them in each witness.
+type ProvingKey struct {
+	Trace trace.Trace
+	Trees []commitment.WMerkleTree
 }
 
-func Setup(t trace.Trace, program board.Program) (PublicKey, error) {
+// VerificationKey is the verifier-side setup material.
+type VerificationKey struct {
+	Roots [][]byte
+}
+
+// VerificationKey returns the verifier-side roots corresponding to pk.
+func (pk ProvingKey) VerificationKey() VerificationKey {
+	res := make([][]byte, len(pk.Trees))
+	for i, tree := range pk.Trees {
+		res[i] = tree.Root()
+	}
+	return VerificationKey{Roots: res}
+}
+
+func Setup(t trace.Trace, program board.Program) (ProvingKey, VerificationKey, error) {
+	setupTrace, err := setupTraceFromProgram(t, program)
+	if err != nil {
+		return ProvingKey{}, VerificationKey{}, err
+	}
+
 	if len(program.PublicColumns) == 0 {
-		return nil, nil
+		pk := ProvingKey{Trace: setupTrace}
+		return pk, pk.VerificationKey(), nil
 	}
 
 	// Group public columns by their owning module's domain size, then
@@ -65,7 +78,7 @@ func Setup(t trace.Trace, program board.Program) (PublicKey, error) {
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
 
-	res := make(PublicKey, len(sizes))
+	trees := make([]commitment.WMerkleTree, len(sizes))
 	for i, N := range sizes {
 		refs := colsByN[N]
 		sort.Slice(refs, func(i, j int) bool { return refs[i].Name < refs[j].Name })
@@ -73,18 +86,18 @@ func Setup(t trace.Trace, program board.Program) (PublicKey, error) {
 		extPublic := make([]poly.ExtPolynomial, 0, len(refs))
 		for _, ref := range refs {
 			if ref.Field == field.Base {
-				p, ok := t.Base[ref.Name]
+				p, ok := setupTrace.Base[ref.Name]
 				if !ok {
-					return nil, fmt.Errorf("setup: base public column %q not found", ref.Name)
+					return ProvingKey{}, VerificationKey{}, fmt.Errorf("setup: base public column %q not found", ref.Name)
 				}
 				basePublic = append(basePublic, p)
 			}
 		}
 		for _, ref := range refs {
 			if ref.Field == field.Ext {
-				p, ok := t.Ext[ref.Name]
+				p, ok := setupTrace.Ext[ref.Name]
 				if !ok {
-					return nil, fmt.Errorf("setup: extension public column %q not found", ref.Name)
+					return ProvingKey{}, VerificationKey{}, fmt.Errorf("setup: extension public column %q not found", ref.Name)
 				}
 				extPublic = append(extPublic, p)
 			}
@@ -92,9 +105,37 @@ func Setup(t trace.Trace, program board.Program) (PublicKey, error) {
 		committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
 		tree, err := committer.Commit(basePublic, extPublic)
 		if err != nil {
-			return nil, err
+			return ProvingKey{}, VerificationKey{}, err
 		}
-		res[i] = tree
+		trees[i] = tree
+	}
+	pk := ProvingKey{Trace: setupTrace, Trees: trees}
+	return pk, pk.VerificationKey(), nil
+}
+
+func setupTraceFromProgram(t trace.Trace, program board.Program) (trace.Trace, error) {
+	res := trace.New(len(program.PublicColumns))
+	for _, ref := range program.PublicColumns {
+		switch ref.Field {
+		case field.Base:
+			p, ok := t.Base[ref.Name]
+			if !ok {
+				return trace.Trace{}, fmt.Errorf("setup: base public column %q not found", ref.Name)
+			}
+			if err := res.PutBase(ref.Name, p); err != nil {
+				return trace.Trace{}, err
+			}
+		case field.Ext:
+			p, ok := t.Ext[ref.Name]
+			if !ok {
+				return trace.Trace{}, fmt.Errorf("setup: extension public column %q not found", ref.Name)
+			}
+			if err := res.PutExt(ref.Name, p); err != nil {
+				return trace.Trace{}, err
+			}
+		default:
+			return trace.Trace{}, fmt.Errorf("setup: unsupported field kind for public column %q", ref.Name)
+		}
 	}
 	return res, nil
 }

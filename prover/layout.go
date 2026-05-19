@@ -45,7 +45,7 @@ type Slot struct {
 //
 //	[setup, decreasing N] [trace-round-0, decreasing N] … [trace-round-{r-1}] [AIR, decreasing N]
 //
-// The setup section length is given by the verifier's PublicKey (i.e. the
+// The setup section length is given by the proving/verification key (i.e. the
 // number of distinct sizes among program.PublicColumns).
 type Layout struct {
 	NumTrees int // total number of trees in the canonical order

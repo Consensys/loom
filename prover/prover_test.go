@@ -20,6 +20,7 @@ import (
 	"github.com/consensys/loom/arguments"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/setup"
 	"github.com/consensys/loom/viz"
 )
 
@@ -74,7 +75,7 @@ func TestVanishingRelationsAndLogupBus(t *testing.T) {
 	traceRange := TraceRange(N)
 	tr := MergeTrace(traceFrob, traceRange)
 
-	proof, err := Prove(tr, nil, nil, program, EmulateFS())
+	proof, err := Prove(tr, setup.ProvingKey{}, nil, program, EmulateFS())
 	if err != nil {
 		t.Fatal(err)
 	}

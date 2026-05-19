@@ -30,15 +30,15 @@ import (
 // Proof data produced by the prover, including proof.ExposedValues, does not
 // belong here.
 type Statement struct {
-	Program      board.Program
-	SetupRoots   PublicKeyRoots
-	PublicInputs PublicInputs
+	Program         board.Program
+	VerificationKey VerificationKey
+	PublicInputs    PublicInputs
 }
 
 // Witness contains prover-owned data used to produce a proof for a Statement.
 type Witness struct {
-	Trace trace.Trace
-	Setup setup.PublicKey
+	Trace      trace.Trace
+	ProvingKey ProvingKey
 }
 
 type PublicInputs = public.Inputs
@@ -49,42 +49,57 @@ type ProverOption = prover.Option
 // VerifierOption configures Verify.
 type VerifierOption = verifier.Option
 
-type PublicKey = setup.PublicKey
+type ProvingKey = setup.ProvingKey
 
-type PublicKeyRoots = setup.PublicKeyRoots
+type VerificationKey = setup.VerificationKey
 
 // Setup produces the Merkle trees of the precommitted columns + their roots.
-func Setup(t trace.Trace, program board.Program) (PublicKey, PublicKeyRoots, error) {
-	pk, err := setup.Setup(t, program)
-	if err != nil {
-		return pk, nil, err
-	}
-	pkRoots := setup.Roots(pk)
-	return pk, pkRoots, nil
+func Setup(t trace.Trace, program board.Program) (ProvingKey, VerificationKey, error) {
+	return setup.Setup(t, program)
 }
 
 // Prove produces a proof for statement using witness.
 func Prove(statement Statement, witness Witness, opts ...ProverOption) (proof.Proof, error) {
-	if err := checkSetupRoots(statement.SetupRoots, witness.Setup); err != nil {
+	if err := checkVerificationKey(statement, witness.ProvingKey); err != nil {
 		return proof.Proof{}, err
 	}
-	return prover.Prove(witness.Trace, witness.Setup, statement.PublicInputs, statement.Program, opts...)
+	return prover.Prove(witness.Trace, witness.ProvingKey, statement.PublicInputs, statement.Program, opts...)
 }
 
 // Verify checks prf against statement.
 func Verify(statement Statement, prf proof.Proof, opts ...VerifierOption) error {
-	return verifier.Verify(statement.PublicInputs, statement.SetupRoots, statement.Program, prf, opts...)
+	return verifier.Verify(statement.PublicInputs, statement.VerificationKey, statement.Program, prf, opts...)
 }
 
-func checkSetupRoots(statementRoots setup.PublicKeyRoots, witnessSetup setup.PublicKey) error {
-	witnessRoots := setup.Roots(witnessSetup)
-	if len(statementRoots) != len(witnessRoots) {
-		return fmt.Errorf("loom: statement has %d setup roots, witness has %d setup trees", len(statementRoots), len(witnessRoots))
+func checkVerificationKey(statement Statement, witnessKey setup.ProvingKey) error {
+	statementKey := statement.VerificationKey
+	witnessKeyForVerifier := witnessKey.VerificationKey()
+	expectedRoots := expectedSetupTreeCount(statement.Program)
+	if len(statementKey.Roots) != expectedRoots {
+		return fmt.Errorf("loom: statement has %d setup roots, program expects %d setup trees", len(statementKey.Roots), expectedRoots)
 	}
-	for i := range statementRoots {
-		if !bytes.Equal(statementRoots[i], witnessRoots[i]) {
+	if len(witnessKey.Trees) != expectedRoots {
+		return fmt.Errorf("loom: witness has %d setup trees, program expects %d", len(witnessKey.Trees), expectedRoots)
+	}
+	if len(statementKey.Roots) != len(witnessKeyForVerifier.Roots) {
+		return fmt.Errorf("loom: statement has %d setup roots, witness has %d setup trees", len(statementKey.Roots), len(witnessKeyForVerifier.Roots))
+	}
+	for i := range statementKey.Roots {
+		if !bytes.Equal(statementKey.Roots[i], witnessKeyForVerifier.Roots[i]) {
 			return fmt.Errorf("loom: statement setup root %d does not match witness setup root", i)
 		}
 	}
 	return nil
+}
+
+func expectedSetupTreeCount(program board.Program) int {
+	seenSizes := make(map[int]bool)
+	for _, ref := range program.PublicColumns {
+		m, ok := program.Modules[ref.Module]
+		if !ok {
+			continue
+		}
+		seenSizes[m.N] = true
+	}
+	return len(seenSizes)
 }

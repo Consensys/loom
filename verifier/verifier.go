@@ -51,8 +51,6 @@ func SkipFRI() Option {
 	}
 }
 
-type PublicKey = []commitment.WMerkleTree
-
 type verifierRunTime struct {
 	config       Config
 	proof        proof.Proof
@@ -61,7 +59,7 @@ type verifierRunTime struct {
 	program      board.Program
 	zeta         ext.E4 // point of evaluation to check the AIR relation with SZ
 	alpha        ext.E4 // folding challenge for N-grouped polynomials, used to build the DEEP quotient
-	setup        setup.PublicKeyRoots
+	setup        setup.VerificationKey
 	fs           *fiatshamir.Transcript
 	dqLayout     prover.DEEPquotientLayout
 
@@ -69,22 +67,22 @@ type verifierRunTime struct {
 	// (built from program + len(setup) at the start of every Verify call).
 	layout prover.Layout
 	// roots is the flat sequence of Merkle roots in canonical order:
-	//   setup roots (from PublicKey) ++ proof.Commitments
+	//   setup roots (from VerificationKey) ++ proof.Commitments
 	// roots[i] aligns with proof.PointSamplings[q][i] for any query q.
 	roots [][]byte
 }
 
-func newVerifierRuntime(program board.Program, setup setup.PublicKeyRoots, publicInputs public.Inputs, prf proof.Proof, config Config) (verifierRunTime, error) {
+func newVerifierRuntime(program board.Program, verificationKey setup.VerificationKey, publicInputs public.Inputs, prf proof.Proof, config Config) (verifierRunTime, error) {
 	res := verifierRunTime{
 		config:       config,
 		proof:        prf,
 		publicInputs: publicInputs,
 		program:      program,
-		setup:        setup,
+		setup:        verificationKey,
 	}
 
 	// Build the layout shared with the prover.
-	res.layout = prover.BuildLayout(program, len(setup))
+	res.layout = prover.BuildLayout(program, len(verificationKey.Roots))
 	res.dqLayout = prover.BuildDeepQuotientLayout(program)
 
 	// Validate proof.Commitments matches layout (trace + AIR section).
@@ -95,10 +93,10 @@ func newVerifierRuntime(program board.Program, setup setup.PublicKeyRoots, publi
 
 	// Flatten setup roots ++ proof.Commitments into res.roots.
 	res.roots = make([][]byte, res.layout.NumTrees)
-	if len(setup) != res.layout.SetupEnd-res.layout.SetupBegin {
-		return res, fmt.Errorf("verifier: setup has %d trees, layout expects %d", len(setup), res.layout.SetupEnd-res.layout.SetupBegin)
+	if len(verificationKey.Roots) != res.layout.SetupEnd-res.layout.SetupBegin {
+		return res, fmt.Errorf("verifier: setup has %d trees, layout expects %d", len(verificationKey.Roots), res.layout.SetupEnd-res.layout.SetupBegin)
 	}
-	for i, pkr := range setup {
+	for i, pkr := range verificationKey.Roots {
 		res.roots[res.layout.SetupBegin+i] = pkr
 	}
 	for i, root := range prf.Commitments {
@@ -114,7 +112,7 @@ func newVerifierRuntime(program board.Program, setup setup.PublicKeyRoots, publi
 	res.fs.NewChallenge(constants.DEEP_ALPHA)
 
 	// Bind every setup tree's root to challenge_0 (decreasing-N order, set by Setup) + public inputs
-	for _, pkr := range setup {
+	for _, pkr := range verificationKey.Roots {
 		res.fs.Bind(constants.CanonicalChallengeName(0), pkr)
 	}
 	if len(publicInputs) > 0 {
@@ -571,7 +569,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 	return nil
 }
 
-func Verify(publicInputs public.Inputs, setup setup.PublicKeyRoots, program board.Program, proof proof.Proof, opts ...Option) error {
+func Verify(publicInputs public.Inputs, verificationKey setup.VerificationKey, program board.Program, proof proof.Proof, opts ...Option) error {
 
 	var config Config
 	for _, opt := range opts {
@@ -581,7 +579,7 @@ func Verify(publicInputs public.Inputs, setup setup.PublicKeyRoots, program boar
 		}
 	}
 
-	vr, err := newVerifierRuntime(program, setup, publicInputs, proof, config)
+	vr, err := newVerifierRuntime(program, verificationKey, publicInputs, proof, config)
 	if err != nil {
 		return err
 	}

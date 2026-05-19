@@ -46,6 +46,49 @@ func New(capacity ...int) Trace {
 	}
 }
 
+// ShallowClone returns a trace with copied maps and shared polynomial slices.
+func (t Trace) ShallowClone() Trace {
+	res := New(len(t.Base))
+	for name, col := range t.Base {
+		res.Base[name] = col
+	}
+	for name, col := range t.Ext {
+		res.Ext[name] = col
+	}
+	return res
+}
+
+// MergeMatching overlays rhs into lhs. If a column exists in both traces, the
+// values must match exactly. Polynomial slices are shared with the inputs.
+func MergeMatching(lhs, rhs Trace) (Trace, error) {
+	res := lhs.ShallowClone()
+	for name, col := range rhs.Base {
+		if existing, ok := res.Base[name]; ok {
+			if !sameBasePolynomial(existing, col) {
+				return Trace{}, fmt.Errorf("trace: base column %q already exists with different values", name)
+			}
+			continue
+		}
+		if _, ok := res.Ext[name]; ok {
+			return Trace{}, fmt.Errorf("trace: column %q exists as extension column", name)
+		}
+		res.Base[name] = col
+	}
+	for name, col := range rhs.Ext {
+		if existing, ok := res.Ext[name]; ok {
+			if !sameExtPolynomial(existing, col) {
+				return Trace{}, fmt.Errorf("trace: extension column %q already exists with different values", name)
+			}
+			continue
+		}
+		if _, ok := res.Base[name]; ok {
+			return Trace{}, fmt.Errorf("trace: column %q exists as base column", name)
+		}
+		res.Ext[name] = col
+	}
+	return res, nil
+}
+
 func (t Trace) GetField(name string) (field.Kind, bool) {
 	if _, ok := t.Ext[name]; ok {
 		return field.Ext, true
@@ -88,4 +131,28 @@ func (t Trace) PutExt(name string, c ExtPolynomial) error {
 // raw map assignment
 func (t Trace) SetExt(name string, c ExtPolynomial) {
 	t.Ext[name] = c
+}
+
+func sameBasePolynomial(lhs, rhs poly.Polynomial) bool {
+	if len(lhs) != len(rhs) {
+		return false
+	}
+	for i := range lhs {
+		if !lhs[i].Equal(&rhs[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameExtPolynomial(lhs, rhs ExtPolynomial) bool {
+	if len(lhs) != len(rhs) {
+		return false
+	}
+	for i := range lhs {
+		if !lhs[i].Equal(&rhs[i]) {
+			return false
+		}
+	}
+	return true
 }

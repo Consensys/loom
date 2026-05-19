@@ -17,8 +17,8 @@ Fiat-Shamir challenges, including lookup/permutation challenges, canonical trace
 | Builder | `board.Builder` | Accumulates modules, relations, and derivation steps before compilation |
 | Module | `board.Module` | A named constraint domain; all columns within it share the same N |
 | Program | `board.Program` | Compiled IOP: level-ordered step schedule + folded vanishing relations |
-| Statement | `loom.Statement` | Verifier-owned data: program, setup roots, and public inputs |
-| Witness | `loom.Witness` | Prover-owned data: trace and setup key |
+| Statement | `loom.Statement` | Verifier-owned data: program, verification key, and public inputs |
+| Witness | `loom.Witness` | Prover-owned data: witness trace and proving key |
 | Exposed values | `proof.Proof.ExposedValues` / `proof.ExposedValue` | Values produced by board steps such as `AddExposeIthValueStep` and carried by the proof |
 
 ## Workflow
@@ -28,9 +28,9 @@ Fiat-Shamir challenges, including lookup/permutation challenges, canonical trace
 2. Describe polynomial constraints on each module (AssertZero, …)
 3. Attach standard arguments (permutation, lookup, …) from the arguments/ package
 4. board.Compile(&builder) → Program
-5. setup.Setup(trace, program) → setup.PublicKey, if the program has precommitted public columns
-6. Build a `loom.Statement` from the program, setup roots, and public inputs
-7. Build a `loom.Witness` from the trace and setup key
+5. setup.Setup(setupTrace, program) → setup.ProvingKey + setup.VerificationKey, if the program has precommitted public columns
+6. Build a `loom.Statement` from the program, verification key, and public inputs
+7. Build a `loom.Witness` from the witness trace and proving key
 8. loom.Prove(statement, witness) → Proof
 9. loom.Verify(statement, proof)
 ```
@@ -103,12 +103,17 @@ The `PublicInputs` field on `loom.Statement` is reserved for verifier-supplied s
 For columns that require a setup commitment (e.g. PLONK selector columns), mark them with `builder.MakeColumnPublic` and use `setup.Setup` to pre-commit them:
 
 ```go
-pk, err := setup.Setup(trace, pg)
-statement := loom.Statement{Program: pg, SetupRoots: setup.Roots(pk)}
-witness := loom.Witness{Trace: trace, Setup: pk}
+provingKey, verificationKey, err := loom.Setup(setupTrace, pg)
+
+statement := loom.Statement{Program: pg, VerificationKey: verificationKey}
+witness := loom.Witness{Trace: witnessTrace, ProvingKey: provingKey}
 prf, err := loom.Prove(statement, witness)
 err = loom.Verify(statement, prf)
 ```
+
+`setupTrace` only needs the fixed columns registered with `MakeColumnPublic`.
+The proving key stores those columns in Lagrange form and the setup Merkle
+trees; `loom.Prove` overlays them with the per-instance witness trace.
 
 ## Development
 
