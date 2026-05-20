@@ -79,6 +79,7 @@ func Setup(t trace.Trace, program board.Program) (ProvingKey, VerificationKey, e
 	sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
 
 	trees := make([]commitment.WMerkleTree, len(sizes))
+	var domainCache poly.DomainCache
 	for i, N := range sizes {
 		refs := colsByN[N]
 		sort.Slice(refs, func(i, j int) bool { return refs[i].Name < refs[j].Name })
@@ -102,8 +103,8 @@ func Setup(t trace.Trace, program board.Program) (ProvingKey, VerificationKey, e
 				extPublic = append(extPublic, p)
 			}
 		}
-		committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
-		tree, err := committer.Commit(basePublic, extPublic)
+		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash, &domainCache)
+		tree, err := committer.Commit(basePublic, extPublic, commitment.WithDomainCache(&domainCache))
 		if err != nil {
 			return ProvingKey{}, VerificationKey{}, err
 		}

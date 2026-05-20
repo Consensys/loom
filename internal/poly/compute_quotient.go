@@ -26,9 +26,44 @@ import (
 	"github.com/consensys/loom/internal/dag"
 )
 
+// QuotientConfig configures quotient computation.
+type QuotientConfig struct {
+	DomainCache *DomainCache
+}
+
+// QuotientOption configures quotient computation.
+type QuotientOption func(c *QuotientConfig) error
+
+// WithDomainCache reuses cache for FFT domains created during quotient
+// computation and coset conversion.
+func WithDomainCache(cache *DomainCache) QuotientOption {
+	return func(c *QuotientConfig) error {
+		c.DomainCache = cache
+		return nil
+	}
+}
+
+func newQuotientConfig(opts ...QuotientOption) (QuotientConfig, error) {
+	var config QuotientConfig
+	for _, opt := range opts {
+		if err := opt(&config); err != nil {
+			return QuotientConfig{}, err
+		}
+	}
+	return config, nil
+}
+
 // ComputeQuotient computes E(PI)/X^N-1
 // /!\ all polynomials must be in normal layout, lagrange basis
-func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int) (Polynomial, error) {
+func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int, opts ...QuotientOption) (Polynomial, error) {
+	config, err := newQuotientConfig(opts...)
+	if err != nil {
+		return nil, err
+	}
+	domainCache := config.DomainCache
+	if domainCache == nil {
+		domainCache = &DomainCache{}
+	}
 
 	// Degree of E(Pi) is at most E.Degree() * sizePi
 	eDeg := vanishingRelation.Degree()
@@ -79,8 +114,8 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 	numerator := make([]koalabear.Element, bigSize)
 
 	// create domains
-	bigDomain := fft.NewDomain(uint64(bigSize))
-	smallDomain := fft.NewDomain(uint64(N))
+	bigDomain := domainCache.Get(uint64(bigSize))
+	smallDomain := domainCache.Get(uint64(N))
 
 	// number of cosets of smalldomain in bigdomain
 	rho := bigSize / N
@@ -166,7 +201,16 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int)
 // stay on the extension rail, and mixed evaluation lifts base values only when
 // an extension node consumes them. The returned quotient is in coset-Lagrange
 // form, matching ComputeQuotient.
-func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPolynomial, vanishingRelation dag.DAG, N int) (ExtPolynomial, error) {
+func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPolynomial, vanishingRelation dag.DAG, N int, opts ...QuotientOption) (ExtPolynomial, error) {
+	config, err := newQuotientConfig(opts...)
+	if err != nil {
+		return nil, err
+	}
+	domainCache := config.DomainCache
+	if domainCache == nil {
+		domainCache = &DomainCache{}
+	}
+
 	if vanishingRelation.Root.Field != field.Ext {
 		return nil, fmt.Errorf("ComputeQuotientMixed: root field is %s, want %s", vanishingRelation.Root.Field, field.Ext)
 	}
@@ -248,8 +292,8 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 
 	numerator := make(ExtPolynomial, bigSize)
 
-	bigDomain := fft.NewDomain(uint64(bigSize))
-	smallDomain := fft.NewDomain(uint64(N))
+	bigDomain := domainCache.Get(uint64(bigSize))
+	smallDomain := domainCache.Get(uint64(N))
 	rho := bigSize / N
 
 	twiddleFrMultiplicativeGen := make([]koalabear.Element, N)
@@ -332,8 +376,14 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 // standard Lagrange Normal form (evaluated on {ω^j}).
 // The conversion is in-place.
 func CosetLagrangeToLagrangeNormal(p Polynomial) {
+	CosetLagrangeToLagrangeNormalWithCache(p, nil)
+}
+
+// CosetLagrangeToLagrangeNormalWithCache converts p in place using cache for
+// the FFT domain.
+func CosetLagrangeToLagrangeNormalWithCache(p Polynomial, cache *DomainCache) {
 	N := uint64(len(p))
-	d := fft.NewDomain(N)
+	d := cache.Get(N)
 
 	// Step 1: coset-Lagrange Normal → BitReversed IFFT (= c_k * FrGen^k, BitReversed)
 	d.FFTInverse(p, fft.DIF)
@@ -360,8 +410,14 @@ func CosetLagrangeToLagrangeNormal(p Polynomial) {
 // CosetExtLagrangeToLagrangeNormal converts an extension polynomial from
 // coset-Lagrange normal form to standard Lagrange normal form.
 func CosetExtLagrangeToLagrangeNormal(p ExtPolynomial) {
+	CosetExtLagrangeToLagrangeNormalWithCache(p, nil)
+}
+
+// CosetExtLagrangeToLagrangeNormalWithCache converts p in place using cache for
+// the FFT domain.
+func CosetExtLagrangeToLagrangeNormalWithCache(p ExtPolynomial, cache *DomainCache) {
 	N := uint64(len(p))
-	d := fft.NewDomain(N)
+	d := cache.Get(N)
 
 	d.FFTInverseExt(p, fft.DIF)
 	utils.BitReverse(p)

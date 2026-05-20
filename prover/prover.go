@@ -85,6 +85,7 @@ type proverRuntime struct {
 	setup          setup.ProvingKey
 	queryPositions []int
 	fs             *fiatshamir.Transcript
+	domainCache    poly.DomainCache
 }
 
 func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs public.Inputs, program board.Program, config Config) (proverRuntime, error) {
@@ -284,8 +285,8 @@ func (pr *proverRuntime) commitTraceRound(roundIdx int, challengeName string) er
 	base := pr.layout.TraceBegin[roundIdx]
 	for i, N := range sizes {
 		group := polysByN[N]
-		committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
-		tree, err := committer.Commit(group.base, group.ext)
+		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash, &pr.domainCache)
+		tree, err := committer.Commit(group.base, group.ext, commitment.WithDomainCache(&pr.domainCache))
 		if err != nil {
 			return err
 		}
@@ -368,14 +369,14 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 
 		N := module.N
 		if module.VanishingRelation.Root.Field == field.Ext {
-			quotient, err := poly.ComputeQuotientMixed(pr.t.Base, pr.t.Ext, *module.VanishingRelation, N)
+			quotient, err := poly.ComputeQuotientMixed(pr.t.Base, pr.t.Ext, *module.VanishingRelation, N, poly.WithDomainCache(&pr.domainCache))
 			if err != nil {
 				return err
 			}
 
-			poly.CosetExtLagrangeToLagrangeNormal(quotient)
+			poly.CosetExtLagrangeToLagrangeNormalWithCache(quotient, &pr.domainCache)
 			bigSize := len(quotient)
-			bigD := fft.NewDomain(uint64(bigSize))
+			bigD := pr.domainCache.Get(uint64(bigSize))
 			bigD.FFTInverseExt(quotient, fft.DIF)
 			utils.BitReverse(quotient)
 
@@ -392,14 +393,14 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 			continue
 		}
 
-		quotient, err := poly.ComputeQuotient(pr.t.Base, *module.VanishingRelation, N)
+		quotient, err := poly.ComputeQuotient(pr.t.Base, *module.VanishingRelation, N, poly.WithDomainCache(&pr.domainCache))
 		if err != nil {
 			return err
 		}
 
-		poly.CosetLagrangeToLagrangeNormal(quotient)
+		poly.CosetLagrangeToLagrangeNormalWithCache(quotient, &pr.domainCache)
 		bigSize := len(quotient)
-		bigD := fft.NewDomain(uint64(bigSize))
+		bigD := pr.domainCache.Get(uint64(bigSize))
 		bigD.FFTInverse(quotient, fft.DIF)
 		utils.BitReverse(quotient)
 
@@ -459,8 +460,8 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	}
 	for i, N := range sizes {
 		group := chunksByN[N]
-		committer := commitment.NewRSCommit(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash)
-		tree, err := committer.Commit(group.base, group.ext)
+		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash, &pr.domainCache)
+		tree, err := committer.Commit(group.base, group.ext, commitment.WithDomainCache(&pr.domainCache))
 		if err != nil {
 			return err
 		}
@@ -653,7 +654,7 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 
 	levels := make([]fri.Level, len(sizes))
 	for li, N := range sizes {
-		encoder := reedsolomon.NewEncoder(uint64(constants.RATE) * uint64(N))
+		encoder := reedsolomon.NewEncoderWithDomainCache(uint64(constants.RATE)*uint64(N), &pr.domainCache)
 		encoded := encoder.EncodeExt(deepQuotients[N], domainBySize[N])
 
 		tree, err := pr.friParams.BuildLevelTreeExt(encoded)

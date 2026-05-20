@@ -63,6 +63,26 @@ func TestRSCommitDualRailProofSerialisation(t *testing.T) {
 	}
 }
 
+func TestRSCommitWithDomainCache(t *testing.T) {
+	basePolys := []poly.Polynomial{
+		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},
+		{baseElement(5), baseElement(6), baseElement(7), baseElement(8)},
+	}
+
+	var cache poly.DomainCache
+	committer := NewRSCommitWithDomainCache(4, 2, LeafHash, NodeHash, &cache)
+	tree, err := committer.Commit(basePolys, nil, WithDomainCache(&cache))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tree.NumLeaves(); got != 4 {
+		t.Fatalf("NumLeaves = %d, want 4", got)
+	}
+	if got := cache.Get(4); got != cache.Get(4) {
+		t.Fatalf("DomainCache did not reuse input domain: %p vs %p", got, cache.Get(4))
+	}
+}
+
 func TestRSCommitEmptyRails(t *testing.T) {
 	basePolys := []poly.Polynomial{
 		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},

@@ -18,7 +18,6 @@ import (
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
-	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/internal/reedsolomon"
@@ -58,12 +57,33 @@ type PairBase = [2]koalabear.Element // used to store the pairs {f_k(w^i), f_k(-
 type PairExt = [2]ext.E4             // used to store the pairs {f_k(w^i), f_k(-w^i)}
 
 func NewRSCommit(N uint64, rate uint64, leafHasher merkle.LeafHasher, nodehasher merkle.NodeHasher) RSCommit {
-	d := fft.NewDomain(rate * N)
-	rsEncoder := reedsolomon.Encoder{Domain: d}
+	return NewRSCommitWithDomainCache(N, rate, leafHasher, nodehasher, nil)
+}
+
+// NewRSCommitWithDomainCache constructs an RSCommit using cache for the
+// Reed-Solomon encoder domain.
+func NewRSCommitWithDomainCache(N uint64, rate uint64, leafHasher merkle.LeafHasher, nodehasher merkle.NodeHasher, cache *poly.DomainCache) RSCommit {
+	rsEncoder := reedsolomon.NewEncoderWithDomainCache(rate*N, cache)
 	return RSCommit{
 		Encoder:    rsEncoder,
 		LeafHasher: leafHasher,
 		NodeHasher: nodehasher,
+	}
+}
+
+// CommitConfig configures RSCommit.Commit.
+type CommitConfig struct {
+	DomainCache *poly.DomainCache
+}
+
+// CommitOption configures RSCommit.Commit.
+type CommitOption func(c *CommitConfig) error
+
+// WithDomainCache reuses cache for input-polynomial FFT domains.
+func WithDomainCache(cache *poly.DomainCache) CommitOption {
+	return func(c *CommitConfig) error {
+		c.DomainCache = cache
+		return nil
 	}
 }
 
@@ -83,32 +103,29 @@ func NodeHash(left, right []byte) []byte {
 // Commit commits to base and extension polynomials in one Merkle tree. Inputs
 // are assumed to be in Lagrange form and may have different sizes. Each leaf is
 // the byte serialization of all base pairs followed by all extension pairs.
-func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolynomial) (WMerkleTree, error) {
-	domainsPool := map[int]*fft.Domain{}
+func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolynomial, opts ...CommitOption) (WMerkleTree, error) {
+	var config CommitConfig
+	for _, opt := range opts {
+		if err := opt(&config); err != nil {
+			return WMerkleTree{}, err
+		}
+	}
+	domainCache := config.DomainCache
+	if domainCache == nil {
+		domainCache = &poly.DomainCache{}
+	}
 
 	// 1- encode every polynomial on its rail
 	encodedBase := make([]poly.Polynomial, len(basePolys))
 	for i, pol := range basePolys {
 		n := len(pol)
-		_, ok := domainsPool[n]
-		if !ok {
-			d := fft.NewDomain(uint64(n))
-			domainsPool[n] = d
-		}
-		d := domainsPool[n]
-		encodedBase[i] = rs.Encoder.Encode(pol, d)
+		encodedBase[i] = rs.Encoder.Encode(pol, domainCache.Get(uint64(n)))
 	}
 
 	encodedExt := make([]poly.ExtPolynomial, len(extPolys))
 	for i, pol := range extPolys {
 		n := len(pol)
-		_, ok := domainsPool[n]
-		if !ok {
-			d := fft.NewDomain(uint64(n))
-			domainsPool[n] = d
-		}
-		d := domainsPool[n]
-		encodedExt[i] = rs.Encoder.EncodeExt(pol, d)
+		encodedExt[i] = rs.Encoder.EncodeExt(pol, domainCache.Get(uint64(n)))
 	}
 
 	// 2- build the merkle tree, with rs.N/2 leafs

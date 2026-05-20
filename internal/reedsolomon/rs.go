@@ -20,10 +20,13 @@ import (
 )
 
 func NewEncoder(N uint64) Encoder {
-	domain := fft.NewDomain(N)
-	return Encoder{
-		Domain: domain,
-	}
+	return NewEncoderWithDomainCache(N, nil)
+}
+
+// NewEncoderWithDomainCache constructs an encoder using cache for its FFT
+// domain.
+func NewEncoderWithDomainCache(N uint64, cache *poly.DomainCache) Encoder {
+	return Encoder{Domain: cache.Get(N)}
 }
 
 type Encoder struct {
