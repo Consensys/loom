@@ -126,6 +126,7 @@ func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolyn
 	if len(encodedExt) > 0 {
 		wTree.UnhashedLeafsExt = make([][]PairExt, halfN)
 	}
+	leafBuf := make([]byte, rawLeafSizeForWidths(len(encodedBase), len(encodedExt)))
 	for i := 0; i < halfN; i++ {
 		if len(encodedBase) > 0 {
 			wTree.UnhashedLeafsBase[i] = make([]PairBase, len(encodedBase))
@@ -141,7 +142,7 @@ func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolyn
 				wTree.UnhashedLeafsExt[i][j][1].Set(&encodedExt[j][i+halfN])
 			}
 		}
-		tree.BuildIthLeaf(SerializeRawLeaf(wTree.baseLeaf(i), wTree.extLeaf(i)), i)
+		tree.BuildIthLeaf(SerializeRawLeafInto(leafBuf, wTree.baseLeaf(i), wTree.extLeaf(i)), i)
 	}
 	tree.BuildNodes()
 
@@ -167,6 +168,18 @@ func (wt WMerkleTree) extLeaf(i int) []PairExt {
 // B0.A0, B0.A1, B1.A0, B1.A1.
 func SerializeRawLeaf(base []PairBase, ext []PairExt) []byte {
 	buf := make([]byte, rawLeafSize(base, ext))
+	return SerializeRawLeafInto(buf, base, ext)
+}
+
+// SerializeRawLeafInto encodes a dual-rail Merkle leaf into buf and returns the
+// written slice. It allocates only when cap(buf) is too small.
+func SerializeRawLeafInto(buf []byte, base []PairBase, ext []PairExt) []byte {
+	size := rawLeafSize(base, ext)
+	if cap(buf) < size {
+		buf = make([]byte, size)
+	} else {
+		buf = buf[:size]
+	}
 	offset := 0
 	for _, pair := range base {
 		offset = putBaseElement(buf, offset, &pair[0])
@@ -180,11 +193,16 @@ func SerializeRawLeaf(base []PairBase, ext []PairExt) []byte {
 }
 
 func rawLeafSize(base []PairBase, ext []PairExt) int {
-	return 2*len(base)*koalabear.Bytes + 8*len(ext)*koalabear.Bytes
+	return rawLeafSizeForWidths(len(base), len(ext))
+}
+
+func rawLeafSizeForWidths(baseWidth int, extWidth int) int {
+	return 2*baseWidth*koalabear.Bytes + 8*extWidth*koalabear.Bytes
 }
 
 func putBaseElement(buf []byte, offset int, e *koalabear.Element) int {
-	copy(buf[offset:], e.Marshal())
+	bytes := e.Bytes()
+	copy(buf[offset:offset+koalabear.Bytes], bytes[:])
 	return offset + koalabear.Bytes
 }
 

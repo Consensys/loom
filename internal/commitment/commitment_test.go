@@ -111,6 +111,31 @@ func TestSerializeRawLeafExtCoordinateOrder(t *testing.T) {
 	}
 }
 
+// Regression test
+func TestSerializeRawLeafIntoMatchesAllocatingSerializer(t *testing.T) {
+	base := []PairBase{
+		{baseElement(1), baseElement(2)},
+		{baseElement(3), baseElement(4)},
+	}
+	ext := []PairExt{
+		{
+			extElement(5, 6, 7, 8),
+			extElement(9, 10, 11, 12),
+		},
+	}
+
+	want := SerializeRawLeaf(base, ext)
+	buf := make([]byte, 0, len(want)+koalabear.Bytes)
+	got := SerializeRawLeafInto(buf, base, ext)
+
+	if !bytes.Equal(got, want) {
+		t.Fatalf("SerializeRawLeafInto mismatch\ngot  %x\nwant %x", got, want)
+	}
+	if len(got) > 0 && &got[0] != &buf[:cap(buf)][0] {
+		t.Fatal("SerializeRawLeafInto did not reuse caller-provided buffer")
+	}
+}
+
 func baseElement(v uint64) koalabear.Element {
 	var e koalabear.Element
 	e.SetUint64(v)
