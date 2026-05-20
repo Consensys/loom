@@ -278,6 +278,8 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 		scaleExtByTwiddles(pCopy, twiddleFrMultiplicativeGen)
 	}
 
+	vals := make([]ext.E4, N)
+	var evalWorkspace dag.EvalWorkspace
 	for i := range rho {
 		for _, pCopy := range baseNonConst {
 			smallDomain.FFT(pCopy, fft.DIT)
@@ -286,7 +288,7 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 			smallDomain.FFTExt(pCopy, fft.DIT)
 		}
 
-		vals := vanishingRelation.EvalOnAllEntriesMixed(_PiBase, _PiExt, N)
+		vanishingRelation.EvalOnAllEntriesMixedInto(vals, _PiBase, _PiExt, N, &evalWorkspace)
 		for j := 0; j < N; j++ {
 			numerator[rho*j+i] = vals[j]
 		}

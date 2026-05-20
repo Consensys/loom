@@ -1075,41 +1075,72 @@ func (d *DAG) EvalOnAllEntries(Pi [][]koalabear.Element, N int) []koalabear.Elem
 // koalabear arithmetic and extension-valued nodes use E4 arithmetic, lifting
 // base children on demand. The root must be extension-valued.
 func (d *DAG) EvalOnAllEntriesMixed(PiBase [][]koalabear.Element, PiExt [][]ext.E4, N int) []ext.E4 {
+	dst := make([]ext.E4, N)
+	var ws EvalWorkspace
+	d.EvalOnAllEntriesMixedInto(dst, PiBase, PiExt, N, &ws)
+	return dst
+}
+
+// EvalWorkspace stores scratch buffers for repeated DAG vector evaluations.
+// It is not safe for concurrent use.
+type EvalWorkspace struct {
+	refCount []int
+	baseVec  [][]koalabear.Element
+	extVec   [][]ext.E4
+	basePool [][]koalabear.Element
+	extPool  [][]ext.E4
+}
+
+// EvalOnAllEntriesMixedInto evaluates the DAG pointwise into dst for all N
+// rows, reusing ws scratch buffers across calls. dst must have length at least
+// N. The root must be extension-valued.
+func (d *DAG) EvalOnAllEntriesMixedInto(dst []ext.E4, PiBase [][]koalabear.Element, PiExt [][]ext.E4, N int, ws *EvalWorkspace) {
 	if d.Root.Field != field.Ext {
 		panic("EvalOnAllEntriesMixed: root is not extension-valued")
 	}
+	if len(dst) < N {
+		panic("EvalOnAllEntriesMixedInto: dst length is smaller than N")
+	}
+	dst = dst[:N]
 
-	refCount := make([]int, len(d.Nodes))
+	if ws == nil {
+		ws = &EvalWorkspace{}
+	}
+	ws.prepare(len(d.Nodes))
+
+	refCount := ws.refCount
 	for _, n := range d.Nodes {
 		for _, child := range n.Children {
 			refCount[child.Index]++
 		}
 	}
 
-	var basePool [][]koalabear.Element
 	allocBase := func() []koalabear.Element {
-		if last := len(basePool) - 1; last >= 0 {
-			b := basePool[last]
-			basePool = basePool[:last]
-			return b
+		for last := len(ws.basePool) - 1; last >= 0; last = len(ws.basePool) - 1 {
+			b := ws.basePool[last]
+			ws.basePool = ws.basePool[:last]
+			if cap(b) >= N {
+				return b[:N]
+			}
 		}
 		return make([]koalabear.Element, N)
 	}
-	releaseBase := func(b []koalabear.Element) { basePool = append(basePool, b) }
+	releaseBase := func(b []koalabear.Element) { ws.basePool = append(ws.basePool, b) }
 
-	var extPool [][]ext.E4
 	allocExt := func() []ext.E4 {
-		if last := len(extPool) - 1; last >= 0 {
-			b := extPool[last]
-			extPool = extPool[:last]
-			return b
+		for last := len(ws.extPool) - 1; last >= 0; last = len(ws.extPool) - 1 {
+			b := ws.extPool[last]
+			ws.extPool = ws.extPool[:last]
+			if cap(b) >= N {
+				return b[:N]
+			}
 		}
 		return make([]ext.E4, N)
 	}
-	releaseExt := func(b []ext.E4) { extPool = append(extPool, b) }
+	releaseExt := func(b []ext.E4) { ws.extPool = append(ws.extPool, b) }
 
-	baseVec := make([][]koalabear.Element, len(d.Nodes))
-	extVec := make([][]ext.E4, len(d.Nodes))
+	baseVec := ws.baseVec
+	extVec := ws.extVec
 
 	for _, n := range d.Nodes {
 		if n.Field == field.Base {
@@ -1117,9 +1148,12 @@ func (d *DAG) EvalOnAllEntriesMixed(PiBase [][]koalabear.Element, PiExt [][]ext.
 			evalBaseNodeOnAllEntries(dst, n, baseVec, PiBase, N, allocBase, releaseBase)
 			baseVec[n.Index] = dst
 		} else {
-			dst := allocExt()
-			evalExtNodeOnAllEntries(dst, n, baseVec, extVec, PiExt, N, allocExt, releaseExt)
-			extVec[n.Index] = dst
+			nodeDst := dst
+			if n != d.Root {
+				nodeDst = allocExt()
+			}
+			evalExtNodeOnAllEntries(nodeDst, n, baseVec, extVec, PiExt, N, allocExt, releaseExt)
+			extVec[n.Index] = nodeDst
 		}
 
 		for _, child := range n.Children {
@@ -1136,8 +1170,21 @@ func (d *DAG) EvalOnAllEntriesMixed(PiBase [][]koalabear.Element, PiExt [][]ext.
 			}
 		}
 	}
+}
 
-	return extVec[d.Root.Index]
+func (ws *EvalWorkspace) prepare(numNodes int) {
+	ws.refCount = resizeAndClear(ws.refCount, numNodes)
+	ws.baseVec = resizeAndClear(ws.baseVec, numNodes)
+	ws.extVec = resizeAndClear(ws.extVec, numNodes)
+}
+
+func resizeAndClear[S ~[]E, E any](s S, n int) S {
+	if cap(s) < n {
+		return make(S, n)
+	}
+	s = s[:n]
+	clear(s)
+	return s
 }
 
 // evalBaseNodeOnAllEntries evaluates one base-valued node for

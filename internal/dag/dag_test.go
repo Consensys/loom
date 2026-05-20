@@ -509,6 +509,15 @@ func TestDAGEvalOnAllEntriesMixed(t *testing.T) {
 		[][]ext.E4{{gamma}, logup},
 		N,
 	)
+	var ws EvalWorkspace
+	gotInto := make([]ext.E4, N)
+	d.EvalOnAllEntriesMixedInto(
+		gotInto,
+		[][]koalabear.Element{x},
+		[][]ext.E4{{gamma}, logup},
+		N,
+		&ws,
+	)
 
 	twoExt := liftE4(two)
 	for j := range N {
@@ -522,6 +531,27 @@ func TestDAGEvalOnAllEntriesMixed(t *testing.T) {
 		if !got[j].Equal(&want) {
 			t.Fatalf("row %d: EvalOnAllEntriesMixed = %s, want %s", j, got[j].String(), want.String())
 		}
+		if !gotInto[j].Equal(&want) {
+			t.Fatalf("row %d: EvalOnAllEntriesMixedInto = %s, want %s", j, gotInto[j].String(), want.String())
+		}
+	}
+
+	logup[0] = e4FromU64(21, 1, 2, 3)
+	d.EvalOnAllEntriesMixedInto(
+		gotInto,
+		[][]koalabear.Element{x},
+		[][]ext.E4{{gamma}, logup},
+		N,
+		&ws,
+	)
+	xRot := liftE4(x[1])
+	var want, term, square ext.E4
+	term.Mul(&xRot, &gamma)
+	square.Mul(&logup[0], &logup[0])
+	want.Add(&term, &square)
+	want.Sub(&want, &twoExt)
+	if !gotInto[0].Equal(&want) {
+		t.Fatalf("workspace reuse: row 0 = %s, want %s", gotInto[0].String(), want.String())
 	}
 }
 
