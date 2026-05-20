@@ -30,10 +30,14 @@ type RSCommit struct {
 }
 
 type WMerkleTree struct {
-	Tree              *merkle.Tree
-	numLeaves         int
-	UnhashedLeafsBase [][]PairBase // UnhashedLeafsBase[i][j] = {f_j(w^i), f_j(-w^i)}
-	UnhashedLeafsExt  [][]PairExt  // UnhashedLeafsExt[i][j] = {f_j(w^i), f_j(-w^i)}
+	Tree *merkle.Tree
+
+	numLeaves int
+	baseWidth int
+	extWidth  int
+
+	unhashedLeafsBase []PairBase // leaf i starts at i*baseWidth
+	unhashedLeafsExt  []PairExt  // leaf i starts at i*extWidth
 }
 
 // PointSampling contains the pair evaluation {f(w^i),f(-w^i)} for batches of
@@ -51,6 +55,55 @@ func (wt WMerkleTree) Root() []byte {
 
 func (wt WMerkleTree) NumLeaves() int {
 	return wt.numLeaves
+}
+
+// BaseWidth returns the number of base-field pairs stored in each leaf.
+func (wt WMerkleTree) BaseWidth() int {
+	return wt.baseWidth
+}
+
+// ExtWidth returns the number of extension-field pairs stored in each leaf.
+func (wt WMerkleTree) ExtWidth() int {
+	return wt.extWidth
+}
+
+// BaseLeaf returns the base-field pair evaluations stored for leaf i. The
+// returned slice aliases the tree's opening data.
+func (wt WMerkleTree) BaseLeaf(i int) []PairBase {
+	if wt.baseWidth == 0 {
+		return nil
+	}
+	start := i * wt.baseWidth
+	return wt.unhashedLeafsBase[start : start+wt.baseWidth]
+}
+
+// ExtLeaf returns the extension-field pair evaluations stored for leaf i. The
+// returned slice aliases the tree's opening data.
+func (wt WMerkleTree) ExtLeaf(i int) []PairExt {
+	if wt.extWidth == 0 {
+		return nil
+	}
+	start := i * wt.extWidth
+	return wt.unhashedLeafsExt[start : start+wt.extWidth]
+}
+
+// Open returns the Merkle proof and raw paired evaluations for leaf i.
+func (wt WMerkleTree) Open(i int) (WMerkleProof, error) {
+	pth, err := wt.Tree.OpenProof(i)
+	if err != nil {
+		return WMerkleProof{}, err
+	}
+	var rawLeafBase []PairBase
+	if wt.baseWidth > 0 {
+		rawLeafBase = make([]PairBase, wt.baseWidth)
+		copy(rawLeafBase, wt.BaseLeaf(i))
+	}
+	var rawLeafExt []PairExt
+	if wt.extWidth > 0 {
+		rawLeafExt = make([]PairExt, wt.extWidth)
+		copy(rawLeafExt, wt.ExtLeaf(i))
+	}
+	return WMerkleProof{RawLeafBase: rawLeafBase, RawLeafExt: rawLeafExt, Proof: pth}, nil
 }
 
 type PairBase = [2]koalabear.Element // used to store the pairs {f_k(w^i), f_k(-w^i)}
@@ -136,48 +189,39 @@ func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolyn
 	if err != nil {
 		return WMerkleTree{}, err
 	}
-	wTree := WMerkleTree{Tree: tree, numLeaves: halfN}
+	wTree := WMerkleTree{
+		Tree:      tree,
+		numLeaves: halfN,
+		baseWidth: len(encodedBase),
+		extWidth:  len(encodedExt),
+	}
 	if len(encodedBase) > 0 {
-		wTree.UnhashedLeafsBase = make([][]PairBase, halfN)
+		wTree.unhashedLeafsBase = make([]PairBase, halfN*len(encodedBase))
 	}
 	if len(encodedExt) > 0 {
-		wTree.UnhashedLeafsExt = make([][]PairExt, halfN)
+		wTree.unhashedLeafsExt = make([]PairExt, halfN*len(encodedExt))
 	}
 	leafBuf := make([]byte, rawLeafSizeForWidths(len(encodedBase), len(encodedExt)))
 	for i := 0; i < halfN; i++ {
+		baseLeaf := wTree.BaseLeaf(i)
 		if len(encodedBase) > 0 {
-			wTree.UnhashedLeafsBase[i] = make([]PairBase, len(encodedBase))
 			for j := range encodedBase {
-				wTree.UnhashedLeafsBase[i][j][0].Set(&encodedBase[j][i])
-				wTree.UnhashedLeafsBase[i][j][1].Set(&encodedBase[j][i+halfN])
+				baseLeaf[j][0].Set(&encodedBase[j][i])
+				baseLeaf[j][1].Set(&encodedBase[j][i+halfN])
 			}
 		}
+		extLeaf := wTree.ExtLeaf(i)
 		if len(encodedExt) > 0 {
-			wTree.UnhashedLeafsExt[i] = make([]PairExt, len(encodedExt))
 			for j := range encodedExt {
-				wTree.UnhashedLeafsExt[i][j][0].Set(&encodedExt[j][i])
-				wTree.UnhashedLeafsExt[i][j][1].Set(&encodedExt[j][i+halfN])
+				extLeaf[j][0].Set(&encodedExt[j][i])
+				extLeaf[j][1].Set(&encodedExt[j][i+halfN])
 			}
 		}
-		tree.BuildIthLeaf(SerializeRawLeafInto(leafBuf, wTree.baseLeaf(i), wTree.extLeaf(i)), i)
+		tree.BuildIthLeaf(SerializeRawLeafInto(leafBuf, baseLeaf, extLeaf), i)
 	}
 	tree.BuildNodes()
 
 	return wTree, nil
-}
-
-func (wt WMerkleTree) baseLeaf(i int) []PairBase {
-	if len(wt.UnhashedLeafsBase) == 0 {
-		return nil
-	}
-	return wt.UnhashedLeafsBase[i]
-}
-
-func (wt WMerkleTree) extLeaf(i int) []PairExt {
-	if len(wt.UnhashedLeafsExt) == 0 {
-		return nil
-	}
-	return wt.UnhashedLeafsExt[i]
 }
 
 // SerializeRawLeaf encodes a dual-rail Merkle leaf as base pairs followed by

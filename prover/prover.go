@@ -692,21 +692,11 @@ func openWMerkleAt(tree commitment.WMerkleTree, s int) (commitment.WMerkleProof,
 		return commitment.WMerkleProof{}, fmt.Errorf("empty WMerkleTree")
 	}
 	pos := s % leafCount
-	pth, err := tree.Tree.OpenProof(pos)
+	wp, err := tree.Open(pos)
 	if err != nil {
 		return commitment.WMerkleProof{}, err
 	}
-	var rawLeafBase []commitment.PairBase
-	if len(tree.UnhashedLeafsBase) > 0 {
-		rawLeafBase = make([]commitment.PairBase, len(tree.UnhashedLeafsBase[pos]))
-		copy(rawLeafBase, tree.UnhashedLeafsBase[pos])
-	}
-	var rawLeafExt []commitment.PairExt
-	if len(tree.UnhashedLeafsExt) > 0 {
-		rawLeafExt = make([]commitment.PairExt, len(tree.UnhashedLeafsExt[pos]))
-		copy(rawLeafExt, tree.UnhashedLeafsExt[pos])
-	}
-	return commitment.WMerkleProof{RawLeafBase: rawLeafBase, RawLeafExt: rawLeafExt, Proof: pth}, nil
+	return wp, nil
 }
 
 // SampleEvaluations opens every committed polynomial at every FRI query

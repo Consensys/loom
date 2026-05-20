@@ -45,10 +45,10 @@ func TestRSCommitDualRailProofSerialisation(t *testing.T) {
 	if got := tree.NumLeaves(); got != 4 {
 		t.Fatalf("NumLeaves = %d, want 4", got)
 	}
-	if got := len(tree.UnhashedLeafsBase[0]); got != len(basePolys) {
+	if got := tree.BaseWidth(); got != len(basePolys) {
 		t.Fatalf("base rail width = %d, want %d", got, len(basePolys))
 	}
-	if got := len(tree.UnhashedLeafsExt[0]); got != len(extPolys) {
+	if got := tree.ExtWidth(); got != len(extPolys) {
 		t.Fatalf("ext rail width = %d, want %d", got, len(extPolys))
 	}
 
@@ -57,9 +57,53 @@ func TestRSCommitDualRailProofSerialisation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	leafData := SerializeRawLeaf(tree.UnhashedLeafsBase[leafIdx], tree.UnhashedLeafsExt[leafIdx])
+	leafData := SerializeRawLeaf(tree.BaseLeaf(leafIdx), tree.ExtLeaf(leafIdx))
 	if !merkle.Verify(tree.Root(), proof, leafData, LeafHash, NodeHash) {
 		t.Fatal("dual-rail Merkle proof did not verify")
+	}
+}
+
+func TestWMerkleTreeOpenCopiesFlatLeafData(t *testing.T) {
+	basePolys := []poly.Polynomial{
+		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},
+		{baseElement(5), baseElement(6), baseElement(7), baseElement(8)},
+	}
+	extPolys := []poly.ExtPolynomial{
+		{
+			extElement(1, 2, 3, 4),
+			extElement(5, 6, 7, 8),
+			extElement(9, 10, 11, 12),
+			extElement(13, 14, 15, 16),
+		},
+	}
+
+	committer := NewRSCommit(4, 2, LeafHash, NodeHash)
+	tree, err := committer.Commit(basePolys, extPolys)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const leafIdx = 2
+	proof, err := tree.Open(leafIdx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(proof.RawLeafBase) != tree.BaseWidth() {
+		t.Fatalf("RawLeafBase length = %d, want %d", len(proof.RawLeafBase), tree.BaseWidth())
+	}
+	if len(proof.RawLeafExt) != tree.ExtWidth() {
+		t.Fatalf("RawLeafExt length = %d, want %d", len(proof.RawLeafExt), tree.ExtWidth())
+	}
+	if len(proof.RawLeafBase) > 0 && &proof.RawLeafBase[0] == &tree.BaseLeaf(leafIdx)[0] {
+		t.Fatal("Open returned aliased base leaf data")
+	}
+	if len(proof.RawLeafExt) > 0 && &proof.RawLeafExt[0] == &tree.ExtLeaf(leafIdx)[0] {
+		t.Fatal("Open returned aliased ext leaf data")
+	}
+
+	leafData := SerializeRawLeaf(proof.RawLeafBase, proof.RawLeafExt)
+	if !merkle.Verify(tree.Root(), proof.Proof, leafData, LeafHash, NodeHash) {
+		t.Fatal("opened flat-layout Merkle proof did not verify")
 	}
 }
 
@@ -92,8 +136,8 @@ func TestRSCommitEmptyRails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(baseTree.UnhashedLeafsExt) != 0 {
-		t.Fatalf("base-only tree ext rail length = %d, want 0", len(baseTree.UnhashedLeafsExt))
+	if got := baseTree.ExtWidth(); got != 0 {
+		t.Fatalf("base-only tree ext rail width = %d, want 0", got)
 	}
 
 	extPolys := []poly.ExtPolynomial{
@@ -108,8 +152,8 @@ func TestRSCommitEmptyRails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(extTree.UnhashedLeafsBase) != 0 {
-		t.Fatalf("ext-only tree base rail length = %d, want 0", len(extTree.UnhashedLeafsBase))
+	if got := extTree.BaseWidth(); got != 0 {
+		t.Fatalf("ext-only tree base rail width = %d, want 0", got)
 	}
 	if got := extTree.NumLeaves(); got != 4 {
 		t.Fatalf("ext-only NumLeaves = %d, want 4", got)
