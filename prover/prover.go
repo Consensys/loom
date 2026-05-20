@@ -74,6 +74,9 @@ type proverRuntime struct {
 	// at construction; trace and AIR trees are filled in as commitments
 	// happen.
 	allTrees []commitment.WMerkleTree
+	// openingSources[i] reconstructs raw leaves for allTrees[i] after FRI
+	// query positions are known.
+	openingSources []commitmentOpeningSource
 
 	t              trace.Trace
 	airTrace       trace.Trace
@@ -115,8 +118,12 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 	// commitments happen. proof.Commitments stores ONLY the trace+AIR roots
 	// (setup roots come from the verifier's VerificationKey input, not the proof).
 	res.allTrees = make([]commitment.WMerkleTree, res.layout.NumTrees)
+	res.openingSources = make([]commitmentOpeningSource, res.layout.NumTrees)
 	for i, tree := range provingKey.Trees {
 		res.allTrees[res.layout.SetupBegin+i] = tree
+	}
+	if err := res.initSetupOpeningSources(); err != nil {
+		return proverRuntime{}, err
 	}
 	res.Proof.Commitments = make([][]byte, res.layout.NumTrees-res.layout.SetupEnd)
 
@@ -200,6 +207,40 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 // pr.Proof.Commitments (which excludes the setup section).
 func (pr *proverRuntime) commitIdxOf(treeIdx int) int {
 	return treeIdx - pr.layout.SetupEnd
+}
+
+func (pr *proverRuntime) initSetupOpeningSources() error {
+	for _, ref := range pr.program.PublicColumns {
+		slot, ok := pr.layout.ColSlot[ref.Name]
+		if !ok {
+			continue
+		}
+		if slot.TreeIdx < pr.layout.SetupBegin || slot.TreeIdx >= pr.layout.SetupEnd {
+			return fmt.Errorf("initSetupOpeningSources: public column %q mapped outside setup section", ref.Name)
+		}
+		if slot.TreeIdx >= len(pr.layout.TreeSize) {
+			return fmt.Errorf("initSetupOpeningSources: setup tree index %d out of range", slot.TreeIdx)
+		}
+		source := &pr.openingSources[slot.TreeIdx]
+		source.setFullDomainSize(pr.layout.TreeSize[slot.TreeIdx])
+		switch ref.Field {
+		case field.Base:
+			p, ok := pr.setup.Trace.Base[ref.Name]
+			if !ok {
+				return fmt.Errorf("initSetupOpeningSources: base setup column %q not found", ref.Name)
+			}
+			source.setBase(slot.PolyIdx, p)
+		case field.Ext:
+			p, ok := pr.setup.Trace.Ext[ref.Name]
+			if !ok {
+				return fmt.Errorf("initSetupOpeningSources: extension setup column %q not found", ref.Name)
+			}
+			source.setExt(slot.PolyIdx, p)
+		default:
+			return fmt.Errorf("initSetupOpeningSources: unsupported field kind for setup column %q", ref.Name)
+		}
+	}
+	return nil
 }
 
 func setExtFromBytes(z *ext.E4, b []byte) error {
@@ -292,6 +333,7 @@ func (pr *proverRuntime) commitTraceRound(roundIdx int, challengeName string) er
 		}
 		treeIdx := base + i
 		pr.allTrees[treeIdx] = tree
+		pr.openingSources[treeIdx] = newCommitmentOpeningSource(group.base, group.ext, N)
 		root := tree.Root()
 		pr.Proof.Commitments[pr.commitIdxOf(treeIdx)] = root
 		if err := pr.fs.Bind(challengeName, root); err != nil {
@@ -467,6 +509,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 		}
 		treeIdx := pr.layout.AIRBegin + i
 		pr.allTrees[treeIdx] = tree
+		pr.openingSources[treeIdx] = newCommitmentOpeningSource(group.base, group.ext, N)
 		root := tree.Root()
 		pr.Proof.Commitments[pr.commitIdxOf(treeIdx)] = root
 		if err := pr.fs.Bind(constants.FINAL_EVALUATION_POINT, root); err != nil {
@@ -686,17 +729,27 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 // openWMerkleAt opens a WMerkleTree at the leaf index corresponding to FRI
 // query position `s`, reduced mod the tree's paired-leaf count (=
 // encoded_size/2 = RATE·N/2).
-func openWMerkleAt(tree commitment.WMerkleTree, s int) (commitment.WMerkleProof, error) {
+func openWMerkleAt(tree commitment.WMerkleTree, source commitmentOpeningSource, s int, domainCache *poly.DomainCache) (commitment.WMerkleProof, error) {
 	leafCount := tree.NumLeaves()
 	if leafCount == 0 {
 		return commitment.WMerkleProof{}, fmt.Errorf("empty WMerkleTree")
 	}
 	pos := s % leafCount
-	wp, err := tree.Open(pos)
+	pth, err := tree.OpenProof(pos)
 	if err != nil {
 		return commitment.WMerkleProof{}, err
 	}
-	return wp, nil
+	rawLeafBase, rawLeafExt, err := source.rawLeaf(pos, leafCount, domainCache)
+	if err != nil {
+		return commitment.WMerkleProof{}, err
+	}
+	if len(rawLeafBase) != tree.BaseWidth() {
+		return commitment.WMerkleProof{}, fmt.Errorf("base raw leaf width %d, tree expects %d", len(rawLeafBase), tree.BaseWidth())
+	}
+	if len(rawLeafExt) != tree.ExtWidth() {
+		return commitment.WMerkleProof{}, fmt.Errorf("extension raw leaf width %d, tree expects %d", len(rawLeafExt), tree.ExtWidth())
+	}
+	return commitment.WMerkleProof{RawLeafBase: rawLeafBase, RawLeafExt: rawLeafExt, Proof: pth}, nil
 }
 
 // SampleEvaluations opens every committed polynomial at every FRI query
@@ -710,7 +763,7 @@ func (pr *proverRuntime) SampleEvaluations() error {
 	for q, s := range pr.queryPositions {
 		samplings := make([]commitment.WMerkleProof, pr.layout.NumTrees)
 		for i, tree := range pr.allTrees {
-			wp, err := openWMerkleAt(tree, s)
+			wp, err := openWMerkleAt(tree, pr.openingSources[i], s, &pr.domainCache)
 			if err != nil {
 				return fmt.Errorf("SampleEvaluations: tree %d query %d: %w", i, q, err)
 			}

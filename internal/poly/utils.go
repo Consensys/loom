@@ -18,6 +18,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
+	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 )
 
 // isPowerOfTwo checks if n is a power of two
@@ -85,6 +86,105 @@ func LagrangeAtZetaExt(zeta ext.E4, N, i int) ext.E4 {
 
 	numerator.Mul(&numerator, &denominator)
 	return numerator
+}
+
+// LagrangeWeightsOnExtendedDomainRoot returns the evaluations of the Lagrange
+// basis over d at bigD.Generator^rootIndex. It supports the common case where
+// d is a subgroup domain of bigD, but does not rely on that relationship.
+func LagrangeWeightsOnExtendedDomainRoot(d *fft.Domain, bigD *fft.Domain, rootIndex int) []koalabear.Element {
+	N := int(d.Cardinality)
+	weights := make([]koalabear.Element, N)
+	if N == 1 {
+		weights[0].SetOne()
+		return weights
+	}
+
+	bigN := int(bigD.Cardinality)
+	rootIndex %= bigN
+	if rootIndex < 0 {
+		rootIndex += bigN
+	}
+
+	var x koalabear.Element
+	if rootIndex == 0 {
+		x.SetOne()
+	} else {
+		x.Exp(bigD.Generator, big.NewInt(int64(rootIndex)))
+	}
+
+	denominators := make([]koalabear.Element, N)
+	var h koalabear.Element
+	h.SetOne()
+	for i := 0; i < N; i++ {
+		denominators[i].Sub(&x, &h)
+		if denominators[i].IsZero() {
+			weights[i].SetOne()
+			return weights
+		}
+		h.Mul(&h, &d.Generator)
+	}
+
+	invDenominators := koalabear.BatchInvert(denominators)
+
+	var xN, one, common, nInv, nElt koalabear.Element
+	xN.Exp(x, big.NewInt(int64(N)))
+	one.SetOne()
+	common.Sub(&xN, &one)
+	nElt.SetUint64(uint64(N))
+	nInv.Inverse(&nElt)
+	common.Mul(&common, &nInv)
+
+	h.SetOne()
+	for i := 0; i < N; i++ {
+		weights[i].Mul(&common, &h)
+		weights[i].Mul(&weights[i], &invDenominators[i])
+		h.Mul(&h, &d.Generator)
+	}
+	return weights
+}
+
+// EvaluateLagrangeWithWeights evaluates a base-field polynomial in Lagrange
+// form using precomputed Lagrange basis weights for the same domain.
+func EvaluateLagrangeWithWeights(p Polynomial, weights []koalabear.Element) koalabear.Element {
+	if len(p) != len(weights) {
+		panic("EvaluateLagrangeWithWeights: length mismatch")
+	}
+	var res koalabear.Element
+	for i := range p {
+		var term koalabear.Element
+		term.Mul(&p[i], &weights[i])
+		res.Add(&res, &term)
+	}
+	return res
+}
+
+// ExtEvaluateLagrangeWithWeights is the extension-field counterpart of
+// EvaluateLagrangeWithWeights. The Lagrange weights live in the base field.
+func ExtEvaluateLagrangeWithWeights(p ExtPolynomial, weights []koalabear.Element) ext.E4 {
+	if len(p) != len(weights) {
+		panic("ExtEvaluateLagrangeWithWeights: length mismatch")
+	}
+	var res ext.E4
+	for i := range p {
+		var term ext.E4
+		term.MulByElement(&p[i], &weights[i])
+		res.Add(&res, &term)
+	}
+	return res
+}
+
+// EvaluateOnExtendedDomainRoot evaluates p, given in Lagrange form over d, at
+// bigD.Generator^rootIndex.
+func EvaluateOnExtendedDomainRoot(p Polynomial, d *fft.Domain, bigD *fft.Domain, rootIndex int) koalabear.Element {
+	weights := LagrangeWeightsOnExtendedDomainRoot(d, bigD, rootIndex)
+	return EvaluateLagrangeWithWeights(p, weights)
+}
+
+// ExtEvaluateOnExtendedDomainRoot is the extension-field counterpart of
+// EvaluateOnExtendedDomainRoot.
+func ExtEvaluateOnExtendedDomainRoot(p ExtPolynomial, d *fft.Domain, bigD *fft.Domain, rootIndex int) ext.E4 {
+	weights := LagrangeWeightsOnExtendedDomainRoot(d, bigD, rootIndex)
+	return ExtEvaluateLagrangeWithWeights(p, weights)
 }
 
 // nextPowerOfTwo is an alias for NextPowerOfTwo for internal use

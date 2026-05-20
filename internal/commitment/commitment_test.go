@@ -53,17 +53,18 @@ func TestRSCommitDualRailProofSerialisation(t *testing.T) {
 	}
 
 	const leafIdx = 1
-	proof, err := tree.Tree.OpenProof(leafIdx)
+	proof, err := tree.OpenProof(leafIdx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	leafData := SerializeRawLeaf(tree.BaseLeaf(leafIdx), tree.ExtLeaf(leafIdx))
+	baseLeaf, extLeaf := rawLeafFromPolys(committer, basePolys, extPolys, leafIdx)
+	leafData := SerializeRawLeaf(baseLeaf, extLeaf)
 	if !merkle.Verify(tree.Root(), proof, leafData, LeafHash, NodeHash) {
 		t.Fatal("dual-rail Merkle proof did not verify")
 	}
 }
 
-func TestWMerkleTreeOpenCopiesFlatLeafData(t *testing.T) {
+func TestWMerkleTreeOpenProof(t *testing.T) {
 	basePolys := []poly.Polynomial{
 		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},
 		{baseElement(5), baseElement(6), baseElement(7), baseElement(8)},
@@ -84,26 +85,15 @@ func TestWMerkleTreeOpenCopiesFlatLeafData(t *testing.T) {
 	}
 
 	const leafIdx = 2
-	proof, err := tree.Open(leafIdx)
+	proof, err := tree.OpenProof(leafIdx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(proof.RawLeafBase) != tree.BaseWidth() {
-		t.Fatalf("RawLeafBase length = %d, want %d", len(proof.RawLeafBase), tree.BaseWidth())
-	}
-	if len(proof.RawLeafExt) != tree.ExtWidth() {
-		t.Fatalf("RawLeafExt length = %d, want %d", len(proof.RawLeafExt), tree.ExtWidth())
-	}
-	if len(proof.RawLeafBase) > 0 && &proof.RawLeafBase[0] == &tree.BaseLeaf(leafIdx)[0] {
-		t.Fatal("Open returned aliased base leaf data")
-	}
-	if len(proof.RawLeafExt) > 0 && &proof.RawLeafExt[0] == &tree.ExtLeaf(leafIdx)[0] {
-		t.Fatal("Open returned aliased ext leaf data")
-	}
 
-	leafData := SerializeRawLeaf(proof.RawLeafBase, proof.RawLeafExt)
-	if !merkle.Verify(tree.Root(), proof.Proof, leafData, LeafHash, NodeHash) {
-		t.Fatal("opened flat-layout Merkle proof did not verify")
+	baseLeaf, extLeaf := rawLeafFromPolys(committer, basePolys, extPolys, leafIdx)
+	leafData := SerializeRawLeaf(baseLeaf, extLeaf)
+	if !merkle.Verify(tree.Root(), proof, leafData, LeafHash, NodeHash) {
+		t.Fatal("opened Merkle proof did not verify")
 	}
 }
 
@@ -221,4 +211,25 @@ func appendExtElement(out []byte, e ext.E4) []byte {
 	out = append(out, e.B1.A0.Marshal()...)
 	out = append(out, e.B1.A1.Marshal()...)
 	return out
+}
+
+func rawLeafFromPolys(committer RSCommit, basePolys []poly.Polynomial, extPolys []poly.ExtPolynomial, leafIdx int) ([]PairBase, []PairExt) {
+	var cache poly.DomainCache
+	halfN := int(committer.Encoder.Domain.Cardinality >> 1)
+
+	baseLeaf := make([]PairBase, len(basePolys))
+	for j, p := range basePolys {
+		encoded := committer.Encoder.Encode(p, cache.Get(uint64(len(p))))
+		baseLeaf[j][0].Set(&encoded[leafIdx])
+		baseLeaf[j][1].Set(&encoded[leafIdx+halfN])
+	}
+
+	extLeaf := make([]PairExt, len(extPolys))
+	for j, p := range extPolys {
+		encoded := committer.Encoder.EncodeExt(p, cache.Get(uint64(len(p))))
+		extLeaf[j][0].Set(&encoded[leafIdx])
+		extLeaf[j][1].Set(&encoded[leafIdx+halfN])
+	}
+
+	return baseLeaf, extLeaf
 }

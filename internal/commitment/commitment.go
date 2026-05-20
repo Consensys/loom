@@ -35,9 +35,6 @@ type WMerkleTree struct {
 	numLeaves int
 	baseWidth int
 	extWidth  int
-
-	unhashedLeafsBase []PairBase // leaf i starts at i*baseWidth
-	unhashedLeafsExt  []PairExt  // leaf i starts at i*extWidth
 }
 
 // PointSampling contains the pair evaluation {f(w^i),f(-w^i)} for batches of
@@ -67,43 +64,10 @@ func (wt WMerkleTree) ExtWidth() int {
 	return wt.extWidth
 }
 
-// BaseLeaf returns the base-field pair evaluations stored for leaf i. The
-// returned slice aliases the tree's opening data.
-func (wt WMerkleTree) BaseLeaf(i int) []PairBase {
-	if wt.baseWidth == 0 {
-		return nil
-	}
-	start := i * wt.baseWidth
-	return wt.unhashedLeafsBase[start : start+wt.baseWidth]
-}
-
-// ExtLeaf returns the extension-field pair evaluations stored for leaf i. The
-// returned slice aliases the tree's opening data.
-func (wt WMerkleTree) ExtLeaf(i int) []PairExt {
-	if wt.extWidth == 0 {
-		return nil
-	}
-	start := i * wt.extWidth
-	return wt.unhashedLeafsExt[start : start+wt.extWidth]
-}
-
-// Open returns the Merkle proof and raw paired evaluations for leaf i.
-func (wt WMerkleTree) Open(i int) (WMerkleProof, error) {
-	pth, err := wt.Tree.OpenProof(i)
-	if err != nil {
-		return WMerkleProof{}, err
-	}
-	var rawLeafBase []PairBase
-	if wt.baseWidth > 0 {
-		rawLeafBase = make([]PairBase, wt.baseWidth)
-		copy(rawLeafBase, wt.BaseLeaf(i))
-	}
-	var rawLeafExt []PairExt
-	if wt.extWidth > 0 {
-		rawLeafExt = make([]PairExt, wt.extWidth)
-		copy(rawLeafExt, wt.ExtLeaf(i))
-	}
-	return WMerkleProof{RawLeafBase: rawLeafBase, RawLeafExt: rawLeafExt, Proof: pth}, nil
+// OpenProof returns the Merkle proof for leaf i. Raw leaf values are
+// reconstructed by the prover from the committed polynomials when needed.
+func (wt WMerkleTree) OpenProof(i int) (merkle.Proof, error) {
+	return wt.Tree.OpenProof(i)
 }
 
 type PairBase = [2]koalabear.Element // used to store the pairs {f_k(w^i), f_k(-w^i)}
@@ -195,22 +159,16 @@ func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolyn
 		baseWidth: len(encodedBase),
 		extWidth:  len(encodedExt),
 	}
-	if len(encodedBase) > 0 {
-		wTree.unhashedLeafsBase = make([]PairBase, halfN*len(encodedBase))
-	}
-	if len(encodedExt) > 0 {
-		wTree.unhashedLeafsExt = make([]PairExt, halfN*len(encodedExt))
-	}
+	baseLeaf := make([]PairBase, len(encodedBase))
+	extLeaf := make([]PairExt, len(encodedExt))
 	leafBuf := make([]byte, rawLeafSizeForWidths(len(encodedBase), len(encodedExt)))
 	for i := 0; i < halfN; i++ {
-		baseLeaf := wTree.BaseLeaf(i)
 		if len(encodedBase) > 0 {
 			for j := range encodedBase {
 				baseLeaf[j][0].Set(&encodedBase[j][i])
 				baseLeaf[j][1].Set(&encodedBase[j][i+halfN])
 			}
 		}
-		extLeaf := wTree.ExtLeaf(i)
 		if len(encodedExt) > 0 {
 			for j := range encodedExt {
 				extLeaf[j][0].Set(&encodedExt[j][i])
