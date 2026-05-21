@@ -202,8 +202,9 @@ func (vr *verifierRunTime) deriveDeepAlpha() error {
 	return setExtFromBytes(&vr.alpha, alphaBytes)
 }
 
-// TODO the verifier should fetch the public values from the vanishing expressions, and look them up
-// in proof.PublicColumns, but not just trust proof.PublicColumns
+// TODO bind the exposed values to FS -> either we add a step to bind the exposed values alone to FS
+// OR we commit to the exposed columns, and use computeExposedColumns only to let the verifier recompute the exposed column at zeta
+// and check thatit matches the prover's exposed columns at zeta
 func (vr *verifierRunTime) computeExposedColumns() error {
 	for _, m := range vr.program.Modules {
 		leafs := m.VanishingRelation.Leaves(expr.NewConfig(expr.OnlyExposedColumns...))
