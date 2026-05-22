@@ -18,6 +18,7 @@ import (
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/merkle"
+	"github.com/consensys/loom/internal/parallel"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/internal/reedsolomon"
 )
@@ -190,25 +191,42 @@ func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolyn
 		baseWidth: len(encodedBase),
 		extWidth:  len(encodedExt),
 	}
-	baseLeaf := make([]PairBase, len(encodedBase))
-	extLeaf := make([]PairExt, len(encodedExt))
-	for i := 0; i < halfN; i++ {
-		if len(encodedBase) > 0 {
-			for j := range encodedBase {
-				baseLeaf[j][0].Set(&encodedBase[j][i])
-				baseLeaf[j][1].Set(&encodedBase[j][i+halfN])
+	parallel.Execute(halfN, func(start, end int) {
+		baseLeaf := make([]PairBase, len(encodedBase))
+		extLeaf := make([]PairExt, len(encodedExt))
+		for i := start; i < end; i++ {
+			if len(encodedBase) > 0 {
+				for j := range encodedBase {
+					baseLeaf[j][0].Set(&encodedBase[j][i])
+					baseLeaf[j][1].Set(&encodedBase[j][i+halfN])
+				}
 			}
-		}
-		if len(encodedExt) > 0 {
-			for j := range encodedExt {
-				extLeaf[j][0].Set(&encodedExt[j][i])
-				extLeaf[j][1].Set(&encodedExt[j][i+halfN])
+			if len(encodedExt) > 0 {
+				for j := range encodedExt {
+					extLeaf[j][0].Set(&encodedExt[j][i])
+					extLeaf[j][1].Set(&encodedExt[j][i+halfN])
+				}
 			}
+			_ = tree.BuildIthLeaf(rs.LeafHasher.HashLeaf(baseLeaf, extLeaf), i)
 		}
-		if err := tree.BuildIthLeaf(rs.LeafHasher.HashLeaf(baseLeaf, extLeaf), i); err != nil {
-			return WMerkleTree{}, err
-		}
-	}
+	})
+	// for i := 0; i < halfN; i++ {
+	// 	if len(encodedBase) > 0 {
+	// 		for j := range encodedBase {
+	// 			baseLeaf[j][0].Set(&encodedBase[j][i])
+	// 			baseLeaf[j][1].Set(&encodedBase[j][i+halfN])
+	// 		}
+	// 	}
+	// 	if len(encodedExt) > 0 {
+	// 		for j := range encodedExt {
+	// 			extLeaf[j][0].Set(&encodedExt[j][i])
+	// 			extLeaf[j][1].Set(&encodedExt[j][i+halfN])
+	// 		}
+	// 	}
+	// 	if err := tree.BuildIthLeaf(rs.LeafHasher.HashLeaf(baseLeaf, extLeaf), i); err != nil {
+	// 		return WMerkleTree{}, err
+	// 	}
+	// }
 	tree.BuildNodes()
 
 	return wTree, nil
