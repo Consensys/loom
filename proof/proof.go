@@ -29,6 +29,8 @@ type Commitment struct {
 }
 
 type Proof struct {
+	HashBackendID string
+
 	ValuesAtZeta  map[string]extensions.E4 // map string -> evaluation of the column whose String() is the key at zeta
 	ExposedValues ExposedValues            // map column name -> values exposed to the verifier
 

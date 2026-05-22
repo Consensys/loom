@@ -39,8 +39,9 @@ import (
 )
 
 type Config struct {
-	EmulateFS bool
-	SkipFRI   bool
+	EmulateFS   bool
+	SkipFRI     bool
+	HashBackend commitment.HashBackend
 }
 
 type Option func(c *Config) error
@@ -55,6 +56,13 @@ func EmulateFS() Option {
 func SkipFRI() Option {
 	return func(c *Config) error {
 		c.SkipFRI = true
+		return nil
+	}
+}
+
+func WithHashBackend(backend commitment.HashBackend) Option {
+	return func(c *Config) error {
+		c.HashBackend = backend
 		return nil
 	}
 }
@@ -89,10 +97,17 @@ type proverRuntime struct {
 	queryPositions []int
 	fs             *fiatshamir.Transcript
 	domainCache    poly.DomainCache
+	hashBackend    commitment.HashBackend
 }
 
 func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs public.Inputs, program board.Program, config Config) (proverRuntime, error) {
 	var err error
+	hashBackend, err := commitment.ResolveHashBackend(config.HashBackend, provingKey.HashBackendID)
+	if err != nil {
+		return proverRuntime{}, err
+	}
+	config.HashBackend = hashBackend
+
 	if len(provingKey.Trace.Base) > 0 || len(provingKey.Trace.Ext) > 0 {
 		t, err = trace.MergeMatching(t, provingKey.Trace)
 		if err != nil {
@@ -109,7 +124,9 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 		setup:        provingKey,
 		airTrace:     trace.New(),
 		mu:           sync.Mutex{}, // mutex to protect the trace when reading/writing (in case of parallelisation)
+		hashBackend:  hashBackend,
 	}
+	res.Proof.HashBackendID = hashBackend.ID
 
 	// Build the canonical commitment layout for this run.
 	res.layout = BuildLayout(program, len(provingKey.Trees))
@@ -135,7 +152,7 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 		}
 	}
 
-	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, commitment.DefaultLeafHasher, commitment.DefaultNodeHasher)
+	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, hashBackend.LeafHasher, hashBackend.NodeHasher)
 	if err != nil {
 		return res, err
 	}
@@ -144,8 +161,7 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 
 	// initialize FS transcript and pre-register all challenges
 	// (challenge@loom_0..n-1, zeta, and alpha_DEEP)
-	fsHasher := hash.NewPoseidon2SpongeHasher()
-	res.fs = fiatshamir.NewTranscript(&fsHasher)
+	res.fs = fiatshamir.NewTranscript(hashBackend.NewTranscriptHasher())
 	numRounds := len(program.FScolumnsDependencies)
 	for i := 0; i < numRounds; i++ {
 		res.fs.NewChallenge(constants.CanonicalChallengeName(i))
@@ -153,13 +169,21 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
 	res.fs.NewChallenge(constants.DEEP_ALPHA)
 
-	// Bind every setup tree's root to challenge_0 (decreasing-N order, set by Setup) + public inputs
+	initialChallenge := constants.InitialChallengeName(numRounds)
+	if err := res.fs.Bind(initialChallenge, hash.StringToElements(constants.HASH_BACKEND_DOMAIN_TAG, hashBackend.ID)); err != nil {
+		return res, err
+	}
+
+	// Bind every setup tree's root to the first challenge (decreasing-N order,
+	// set by Setup) + public inputs.
 	for _, tree := range provingKey.Trees {
 		root := tree.Root()
-		res.fs.Bind(constants.CanonicalChallengeName(0), root[:])
+		if err := res.fs.Bind(initialChallenge, root[:]); err != nil {
+			return res, err
+		}
 	}
 	if len(publicInputs) > 0 {
-		if err := res.fs.Bind(constants.CanonicalChallengeName(0), publicInputs.TranscriptElements()); err != nil {
+		if err := res.fs.Bind(initialChallenge, publicInputs.TranscriptElements()); err != nil {
 			return res, err
 		}
 	}
@@ -317,7 +341,7 @@ func (pr *proverRuntime) commitTraceRound(roundIdx int, challengeName string) er
 	base := pr.layout.TraceBegin[roundIdx]
 	for i, N := range sizes {
 		group := polysByN[N]
-		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), commitment.DefaultLeafHasher, commitment.DefaultNodeHasher, &pr.domainCache)
+		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), pr.hashBackend.LeafHasher, pr.hashBackend.NodeHasher, &pr.domainCache)
 		tree, err := committer.Commit(group.base, group.ext, commitment.WithDomainCache(&pr.domainCache))
 		if err != nil {
 			return err
@@ -491,7 +515,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	}
 	for i, N := range sizes {
 		group := chunksByN[N]
-		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), commitment.DefaultLeafHasher, commitment.DefaultNodeHasher, &pr.domainCache)
+		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), pr.hashBackend.LeafHasher, pr.hashBackend.NodeHasher, &pr.domainCache)
 		tree, err := committer.Commit(group.base, group.ext, commitment.WithDomainCache(&pr.domainCache))
 		if err != nil {
 			return err

@@ -26,6 +26,73 @@ import (
 )
 
 func TestStatementWitnessProveVerify(t *testing.T) {
+	statement, witness := equalityStatementWitness(t)
+
+	prf, err := loom.Prove(statement, witness, prover.SkipFRI())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := loom.Verify(statement, prf, verifier.SkipFRI()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStatementWitnessProveVerifySHA256HashBackend(t *testing.T) {
+	statement, witness := equalityStatementWitness(t)
+	backend := loom.SHA256HashBackend()
+
+	prf, err := loom.Prove(statement, witness, loom.WithProverHashBackend(backend), prover.SkipFRI())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := prf.HashBackendID, backend.ID; got != want {
+		t.Fatalf("proof hash backend = %q, want %q", got, want)
+	}
+	if err := loom.Verify(statement, prf, loom.WithVerifierHashBackend(backend), verifier.SkipFRI()); err != nil {
+		t.Fatal(err)
+	}
+	if err := loom.Verify(statement, prf, verifier.SkipFRI()); err == nil {
+		t.Fatal("expected verifier hash backend mismatch")
+	}
+}
+
+func TestSetupHashBackendIsUsedByProveAndVerify(t *testing.T) {
+	statement, witness := equalityStatementWitness(t)
+	builder := board.NewBuilder()
+	module := board.NewModule("main")
+	module.N = 4
+	module.AssertZero(expr.Col("A").Sub(expr.Col("B")))
+	builder.AddModule(module)
+	builder.MakeColumnPublic("main", "A")
+	program, err := board.Compile(&builder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statement.Program = program
+
+	backend := loom.SHA256HashBackend()
+	pk, vk, err := loom.Setup(witness.Trace, program, loom.WithSetupHashBackend(backend))
+	if err != nil {
+		t.Fatal(err)
+	}
+	statement.VerificationKey = vk
+	witness.ProvingKey = pk
+
+	prf, err := loom.Prove(statement, witness, prover.SkipFRI())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := prf.HashBackendID, backend.ID; got != want {
+		t.Fatalf("proof hash backend = %q, want %q", got, want)
+	}
+	if err := loom.Verify(statement, prf, verifier.SkipFRI()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func equalityStatementWitness(t *testing.T) (loom.Statement, loom.Witness) {
+	t.Helper()
+
 	builder := board.NewBuilder()
 	module := board.NewModule("main")
 	module.N = 4
@@ -51,11 +118,5 @@ func TestStatementWitnessProveVerify(t *testing.T) {
 	statement := loom.Statement{Program: program}
 	witness := loom.Witness{Trace: tr}
 
-	prf, err := loom.Prove(statement, witness, prover.SkipFRI())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := loom.Verify(statement, prf, verifier.SkipFRI()); err != nil {
-		t.Fatal(err)
-	}
+	return statement, witness
 }

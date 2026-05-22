@@ -1,6 +1,7 @@
 package hash
 
 import (
+	"crypto/sha256"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -163,6 +164,60 @@ func TestPoseidon2SpongeHasherWriteExtMatchesCoordinates(t *testing.T) {
 func TestPoseidon2SpongeHasherSumIsIdempotentAndResettable(t *testing.T) {
 	input := testElements(SPONGE_RATE + 3)
 	hasher := NewPoseidon2SpongeHasher()
+	hasher.WriteElements(input...)
+
+	first := hasher.Sum()
+	second := hasher.Sum()
+	if first != second {
+		t.Fatal("Sum changed digest on repeated call")
+	}
+
+	hasher.Reset()
+	hasher.WriteElements(input...)
+	if got := hasher.Sum(); got != first {
+		t.Fatal("Reset did not restore hasher to initial state")
+	}
+}
+
+func TestSHA256FieldHasherWriteExtMatchesCoordinates(t *testing.T) {
+	input := []ext.E4{
+		testExt(1, 2, 3, 4),
+		testExt(5, 6, 7, 8),
+	}
+
+	withExt := NewSHA256FieldHasher()
+	withExt.WriteExt(input...)
+
+	withElements := NewSHA256FieldHasher()
+	for _, e := range input {
+		withElements.WriteElements(e.B0.A0, e.B0.A1, e.B1.A0, e.B1.A1)
+	}
+
+	if got, want := withExt.Sum(), withElements.Sum(); got != want {
+		t.Fatalf("WriteExt digest mismatch")
+	}
+}
+
+func TestSHA256FieldHasherMatchesByteEncoding(t *testing.T) {
+	input := testElements(4)
+	hasher := NewSHA256FieldHasher()
+	hasher.WriteElements(input...)
+
+	ref := sha256.New()
+	for i := range input {
+		b := input[i].Bytes()
+		_, _ = ref.Write(b[:])
+	}
+	var sum [sha256.Size]byte
+	copy(sum[:], ref.Sum(nil))
+	if got, want := hasher.Sum(), DigestFromBytes32(sum); got != want {
+		t.Fatalf("digest mismatch")
+	}
+}
+
+func TestSHA256FieldHasherSumIsIdempotentAndResettable(t *testing.T) {
+	input := testElements(7)
+	hasher := NewSHA256FieldHasher()
 	hasher.WriteElements(input...)
 
 	first := hasher.Sum()

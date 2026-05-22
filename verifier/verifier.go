@@ -39,7 +39,8 @@ import (
 )
 
 type Config struct {
-	SkipFRI bool
+	SkipFRI     bool
+	HashBackend commitment.HashBackend
 }
 
 type Option func(c *Config) error
@@ -47,6 +48,13 @@ type Option func(c *Config) error
 func SkipFRI() Option {
 	return func(c *Config) error {
 		c.SkipFRI = true
+		return nil
+	}
+}
+
+func WithHashBackend(backend commitment.HashBackend) Option {
+	return func(c *Config) error {
+		c.HashBackend = backend
 		return nil
 	}
 }
@@ -70,15 +78,27 @@ type verifierRunTime struct {
 	//   setup roots (from VerificationKey) ++ proof.Commitments
 	// roots[i] aligns with proof.PointSamplings[q][i] for any query q.
 	roots []hash.Digest
+
+	hashBackend commitment.HashBackend
 }
 
 func newVerifierRuntime(program board.Program, verificationKey setup.VerificationKey, publicInputs public.Inputs, prf proof.Proof, config Config) (verifierRunTime, error) {
+	hashBackend, err := commitment.ResolveHashBackend(config.HashBackend, verificationKey.HashBackendID)
+	if err != nil {
+		return verifierRunTime{}, err
+	}
+	if prf.HashBackendID != "" && prf.HashBackendID != hashBackend.ID {
+		return verifierRunTime{}, fmt.Errorf("verifier: proof hash backend %q does not match verifier backend %q", prf.HashBackendID, hashBackend.ID)
+	}
+	config.HashBackend = hashBackend
+
 	res := verifierRunTime{
 		config:       config,
 		proof:        prf,
 		publicInputs: publicInputs,
 		program:      program,
 		setup:        verificationKey,
+		hashBackend:  hashBackend,
 	}
 
 	// Build the layout shared with the prover.
@@ -103,8 +123,7 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 		res.roots[res.layout.SetupEnd+i] = root
 	}
 
-	fsHasher := hash.NewPoseidon2SpongeHasher()
-	res.fs = fiatshamir.NewTranscript(&fsHasher)
+	res.fs = fiatshamir.NewTranscript(hashBackend.NewTranscriptHasher())
 	numRounds := len(program.FScolumnsDependencies)
 	for i := 0; i < numRounds; i++ {
 		res.fs.NewChallenge(constants.CanonicalChallengeName(i))
@@ -112,12 +131,20 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
 	res.fs.NewChallenge(constants.DEEP_ALPHA)
 
-	// Bind every setup tree's root to challenge_0 (decreasing-N order, set by Setup) + public inputs
+	initialChallenge := constants.InitialChallengeName(numRounds)
+	if err := res.fs.Bind(initialChallenge, hash.StringToElements(constants.HASH_BACKEND_DOMAIN_TAG, hashBackend.ID)); err != nil {
+		return res, err
+	}
+
+	// Bind every setup tree's root to the first challenge (decreasing-N order,
+	// set by Setup) + public inputs.
 	for _, pkr := range verificationKey.Roots {
-		res.fs.Bind(constants.CanonicalChallengeName(0), pkr[:])
+		if err := res.fs.Bind(initialChallenge, pkr[:]); err != nil {
+			return res, err
+		}
 	}
 	if len(publicInputs) > 0 {
-		if err := res.fs.Bind(constants.CanonicalChallengeName(0), publicInputs.TranscriptElements()); err != nil {
+		if err := res.fs.Bind(initialChallenge, publicInputs.TranscriptElements()); err != nil {
 			return res, err
 		}
 	}
@@ -130,8 +157,7 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 		}
 	}
 
-	var err error
-	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, commitment.DefaultLeafHasher, commitment.DefaultNodeHasher, fri.LightMode())
+	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, hashBackend.LeafHasher, hashBackend.NodeHasher, fri.LightMode())
 	if err != nil {
 		return res, err
 	}
@@ -353,9 +379,9 @@ func (vr *verifierRunTime) checkFRIProof() error {
 
 // verifyWMerkleProof checks wp opens to its leaf data under root, using the
 // same base-then-ext paired-leaf hashing as RSCommit.Commit.
-func verifyWMerkleProof(root hash.Digest, wp commitment.WMerkleProof) bool {
-	leaf := commitment.DefaultLeafHasher.HashLeaf(wp.RawLeafBase, wp.RawLeafExt)
-	return merkle.Verify(root, wp.Proof, leaf, commitment.DefaultNodeHasher)
+func (vr *verifierRunTime) verifyWMerkleProof(root hash.Digest, wp commitment.WMerkleProof) bool {
+	leaf := vr.hashBackend.LeafHasher.HashLeaf(wp.RawLeafBase, wp.RawLeafExt)
+	return merkle.Verify(root, wp.Proof, leaf, vr.hashBackend.NodeHasher)
 }
 
 // checkMerkleProofsPointSampling verifies every WMerkleProof in
@@ -371,7 +397,7 @@ func (vr *verifierRunTime) checkMerkleProofsPointSampling() error {
 			return fmt.Errorf("checkMerkleProofs: PointSamplings[%d] has %d entries, want %d", q, len(samplings), vr.layout.NumTrees)
 		}
 		for i, wp := range samplings {
-			if !verifyWMerkleProof(vr.roots[i], wp) {
+			if !vr.verifyWMerkleProof(vr.roots[i], wp) {
 				return fmt.Errorf("checkMerkleProofs: query %d tree %d: invalid Merkle proof", q, i)
 			}
 		}

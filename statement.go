@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/consensys/loom/board"
+	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/prover"
 	"github.com/consensys/loom/public"
@@ -48,13 +49,38 @@ type ProverOption = prover.Option
 // VerifierOption configures Verify.
 type VerifierOption = verifier.Option
 
+// SetupOption configures Setup.
+type SetupOption = setup.Option
+
+type HashBackend = commitment.HashBackend
+
 type ProvingKey = setup.ProvingKey
 
 type VerificationKey = setup.VerificationKey
 
+func Poseidon2HashBackend() HashBackend {
+	return commitment.Poseidon2HashBackend()
+}
+
+func SHA256HashBackend() HashBackend {
+	return commitment.SHA256HashBackend()
+}
+
+func WithSetupHashBackend(backend HashBackend) SetupOption {
+	return setup.WithHashBackend(backend)
+}
+
+func WithProverHashBackend(backend HashBackend) ProverOption {
+	return prover.WithHashBackend(backend)
+}
+
+func WithVerifierHashBackend(backend HashBackend) VerifierOption {
+	return verifier.WithHashBackend(backend)
+}
+
 // Setup produces the Merkle trees of the precommitted columns + their roots.
-func Setup(t trace.Trace, program board.Program) (ProvingKey, VerificationKey, error) {
-	return setup.Setup(t, program)
+func Setup(t trace.Trace, program board.Program, opts ...SetupOption) (ProvingKey, VerificationKey, error) {
+	return setup.Setup(t, program, opts...)
 }
 
 // Prove produces a proof for statement using witness.
@@ -73,6 +99,11 @@ func Verify(statement Statement, prf proof.Proof, opts ...VerifierOption) error 
 func checkVerificationKey(statement Statement, witnessKey setup.ProvingKey) error {
 	statementKey := statement.VerificationKey
 	witnessKeyForVerifier := witnessKey.VerificationKey()
+	statementBackend := commitment.NormalizeHashBackendID(statementKey.HashBackendID)
+	witnessBackend := commitment.NormalizeHashBackendID(witnessKeyForVerifier.HashBackendID)
+	if statementBackend != witnessBackend {
+		return fmt.Errorf("loom: statement uses hash backend %q, witness uses %q", statementBackend, witnessBackend)
+	}
 	expectedRoots := expectedSetupTreeCount(statement.Program)
 	if len(statementKey.Roots) != expectedRoots {
 		return fmt.Errorf("loom: statement has %d setup roots, program expects %d setup trees", len(statementKey.Roots), expectedRoots)

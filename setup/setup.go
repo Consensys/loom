@@ -30,13 +30,15 @@ import (
 // commitments and Trace contains the fixed columns in Lagrange form, so the
 // prover can evaluate setup columns without carrying them in each witness.
 type ProvingKey struct {
-	Trace trace.Trace
-	Trees []commitment.WMerkleTree
+	HashBackendID string
+	Trace         trace.Trace
+	Trees         []commitment.WMerkleTree
 }
 
 // VerificationKey is the verifier-side setup material.
 type VerificationKey struct {
-	Roots []hash.Digest
+	HashBackendID string
+	Roots         []hash.Digest
 }
 
 // VerificationKey returns the verifier-side roots corresponding to pk.
@@ -45,17 +47,41 @@ func (pk ProvingKey) VerificationKey() VerificationKey {
 	for i, tree := range pk.Trees {
 		res[i] = tree.Root()
 	}
-	return VerificationKey{Roots: res}
+	return VerificationKey{HashBackendID: pk.HashBackendID, Roots: res}
 }
 
-func Setup(t trace.Trace, program board.Program) (ProvingKey, VerificationKey, error) {
+type Config struct {
+	HashBackend commitment.HashBackend
+}
+
+type Option func(c *Config) error
+
+func WithHashBackend(backend commitment.HashBackend) Option {
+	return func(c *Config) error {
+		c.HashBackend = backend
+		return nil
+	}
+}
+
+func Setup(t trace.Trace, program board.Program, opts ...Option) (ProvingKey, VerificationKey, error) {
+	var config Config
+	for _, opt := range opts {
+		if err := opt(&config); err != nil {
+			return ProvingKey{}, VerificationKey{}, err
+		}
+	}
+	hashBackend, err := commitment.ResolveHashBackend(config.HashBackend, "")
+	if err != nil {
+		return ProvingKey{}, VerificationKey{}, err
+	}
+
 	setupTrace, err := setupTraceFromProgram(t, program)
 	if err != nil {
 		return ProvingKey{}, VerificationKey{}, err
 	}
 
 	if len(program.PublicColumns) == 0 {
-		pk := ProvingKey{Trace: setupTrace}
+		pk := ProvingKey{HashBackendID: hashBackend.ID, Trace: setupTrace}
 		return pk, pk.VerificationKey(), nil
 	}
 
@@ -104,14 +130,14 @@ func Setup(t trace.Trace, program board.Program) (ProvingKey, VerificationKey, e
 				extPublic = append(extPublic, p)
 			}
 		}
-		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), commitment.DefaultLeafHasher, commitment.DefaultNodeHasher, &domainCache)
+		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), hashBackend.LeafHasher, hashBackend.NodeHasher, &domainCache)
 		tree, err := committer.Commit(basePublic, extPublic, commitment.WithDomainCache(&domainCache))
 		if err != nil {
 			return ProvingKey{}, VerificationKey{}, err
 		}
 		trees[i] = tree
 	}
-	pk := ProvingKey{Trace: setupTrace, Trees: trees}
+	pk := ProvingKey{HashBackendID: hashBackend.ID, Trace: setupTrace, Trees: trees}
 	return pk, pk.VerificationKey(), nil
 }
 

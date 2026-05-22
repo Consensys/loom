@@ -29,6 +29,7 @@ const NUM_QUERIES = 4
 const RANGE_MODULE = "range"
 const FINAL_EVALUATION_POINT = "__zeta"
 const DEEP_ALPHA = "alpha_DEEP"
+const HASH_BACKEND_DOMAIN_TAG uint64 = 0x48415348 // "HASH"
 const SUFFIX_SHIFT_SPLIT = "_"
 const SUFFIX_SHIFT = "shift"
 const LOGUP = "logup"
@@ -117,6 +118,13 @@ func ParseLagrangeName(name string) (i int) {
 // at a given BFS level in the challenge-dependency DAG.
 func CanonicalChallengeName(level int) string {
 	return fmt.Sprintf("challenge@loom_%d", level)
+}
+
+func InitialChallengeName(numFSRounds int) string {
+	if numFSRounds > 0 {
+		return CanonicalChallengeName(0)
+	}
+	return FINAL_EVALUATION_POINT
 }
 
 func GetShiftedName(name string, shift int) string {
