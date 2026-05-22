@@ -45,6 +45,7 @@ import (
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/prover"
+	"github.com/consensys/loom/public"
 	"github.com/consensys/loom/setup"
 	"github.com/consensys/loom/trace"
 	"github.com/consensys/loom/verifier"
@@ -55,8 +56,8 @@ const verifierCoreModule = "loom_recursion_core"
 // RecursionInput is the proof and verifier context for one recursion step.
 type RecursionInput struct {
 	Program      board.Program
-	Setup        setup.PublicKeyRoots
-	PublicInputs proof.PublicInputs
+	Setup        setup.VerificationKey
+	PublicInputs public.Inputs
 	Proof        proof.Proof
 }
 
@@ -160,13 +161,13 @@ func ProveNextLayer(input RecursionInput, opts ...Option) (RecursionOutput, erro
 		return RecursionOutput{}, err
 	}
 
-	prf, err := prover.Prove(tr, nil, nil, program, config.outerProverOpts...)
+	prf, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, config.outerProverOpts...)
 	if err != nil {
 		return RecursionOutput{}, fmt.Errorf("recursion: prove next layer: %w", err)
 	}
 
 	if !config.forceSkipOuterCheck {
-		if err := verifier.Verify(nil, nil, program, prf, config.outerVerifierOpts...); err != nil {
+		if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf, config.outerVerifierOpts...); err != nil {
 			return RecursionOutput{}, fmt.Errorf("recursion: generated outer proof rejected: %w", err)
 		}
 	}
@@ -176,7 +177,7 @@ func ProveNextLayer(input RecursionInput, opts ...Option) (RecursionOutput, erro
 
 // VerifyOutput verifies a recursive wrapper proof.
 func VerifyOutput(output RecursionOutput, opts ...verifier.Option) error {
-	return verifier.Verify(nil, nil, output.Program, output.Proof, opts...)
+	return verifier.Verify(nil, setup.VerificationKey{}, output.Program, output.Proof, opts...)
 }
 
 // ProveAggregationLayer creates one Loom proof whose verifier-core constraints
@@ -201,13 +202,13 @@ func ProveAggregationLayer(input AggregationInput, opts ...Option) (RecursionOut
 		return RecursionOutput{}, err
 	}
 
-	prf, err := prover.Prove(tr, nil, nil, program, config.outerProverOpts...)
+	prf, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, config.outerProverOpts...)
 	if err != nil {
 		return RecursionOutput{}, fmt.Errorf("recursion: prove aggregation layer: %w", err)
 	}
 
 	if !config.forceSkipOuterCheck {
-		if err := verifier.Verify(nil, nil, program, prf, config.outerVerifierOpts...); err != nil {
+		if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf, config.outerVerifierOpts...); err != nil {
 			return RecursionOutput{}, fmt.Errorf("recursion: generated aggregation proof rejected: %w", err)
 		}
 	}
@@ -238,6 +239,9 @@ func buildVerifierCore(input RecursionInput, config Config) (board.Program, trac
 	cb.namespace = "single"
 
 	if err := cb.addExposedColumnConstraints(input.Program, input.Proof); err != nil {
+		return board.Program{}, trace.Trace{}, err
+	}
+	if err := cb.addPublicInputColumnConstraints(input.Program, input.PublicInputs); err != nil {
 		return board.Program{}, trace.Trace{}, err
 	}
 	if err := cb.addProgramLagrangeConstraints(input.Program); err != nil {
@@ -301,6 +305,9 @@ func buildAggregationCore(input AggregationInput, config Config) (board.Program,
 	if err := cb.addExposedColumnConstraints(input.Left.Program, input.Left.Proof); err != nil {
 		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: left exposed columns: %w", err)
 	}
+	if err := cb.addPublicInputColumnConstraints(input.Left.Program, input.Left.PublicInputs); err != nil {
+		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: left public inputs: %w", err)
+	}
 	if err := cb.addProgramLagrangeConstraints(input.Left.Program); err != nil {
 		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: left lagranges: %w", err)
 	}
@@ -323,6 +330,9 @@ func buildAggregationCore(input AggregationInput, config Config) (board.Program,
 	cb.namespace = "right"
 	if err := cb.addExposedColumnConstraints(input.Right.Program, input.Right.Proof); err != nil {
 		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: right exposed columns: %w", err)
+	}
+	if err := cb.addPublicInputColumnConstraints(input.Right.Program, input.Right.PublicInputs); err != nil {
+		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: right public inputs: %w", err)
 	}
 	if err := cb.addProgramLagrangeConstraints(input.Right.Program); err != nil {
 		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: right lagranges: %w", err)
@@ -517,7 +527,61 @@ func (cb *coreBuilder) addExposedColumnConstraints(program board.Program, prf pr
 	return nil
 }
 
-func (cb *coreBuilder) exposedEntryExpr(name string, entryIndex int, pe proof.PublicEntry) (expr.Expr, error) {
+func (cb *coreBuilder) addPublicInputColumnConstraints(program board.Program, inputs public.Inputs) error {
+	moduleNames := sortedModuleNames(program.Modules)
+	for _, moduleName := range moduleNames {
+		innerModule := program.Modules[moduleName]
+		names := innerModule.VanishingRelation.Leaves(expr.NewConfig(expr.OnlyPublicColumns...))
+		sort.Strings(names)
+		for _, name := range names {
+			pi, ok := inputs[name]
+			if !ok {
+				return fmt.Errorf("recursion: public input column %q not found", name)
+			}
+			if pi.Module != moduleName {
+				return fmt.Errorf("recursion: public input column %q belongs to module %q, used from module %q", name, pi.Module, moduleName)
+			}
+			eval, err := cb.valueExpr(name)
+			if err != nil {
+				return fmt.Errorf("recursion: public input column %q evaluation: %w", name, err)
+			}
+
+			sum := zeroExpr()
+			for entryIndex, pe := range pi.Entries {
+				if pe.Idx < 0 || pe.Idx >= innerModule.N {
+					return fmt.Errorf("recursion: public input column %q entry %d index %d out of bounds for module %q of size %d", name, entryIndex, pe.Idx, moduleName, innerModule.N)
+				}
+
+				lagKey := fmt.Sprintf("public_input.%s.%s.%d.%d.%d", moduleName, name, innerModule.N, pe.Idx, entryIndex)
+				if _, ok := cb.state.values[lagKey]; !ok {
+					cb.setVerifierValue(lagKey, poly.LagrangeAtZetaExt(cb.state.zeta, innerModule.N, pe.Idx))
+				}
+				lag, err := cb.valueExpr(lagKey)
+				if err != nil {
+					return err
+				}
+				if err := cb.addLagrangeConstraint(lagKey, innerModule.N, pe.Idx); err != nil {
+					return fmt.Errorf("recursion: public input column %q entry %d lagrange: %w", name, entryIndex, err)
+				}
+
+				value, err := cb.publicInputEntryExpr(name, entryIndex, pe)
+				if err != nil {
+					return fmt.Errorf("recursion: public input column %q entry %d value: %w", name, entryIndex, err)
+				}
+				sum = sum.Add(value.Mul(lag))
+			}
+
+			cb.module.AssertZero(eval.Sub(sum))
+		}
+	}
+	return nil
+}
+
+func (cb *coreBuilder) publicInputEntryExpr(name string, entryIndex int, pe public.Entry) (expr.Expr, error) {
+	return cb.literalExpr(fmt.Sprintf("public_input.%s.%d", name, entryIndex), pe.ExtValue())
+}
+
+func (cb *coreBuilder) exposedEntryExpr(name string, entryIndex int, pe proof.ExposedEntry) (expr.Expr, error) {
 	return cb.literalExpr(fmt.Sprintf("exposed.%s.%d", name, entryIndex), pe.ExtValue())
 }
 
@@ -721,7 +785,7 @@ func (cb *coreBuilder) addFRIBridgeConstraints(input RecursionInput) error {
 		return fmt.Errorf("recursion: FRI bridge has %d FRI queries, want %d", len(prf.DeepQuotientFriProof.FRIQueries), constants.NUM_QUERIES)
 	}
 
-	layout := prover.BuildLayout(input.Program, len(input.Setup))
+	layout := prover.BuildLayout(input.Program, len(input.Setup.Roots))
 	dqLayout := prover.BuildDeepQuotientLayout(input.Program)
 	if len(dqLayout.Sizes) > 1 && len(prf.DeepQuotientFriProof.LevelQueries) < len(dqLayout.Sizes)-1 {
 		return fmt.Errorf("recursion: FRI bridge has %d level query sets, want at least %d", len(prf.DeepQuotientFriProof.LevelQueries), len(dqLayout.Sizes)-1)
@@ -1155,18 +1219,18 @@ func (cb *coreBuilder) friRoundForLevel(level int) int {
 }
 
 func deriveVerifierState(input RecursionInput, config Config) (verifierState, error) {
-	layout := prover.BuildLayout(input.Program, len(input.Setup))
+	layout := prover.BuildLayout(input.Program, len(input.Setup.Roots))
 	wantCommitments := layout.NumTrees - layout.SetupEnd
 	if len(input.Proof.Commitments) != wantCommitments {
 		return verifierState{}, fmt.Errorf("recursion: proof has %d commitments, layout expects %d", len(input.Proof.Commitments), wantCommitments)
 	}
 
-	if len(input.Setup) != layout.SetupEnd-layout.SetupBegin {
-		return verifierState{}, fmt.Errorf("recursion: setup has %d trees, layout expects %d", len(input.Setup), layout.SetupEnd-layout.SetupBegin)
+	if len(input.Setup.Roots) != layout.SetupEnd-layout.SetupBegin {
+		return verifierState{}, fmt.Errorf("recursion: setup has %d trees, layout expects %d", len(input.Setup.Roots), layout.SetupEnd-layout.SetupBegin)
 	}
 
 	roots := make([][]byte, layout.NumTrees)
-	for i, root := range input.Setup {
+	for i, root := range input.Setup.Roots {
 		roots[layout.SetupBegin+i] = root
 	}
 	for i, root := range input.Proof.Commitments {
@@ -1188,8 +1252,13 @@ func deriveVerifierState(input RecursionInput, config Config) (verifierState, er
 	}
 
 	if numRounds > 0 {
-		for _, root := range input.Setup {
+		for _, root := range input.Setup.Roots {
 			if err := fs.Bind(constants.CanonicalChallengeName(0), root); err != nil {
+				return verifierState{}, err
+			}
+		}
+		if len(input.PublicInputs) > 0 {
+			if err := fs.Bind(constants.CanonicalChallengeName(0), input.PublicInputs.TranscriptBytes()); err != nil {
 				return verifierState{}, err
 			}
 		}
@@ -1229,6 +1298,9 @@ func deriveVerifierState(input RecursionInput, config Config) (verifierState, er
 	}
 
 	if err := computeExposedColumns(values, zeta, input.Program, input.Proof); err != nil {
+		return verifierState{}, err
+	}
+	if err := computePublicInputColumns(values, zeta, input.Program, input.PublicInputs); err != nil {
 		return verifierState{}, err
 	}
 	if err := computeLagranges(values, zeta, input.Program); err != nil {
@@ -1287,6 +1359,36 @@ func computeExposedColumns(values map[string]ext.E4, zeta ext.E4, program board.
 					return fmt.Errorf("recursion: exposed column %q entry: %w", name, err)
 				}
 				tmp := poly.LagrangeAtZetaExt(zeta, innerModule.N, idx)
+				value := pe.ExtValue()
+				tmp.Mul(&tmp, &value)
+				lag.Add(&lag, &tmp)
+			}
+			values[name] = lag
+		}
+	}
+	return nil
+}
+
+func computePublicInputColumns(values map[string]ext.E4, zeta ext.E4, program board.Program, inputs public.Inputs) error {
+	moduleNames := sortedModuleNames(program.Modules)
+	for _, moduleName := range moduleNames {
+		innerModule := program.Modules[moduleName]
+		names := innerModule.VanishingRelation.Leaves(expr.NewConfig(expr.OnlyPublicColumns...))
+		sort.Strings(names)
+		for _, name := range names {
+			pi, ok := inputs[name]
+			if !ok {
+				return fmt.Errorf("recursion: public input column %q not found", name)
+			}
+			if pi.Module != moduleName {
+				return fmt.Errorf("recursion: public input column %q belongs to module %q, used from module %q", name, pi.Module, moduleName)
+			}
+			var lag ext.E4
+			for entryIndex, pe := range pi.Entries {
+				if pe.Idx < 0 || pe.Idx >= innerModule.N {
+					return fmt.Errorf("recursion: public input column %q entry %d index %d out of bounds for module %q of size %d", name, entryIndex, pe.Idx, moduleName, innerModule.N)
+				}
+				tmp := poly.LagrangeAtZetaExt(zeta, innerModule.N, pe.Idx)
 				value := pe.ExtValue()
 				tmp.Mul(&tmp, &value)
 				lag.Add(&lag, &tmp)

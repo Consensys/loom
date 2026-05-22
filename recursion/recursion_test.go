@@ -20,6 +20,7 @@ import (
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/prover"
+	"github.com/consensys/loom/setup"
 	"github.com/consensys/loom/verifier"
 )
 
@@ -49,11 +50,11 @@ func proveFibonacci(t *testing.T, n int) RecursionInput {
 
 	program, a, b := fibonacciProgram(t, n)
 	tr := prover.TraceFibonacci(n, a, b)
-	prf, err := prover.Prove(tr, nil, nil, program, prover.UsePoseidon2())
+	prf, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, prover.UsePoseidon2())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifier.Verify(nil, nil, program, prf, verifier.UsePoseidon2()); err != nil {
+	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf, verifier.UsePoseidon2()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -87,14 +88,14 @@ func proveExposedFibonacci(t *testing.T, n int) RecursionInput {
 
 	program, a, b := exposedFibonacciProgram(t, n)
 	tr := prover.TraceFibonacci(n, a, b)
-	prf, err := prover.Prove(tr, nil, nil, program, prover.UsePoseidon2())
+	prf, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, prover.UsePoseidon2())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(prf.ExposedValues["exposed_b0"].Entries) != 1 {
 		t.Fatalf("expected one exposed entry, got %d", len(prf.ExposedValues["exposed_b0"].Entries))
 	}
-	if err := verifier.Verify(nil, nil, program, prf, verifier.UsePoseidon2()); err != nil {
+	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf, verifier.UsePoseidon2()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -214,11 +215,11 @@ func TestPoseidon2MerkleModuleRejectsBadPointSamplingPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prf, err := prover.Prove(tr, nil, nil, program, prover.UsePoseidon2(), prover.SkipFRI())
+	prf, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, prover.UsePoseidon2(), prover.SkipFRI())
 	if err != nil {
 		return
 	}
-	if err := verifier.Verify(nil, nil, program, prf, verifier.UsePoseidon2(), verifier.SkipFRI()); err == nil {
+	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf, verifier.UsePoseidon2(), verifier.SkipFRI()); err == nil {
 		t.Fatal("expected Poseidon2 Merkle module to reject tampered sibling")
 	}
 }
@@ -248,11 +249,11 @@ func TestPoseidon2MerkleModuleRejectsBadFRIPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prf, err := prover.Prove(tr, nil, nil, program, prover.UsePoseidon2(), prover.SkipFRI())
+	prf, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, prover.UsePoseidon2(), prover.SkipFRI())
 	if err != nil {
 		return
 	}
-	if err := verifier.Verify(nil, nil, program, prf, verifier.UsePoseidon2(), verifier.SkipFRI()); err == nil {
+	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf, verifier.UsePoseidon2(), verifier.SkipFRI()); err == nil {
 		t.Fatal("expected Poseidon2 Merkle module to reject tampered FRI sibling")
 	}
 }

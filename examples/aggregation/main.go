@@ -22,6 +22,7 @@ import (
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/prover"
 	"github.com/consensys/loom/recursion"
+	"github.com/consensys/loom/setup"
 	"github.com/consensys/loom/trace"
 	"github.com/consensys/loom/verifier"
 )
@@ -46,11 +47,11 @@ func main() {
 
 func proveFibonacci(n int) recursion.RecursionInput {
 	program, tr := fibonacciInstance(n)
-	prf, err := prover.Prove(tr, nil, nil, program, prover.UsePoseidon2())
+	prf, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, prover.UsePoseidon2())
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := verifier.Verify(nil, nil, program, prf, verifier.UsePoseidon2()); err != nil {
+	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf, verifier.UsePoseidon2()); err != nil {
 		log.Fatal(err)
 	}
 	return recursion.RecursionInput{Program: program, Proof: prf}

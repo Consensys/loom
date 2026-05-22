@@ -218,17 +218,17 @@ func collectPoseidon2TranscriptOps(namespace string, input RecursionInput) ([]po
 }
 
 func recordPoseidon2Transcript(input RecursionInput) (*poseidon2TranscriptRecorder, error) {
-	layout := prover.BuildLayout(input.Program, len(input.Setup))
+	layout := prover.BuildLayout(input.Program, len(input.Setup.Roots))
 	wantCommitments := layout.NumTrees - layout.SetupEnd
 	if len(input.Proof.Commitments) != wantCommitments {
 		return nil, fmt.Errorf("recursion: transcript proof has %d commitments, layout expects %d", len(input.Proof.Commitments), wantCommitments)
 	}
-	if len(input.Setup) != layout.SetupEnd-layout.SetupBegin {
-		return nil, fmt.Errorf("recursion: transcript setup has %d trees, layout expects %d", len(input.Setup), layout.SetupEnd-layout.SetupBegin)
+	if len(input.Setup.Roots) != layout.SetupEnd-layout.SetupBegin {
+		return nil, fmt.Errorf("recursion: transcript setup has %d trees, layout expects %d", len(input.Setup.Roots), layout.SetupEnd-layout.SetupBegin)
 	}
 
 	roots := make([][]byte, layout.NumTrees)
-	for i, root := range input.Setup {
+	for i, root := range input.Setup.Roots {
 		roots[layout.SetupBegin+i] = root
 	}
 	for i, root := range input.Proof.Commitments {
@@ -250,8 +250,13 @@ func recordPoseidon2Transcript(input RecursionInput) (*poseidon2TranscriptRecord
 	}
 
 	if numRounds > 0 {
-		for _, root := range input.Setup {
+		for _, root := range input.Setup.Roots {
 			if err := recorder.Bind(constants.CanonicalChallengeName(0), root); err != nil {
+				return nil, err
+			}
+		}
+		if len(input.PublicInputs) > 0 {
+			if err := recorder.Bind(constants.CanonicalChallengeName(0), input.PublicInputs.TranscriptBytes()); err != nil {
 				return nil, err
 			}
 		}
@@ -499,13 +504,13 @@ func poseidon2FRILevelAtRound(maxN int, levelDs []int) (map[int]int, error) {
 }
 
 func collectPoseidon2PointSamplingMerkleOps(namespace string, input RecursionInput) ([]poseidon2Op, error) {
-	layout := prover.BuildLayout(input.Program, len(input.Setup))
+	layout := prover.BuildLayout(input.Program, len(input.Setup.Roots))
 	if len(input.Proof.PointSamplings) != constants.NUM_QUERIES {
 		return nil, fmt.Errorf("recursion: point-sampling Merkle has %d queries, want %d", len(input.Proof.PointSamplings), constants.NUM_QUERIES)
 	}
 
 	roots := make([][]byte, layout.NumTrees)
-	for i, root := range input.Setup {
+	for i, root := range input.Setup.Roots {
 		roots[layout.SetupBegin+i] = root
 	}
 	for i, root := range input.Proof.Commitments {
