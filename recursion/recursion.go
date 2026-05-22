@@ -237,7 +237,7 @@ func buildVerifierCore(input RecursionInput, config Config) (board.Program, trac
 	cb := newCoreBuilder(&module, state)
 	cb.namespace = "single"
 
-	if err := cb.addPublicColumnConstraints(input.Proof); err != nil {
+	if err := cb.addExposedColumnConstraints(input.Program, input.Proof); err != nil {
 		return board.Program{}, trace.Trace{}, err
 	}
 	if err := cb.addProgramLagrangeConstraints(input.Program); err != nil {
@@ -298,8 +298,8 @@ func buildAggregationCore(input AggregationInput, config Config) (board.Program,
 
 	cb.state = leftState
 	cb.namespace = "left"
-	if err := cb.addPublicColumnConstraints(input.Left.Proof); err != nil {
-		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: left public columns: %w", err)
+	if err := cb.addExposedColumnConstraints(input.Left.Program, input.Left.Proof); err != nil {
+		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: left exposed columns: %w", err)
 	}
 	if err := cb.addProgramLagrangeConstraints(input.Left.Program); err != nil {
 		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: left lagranges: %w", err)
@@ -321,8 +321,8 @@ func buildAggregationCore(input AggregationInput, config Config) (board.Program,
 
 	cb.state = rightState
 	cb.namespace = "right"
-	if err := cb.addPublicColumnConstraints(input.Right.Proof); err != nil {
-		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: right public columns: %w", err)
+	if err := cb.addExposedColumnConstraints(input.Right.Program, input.Right.Proof); err != nil {
+		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: right exposed columns: %w", err)
 	}
 	if err := cb.addProgramLagrangeConstraints(input.Right.Program); err != nil {
 		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: right lagranges: %w", err)
@@ -469,48 +469,56 @@ func (cb *coreBuilder) setVerifierValue(key string, value ext.E4) {
 	cb.state.values[key] = value
 }
 
-func (cb *coreBuilder) addPublicColumnConstraints(prf proof.Proof) error {
-	names := sortedPublicColumnNames(prf.PublicColumns)
-	for _, name := range names {
-		pi := prf.PublicColumns[name]
-		eval, err := cb.valueExpr(name)
-		if err != nil {
-			return fmt.Errorf("recursion: public column %q evaluation: %w", name, err)
+func (cb *coreBuilder) addExposedColumnConstraints(program board.Program, prf proof.Proof) error {
+	moduleNames := sortedModuleNames(program.Modules)
+	for _, moduleName := range moduleNames {
+		innerModule := program.Modules[moduleName]
+		names := innerModule.VanishingRelation.Leaves(expr.NewConfig(expr.OnlyExposedColumns...))
+		sort.Strings(names)
+		for _, name := range names {
+			pi, ok := prf.ExposedValues[name]
+			if !ok {
+				return fmt.Errorf("recursion: exposed column %q not found in proof.ExposedValues", name)
+			}
+			eval, err := cb.valueExpr(name)
+			if err != nil {
+				return fmt.Errorf("recursion: exposed column %q evaluation: %w", name, err)
+			}
+
+			sum := zeroExpr()
+			for entryIndex, pe := range pi.Entries {
+				idx, err := normalizeIndex(pe.Idx, innerModule.N)
+				if err != nil {
+					return fmt.Errorf("recursion: exposed column %q entry %d: %w", name, entryIndex, err)
+				}
+
+				lagKey := fmt.Sprintf("exposed.%s.%s.%d.%d.%d", moduleName, name, innerModule.N, idx, entryIndex)
+				if _, ok := cb.state.values[lagKey]; !ok {
+					cb.setVerifierValue(lagKey, poly.LagrangeAtZetaExt(cb.state.zeta, innerModule.N, idx))
+				}
+				lag, err := cb.valueExpr(lagKey)
+				if err != nil {
+					return err
+				}
+				if err := cb.addLagrangeConstraint(lagKey, innerModule.N, idx); err != nil {
+					return fmt.Errorf("recursion: exposed column %q entry %d lagrange: %w", name, entryIndex, err)
+				}
+
+				value, err := cb.exposedEntryExpr(name, entryIndex, pe)
+				if err != nil {
+					return fmt.Errorf("recursion: exposed column %q entry %d value: %w", name, entryIndex, err)
+				}
+				sum = sum.Add(value.Mul(lag))
+			}
+
+			cb.module.AssertZero(eval.Sub(sum))
 		}
-
-		sum := zeroExpr()
-		for entryIndex, pe := range pi.Entries {
-			idx, err := normalizeIndex(pe.Idx, pi.N)
-			if err != nil {
-				return fmt.Errorf("recursion: public column %q entry %d: %w", name, entryIndex, err)
-			}
-
-			lagKey := fmt.Sprintf("public.%s.%d.%d.%d", name, pi.N, idx, entryIndex)
-			if _, ok := cb.state.values[lagKey]; !ok {
-				cb.setVerifierValue(lagKey, poly.LagrangeAtZetaExt(cb.state.zeta, pi.N, idx))
-			}
-			lag, err := cb.valueExpr(lagKey)
-			if err != nil {
-				return err
-			}
-			if err := cb.addLagrangeConstraint(lagKey, pi.N, idx); err != nil {
-				return fmt.Errorf("recursion: public column %q entry %d lagrange: %w", name, entryIndex, err)
-			}
-
-			value, err := cb.publicEntryExpr(name, entryIndex, pe)
-			if err != nil {
-				return fmt.Errorf("recursion: public column %q entry %d value: %w", name, entryIndex, err)
-			}
-			sum = sum.Add(value.Mul(lag))
-		}
-
-		cb.module.AssertZero(eval.Sub(sum))
 	}
 	return nil
 }
 
-func (cb *coreBuilder) publicEntryExpr(name string, entryIndex int, pe proof.PublicEntry) (expr.Expr, error) {
-	return cb.literalExpr(fmt.Sprintf("public.%s.%d", name, entryIndex), pe.ExtValue())
+func (cb *coreBuilder) exposedEntryExpr(name string, entryIndex int, pe proof.PublicEntry) (expr.Expr, error) {
+	return cb.literalExpr(fmt.Sprintf("exposed.%s.%d", name, entryIndex), pe.ExtValue())
 }
 
 func (cb *coreBuilder) addProgramLagrangeConstraints(program board.Program) error {
@@ -592,9 +600,9 @@ func (cb *coreBuilder) addLogupBusConstraints(program board.Program, prf proof.P
 }
 
 func (cb *coreBuilder) logupPublicEntryExpr(prf proof.Proof, name string) (expr.Expr, error) {
-	pi, ok := prf.PublicColumns[name]
+	pi, ok := prf.ExposedValues[name]
 	if !ok {
-		return nil, fmt.Errorf("public column not found")
+		return nil, fmt.Errorf("exposed column not found")
 	}
 	if len(pi.Entries) != 1 {
 		return nil, fmt.Errorf("has %d entries, want 1", len(pi.Entries))
@@ -1220,7 +1228,9 @@ func deriveVerifierState(input RecursionInput, config Config) (verifierState, er
 		return verifierState{}, err
 	}
 
-	computePublicColumns(values, zeta, input.Proof)
+	if err := computeExposedColumns(values, zeta, input.Program, input.Proof); err != nil {
+		return verifierState{}, err
+	}
 	if err := computeLagranges(values, zeta, input.Program); err != nil {
 		return verifierState{}, err
 	}
@@ -1259,17 +1269,32 @@ func setExtFromBytes(z *ext.E4, b []byte) error {
 	return nil
 }
 
-func computePublicColumns(values map[string]ext.E4, zeta ext.E4, prf proof.Proof) {
-	for name, pi := range prf.PublicColumns {
-		var lag ext.E4
-		for _, pe := range pi.Entries {
-			tmp := poly.LagrangeAtZetaExt(zeta, pi.N, pe.Idx)
-			value := pe.ExtValue()
-			tmp.Mul(&tmp, &value)
-			lag.Add(&lag, &tmp)
+func computeExposedColumns(values map[string]ext.E4, zeta ext.E4, program board.Program, prf proof.Proof) error {
+	moduleNames := sortedModuleNames(program.Modules)
+	for _, moduleName := range moduleNames {
+		innerModule := program.Modules[moduleName]
+		names := innerModule.VanishingRelation.Leaves(expr.NewConfig(expr.OnlyExposedColumns...))
+		sort.Strings(names)
+		for _, name := range names {
+			pi, ok := prf.ExposedValues[name]
+			if !ok {
+				return fmt.Errorf("recursion: exposed column %q not found in proof.ExposedValues", name)
+			}
+			var lag ext.E4
+			for _, pe := range pi.Entries {
+				idx, err := normalizeIndex(pe.Idx, innerModule.N)
+				if err != nil {
+					return fmt.Errorf("recursion: exposed column %q entry: %w", name, err)
+				}
+				tmp := poly.LagrangeAtZetaExt(zeta, innerModule.N, idx)
+				value := pe.ExtValue()
+				tmp.Mul(&tmp, &value)
+				lag.Add(&lag, &tmp)
+			}
+			values[name] = lag
 		}
-		values[name] = lag
 	}
+	return nil
 }
 
 func computeLagranges(values map[string]ext.E4, zeta ext.E4, program board.Program) error {
@@ -1478,15 +1503,6 @@ func friSerialiseExt(poly []ext.E4) []byte {
 		offset += koalabear.Bytes
 	}
 	return buf
-}
-
-func sortedPublicColumnNames(cols map[string]proof.PublicInput) []string {
-	names := make([]string, 0, len(cols))
-	for name := range cols {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }
 
 func sortedModuleNames(modules map[string]board.CompiledModule) []string {

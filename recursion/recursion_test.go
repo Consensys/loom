@@ -60,8 +60,61 @@ func proveFibonacci(t *testing.T, n int) RecursionInput {
 	return RecursionInput{Program: program, Proof: prf}
 }
 
+func exposedFibonacciProgram(t *testing.T, n int) (board.Program, koalabear.Element, koalabear.Element) {
+	t.Helper()
+
+	builder := board.NewBuilder()
+	module := board.NewModule("fibonacci")
+	module.N = n
+	module.AssertZeroExceptAt(expr.Rot("A", 1).Sub(expr.Col("B")), n-1)
+	module.AssertZeroExceptAt(expr.Rot("B", 1).Sub(expr.Col("C")), n-1)
+	module.AssertZero(expr.Col("C").Sub(expr.Col("A")).Sub(expr.Col("B")))
+	builder.AddModule(module)
+	builder.AddExposeIthValueStep("fibonacci", expr.Col("B"), "exposed_b0", 0)
+
+	program, err := board.Compile(&builder)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var a, b koalabear.Element
+	b.SetOne()
+	return program, a, b
+}
+
+func proveExposedFibonacci(t *testing.T, n int) RecursionInput {
+	t.Helper()
+
+	program, a, b := exposedFibonacciProgram(t, n)
+	tr := prover.TraceFibonacci(n, a, b)
+	prf, err := prover.Prove(tr, nil, nil, program, prover.UsePoseidon2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prf.ExposedValues["exposed_b0"].Entries) != 1 {
+		t.Fatalf("expected one exposed entry, got %d", len(prf.ExposedValues["exposed_b0"].Entries))
+	}
+	if err := verifier.Verify(nil, nil, program, prf, verifier.UsePoseidon2()); err != nil {
+		t.Fatal(err)
+	}
+
+	return RecursionInput{Program: program, Proof: prf}
+}
+
 func TestProveNextLayerPoseidon2(t *testing.T) {
 	input := proveFibonacci(t, 4)
+
+	output, err := ProveNextLayer(input, UsePoseidon2(), SkipOuterFRI())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyOutput(output, verifier.UsePoseidon2(), verifier.SkipFRI()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProveNextLayerPoseidon2WithExposedValue(t *testing.T) {
+	input := proveExposedFibonacci(t, 4)
 
 	output, err := ProveNextLayer(input, UsePoseidon2(), SkipOuterFRI())
 	if err != nil {
