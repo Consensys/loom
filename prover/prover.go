@@ -14,12 +14,10 @@
 package prover
 
 import (
-	"crypto/sha256"
 	"fmt"
 	"sort"
 	"sync"
 
-	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
@@ -29,7 +27,9 @@ import (
 	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
+	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/fri"
+	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/internal/reedsolomon"
 	"github.com/consensys/loom/proof"
@@ -125,7 +125,7 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 	if err := res.initSetupOpeningSources(); err != nil {
 		return proverRuntime{}, err
 	}
-	res.Proof.Commitments = make([][]byte, res.layout.NumTrees-res.layout.SetupEnd)
+	res.Proof.Commitments = make([]hash.HashOutput, res.layout.NumTrees-res.layout.SetupEnd)
 
 	// find the largest module size N in program (used to size FRI's outer domain)
 	maxN := 0
@@ -135,7 +135,7 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 		}
 	}
 
-	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, commitment.LeafHash, commitment.NodeHash)
+	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, commitment.DefaultLeafHasher, commitment.DefaultNodeHasher)
 	if err != nil {
 		return res, err
 	}
@@ -144,7 +144,8 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 
 	// initialize FS transcript and pre-register all challenges
 	// (challenge@loom_0..n-1, zeta, and alpha_DEEP)
-	res.fs = fiatshamir.NewTranscript(sha256.New())
+	fsHasher := hash.NewPoseidon2MDHasher()
+	res.fs = fiatshamir.NewTranscript(&fsHasher)
 	numRounds := len(program.FScolumnsDependencies)
 	for i := 0; i < numRounds; i++ {
 		res.fs.NewChallenge(constants.CanonicalChallengeName(i))
@@ -154,10 +155,11 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 
 	// Bind every setup tree's root to challenge_0 (decreasing-N order, set by Setup) + public inputs
 	for _, tree := range provingKey.Trees {
-		res.fs.Bind(constants.CanonicalChallengeName(0), tree.Root())
+		root := tree.Root()
+		res.fs.Bind(constants.CanonicalChallengeName(0), root[:])
 	}
 	if len(publicInputs) > 0 {
-		if err := res.fs.Bind(constants.CanonicalChallengeName(0), publicInputs.TranscriptBytes()); err != nil {
+		if err := res.fs.Bind(constants.CanonicalChallengeName(0), publicInputs.TranscriptElements()); err != nil {
 			return res, err
 		}
 	}
@@ -243,17 +245,6 @@ func (pr *proverRuntime) initSetupOpeningSources() error {
 	return nil
 }
 
-func setExtFromBytes(z *ext.E4, b []byte) error {
-	if len(b) < 4*koalabear.Bytes {
-		return fmt.Errorf("need at least %d bytes, got %d", 4*koalabear.Bytes, len(b))
-	}
-	z.B0.A0.SetBytes(b[0*koalabear.Bytes : 1*koalabear.Bytes])
-	z.B0.A1.SetBytes(b[1*koalabear.Bytes : 2*koalabear.Bytes])
-	z.B1.A0.SetBytes(b[2*koalabear.Bytes : 3*koalabear.Bytes])
-	z.B1.A1.SetBytes(b[3*koalabear.Bytes : 4*koalabear.Bytes])
-	return nil
-}
-
 func liftBaseToExt(v koalabear.Element) ext.E4 {
 	var res ext.E4
 	res.Lift(&v)
@@ -326,7 +317,7 @@ func (pr *proverRuntime) commitTraceRound(roundIdx int, challengeName string) er
 	base := pr.layout.TraceBegin[roundIdx]
 	for i, N := range sizes {
 		group := polysByN[N]
-		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash, &pr.domainCache)
+		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), commitment.DefaultLeafHasher, commitment.DefaultNodeHasher, &pr.domainCache)
 		tree, err := committer.Commit(group.base, group.ext, commitment.WithDomainCache(&pr.domainCache))
 		if err != nil {
 			return err
@@ -336,7 +327,7 @@ func (pr *proverRuntime) commitTraceRound(roundIdx int, challengeName string) er
 		pr.openingSources[treeIdx] = newCommitmentOpeningSource(group.base, group.ext, N)
 		root := tree.Root()
 		pr.Proof.Commitments[pr.commitIdxOf(treeIdx)] = root
-		if err := pr.fs.Bind(challengeName, root); err != nil {
+		if err := pr.fs.Bind(challengeName, root[:]); err != nil {
 			return err
 		}
 	}
@@ -374,13 +365,11 @@ func (pr *proverRuntime) ExecuteSteps() error {
 						return fmt.Errorf("ExecuteSteps: compute emulated challenge %s: %w", challengeName, err)
 					}
 				} else {
-					challengeBytes, err := pr.fs.ComputeChallenge(challengeName)
+					challenge, err := pr.fs.ComputeChallenge(challengeName)
 					if err != nil {
 						return err
 					}
-					if err := setExtFromBytes(&challengeVal, challengeBytes); err != nil {
-						return err
-					}
+					challengeVal = hash.OutputToExt(challenge)
 				}
 
 				pr.mu.Lock()
@@ -502,7 +491,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	}
 	for i, N := range sizes {
 		group := chunksByN[N]
-		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash, &pr.domainCache)
+		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), commitment.DefaultLeafHasher, commitment.DefaultNodeHasher, &pr.domainCache)
 		tree, err := committer.Commit(group.base, group.ext, commitment.WithDomainCache(&pr.domainCache))
 		if err != nil {
 			return err
@@ -512,7 +501,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 		pr.openingSources[treeIdx] = newCommitmentOpeningSource(group.base, group.ext, N)
 		root := tree.Root()
 		pr.Proof.Commitments[pr.commitIdxOf(treeIdx)] = root
-		if err := pr.fs.Bind(constants.FINAL_EVALUATION_POINT, root); err != nil {
+		if err := pr.fs.Bind(constants.FINAL_EVALUATION_POINT, root[:]); err != nil {
 			return err
 		}
 	}
@@ -523,13 +512,11 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 			return fmt.Errorf("ComputeAIRQuotients: compute emulated zeta: %w", err)
 		}
 	} else {
-		zetaBytes, err := pr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
+		zeta, err := pr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
 		if err != nil {
 			return err
 		}
-		if err := setExtFromBytes(&pr.zeta, zetaBytes); err != nil {
-			return err
-		}
+		pr.zeta = hash.OutputToExt(zeta)
 	}
 
 	for chunkName, chunkPoly := range pr.airTrace.Base {
@@ -712,7 +699,7 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 		}
 	}
 
-	pr.Proof.DeepQuotientCommitment = make([][]byte, len(levels))
+	pr.Proof.DeepQuotientCommitment = make([]hash.HashOutput, len(levels))
 	for li := range levels {
 		pr.Proof.DeepQuotientCommitment[li] = levels[li].Tree.Root()
 	}

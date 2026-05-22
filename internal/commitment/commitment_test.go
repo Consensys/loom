@@ -14,7 +14,6 @@
 package commitment
 
 import (
-	"bytes"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -23,7 +22,7 @@ import (
 	"github.com/consensys/loom/internal/poly"
 )
 
-func TestRSCommitDualRailProofSerialisation(t *testing.T) {
+func TestRSCommitDualRailProof(t *testing.T) {
 	basePolys := []poly.Polynomial{
 		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},
 		{baseElement(5), baseElement(6), baseElement(7), baseElement(8)},
@@ -37,7 +36,7 @@ func TestRSCommitDualRailProofSerialisation(t *testing.T) {
 		},
 	}
 
-	committer := NewRSCommit(4, 2, LeafHash, NodeHash)
+	committer := NewRSCommit(4, 2, DefaultLeafHasher, DefaultNodeHasher)
 	tree, err := committer.Commit(basePolys, extPolys)
 	if err != nil {
 		t.Fatal(err)
@@ -58,8 +57,8 @@ func TestRSCommitDualRailProofSerialisation(t *testing.T) {
 		t.Fatal(err)
 	}
 	baseLeaf, extLeaf := rawLeafFromPolys(committer, basePolys, extPolys, leafIdx)
-	leafData := SerializeRawLeaf(baseLeaf, extLeaf)
-	if !merkle.Verify(tree.Root(), proof, leafData, LeafHash, NodeHash) {
+	leaf := DefaultLeafHasher.HashLeaf(baseLeaf, extLeaf)
+	if !merkle.Verify(tree.Root(), proof, leaf, DefaultNodeHasher) {
 		t.Fatal("dual-rail Merkle proof did not verify")
 	}
 }
@@ -78,7 +77,7 @@ func TestWMerkleTreeOpenProof(t *testing.T) {
 		},
 	}
 
-	committer := NewRSCommit(4, 2, LeafHash, NodeHash)
+	committer := NewRSCommit(4, 2, DefaultLeafHasher, DefaultNodeHasher)
 	tree, err := committer.Commit(basePolys, extPolys)
 	if err != nil {
 		t.Fatal(err)
@@ -91,8 +90,8 @@ func TestWMerkleTreeOpenProof(t *testing.T) {
 	}
 
 	baseLeaf, extLeaf := rawLeafFromPolys(committer, basePolys, extPolys, leafIdx)
-	leafData := SerializeRawLeaf(baseLeaf, extLeaf)
-	if !merkle.Verify(tree.Root(), proof, leafData, LeafHash, NodeHash) {
+	leaf := DefaultLeafHasher.HashLeaf(baseLeaf, extLeaf)
+	if !merkle.Verify(tree.Root(), proof, leaf, DefaultNodeHasher) {
 		t.Fatal("opened Merkle proof did not verify")
 	}
 }
@@ -104,7 +103,7 @@ func TestRSCommitWithDomainCache(t *testing.T) {
 	}
 
 	var cache poly.DomainCache
-	committer := NewRSCommitWithDomainCache(4, 2, LeafHash, NodeHash, &cache)
+	committer := NewRSCommitWithDomainCache(4, 2, DefaultLeafHasher, DefaultNodeHasher, &cache)
 	tree, err := committer.Commit(basePolys, nil, WithDomainCache(&cache))
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +120,7 @@ func TestRSCommitEmptyRails(t *testing.T) {
 	basePolys := []poly.Polynomial{
 		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},
 	}
-	committer := NewRSCommit(4, 2, LeafHash, NodeHash)
+	committer := NewRSCommit(4, 2, DefaultLeafHasher, DefaultNodeHasher)
 	baseTree, err := committer.Commit(basePolys, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -150,46 +149,6 @@ func TestRSCommitEmptyRails(t *testing.T) {
 	}
 }
 
-func TestSerializeRawLeafExtCoordinateOrder(t *testing.T) {
-	pair := PairExt{
-		extElement(1, 2, 3, 4),
-		extElement(5, 6, 7, 8),
-	}
-
-	got := SerializeRawLeaf(nil, []PairExt{pair})
-	var want []byte
-	want = appendExtElement(want, pair[0])
-	want = appendExtElement(want, pair[1])
-	if !bytes.Equal(got, want) {
-		t.Fatalf("SerializeRawLeaf ext bytes mismatch\ngot  %x\nwant %x", got, want)
-	}
-}
-
-// Regression test
-func TestSerializeRawLeafIntoMatchesAllocatingSerializer(t *testing.T) {
-	base := []PairBase{
-		{baseElement(1), baseElement(2)},
-		{baseElement(3), baseElement(4)},
-	}
-	ext := []PairExt{
-		{
-			extElement(5, 6, 7, 8),
-			extElement(9, 10, 11, 12),
-		},
-	}
-
-	want := SerializeRawLeaf(base, ext)
-	buf := make([]byte, 0, len(want)+koalabear.Bytes)
-	got := SerializeRawLeafInto(buf, base, ext)
-
-	if !bytes.Equal(got, want) {
-		t.Fatalf("SerializeRawLeafInto mismatch\ngot  %x\nwant %x", got, want)
-	}
-	if len(got) > 0 && &got[0] != &buf[:cap(buf)][0] {
-		t.Fatal("SerializeRawLeafInto did not reuse caller-provided buffer")
-	}
-}
-
 func baseElement(v uint64) koalabear.Element {
 	var e koalabear.Element
 	e.SetUint64(v)
@@ -203,14 +162,6 @@ func extElement(a0, a1, b0, b1 uint64) ext.E4 {
 	e.B1.A0.SetUint64(b0)
 	e.B1.A1.SetUint64(b1)
 	return e
-}
-
-func appendExtElement(out []byte, e ext.E4) []byte {
-	out = append(out, e.B0.A0.Marshal()...)
-	out = append(out, e.B0.A1.Marshal()...)
-	out = append(out, e.B1.A0.Marshal()...)
-	out = append(out, e.B1.A1.Marshal()...)
-	return out
 }
 
 func rawLeafFromPolys(committer RSCommit, basePolys []poly.Polynomial, extPolys []poly.ExtPolynomial, leafIdx int) ([]PairBase, []PairExt) {

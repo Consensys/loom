@@ -14,21 +14,21 @@
 package fri_test
 
 import (
-	"crypto/sha256"
 	"fmt"
-	"math/rand"
 	"testing"
 
-	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/internal/commitment"
+	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/fri"
+	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/merkle"
 )
 
 func freshTS() *fiatshamir.Transcript {
-	return fiatshamir.NewTranscript(sha256.New())
+	hasher := hash.NewPoseidon2MDHasher()
+	return fiatshamir.NewTranscript(&hasher)
 }
 
 func randomPoly(n int) []koalabear.Element {
@@ -69,7 +69,7 @@ func buildLevelTreeExt(t *testing.T, p fri.Params, layer []ext.E4) *merkle.Tree 
 
 func testParams(t *testing.T, N, D, queries int) fri.Params {
 	t.Helper()
-	p, err := fri.NewParams(N, D, queries, commitment.LeafHash, commitment.NodeHash)
+	p, err := fri.NewParams(N, D, queries, commitment.DefaultLeafHasher, commitment.DefaultNodeHasher)
 	if err != nil {
 		t.Fatalf("NewParams(%d,%d,%d): %v", N, D, queries, err)
 	}
@@ -108,7 +108,7 @@ func TestProveVerify(t *testing.T) {
 			}
 
 			tsV := freshTS()
-			if err := fri.Verify(p, [][]byte{tree.Root()}, []int{p.D}, prf, tsV); err != nil {
+			if err := fri.Verify(p, []hash.HashOutput{tree.Root()}, []int{p.D}, prf, tsV); err != nil {
 				t.Fatalf("Verify: %v", err)
 			}
 		})
@@ -136,7 +136,7 @@ func TestProveVerifyExtRail(t *testing.T) {
 	}
 
 	tsV := freshTS()
-	if err := fri.Verify(p, [][]byte{tree.Root()}, []int{p.D}, prf, tsV); err != nil {
+	if err := fri.Verify(p, []hash.HashOutput{tree.Root()}, []int{p.D}, prf, tsV); err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
 }
@@ -180,7 +180,7 @@ func TestProveVerifyExtRailWithExtraLevel(t *testing.T) {
 	}
 
 	tsV := freshTS()
-	if err := fri.Verify(p, [][]byte{tree0.Root(), tree1.Root()}, []int{p.D, pSmall.D}, prf, tsV); err != nil {
+	if err := fri.Verify(p, []hash.HashOutput{tree0.Root(), tree1.Root()}, []int{p.D, pSmall.D}, prf, tsV); err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
 }
@@ -198,11 +198,13 @@ func TestVerifyRejectsWrongRoot(t *testing.T) {
 		Tree:  tree,
 	}}, tsP)
 
-	badRoot := make([]byte, 32)
-	rand.Read(badRoot) //nolint:gosec
+	var badRoot hash.HashOutput
+	for i := range badRoot {
+		badRoot[i].SetRandom()
+	}
 
 	tsV := freshTS()
-	if err := fri.Verify(p, [][]byte{badRoot}, []int{p.D}, prf, tsV); err == nil {
+	if err := fri.Verify(p, []hash.HashOutput{badRoot}, []int{p.D}, prf, tsV); err == nil {
 		t.Fatal("Verify accepted a proof with a wrong root0")
 	}
 }
@@ -227,7 +229,7 @@ func TestVerifyRejectsFlippedLeaf(t *testing.T) {
 	prf.FRIQueries[0].Layers[0].LeafPBase.SetRandom()
 
 	tsV := freshTS()
-	if err := fri.Verify(p, [][]byte{tree.Root()}, []int{p.D}, prf, tsV); err == nil {
+	if err := fri.Verify(p, []hash.HashOutput{tree.Root()}, []int{p.D}, prf, tsV); err == nil {
 		t.Fatal("Verify accepted a proof with a corrupted leaf")
 	}
 }
@@ -250,7 +252,7 @@ func TestVerifyRejectsFlippedExtLeaf(t *testing.T) {
 	prf.FRIQueries[0].Layers[0].LeafPExt.MustSetRandom()
 
 	tsV := freshTS()
-	if err := fri.Verify(p, [][]byte{tree.Root()}, []int{p.D}, prf, tsV); err == nil {
+	if err := fri.Verify(p, []hash.HashOutput{tree.Root()}, []int{p.D}, prf, tsV); err == nil {
 		t.Fatal("Verify accepted a proof with a corrupted ext leaf")
 	}
 }

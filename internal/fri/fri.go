@@ -14,17 +14,17 @@
 package fri
 
 import (
-	"encoding/binary"
 	"fmt"
 	"math/big"
 	"sort"
 
-	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/commitment"
+	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
+	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/reedsolomon"
 )
@@ -35,8 +35,8 @@ type Params struct {
 	N          int // 2^n: size of the evaluation domain
 	D          int // 2^m: degree of the purported polynomial
 	NumQueries int // number of independent queries (controls soundness error ≈ (1-δ)^Q)
-	LeafHasher merkle.LeafHasher
-	NodeHasher merkle.NodeHasher
+	LeafHasher commitment.LeafHasher
+	NodeHasher commitment.NodeHasher
 
 	numRounds    int // numRounds = m
 	invTwo       koalabear.Element
@@ -58,7 +58,7 @@ func LightMode() Option {
 }
 
 // NewParams constructs and validates a Params, precomputing r+1 domains and inv(2).
-func NewParams(N, D, numQueries int, lh merkle.LeafHasher, nh merkle.NodeHasher, opts ...Option) (Params, error) {
+func NewParams(N, D, numQueries int, lh commitment.LeafHasher, nh commitment.NodeHasher, opts ...Option) (Params, error) {
 	if N <= 0 || N&(N-1) != 0 {
 		return Params{}, fmt.Errorf("fri: N must be a positive power of two, got %d", N)
 	}
@@ -197,7 +197,7 @@ type Proof struct {
 	LevelQueries [][]QueryLayer
 
 	// Running-polynomial FRI path
-	FRIRoots      [][]byte // Merkle roots for running poly T_1..T_{r-1}
+	FRIRoots      []hash.HashOutput // Merkle roots for running poly T_1..T_{r-1}
 	FinalField    field.Kind
 	FinalPolyBase []koalabear.Element // populated when FinalField == field.Base
 	FinalPolyExt  []ext.E4            // populated when FinalField == field.Ext
@@ -354,7 +354,7 @@ func proveBase(p Params, levels []Level, plan provePlan, ts *fiatshamir.Transcri
 
 	var prf Proof
 	if p.numRounds > 1 {
-		prf.FRIRoots = make([][]byte, p.numRounds-1)
+		prf.FRIRoots = make([]hash.HashOutput, p.numRounds-1)
 	}
 
 	for j := 0; j < p.numRounds; j++ {
@@ -362,15 +362,16 @@ func proveBase(p Params, levels []Level, plan provePlan, ts *fiatshamir.Transcri
 		if j > 0 {
 			if l, ok := plan.levelAtRound[j]; ok {
 				gammaName := levelGammaName(l)
-				if err := ts.Bind(gammaName, levels[l].Tree.Root()); err != nil {
+				root := levels[l].Tree.Root()
+				if err := ts.Bind(gammaName, root[:]); err != nil {
 					return Proof{}, nil, fmt.Errorf("fri: Prove: bind level l=%d: %w", l, err)
 				}
-				b, err := ts.ComputeChallenge(gammaName)
+				challenge, err := ts.ComputeChallenge(gammaName)
 				if err != nil {
 					return Proof{}, nil, fmt.Errorf("fri: Prove: compute level gamma l=%d: %w", l, err)
 				}
 				var gamma koalabear.Element
-				gamma.SetBytes(b)
+				gamma.Set(&challenge[0])
 
 				// Mix γ * levels[l].Evals into running (pointwise).
 				for k, v := range levels[l].Evals.Base {
@@ -398,14 +399,14 @@ func proveBase(p Params, levels []Level, plan provePlan, ts *fiatshamir.Transcri
 		root := tree.Root()
 
 		name := foldName(j)
-		if err := ts.Bind(name, root); err != nil {
+		if err := ts.Bind(name, root[:]); err != nil {
 			return Proof{}, nil, fmt.Errorf("fri: Prove: bind fold %d: %w", j, err)
 		}
-		b, err := ts.ComputeChallenge(name)
+		challenge, err := ts.ComputeChallenge(name)
 		if err != nil {
 			return Proof{}, nil, fmt.Errorf("fri: Prove: compute fold challenge %d: %w", j, err)
 		}
-		alphas[j].SetBytes(b)
+		alphas[j].Set(&challenge[0])
 
 		// Root of T_0 is passed to Verify separately; only T_1..T_{r-1} go in the proof.
 		if j > 0 {
@@ -419,7 +420,7 @@ func proveBase(p Params, levels []Level, plan provePlan, ts *fiatshamir.Transcri
 	prf.FinalField = field.Base
 	prf.FinalPolyBase = running
 
-	if err := ts.Bind(queryName(0), serialiseBase(prf.FinalPolyBase)); err != nil {
+	if err := ts.Bind(queryName(0), transcriptBasePoly(prf.FinalPolyBase)); err != nil {
 		return Proof{}, nil, fmt.Errorf("fri: Prove: bind final poly: %w", err)
 	}
 
@@ -435,15 +436,15 @@ func proveBase(p Params, levels []Level, plan provePlan, ts *fiatshamir.Transcri
 
 	queryPositions := make([]int, p.NumQueries)
 	for k := 0; k < p.NumQueries; k++ {
-		b, err := ts.ComputeChallenge(queryName(k))
+		challenge, err := ts.ComputeChallenge(queryName(k))
 		if err != nil {
 			return Proof{}, nil, fmt.Errorf("fri: Prove: compute query challenge %d: %w", k, err)
 		}
-		s := int(binary.BigEndian.Uint64(b[:8]) % uint64(p.N/2))
+		s := queryIndex(challenge, p.N/2)
 		queryPositions[k] = s
 
 		if k < p.NumQueries-1 {
-			if err := ts.Bind(queryName(k+1), b); err != nil {
+			if err := ts.Bind(queryName(k+1), challenge[:]); err != nil {
 				return Proof{}, nil, fmt.Errorf("fri: Prove: bind query chain %d: %w", k+1, err)
 			}
 		}
@@ -485,24 +486,23 @@ func proveExt(p Params, levels []Level, plan provePlan, ts *fiatshamir.Transcrip
 
 	var prf Proof
 	if p.numRounds > 1 {
-		prf.FRIRoots = make([][]byte, p.numRounds-1)
+		prf.FRIRoots = make([]hash.HashOutput, p.numRounds-1)
 	}
 
 	for j := 0; j < p.numRounds; j++ {
 		if j > 0 {
 			if l, ok := plan.levelAtRound[j]; ok {
 				gammaName := levelGammaName(l)
-				if err := ts.Bind(gammaName, levels[l].Tree.Root()); err != nil {
+				root := levels[l].Tree.Root()
+				if err := ts.Bind(gammaName, root[:]); err != nil {
 					return Proof{}, nil, fmt.Errorf("fri: Prove: bind level l=%d: %w", l, err)
 				}
-				b, err := ts.ComputeChallenge(gammaName)
+				challenge, err := ts.ComputeChallenge(gammaName)
 				if err != nil {
 					return Proof{}, nil, fmt.Errorf("fri: Prove: compute level gamma l=%d: %w", l, err)
 				}
 				var gamma ext.E4
-				if err := setChallengeExt(&gamma, b); err != nil {
-					return Proof{}, nil, fmt.Errorf("fri: Prove: decode level gamma l=%d: %w", l, err)
-				}
+				gamma = hash.OutputToExt(challenge)
 
 				for k, v := range levels[l].Evals.Ext {
 					var term ext.E4
@@ -528,16 +528,14 @@ func proveExt(p Params, levels []Level, plan provePlan, ts *fiatshamir.Transcrip
 		root := tree.Root()
 
 		name := foldName(j)
-		if err := ts.Bind(name, root); err != nil {
+		if err := ts.Bind(name, root[:]); err != nil {
 			return Proof{}, nil, fmt.Errorf("fri: Prove: bind fold %d: %w", j, err)
 		}
-		b, err := ts.ComputeChallenge(name)
+		challenge, err := ts.ComputeChallenge(name)
 		if err != nil {
 			return Proof{}, nil, fmt.Errorf("fri: Prove: compute fold challenge %d: %w", j, err)
 		}
-		if err := setChallengeExt(&alphas[j], b); err != nil {
-			return Proof{}, nil, fmt.Errorf("fri: Prove: decode fold challenge %d: %w", j, err)
-		}
+		alphas[j] = hash.OutputToExt(challenge)
 
 		if j > 0 {
 			prf.FRIRoots[j-1] = root
@@ -549,7 +547,7 @@ func proveExt(p Params, levels []Level, plan provePlan, ts *fiatshamir.Transcrip
 	prf.FinalField = field.Ext
 	prf.FinalPolyExt = running
 
-	if err := ts.Bind(queryName(0), serialiseExt(prf.FinalPolyExt)); err != nil {
+	if err := ts.Bind(queryName(0), transcriptExtPoly(prf.FinalPolyExt)); err != nil {
 		return Proof{}, nil, fmt.Errorf("fri: Prove: bind final poly: %w", err)
 	}
 
@@ -563,15 +561,15 @@ func proveExt(p Params, levels []Level, plan provePlan, ts *fiatshamir.Transcrip
 
 	queryPositions := make([]int, p.NumQueries)
 	for k := 0; k < p.NumQueries; k++ {
-		b, err := ts.ComputeChallenge(queryName(k))
+		challenge, err := ts.ComputeChallenge(queryName(k))
 		if err != nil {
 			return Proof{}, nil, fmt.Errorf("fri: Prove: compute query challenge %d: %w", k, err)
 		}
-		s := int(binary.BigEndian.Uint64(b[:8]) % uint64(p.N/2))
+		s := queryIndex(challenge, p.N/2)
 		queryPositions[k] = s
 
 		if k < p.NumQueries-1 {
-			if err := ts.Bind(queryName(k+1), b); err != nil {
+			if err := ts.Bind(queryName(k+1), challenge[:]); err != nil {
 				return Proof{}, nil, fmt.Errorf("fri: Prove: bind query chain %d: %w", k+1, err)
 			}
 		}
@@ -618,7 +616,7 @@ func proveExt(p Params, levels []Level, plan provePlan, ts *fiatshamir.Transcrip
 // called (i.e. decreasing D).
 //
 // ts must be in the same state as when Prove was called.
-func Verify(p Params, levelRoots [][]byte, levelDs []int, prf Proof, ts *fiatshamir.Transcript) error {
+func Verify(p Params, levelRoots []hash.HashOutput, levelDs []int, prf Proof, ts *fiatshamir.Transcript) error {
 	if len(levelDs) == 0 {
 		return fmt.Errorf("fri: Verify: at least one level required")
 	}
@@ -684,13 +682,13 @@ func Verify(p Params, levelRoots [][]byte, levelDs []int, prf Proof, ts *fiatsha
 
 	// Assemble FRI running-polynomial roots: roots[0] is the level-0 root;
 	// roots[1..r-1] come from prf.FRIRoots.
-	roots := make([][]byte, p.numRounds)
+	roots := make([]hash.HashOutput, p.numRounds)
 	roots[0] = levelRoots[0]
 	for j := 1; j < p.numRounds; j++ {
 		roots[j] = prf.FRIRoots[j-1]
 	}
 
-	var levelRootsExtra [][]byte
+	var levelRootsExtra []hash.HashOutput
 	if numExtraLevels > 0 {
 		levelRootsExtra = levelRoots[1:]
 	}
@@ -701,7 +699,7 @@ func Verify(p Params, levelRoots [][]byte, levelDs []int, prf Proof, ts *fiatsha
 	return verifyBase(p, levelRoots, levelRootsExtra, levelAtRound, roots, prf, ts)
 }
 
-func verifyBase(p Params, levelRoots, levelRootsExtra [][]byte, levelAtRound map[int]int, roots [][]byte, prf Proof, ts *fiatshamir.Transcript) error {
+func verifyBase(p Params, levelRoots, levelRootsExtra []hash.HashOutput, levelAtRound map[int]int, roots []hash.HashOutput, prf Proof, ts *fiatshamir.Transcript) error {
 	numLevels := len(levelRoots)
 	numExtraLevels := numLevels - 1
 
@@ -713,42 +711,44 @@ func verifyBase(p Params, levelRoots, levelRootsExtra [][]byte, levelAtRound map
 		if j > 0 {
 			if l, ok := levelAtRound[j]; ok {
 				gammaName := levelGammaName(l)
-				if err := ts.Bind(gammaName, levelRoots[l]); err != nil {
+				root := levelRoots[l]
+				if err := ts.Bind(gammaName, root[:]); err != nil {
 					return fmt.Errorf("fri: Verify: bind level l=%d: %w", l, err)
 				}
-				b, err := ts.ComputeChallenge(gammaName)
+				challenge, err := ts.ComputeChallenge(gammaName)
 				if err != nil {
 					return fmt.Errorf("fri: Verify: compute level gamma l=%d: %w", l, err)
 				}
-				gammas[l].SetBytes(b)
+				gammas[l].Set(&challenge[0])
 			}
 		}
 
 		name := foldName(j)
-		if err := ts.Bind(name, roots[j]); err != nil {
+		root := roots[j]
+		if err := ts.Bind(name, root[:]); err != nil {
 			return fmt.Errorf("fri: Verify: bind fold %d: %w", j, err)
 		}
-		b, err := ts.ComputeChallenge(name)
+		challenge, err := ts.ComputeChallenge(name)
 		if err != nil {
 			return fmt.Errorf("fri: Verify: compute fold challenge %d: %w", j, err)
 		}
-		alphas[j].SetBytes(b)
+		alphas[j].Set(&challenge[0])
 	}
 
-	if err := ts.Bind(queryName(0), serialiseBase(prf.FinalPolyBase)); err != nil {
+	if err := ts.Bind(queryName(0), transcriptBasePoly(prf.FinalPolyBase)); err != nil {
 		return fmt.Errorf("fri: Verify: bind final poly: %w", err)
 	}
 
 	// ── Query phase ───────────────────────────────────────────────────────────
 	for k := 0; k < p.NumQueries; k++ {
-		b, err := ts.ComputeChallenge(queryName(k))
+		challenge, err := ts.ComputeChallenge(queryName(k))
 		if err != nil {
 			return fmt.Errorf("fri: Verify: compute query challenge %d: %w", k, err)
 		}
-		s := int(binary.BigEndian.Uint64(b[:8]) % uint64(p.N/2))
+		s := queryIndex(challenge, p.N/2)
 
 		if k < p.NumQueries-1 {
-			if err := ts.Bind(queryName(k+1), b); err != nil {
+			if err := ts.Bind(queryName(k+1), challenge[:]); err != nil {
 				return fmt.Errorf("fri: Verify: bind query chain %d: %w", k+1, err)
 			}
 		}
@@ -770,7 +770,7 @@ func verifyBase(p Params, levelRoots, levelRootsExtra [][]byte, levelAtRound map
 	return nil
 }
 
-func verifyExt(p Params, levelRoots, levelRootsExtra [][]byte, levelAtRound map[int]int, roots [][]byte, prf Proof, ts *fiatshamir.Transcript) error {
+func verifyExt(p Params, levelRoots, levelRootsExtra []hash.HashOutput, levelAtRound map[int]int, roots []hash.HashOutput, prf Proof, ts *fiatshamir.Transcript) error {
 	numLevels := len(levelRoots)
 	numExtraLevels := numLevels - 1
 
@@ -781,45 +781,43 @@ func verifyExt(p Params, levelRoots, levelRootsExtra [][]byte, levelAtRound map[
 		if j > 0 {
 			if l, ok := levelAtRound[j]; ok {
 				gammaName := levelGammaName(l)
-				if err := ts.Bind(gammaName, levelRoots[l]); err != nil {
+				root := levelRoots[l]
+				if err := ts.Bind(gammaName, root[:]); err != nil {
 					return fmt.Errorf("fri: Verify: bind level l=%d: %w", l, err)
 				}
-				b, err := ts.ComputeChallenge(gammaName)
+				challenge, err := ts.ComputeChallenge(gammaName)
 				if err != nil {
 					return fmt.Errorf("fri: Verify: compute level gamma l=%d: %w", l, err)
 				}
-				if err := setChallengeExt(&gammas[l], b); err != nil {
-					return fmt.Errorf("fri: Verify: decode level gamma l=%d: %w", l, err)
-				}
+				gammas[l] = hash.OutputToExt(challenge)
 			}
 		}
 
 		name := foldName(j)
-		if err := ts.Bind(name, roots[j]); err != nil {
+		root := roots[j]
+		if err := ts.Bind(name, root[:]); err != nil {
 			return fmt.Errorf("fri: Verify: bind fold %d: %w", j, err)
 		}
-		b, err := ts.ComputeChallenge(name)
+		challenge, err := ts.ComputeChallenge(name)
 		if err != nil {
 			return fmt.Errorf("fri: Verify: compute fold challenge %d: %w", j, err)
 		}
-		if err := setChallengeExt(&alphas[j], b); err != nil {
-			return fmt.Errorf("fri: Verify: decode fold challenge %d: %w", j, err)
-		}
+		alphas[j] = hash.OutputToExt(challenge)
 	}
 
-	if err := ts.Bind(queryName(0), serialiseExt(prf.FinalPolyExt)); err != nil {
+	if err := ts.Bind(queryName(0), transcriptExtPoly(prf.FinalPolyExt)); err != nil {
 		return fmt.Errorf("fri: Verify: bind final poly: %w", err)
 	}
 
 	for k := 0; k < p.NumQueries; k++ {
-		b, err := ts.ComputeChallenge(queryName(k))
+		challenge, err := ts.ComputeChallenge(queryName(k))
 		if err != nil {
 			return fmt.Errorf("fri: Verify: compute query challenge %d: %w", k, err)
 		}
-		s := int(binary.BigEndian.Uint64(b[:8]) % uint64(p.N/2))
+		s := queryIndex(challenge, p.N/2)
 
 		if k < p.NumQueries-1 {
-			if err := ts.Bind(queryName(k+1), b); err != nil {
+			if err := ts.Bind(queryName(k+1), challenge[:]); err != nil {
 				return fmt.Errorf("fri: Verify: bind query chain %d: %w", k+1, err)
 			}
 		}
@@ -858,31 +856,31 @@ func log2(n int) int {
 
 // buildTreeBase builds a Merkle tree of Nⱼ/2 leaves where
 // leaf k = LeafHasher(encode(layer[k]) || encode(layer[k + Nⱼ/2])).
-func buildTreeBase(layer []koalabear.Element, lh merkle.LeafHasher, nh merkle.NodeHasher) (*merkle.Tree, error) {
+func buildTreeBase(layer []koalabear.Element, lh commitment.LeafHasher, nh commitment.NodeHasher) (*merkle.Tree, error) {
 	half := len(layer) / 2
-	tree, err := merkle.New(half, lh, nh)
+	tree, err := merkle.New(half, nh)
 	if err != nil {
 		return nil, err
 	}
-	leaves := make([][]byte, half)
+	leaves := make([]hash.HashOutput, half)
 	for k := 0; k < half; k++ {
 		pair := []commitment.PairBase{{layer[k], layer[k+half]}}
-		leaves[k] = commitment.SerializeRawLeaf(pair, nil)
+		leaves[k] = lh.HashLeaf(pair, nil)
 	}
 	return tree, tree.Build(leaves)
 }
 
 // buildTreeExt is the extension-field counterpart of buildTreeBase.
-func buildTreeExt(layer []ext.E4, lh merkle.LeafHasher, nh merkle.NodeHasher) (*merkle.Tree, error) {
+func buildTreeExt(layer []ext.E4, lh commitment.LeafHasher, nh commitment.NodeHasher) (*merkle.Tree, error) {
 	half := len(layer) / 2
-	tree, err := merkle.New(half, lh, nh)
+	tree, err := merkle.New(half, nh)
 	if err != nil {
 		return nil, err
 	}
-	leaves := make([][]byte, half)
+	leaves := make([]hash.HashOutput, half)
 	for k := 0; k < half; k++ {
 		pair := []commitment.PairExt{{layer[k], layer[k+half]}}
-		leaves[k] = commitment.SerializeRawLeaf(nil, pair)
+		leaves[k] = lh.HashLeaf(nil, pair)
 	}
 	return tree, tree.Build(leaves)
 }
@@ -944,46 +942,28 @@ func foldLayerExt(layer []ext.E4, alpha ext.E4, domain *fft.Domain, invTwo koala
 	return next
 }
 
-// serialiseBase encodes a slice of base field elements to bytes.
-func serialiseBase(poly []koalabear.Element) []byte {
-	buf := make([]byte, len(poly)*koalabear.Bytes)
-	for i, e := range poly {
-		copy(buf[i*koalabear.Bytes:], e.Marshal())
-	}
-	return buf
+func transcriptBasePoly(poly []koalabear.Element) []koalabear.Element {
+	res := make([]koalabear.Element, 0, 2+len(poly))
+	res = append(res, hash.NewElement(0x42415345), hash.NewElement(uint64(len(poly)))) // "BASE"
+	res = append(res, poly...)
+	return res
 }
 
-// serialiseExt encodes a slice of E4 elements using gnark-crypto's coordinate
-// order: B0.A0, B0.A1, B1.A0, B1.A1.
-func serialiseExt(poly []ext.E4) []byte {
-	buf := make([]byte, len(poly)*4*koalabear.Bytes)
-	offset := 0
-	for i := range poly {
-		offset = putExtElement(buf, offset, &poly[i])
+func transcriptExtPoly(poly []ext.E4) []koalabear.Element {
+	res := make([]koalabear.Element, 0, 2+4*len(poly))
+	res = append(res, hash.NewElement(0x45585450), hash.NewElement(uint64(len(poly)))) // "EXTP"
+	for _, v := range poly {
+		res = append(res, v.B0.A0, v.B0.A1, v.B1.A0, v.B1.A1)
 	}
-	return buf
+	return res
 }
 
-func putExtElement(buf []byte, offset int, e *ext.E4) int {
-	copy(buf[offset:], e.B0.A0.Marshal())
-	offset += koalabear.Bytes
-	copy(buf[offset:], e.B0.A1.Marshal())
-	offset += koalabear.Bytes
-	copy(buf[offset:], e.B1.A0.Marshal())
-	offset += koalabear.Bytes
-	copy(buf[offset:], e.B1.A1.Marshal())
-	return offset + koalabear.Bytes
-}
-
-func setChallengeExt(z *ext.E4, b []byte) error {
-	if len(b) < 4*koalabear.Bytes {
-		return fmt.Errorf("need at least %d bytes, got %d", 4*koalabear.Bytes, len(b))
+func queryIndex(challenge hash.HashOutput, modulus int) int {
+	if modulus <= 0 {
+		return 0
 	}
-	z.B0.A0.SetBytes(b[0*koalabear.Bytes : 1*koalabear.Bytes])
-	z.B0.A1.SetBytes(b[1*koalabear.Bytes : 2*koalabear.Bytes])
-	z.B1.A0.SetBytes(b[2*koalabear.Bytes : 3*koalabear.Bytes])
-	z.B1.A1.SetBytes(b[3*koalabear.Bytes : 4*koalabear.Bytes])
-	return nil
+	v := (challenge[0].Uint64() << 31) ^ challenge[1].Uint64()
+	return int(v % uint64(modulus))
 }
 
 // openQueryBase builds the Merkle opening data for query index s across all r
@@ -1042,10 +1022,10 @@ func openQueryExt(s int, layers [][]ext.E4, trees []*merkle.Tree, numRounds int)
 // gammas[l] is the batching challenge for levels[l] (1-based; gammas[0] unused).
 func checkQuery(s int, fq Query,
 	levelQueriesForQuery []QueryLayer,
-	levelRoots [][]byte,
+	levelRoots []hash.HashOutput,
 	levelAtRound map[int]int,
 	gammas []koalabear.Element,
-	roots [][]byte,
+	roots []hash.HashOutput,
 	finalPoly []koalabear.Element,
 	alphas []koalabear.Element,
 	p Params) error {
@@ -1056,8 +1036,8 @@ func checkQuery(s int, fq Query,
 			return fmt.Errorf("level %d: expected base query layer, got %s", lIdx+1, ld.Field)
 		}
 		pair := []commitment.PairBase{{ld.LeafPBase, ld.LeafQBase}}
-		leafData := commitment.SerializeRawLeaf(pair, nil)
-		if !merkle.Verify(levelRoots[lIdx], ld.Path, leafData, p.LeafHasher, p.NodeHasher) {
+		leaf := p.LeafHasher.HashLeaf(pair, nil)
+		if !merkle.Verify(levelRoots[lIdx], ld.Path, leaf, p.NodeHasher) {
 			return fmt.Errorf("level %d: Merkle proof invalid", lIdx+1)
 		}
 	}
@@ -1072,8 +1052,8 @@ func checkQuery(s int, fq Query,
 		}
 
 		pair := []commitment.PairBase{{layer.LeafPBase, layer.LeafQBase}}
-		leafData := commitment.SerializeRawLeaf(pair, nil)
-		if !merkle.Verify(roots[j], layer.Path, leafData, p.LeafHasher, p.NodeHasher) {
+		leaf := p.LeafHasher.HashLeaf(pair, nil)
+		if !merkle.Verify(roots[j], layer.Path, leaf, p.NodeHasher) {
 			return fmt.Errorf("round %d: Merkle proof invalid (base=%d)", j, base)
 		}
 
@@ -1133,10 +1113,10 @@ func checkQuery(s int, fq Query,
 
 func checkQueryExt(s int, fq Query,
 	levelQueriesForQuery []QueryLayer,
-	levelRoots [][]byte,
+	levelRoots []hash.HashOutput,
 	levelAtRound map[int]int,
 	gammas []ext.E4,
-	roots [][]byte,
+	roots []hash.HashOutput,
 	finalPoly []ext.E4,
 	alphas []ext.E4,
 	p Params) error {
@@ -1146,8 +1126,8 @@ func checkQueryExt(s int, fq Query,
 			return fmt.Errorf("level %d: expected ext query layer, got %s", lIdx+1, ld.Field)
 		}
 		pair := []commitment.PairExt{{ld.LeafPExt, ld.LeafQExt}}
-		leafData := commitment.SerializeRawLeaf(nil, pair)
-		if !merkle.Verify(levelRoots[lIdx], ld.Path, leafData, p.LeafHasher, p.NodeHasher) {
+		leaf := p.LeafHasher.HashLeaf(nil, pair)
+		if !merkle.Verify(levelRoots[lIdx], ld.Path, leaf, p.NodeHasher) {
 			return fmt.Errorf("level %d: Merkle proof invalid", lIdx+1)
 		}
 	}
@@ -1161,8 +1141,8 @@ func checkQueryExt(s int, fq Query,
 		}
 
 		pair := []commitment.PairExt{{layer.LeafPExt, layer.LeafQExt}}
-		leafData := commitment.SerializeRawLeaf(nil, pair)
-		if !merkle.Verify(roots[j], layer.Path, leafData, p.LeafHasher, p.NodeHasher) {
+		leaf := p.LeafHasher.HashLeaf(nil, pair)
+		if !merkle.Verify(roots[j], layer.Path, leaf, p.NodeHasher) {
 			return fmt.Errorf("round %d: Merkle proof invalid (base=%d)", j, base)
 		}
 

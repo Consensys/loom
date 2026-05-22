@@ -14,12 +14,10 @@
 package verifier
 
 import (
-	"crypto/sha256"
 	"fmt"
 	"math/big"
 	"sort"
 
-	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
@@ -28,7 +26,9 @@ import (
 	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
+	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/fri"
+	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
@@ -69,7 +69,7 @@ type verifierRunTime struct {
 	// roots is the flat sequence of Merkle roots in canonical order:
 	//   setup roots (from VerificationKey) ++ proof.Commitments
 	// roots[i] aligns with proof.PointSamplings[q][i] for any query q.
-	roots [][]byte
+	roots []hash.HashOutput
 }
 
 func newVerifierRuntime(program board.Program, verificationKey setup.VerificationKey, publicInputs public.Inputs, prf proof.Proof, config Config) (verifierRunTime, error) {
@@ -92,7 +92,7 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 	}
 
 	// Flatten setup roots ++ proof.Commitments into res.roots.
-	res.roots = make([][]byte, res.layout.NumTrees)
+	res.roots = make([]hash.HashOutput, res.layout.NumTrees)
 	if len(verificationKey.Roots) != res.layout.SetupEnd-res.layout.SetupBegin {
 		return res, fmt.Errorf("verifier: setup has %d trees, layout expects %d", len(verificationKey.Roots), res.layout.SetupEnd-res.layout.SetupBegin)
 	}
@@ -103,7 +103,8 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 		res.roots[res.layout.SetupEnd+i] = root
 	}
 
-	res.fs = fiatshamir.NewTranscript(sha256.New())
+	fsHasher := hash.NewPoseidon2MDHasher()
+	res.fs = fiatshamir.NewTranscript(&fsHasher)
 	numRounds := len(program.FScolumnsDependencies)
 	for i := 0; i < numRounds; i++ {
 		res.fs.NewChallenge(constants.CanonicalChallengeName(i))
@@ -113,10 +114,10 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 
 	// Bind every setup tree's root to challenge_0 (decreasing-N order, set by Setup) + public inputs
 	for _, pkr := range verificationKey.Roots {
-		res.fs.Bind(constants.CanonicalChallengeName(0), pkr)
+		res.fs.Bind(constants.CanonicalChallengeName(0), pkr[:])
 	}
 	if len(publicInputs) > 0 {
-		if err := res.fs.Bind(constants.CanonicalChallengeName(0), publicInputs.TranscriptBytes()); err != nil {
+		if err := res.fs.Bind(constants.CanonicalChallengeName(0), publicInputs.TranscriptElements()); err != nil {
 			return res, err
 		}
 	}
@@ -130,23 +131,12 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 	}
 
 	var err error
-	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, commitment.LeafHash, commitment.NodeHash, fri.LightMode())
+	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, commitment.DefaultLeafHasher, commitment.DefaultNodeHasher, fri.LightMode())
 	if err != nil {
 		return res, err
 	}
 
 	return res, nil
-}
-
-func setExtFromBytes(z *ext.E4, b []byte) error {
-	if len(b) < 4*koalabear.Bytes {
-		return fmt.Errorf("need at least %d bytes, got %d", 4*koalabear.Bytes, len(b))
-	}
-	z.B0.A0.SetBytes(b[0*koalabear.Bytes : 1*koalabear.Bytes])
-	z.B0.A1.SetBytes(b[1*koalabear.Bytes : 2*koalabear.Bytes])
-	z.B1.A0.SetBytes(b[2*koalabear.Bytes : 3*koalabear.Bytes])
-	z.B1.A1.SetBytes(b[3*koalabear.Bytes : 4*koalabear.Bytes])
-	return nil
 }
 
 func liftBaseToExt(v koalabear.Element) ext.E4 {
@@ -164,29 +154,26 @@ func (vr *verifierRunTime) deriveChallenges() error {
 	for r := 0; r < numRounds; r++ {
 		challengeName := constants.CanonicalChallengeName(r)
 		for i := vr.layout.TraceBegin[r]; i < vr.layout.TraceEnd[r]; i++ {
-			vr.fs.Bind(challengeName, vr.roots[i])
+			root := vr.roots[i]
+			vr.fs.Bind(challengeName, root[:])
 		}
-		bChallenge, err := vr.fs.ComputeChallenge(challengeName)
+		challenge, err := vr.fs.ComputeChallenge(challengeName)
 		if err != nil {
 			return err
 		}
-		var c ext.E4
-		if err := setExtFromBytes(&c, bChallenge); err != nil {
-			return err
-		}
+		c := hash.OutputToExt(challenge)
 		vr.proof.SetValueAtZetaExt(challengeName, c)
 	}
 	// Bind every per-size AIR-quotient root before computing zeta.
 	for i := vr.layout.AIRBegin; i < vr.layout.AIREnd; i++ {
-		vr.fs.Bind(constants.FINAL_EVALUATION_POINT, vr.roots[i])
+		root := vr.roots[i]
+		vr.fs.Bind(constants.FINAL_EVALUATION_POINT, root[:])
 	}
-	bzeta, err := vr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
+	zeta, err := vr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
 	if err != nil {
 		return err
 	}
-	if err := setExtFromBytes(&vr.zeta, bzeta); err != nil {
-		return err
-	}
+	vr.zeta = hash.OutputToExt(zeta)
 
 	return nil
 }
@@ -195,11 +182,12 @@ func (vr *verifierRunTime) deriveDeepAlpha() error {
 	if err := prover.BindDeepEvaluationClaims(vr.fs, vr.proof, vr.dqLayout); err != nil {
 		return err
 	}
-	alphaBytes, err := vr.fs.ComputeChallenge(constants.DEEP_ALPHA)
+	alpha, err := vr.fs.ComputeChallenge(constants.DEEP_ALPHA)
 	if err != nil {
 		return err
 	}
-	return setExtFromBytes(&vr.alpha, alphaBytes)
+	vr.alpha = hash.OutputToExt(alpha)
+	return nil
 }
 
 // TODO bind the exposed values to FS -> either we add a step to bind the exposed values alone to FS
@@ -355,7 +343,7 @@ func (vr *verifierRunTime) checkFRIProof() error {
 	if len(vr.proof.DeepQuotientCommitment) != len(levelDs) {
 		return fmt.Errorf("checkFRIProof: proof has %d level commitments, want %d", len(vr.proof.DeepQuotientCommitment), len(levelDs))
 	}
-	levelRoots := make([][]byte, len(levelDs))
+	levelRoots := make([]hash.HashOutput, len(levelDs))
 	for i := range levelDs {
 		levelRoots[i] = vr.proof.DeepQuotientCommitment[i]
 	}
@@ -364,10 +352,10 @@ func (vr *verifierRunTime) checkFRIProof() error {
 }
 
 // verifyWMerkleProof checks wp opens to its leaf data under root, using the
-// same base-then-ext paired-leaf serialisation as RSCommit.Commit.
-func verifyWMerkleProof(root []byte, wp commitment.WMerkleProof) bool {
-	buf := commitment.SerializeRawLeaf(wp.RawLeafBase, wp.RawLeafExt)
-	return merkle.Verify(root, wp.Proof, buf, commitment.LeafHash, commitment.NodeHash)
+// same base-then-ext paired-leaf hashing as RSCommit.Commit.
+func verifyWMerkleProof(root hash.HashOutput, wp commitment.WMerkleProof) bool {
+	leaf := commitment.DefaultLeafHasher.HashLeaf(wp.RawLeafBase, wp.RawLeafExt)
+	return merkle.Verify(root, wp.Proof, leaf, commitment.DefaultNodeHasher)
 }
 
 // checkMerkleProofsPointSampling verifies every WMerkleProof in

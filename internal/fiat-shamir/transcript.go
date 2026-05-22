@@ -30,7 +30,6 @@ var (
 
 const (
 	challengeIDDomainTag uint64 = 0x46534944 // "FSID"
-	challengeIDChunkSize        = 3
 )
 
 // Transcript implements a Fiat-Shamir transcript for transforming
@@ -140,7 +139,7 @@ func (t *Transcript) ComputeChallenge(challengeID string) ([8]koalabear.Element,
 	t.h.Reset()
 	defer t.h.Reset()
 
-	t.h.WriteElements(challengeIDToElements(challengeID)...)
+	t.h.WriteElements(hash.StringToElements(challengeIDDomainTag, challengeID)...)
 
 	// write the previous challenge if it's not the first challenge
 	if pos != 0 {
@@ -163,23 +162,4 @@ func (t *Transcript) ComputeChallenge(challengeID string) ([8]koalabear.Element,
 
 	return challenge.value, nil
 
-}
-
-func challengeIDToElements(challengeID string) []koalabear.Element {
-	nbChunks := (len(challengeID) + challengeIDChunkSize - 1) / challengeIDChunkSize
-	res := make([]koalabear.Element, 2, 2+nbChunks)
-	res[0].SetUint64(challengeIDDomainTag)
-	res[1].SetUint64(uint64(len(challengeID)))
-
-	for i := 0; i < len(challengeID); i += challengeIDChunkSize {
-		var limb uint64
-		for j := 0; j < challengeIDChunkSize && i+j < len(challengeID); j++ {
-			limb |= uint64(challengeID[i+j]) << (8 * j)
-		}
-		var e koalabear.Element
-		e.SetUint64(limb)
-		res = append(res, e)
-	}
-
-	return res
 }

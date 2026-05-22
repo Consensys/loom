@@ -14,15 +14,18 @@
 package merkle
 
 import (
-	"bytes"
 	"fmt"
+
+	"github.com/consensys/loom/internal/hash"
 )
 
-// LeafHasher hashes raw leaf data into a fixed-size digest.
-type LeafHasher func(data []byte) []byte
+type LeafHash = hash.HashOutput
+type NodeHash = hash.HashOutput
 
 // NodeHasher combines two child digests into a parent digest.
-type NodeHasher func(left, right []byte) []byte
+type NodeHasher interface {
+	HashNode(left, right hash.HashOutput) hash.HashOutput
+}
 
 // Tree is a binary Merkle tree whose number of leaves is a power of two.
 //
@@ -32,9 +35,8 @@ type NodeHasher func(left, right []byte) []byte
 //   - children of node k   = nodes[2k] (left) and nodes[2k+1] (right)
 //   - parent of node k     = nodes[k/2]
 type Tree struct {
-	nodes      [][]byte
+	nodes      []hash.HashOutput
 	nLeaves    int
-	leafHasher LeafHasher
 	nodeHasher NodeHasher
 }
 
@@ -42,27 +44,29 @@ type Tree struct {
 // Siblings[0] is the sibling at the leaf level; Siblings[depth-1] is the
 // sibling one level below the root.
 type Proof struct {
-	LeafIdx  int      // 0-based index of the opened leaf
-	Siblings [][]byte // sibling digests, leaf-level first
+	LeafIdx  int               // 0-based index of the opened leaf
+	Siblings []hash.HashOutput // sibling digests, leaf-level first
 }
 
 // New creates a Tree for nLeaves leaves. nLeaves must be a positive power of two.
-func New(nLeaves int, lh LeafHasher, nh NodeHasher) (*Tree, error) {
+func New(nLeaves int, nh NodeHasher) (*Tree, error) {
 	if nLeaves <= 0 || nLeaves&(nLeaves-1) != 0 {
 		return nil, fmt.Errorf("merkle: nLeaves must be a positive power of two, got %d", nLeaves)
 	}
 	return &Tree{
-		nodes:      make([][]byte, 2*nLeaves),
+		nodes:      make([]hash.HashOutput, 2*nLeaves),
 		nLeaves:    nLeaves,
-		leafHasher: lh,
 		nodeHasher: nh,
 	}, nil
 }
 
-// BuildIthLeaf builds the i-th leaf
-func (t *Tree) BuildIthLeaf(data []byte, i int) error {
+// BuildIthLeaf sets the i-th already-hashed leaf.
+func (t *Tree) BuildIthLeaf(leaf hash.HashOutput, i int) error {
+	if i < 0 || i >= t.nLeaves {
+		return fmt.Errorf("merkle: leaf index %d out of range [0, %d)", i, t.nLeaves)
+	}
 	n := t.nLeaves
-	t.nodes[n+i] = t.leafHasher(data)
+	t.nodes[n+i] = leaf
 	return nil
 }
 
@@ -70,29 +74,29 @@ func (t *Tree) BuildIthLeaf(data []byte, i int) error {
 func (t *Tree) BuildNodes() error {
 	n := t.nLeaves
 	for i := n - 1; i >= 1; i-- {
-		t.nodes[i] = t.nodeHasher(t.nodes[2*i], t.nodes[2*i+1])
+		t.nodes[i] = t.nodeHasher.HashNode(t.nodes[2*i], t.nodes[2*i+1])
 	}
 	return nil
 }
 
-// Build hashes each entry in data with the leaf hasher, then builds all
-// internal nodes bottom-up. len(data) must equal nLeaves.
-func (t *Tree) Build(data [][]byte) error {
-	if len(data) != t.nLeaves {
-		return fmt.Errorf("merkle: got %d data entries, want %d", len(data), t.nLeaves)
+// Build sets all already-hashed leaves, then builds internal nodes bottom-up.
+// len(leaves) must equal nLeaves.
+func (t *Tree) Build(leaves []hash.HashOutput) error {
+	if len(leaves) != t.nLeaves {
+		return fmt.Errorf("merkle: got %d leaves, want %d", len(leaves), t.nLeaves)
 	}
 	n := t.nLeaves
-	for i, d := range data {
-		t.nodes[n+i] = t.leafHasher(d)
+	for i, leaf := range leaves {
+		t.nodes[n+i] = leaf
 	}
 	for i := n - 1; i >= 1; i-- {
-		t.nodes[i] = t.nodeHasher(t.nodes[2*i], t.nodes[2*i+1])
+		t.nodes[i] = t.nodeHasher.HashNode(t.nodes[2*i], t.nodes[2*i+1])
 	}
 	return nil
 }
 
 // Root returns the Merkle root digest. Build must be called first.
-func (t *Tree) Root() []byte {
+func (t *Tree) Root() hash.HashOutput {
 	return t.nodes[1]
 }
 
@@ -102,7 +106,7 @@ func (t *Tree) OpenProof(idx int) (Proof, error) {
 		return Proof{}, fmt.Errorf("merkle: leaf index %d out of range [0, %d)", idx, t.nLeaves)
 	}
 	depth := log2(t.nLeaves)
-	siblings := make([][]byte, depth)
+	siblings := make([]hash.HashOutput, depth)
 	pos := t.nLeaves + idx
 	for k := 0; k < depth; k++ {
 		siblings[k] = t.nodes[pos^1] // pos^1 flips the last bit to select the sibling
@@ -111,20 +115,20 @@ func (t *Tree) OpenProof(idx int) (Proof, error) {
 	return Proof{LeafIdx: idx, Siblings: siblings}, nil
 }
 
-// Verify checks that proof is a valid Merkle opening proof for leafData under root.
-// The same leaf and node hashers used to build the tree must be supplied.
-func Verify(root []byte, proof Proof, leafData []byte, lh LeafHasher, nh NodeHasher) bool {
-	h := lh(leafData)
+// Verify checks that proof is a valid Merkle opening proof for leaf under root.
+// The same node hasher used to build the tree must be supplied.
+func Verify(root hash.HashOutput, proof Proof, leaf hash.HashOutput, nh NodeHasher) bool {
+	h := leaf
 	idx := proof.LeafIdx
 	for _, sibling := range proof.Siblings {
 		if idx&1 == 0 {
-			h = nh(h, sibling) // current node is the left child
+			h = nh.HashNode(h, sibling) // current node is the left child
 		} else {
-			h = nh(sibling, h) // current node is the right child
+			h = nh.HashNode(sibling, h) // current node is the right child
 		}
 		idx >>= 1
 	}
-	return bytes.Equal(h, root)
+	return h == root
 }
 
 func log2(n int) int {

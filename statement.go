@@ -14,7 +14,6 @@
 package loom
 
 import (
-	"bytes"
 	"fmt"
 
 	"github.com/consensys/loom/board"
@@ -85,7 +84,7 @@ func checkVerificationKey(statement Statement, witnessKey setup.ProvingKey) erro
 		return fmt.Errorf("loom: statement has %d setup roots, witness has %d setup trees", len(statementKey.Roots), len(witnessKeyForVerifier.Roots))
 	}
 	for i := range statementKey.Roots {
-		if !bytes.Equal(statementKey.Roots[i], witnessKeyForVerifier.Roots[i]) {
+		if statementKey.Roots[i] != witnessKeyForVerifier.Roots[i] {
 			return fmt.Errorf("loom: statement setup root %d does not match witness setup root", i)
 		}
 	}

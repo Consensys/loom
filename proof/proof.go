@@ -20,6 +20,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/fri"
+	"github.com/consensys/loom/internal/hash"
 )
 
 type Commitment struct {
@@ -35,14 +36,14 @@ type Proof struct {
 	// commits during the protocol, in canonical order:
 	//   trace-round-0 (decreasing N) → trace-round-1 → … → trace-round-{r-1} → AIR (decreasing N)
 	// Setup roots are NOT stored here; they live in the verifier's VerificationKey.
-	Commitments [][]byte
+	Commitments []hash.HashOutput
 
 	DeepQuotientFriProof fri.Proof
 
 	// DeepQuotientCommitment[l] holds the Merkle root of the FRI level-l
 	// deep-quotient polynomial (level 0 = largest size). Same ordering as
 	// the levels passed to fri.Prove.
-	DeepQuotientCommitment [][]byte
+	DeepQuotientCommitment []hash.HashOutput
 
 	// PointSamplings[q][i] is the opening at FRI query position q of the i-th
 	// committed tree in the FULL canonical order, INCLUDING setup at the front:

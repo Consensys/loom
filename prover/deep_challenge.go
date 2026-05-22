@@ -16,10 +16,11 @@ package prover
 import (
 	"fmt"
 
-	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/internal/constants"
+	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
+	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/proof"
 )
 
@@ -55,11 +56,12 @@ func (pr *proverRuntime) deriveDeepAlpha(layout DEEPquotientLayout) error {
 		}
 		return nil
 	}
-	alphaBytes, err := pr.fs.ComputeChallenge(constants.DEEP_ALPHA)
+	alpha, err := pr.fs.ComputeChallenge(constants.DEEP_ALPHA)
 	if err != nil {
 		return err
 	}
-	return setExtFromBytes(&pr.alpha, alphaBytes)
+	pr.alpha = hash.OutputToExt(alpha)
+	return nil
 }
 
 func bindValueAtZeta(fs *fiatshamir.Transcript, prf proof.Proof, key string) error {
@@ -67,18 +69,9 @@ func bindValueAtZeta(fs *fiatshamir.Transcript, prf proof.Proof, key string) err
 	if !ok {
 		return fmt.Errorf("BindDeepEvaluationClaims: %q not found in ValuesAtZeta", key)
 	}
-	return fs.Bind(constants.DEEP_ALPHA, serializeE4(v))
+	return fs.Bind(constants.DEEP_ALPHA, extToElements(v))
 }
 
-func serializeE4(v ext.E4) []byte {
-	res := make([]byte, 0, 4*koalabear.Bytes)
-	b0a0 := v.B0.A0.Bytes()
-	b0a1 := v.B0.A1.Bytes()
-	b1a0 := v.B1.A0.Bytes()
-	b1a1 := v.B1.A1.Bytes()
-	res = append(res, b0a0[:]...)
-	res = append(res, b0a1[:]...)
-	res = append(res, b1a0[:]...)
-	res = append(res, b1a1[:]...)
-	return res
+func extToElements(v ext.E4) []koalabear.Element {
+	return []koalabear.Element{v.B0.A0, v.B0.A1, v.B1.A0, v.B1.A1}
 }

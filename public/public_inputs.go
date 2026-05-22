@@ -1,14 +1,15 @@
 package public
 
 import (
-	"bytes"
-	"encoding/binary"
 	"sort"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/field"
+	fieldhash "github.com/consensys/loom/internal/hash"
 )
+
+const publicInputDomainTag uint64 = 0x50554249 // "PUBI"
 
 type Input struct {
 	Module  string
@@ -44,22 +45,21 @@ func (e Entry) ExtValue() extensions.E4 {
 	return v
 }
 
-// TranscriptBytes returns a deterministic encoding of the public statement
-// values suitable for Fiat-Shamir binding.
-func (inputs Inputs) TranscriptBytes() []byte {
-	var buf bytes.Buffer
-
+// TranscriptElements returns a deterministic field-element encoding of the
+// public statement values suitable for Fiat-Shamir binding.
+func (inputs Inputs) TranscriptElements() []koalabear.Element {
 	names := make([]string, 0, len(inputs))
 	for name := range inputs {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
-	writeUint64(&buf, uint64(len(names)))
+	res := make([]koalabear.Element, 0)
+	res = append(res, fieldhash.NewElement(publicInputDomainTag), fieldhash.NewElement(uint64(len(names))))
 	for _, name := range names {
 		input := inputs[name]
-		writeString(&buf, name)
-		writeString(&buf, input.Module)
+		res = append(res, fieldhash.StringToElements(publicInputDomainTag, name)...)
+		res = append(res, fieldhash.StringToElements(publicInputDomainTag, input.Module)...)
 
 		entries := append([]Entry(nil), input.Entries...)
 		sort.Slice(entries, func(i, j int) bool {
@@ -69,48 +69,40 @@ func (inputs Inputs) TranscriptBytes() []byte {
 			if entries[i].Field != entries[j].Field {
 				return entries[i].Field < entries[j].Field
 			}
-			return bytes.Compare(entryValueBytes(entries[i]), entryValueBytes(entries[j])) < 0
+			return compareEntryValues(entries[i], entries[j]) < 0
 		})
 
-		writeUint64(&buf, uint64(len(entries)))
+		res = append(res, fieldhash.NewElement(uint64(len(entries))))
 		for _, entry := range entries {
-			writeUint64(&buf, uint64(entry.Idx))
-			buf.WriteByte(byte(entry.Field))
-			buf.Write(entryValueBytes(entry))
+			res = append(res, fieldhash.NewElement(uint64(entry.Idx)), fieldhash.NewElement(uint64(entry.Field)))
+			res = appendEntryValueElements(res, entry)
 		}
 	}
 
-	return buf.Bytes()
-}
-
-func writeString(buf *bytes.Buffer, s string) {
-	writeUint64(buf, uint64(len(s)))
-	buf.WriteString(s)
-}
-
-func writeUint64(buf *bytes.Buffer, v uint64) {
-	var raw [8]byte
-	binary.BigEndian.PutUint64(raw[:], v)
-	buf.Write(raw[:])
-}
-
-func entryValueBytes(entry Entry) []byte {
-	if entry.Field == field.Ext {
-		return extBytes(entry.ValueExt)
-	}
-	raw := entry.Value.Bytes()
-	return raw[:]
-}
-
-func extBytes(v extensions.E4) []byte {
-	res := make([]byte, 0, 4*koalabear.Bytes)
-	b0a0 := v.B0.A0.Bytes()
-	b0a1 := v.B0.A1.Bytes()
-	b1a0 := v.B1.A0.Bytes()
-	b1a1 := v.B1.A1.Bytes()
-	res = append(res, b0a0[:]...)
-	res = append(res, b0a1[:]...)
-	res = append(res, b1a0[:]...)
-	res = append(res, b1a1[:]...)
 	return res
+}
+
+func appendEntryValueElements(dst []koalabear.Element, entry Entry) []koalabear.Element {
+	if entry.Field == field.Ext {
+		return append(dst, entry.ValueExt.B0.A0, entry.ValueExt.B0.A1, entry.ValueExt.B1.A0, entry.ValueExt.B1.A1)
+	}
+	return append(dst, entry.Value)
+}
+
+func compareEntryValues(a, b Entry) int {
+	aVals := entryValueElements(a)
+	bVals := entryValueElements(b)
+	for i := range aVals {
+		if cmp := aVals[i].Cmp(&bVals[i]); cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
+}
+
+func entryValueElements(entry Entry) []koalabear.Element {
+	if entry.Field == field.Ext {
+		return []koalabear.Element{entry.ValueExt.B0.A0, entry.ValueExt.B0.A1, entry.ValueExt.B1.A0, entry.ValueExt.B1.A1}
+	}
+	return []koalabear.Element{entry.Value}
 }

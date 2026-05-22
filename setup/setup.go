@@ -21,6 +21,7 @@ import (
 	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/trace"
 )
@@ -35,12 +36,12 @@ type ProvingKey struct {
 
 // VerificationKey is the verifier-side setup material.
 type VerificationKey struct {
-	Roots [][]byte
+	Roots []hash.HashOutput
 }
 
 // VerificationKey returns the verifier-side roots corresponding to pk.
 func (pk ProvingKey) VerificationKey() VerificationKey {
-	res := make([][]byte, len(pk.Trees))
+	res := make([]hash.HashOutput, len(pk.Trees))
 	for i, tree := range pk.Trees {
 		res[i] = tree.Root()
 	}
@@ -103,7 +104,7 @@ func Setup(t trace.Trace, program board.Program) (ProvingKey, VerificationKey, e
 				extPublic = append(extPublic, p)
 			}
 		}
-		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), commitment.LeafHash, commitment.NodeHash, &domainCache)
+		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), commitment.DefaultLeafHasher, commitment.DefaultNodeHasher, &domainCache)
 		tree, err := committer.Commit(basePublic, extPublic, commitment.WithDomainCache(&domainCache))
 		if err != nil {
 			return ProvingKey{}, VerificationKey{}, err
