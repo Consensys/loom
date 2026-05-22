@@ -93,6 +93,91 @@ func TestPoseidon2MDHasherSumIsIdempotentAndResettable(t *testing.T) {
 	}
 }
 
+func TestPoseidon2SpongeHasherMatchesReference(t *testing.T) {
+	for _, n := range []int{0, 1, 7, SPONGE_RATE, SPONGE_RATE + 1, SPONGE_WIDTH, 2*SPONGE_RATE + 3, 4 * SPONGE_RATE} {
+		input := testElements(n)
+		hasher := NewPoseidon2SpongeHasher()
+		hasher.WriteElements(input...)
+
+		got := hasher.Sum()
+		want := referenceSpongeDigest(input)
+		if got != want {
+			t.Fatalf("n=%d: digest mismatch", n)
+		}
+	}
+}
+
+func TestPoseidon2SpongeHasherChunkingInvariant(t *testing.T) {
+	for _, n := range []int{0, 1, SPONGE_RATE - 1, SPONGE_RATE, SPONGE_RATE + 1, 3*SPONGE_RATE + 5} {
+		input := testElements(n)
+		want := referenceSpongeDigest(input)
+
+		allAtOnce := NewPoseidon2SpongeHasher()
+		allAtOnce.WriteElements(input...)
+		if got := allAtOnce.Sum(); got != want {
+			t.Fatalf("all-at-once n=%d: digest mismatch", n)
+		}
+
+		oneByOne := NewPoseidon2SpongeHasher()
+		for _, e := range input {
+			oneByOne.WriteElements(e)
+		}
+		if got := oneByOne.Sum(); got != want {
+			t.Fatalf("one-by-one n=%d: digest mismatch", n)
+		}
+
+		chunked := NewPoseidon2SpongeHasher()
+		for i := 0; i < len(input); i += 5 {
+			end := i + 5
+			if end > len(input) {
+				end = len(input)
+			}
+			chunked.WriteElements(input[i:end]...)
+		}
+		if got := chunked.Sum(); got != want {
+			t.Fatalf("chunked n=%d: digest mismatch", n)
+		}
+	}
+}
+
+func TestPoseidon2SpongeHasherWriteExtMatchesCoordinates(t *testing.T) {
+	input := []ext.E4{
+		testExt(1, 2, 3, 4),
+		testExt(5, 6, 7, 8),
+		testExt(9, 10, 11, 12),
+	}
+
+	withExt := NewPoseidon2SpongeHasher()
+	withExt.WriteExt(input...)
+
+	withElements := NewPoseidon2SpongeHasher()
+	for _, e := range input {
+		withElements.WriteElements(e.B0.A0, e.B0.A1, e.B1.A0, e.B1.A1)
+	}
+
+	if got, want := withExt.Sum(), withElements.Sum(); got != want {
+		t.Fatalf("WriteExt digest mismatch")
+	}
+}
+
+func TestPoseidon2SpongeHasherSumIsIdempotentAndResettable(t *testing.T) {
+	input := testElements(SPONGE_RATE + 3)
+	hasher := NewPoseidon2SpongeHasher()
+	hasher.WriteElements(input...)
+
+	first := hasher.Sum()
+	second := hasher.Sum()
+	if first != second {
+		t.Fatal("Sum changed digest on repeated call")
+	}
+
+	hasher.Reset()
+	hasher.WriteElements(input...)
+	if got := hasher.Sum(); got != first {
+		t.Fatal("Reset did not restore hasher to initial state")
+	}
+}
+
 func referenceSingleBlockDigest(input []koalabear.Element) Digest {
 	if len(input) > WIDTH {
 		panic("referenceSingleBlockDigest only supports at most one block")
@@ -159,6 +244,28 @@ func compressReferenceBlock(state *[WIDTH]koalabear.Element) Digest {
 	for i := 0; i < WIDTH/2; i++ {
 		res[i].Add(&upper[i], &state[WIDTH/2+i])
 	}
+	return res
+}
+
+func referenceSpongeDigest(input []koalabear.Element) Digest {
+	if len(input) == 0 {
+		return Digest{}
+	}
+	perm := poseidon2.NewPermutation(SPONGE_WIDTH, NB_FULL_ROUND, NB_PARTIAL_ROUNDS)
+	var state [SPONGE_WIDTH]koalabear.Element
+	for i := 0; i < len(input); i += SPONGE_RATE {
+		end := i + SPONGE_RATE
+		if end > len(input) {
+			end = len(input)
+		}
+		copy(state[:], input[i:end])
+		if err := perm.Permutation(state[:]); err != nil {
+			panic(err)
+		}
+	}
+
+	var res Digest
+	copy(res[:], state[:DIGEST_NB_ELEMENTS])
 	return res
 }
 

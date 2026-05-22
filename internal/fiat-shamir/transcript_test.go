@@ -79,7 +79,7 @@ func TestComputeChallengeAbsorbsChallengeID(t *testing.T) {
 func TestChallengeIDDomainSeparation(t *testing.T) {
 	binding := testElement(7)
 
-	hasherA := hash.NewPoseidon2MDHasher()
+	hasherA := hash.NewPoseidon2SpongeHasher()
 	transcriptA := NewTranscript(&hasherA, "a")
 	if err := transcriptA.Bind("a", []koalabear.Element{binding}); err != nil {
 		t.Fatalf("bind a: %v", err)
@@ -89,7 +89,7 @@ func TestChallengeIDDomainSeparation(t *testing.T) {
 		t.Fatalf("compute a: %v", err)
 	}
 
-	hasherB := hash.NewPoseidon2MDHasher()
+	hasherB := hash.NewPoseidon2SpongeHasher()
 	transcriptB := NewTranscript(&hasherB, "b")
 	if err := transcriptB.Bind("b", []koalabear.Element{binding}); err != nil {
 		t.Fatalf("bind b: %v", err)

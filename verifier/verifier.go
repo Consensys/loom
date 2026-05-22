@@ -103,7 +103,7 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 		res.roots[res.layout.SetupEnd+i] = root
 	}
 
-	fsHasher := hash.NewPoseidon2MDHasher()
+	fsHasher := hash.NewPoseidon2SpongeHasher()
 	res.fs = fiatshamir.NewTranscript(&fsHasher)
 	numRounds := len(program.FScolumnsDependencies)
 	for i := 0; i < numRounds; i++ {

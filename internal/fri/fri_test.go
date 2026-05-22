@@ -27,7 +27,7 @@ import (
 )
 
 func freshTS() *fiatshamir.Transcript {
-	hasher := hash.NewPoseidon2MDHasher()
+	hasher := hash.NewPoseidon2SpongeHasher()
 	return fiatshamir.NewTranscript(&hasher)
 }
 

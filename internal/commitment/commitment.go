@@ -129,7 +129,7 @@ func WithDomainCache(cache *poly.DomainCache) CommitOption {
 }
 
 func (Poseidon2LeafHasher) HashLeaf(base []PairBase, ext []PairExt) hash.Digest {
-	h := hash.NewPoseidon2MDHasher()
+	h := hash.NewPoseidon2SpongeHasher()
 	h.WriteElements(hash.NewElement(leafDomainTag), hash.NewElement(uint64(len(base))), hash.NewElement(uint64(len(ext))))
 	for _, pair := range base {
 		h.WriteElements(pair[0], pair[1])

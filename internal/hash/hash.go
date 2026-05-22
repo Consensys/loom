@@ -7,13 +7,16 @@ import (
 )
 
 const (
-	WIDTH             = 16
-	NB_FULL_ROUND     = 6
-	NB_PARTIAL_ROUNDS = 21
+	WIDTH              = 16
+	SPONGE_WIDTH       = 24
+	SPONGE_RATE        = 16
+	NB_FULL_ROUND      = 6
+	NB_PARTIAL_ROUNDS  = 21
+	DIGEST_NB_ELEMENTS = 8
 )
 
 // 8 to land in a space big enough to be collision resistant
-type Digest [8]koalabear.Element
+type Digest [DIGEST_NB_ELEMENTS]koalabear.Element
 
 const StringChunkSize = 3
 
@@ -72,14 +75,37 @@ type Poseidon2MDHasher struct {
 	finalized  bool
 }
 
+// Poseidon2SpongeHasher is a padding-free overwrite-mode sponge with width 24,
+// rate 16, and an 8-element digest. It is used for Fiat-Shamir and Merkle
+// leaves, while Merkle node compression keeps the width-16 MD hasher.
+type Poseidon2SpongeHasher struct {
+	Perm *poseidon2.Permutation
+
+	state     [SPONGE_WIDTH]koalabear.Element
+	block     [SPONGE_RATE]koalabear.Element
+	blockLen  int
+	wrote     bool
+	finalized bool
+}
+
 // Poseidon2 permutations only hold immutable parameters/round keys. The
-// permutation call mutates the input state slice, so all MD hashers can share
-// this value while keeping independent State buffers.
-var defaultPoseidon2Perm = poseidon2.NewPermutation(WIDTH, NB_FULL_ROUND, NB_PARTIAL_ROUNDS)
+// permutation call mutates the input state slice, so hashers can share these
+// values while keeping independent state buffers.
+var (
+	defaultPoseidon2Perm       = poseidon2.NewPermutation(WIDTH, NB_FULL_ROUND, NB_PARTIAL_ROUNDS)
+	defaultPoseidon2SpongePerm = poseidon2.NewPermutation(SPONGE_WIDTH, NB_FULL_ROUND, NB_PARTIAL_ROUNDS)
+)
 
 func NewPoseidon2MDHasher() Poseidon2MDHasher {
 	return Poseidon2MDHasher{
 		Perm: defaultPoseidon2Perm,
+	}
+}
+
+// NewPoseidon2SpongeHasher returns the width-24/rate-16 Poseidon2 sponge.
+func NewPoseidon2SpongeHasher() Poseidon2SpongeHasher {
+	return Poseidon2SpongeHasher{
+		Perm: defaultPoseidon2SpongePerm,
 	}
 }
 
@@ -162,5 +188,95 @@ func (ph *Poseidon2MDHasher) zeroFromPos() {
 func (ph *Poseidon2MDHasher) digest() Digest {
 	var res Digest
 	copy(res[:], ph.state[:WIDTH/2])
+	return res
+}
+
+func (ph *Poseidon2SpongeHasher) Reset() {
+	for i := range ph.state {
+		ph.state[i].SetZero()
+	}
+	for i := range ph.block {
+		ph.block[i].SetZero()
+	}
+	ph.blockLen = 0
+	ph.wrote = false
+	ph.finalized = false
+}
+
+func (ph *Poseidon2SpongeHasher) WriteElements(elmts ...koalabear.Element) {
+	for i := range elmts {
+		ph.writeElement(elmts[i])
+	}
+}
+
+func (ph *Poseidon2SpongeHasher) WriteExt(elmts ...ext.E4) {
+	for _, elmt := range elmts {
+		ph.writeElement(elmt.B0.A0)
+		ph.writeElement(elmt.B0.A1)
+		ph.writeElement(elmt.B1.A0)
+		ph.writeElement(elmt.B1.A1)
+	}
+}
+
+func (ph *Poseidon2SpongeHasher) Sum() Digest {
+	if ph.finalized {
+		return ph.digest()
+	}
+	if !ph.wrote && ph.blockLen == 0 {
+		ph.finalized = true
+		return Digest{}
+	}
+	if ph.blockLen > 0 {
+		ph.absorbPartialBlock()
+	}
+	ph.finalized = true
+	return ph.digest()
+}
+
+func (ph *Poseidon2SpongeHasher) writeElement(elmt koalabear.Element) {
+	ph.block[ph.blockLen].Set(&elmt)
+	ph.blockLen++
+	ph.finalized = false
+	if ph.blockLen == SPONGE_RATE {
+		ph.absorbFullBlock()
+	}
+}
+
+func (ph *Poseidon2SpongeHasher) absorbFullBlock() {
+	copy(ph.state[:SPONGE_RATE], ph.block[:])
+	ph.permute()
+	ph.clearBlock()
+	ph.blockLen = 0
+	ph.wrote = true
+}
+
+func (ph *Poseidon2SpongeHasher) absorbPartialBlock() {
+	for i := 0; i < ph.blockLen; i++ {
+		ph.state[i].Set(&ph.block[i])
+	}
+	ph.permute()
+	ph.clearBlock()
+	ph.blockLen = 0
+	ph.wrote = true
+}
+
+func (ph *Poseidon2SpongeHasher) permute() {
+	if ph.Perm == nil {
+		ph.Perm = defaultPoseidon2SpongePerm
+	}
+	if err := ph.Perm.Permutation(ph.state[:]); err != nil {
+		panic(err)
+	}
+}
+
+func (ph *Poseidon2SpongeHasher) clearBlock() {
+	for i := range ph.block {
+		ph.block[i].SetZero()
+	}
+}
+
+func (ph *Poseidon2SpongeHasher) digest() Digest {
+	var res Digest
+	copy(res[:], ph.state[:DIGEST_NB_ELEMENTS])
 	return res
 }

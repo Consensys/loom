@@ -144,7 +144,7 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 
 	// initialize FS transcript and pre-register all challenges
 	// (challenge@loom_0..n-1, zeta, and alpha_DEEP)
-	fsHasher := hash.NewPoseidon2MDHasher()
+	fsHasher := hash.NewPoseidon2SpongeHasher()
 	res.fs = fiatshamir.NewTranscript(&fsHasher)
 	numRounds := len(program.FScolumnsDependencies)
 	for i := 0; i < numRounds; i++ {
