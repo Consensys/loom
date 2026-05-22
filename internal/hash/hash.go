@@ -63,56 +63,104 @@ func ElementsToExt(a0, a1, b0, b1 koalabear.Element) ext.E4 {
 }
 
 type Poseidon2MDHasher struct {
-	Perm  *poseidon2.Permutation
-	State []koalabear.Element
+	Perm *poseidon2.Permutation
+
+	state      [WIDTH]koalabear.Element
+	pos        int
+	wrote      bool
+	compressed bool
+	finalized  bool
 }
+
+// Poseidon2 permutations only hold immutable parameters/round keys. The
+// permutation call mutates the input state slice, so all MD hashers can share
+// this value while keeping independent State buffers.
+var defaultPoseidon2Perm = poseidon2.NewPermutation(WIDTH, NB_FULL_ROUND, NB_PARTIAL_ROUNDS)
 
 func NewPoseidon2MDHasher() Poseidon2MDHasher {
 	return Poseidon2MDHasher{
-		Perm:  poseidon2.NewPermutation(WIDTH, NB_FULL_ROUND, NB_PARTIAL_ROUNDS),
-		State: make([]koalabear.Element, 0, WIDTH),
+		Perm: defaultPoseidon2Perm,
 	}
 }
 
 func (ph *Poseidon2MDHasher) Reset() {
-	ph.State = ph.State[:0]
+	for i := range ph.state {
+		ph.state[i].SetZero()
+	}
+	ph.pos = 0
+	ph.wrote = false
+	ph.compressed = false
+	ph.finalized = false
 }
 
 func (ph *Poseidon2MDHasher) WriteElements(elmts ...koalabear.Element) {
-	ph.State = append(ph.State, elmts...)
+	for i := range elmts {
+		ph.writeElement(elmts[i])
+	}
 }
 
 func (ph *Poseidon2MDHasher) WriteExt(elmts ...ext.E4) {
 	for _, elmt := range elmts {
-		ph.State = append(ph.State, elmt.B0.A0)
-		ph.State = append(ph.State, elmt.B0.A1)
-		ph.State = append(ph.State, elmt.B1.A0)
-		ph.State = append(ph.State, elmt.B1.A1)
+		ph.writeElement(elmt.B0.A0)
+		ph.writeElement(elmt.B0.A1)
+		ph.writeElement(elmt.B1.A0)
+		ph.writeElement(elmt.B1.A1)
 	}
 }
 
 func (ph *Poseidon2MDHasher) Sum() Digest {
-	if len(ph.State)%WIDTH != 0 {
-		padding := make([]koalabear.Element, WIDTH-len(ph.State)%WIDTH)
-		ph.State = append(ph.State, padding...)
+	if ph.finalized {
+		return ph.digest()
 	}
-
-	numPoseidonCall := len(ph.State) / WIDTH
-
-	tmp := make([]koalabear.Element, WIDTH/2)
-	for i := 0; i < numPoseidonCall; i++ {
-		copy(tmp, ph.State[WIDTH/2:])
-		if err := ph.Perm.Permutation(ph.State[:WIDTH]); err != nil {
-			panic(err)
-		}
-		for i := 0; i < WIDTH/2; i++ {
-			tmp[i].Add(&tmp[i], &ph.State[WIDTH/2+i])
-		}
-		ph.State = ph.State[WIDTH/2:]
-		copy(ph.State, tmp)
+	if !ph.wrote {
+		ph.finalized = true
+		return Digest{}
 	}
+	if !ph.compressed || ph.pos > WIDTH/2 {
+		ph.zeroFromPos()
+		ph.compress()
+	}
+	ph.finalized = true
+	return ph.digest()
+}
 
+func (ph *Poseidon2MDHasher) writeElement(elmt koalabear.Element) {
+	ph.state[ph.pos].Set(&elmt)
+	ph.pos++
+	ph.wrote = true
+	ph.finalized = false
+	if ph.pos == WIDTH {
+		ph.compress()
+	}
+}
+
+func (ph *Poseidon2MDHasher) compress() {
+	if ph.Perm == nil {
+		ph.Perm = defaultPoseidon2Perm
+	}
+	var upper [WIDTH / 2]koalabear.Element
+	copy(upper[:], ph.state[WIDTH/2:])
+	if err := ph.Perm.Permutation(ph.state[:]); err != nil {
+		panic(err)
+	}
+	for i := 0; i < WIDTH/2; i++ {
+		ph.state[i].Add(&upper[i], &ph.state[WIDTH/2+i])
+	}
+	for i := WIDTH / 2; i < WIDTH; i++ {
+		ph.state[i].SetZero()
+	}
+	ph.pos = WIDTH / 2
+	ph.compressed = true
+}
+
+func (ph *Poseidon2MDHasher) zeroFromPos() {
+	for i := ph.pos; i < WIDTH; i++ {
+		ph.state[i].SetZero()
+	}
+}
+
+func (ph *Poseidon2MDHasher) digest() Digest {
 	var res Digest
-	copy(res[:], tmp)
+	copy(res[:], ph.state[:WIDTH/2])
 	return res
 }

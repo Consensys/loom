@@ -1,0 +1,180 @@
+package hash
+
+import (
+	"testing"
+
+	"github.com/consensys/gnark-crypto/field/koalabear"
+	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
+	"github.com/consensys/gnark-crypto/field/koalabear/poseidon2"
+)
+
+func TestPoseidon2MDHasherSingleBlockMatchesPreviousCompression(t *testing.T) {
+	for _, n := range []int{0, 1, WIDTH / 2, WIDTH - 1, WIDTH} {
+		input := testElements(n)
+		hasher := NewPoseidon2MDHasher()
+		hasher.WriteElements(input...)
+
+		got := hasher.Sum()
+		want := referenceSingleBlockDigest(input)
+		if got != want {
+			t.Fatalf("n=%d: digest mismatch", n)
+		}
+	}
+}
+
+func TestPoseidon2MDHasherChunkingInvariant(t *testing.T) {
+	for _, n := range []int{0, 1, 7, WIDTH, WIDTH + 1, WIDTH + WIDTH/2, 2*WIDTH + 1, 4 * WIDTH} {
+		input := testElements(n)
+		want := referenceStreamingDigest(input)
+
+		allAtOnce := NewPoseidon2MDHasher()
+		allAtOnce.WriteElements(input...)
+		if got := allAtOnce.Sum(); got != want {
+			t.Fatalf("all-at-once n=%d: digest mismatch", n)
+		}
+
+		oneByOne := NewPoseidon2MDHasher()
+		for _, e := range input {
+			oneByOne.WriteElements(e)
+		}
+		if got := oneByOne.Sum(); got != want {
+			t.Fatalf("one-by-one n=%d: digest mismatch", n)
+		}
+
+		chunked := NewPoseidon2MDHasher()
+		for i := 0; i < len(input); i += 3 {
+			end := i + 3
+			if end > len(input) {
+				end = len(input)
+			}
+			chunked.WriteElements(input[i:end]...)
+		}
+		if got := chunked.Sum(); got != want {
+			t.Fatalf("chunked n=%d: digest mismatch", n)
+		}
+	}
+}
+
+func TestPoseidon2MDHasherWriteExtMatchesCoordinates(t *testing.T) {
+	input := []ext.E4{
+		testExt(1, 2, 3, 4),
+		testExt(5, 6, 7, 8),
+		testExt(9, 10, 11, 12),
+	}
+
+	withExt := NewPoseidon2MDHasher()
+	withExt.WriteExt(input...)
+
+	withElements := NewPoseidon2MDHasher()
+	for _, e := range input {
+		withElements.WriteElements(e.B0.A0, e.B0.A1, e.B1.A0, e.B1.A1)
+	}
+
+	if got, want := withExt.Sum(), withElements.Sum(); got != want {
+		t.Fatalf("WriteExt digest mismatch")
+	}
+}
+
+func TestPoseidon2MDHasherSumIsIdempotentAndResettable(t *testing.T) {
+	input := testElements(WIDTH + 3)
+	hasher := NewPoseidon2MDHasher()
+	hasher.WriteElements(input...)
+
+	first := hasher.Sum()
+	second := hasher.Sum()
+	if first != second {
+		t.Fatal("Sum changed digest on repeated call")
+	}
+
+	hasher.Reset()
+	hasher.WriteElements(input...)
+	if got := hasher.Sum(); got != first {
+		t.Fatal("Reset did not restore hasher to initial state")
+	}
+}
+
+func referenceSingleBlockDigest(input []koalabear.Element) Digest {
+	if len(input) > WIDTH {
+		panic("referenceSingleBlockDigest only supports at most one block")
+	}
+	if len(input) == 0 {
+		return Digest{}
+	}
+	var state [WIDTH]koalabear.Element
+	copy(state[:], input)
+	return compressReferenceBlock(&state)
+}
+
+func referenceStreamingDigest(input []koalabear.Element) Digest {
+	if len(input) == 0 {
+		return Digest{}
+	}
+	perm := poseidon2.NewPermutation(WIDTH, NB_FULL_ROUND, NB_PARTIAL_ROUNDS)
+	var state [WIDTH]koalabear.Element
+	pos := 0
+	compressed := false
+	compress := func() {
+		var upper [WIDTH / 2]koalabear.Element
+		copy(upper[:], state[WIDTH/2:])
+		if err := perm.Permutation(state[:]); err != nil {
+			panic(err)
+		}
+		for i := 0; i < WIDTH/2; i++ {
+			state[i].Add(&upper[i], &state[WIDTH/2+i])
+		}
+		for i := WIDTH / 2; i < WIDTH; i++ {
+			state[i].SetZero()
+		}
+		pos = WIDTH / 2
+		compressed = true
+	}
+
+	for _, e := range input {
+		state[pos].Set(&e)
+		pos++
+		if pos == WIDTH {
+			compress()
+		}
+	}
+	if !compressed || pos > WIDTH/2 {
+		for i := pos; i < WIDTH; i++ {
+			state[i].SetZero()
+		}
+		compress()
+	}
+
+	var res Digest
+	copy(res[:], state[:WIDTH/2])
+	return res
+}
+
+func compressReferenceBlock(state *[WIDTH]koalabear.Element) Digest {
+	perm := poseidon2.NewPermutation(WIDTH, NB_FULL_ROUND, NB_PARTIAL_ROUNDS)
+	var upper [WIDTH / 2]koalabear.Element
+	copy(upper[:], state[WIDTH/2:])
+	if err := perm.Permutation(state[:]); err != nil {
+		panic(err)
+	}
+	var res Digest
+	for i := 0; i < WIDTH/2; i++ {
+		res[i].Add(&upper[i], &state[WIDTH/2+i])
+	}
+	return res
+}
+
+func testElements(n int) []koalabear.Element {
+	res := make([]koalabear.Element, n)
+	for i := range res {
+		res[i].SetUint64(uint64(i + 1))
+	}
+	return res
+}
+
+func testExt(a0, a1, b0, b1 uint64) ext.E4 {
+	var e ext.E4
+	e.B0.A0.SetUint64(a0)
+	e.B0.A1.SetUint64(a1)
+	e.B1.A0.SetUint64(b0)
+	e.B1.A1.SetUint64(b1)
+	return e
+}
