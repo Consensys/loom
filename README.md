@@ -19,6 +19,7 @@ Fiat-Shamir challenges, including lookup/permutation challenges, canonical trace
 | Program | `board.Program` | Compiled IOP: level-ordered step schedule + folded vanishing relations |
 | Statement | `loom.Statement` | Verifier-owned data: program, verification key, and public inputs |
 | Witness | `loom.Witness` | Prover-owned data: witness trace and proving key |
+| Hash backend | `loom.HashBackend` | Hashes used by commitments, Merkle proofs, FRI, and Fiat-Shamir |
 | Exposed values | `proof.Proof.ExposedValues` / `proof.ExposedValue` | Values produced by board steps such as `AddExposeIthValueStep` and carried by the proof |
 
 ## Workflow
@@ -114,6 +115,53 @@ err = loom.Verify(statement, prf)
 `setupTrace` only needs the fixed columns registered with `MakeColumnPublic`.
 The proving key stores those columns in Lagrange form and the setup Merkle
 trees; `loom.Prove` overlays them with the per-instance witness trace.
+
+## Hash backends
+
+Loom supports configurable hash backends. `Poseidon2` is the default and is the
+right backend for algebraic or recursive verification. `SHA-256` is available
+for non-recursive proving workflows where native hash performance is preferred.
+
+The selected backend is part of the protocol identity: setup keys and proofs
+carry a `HashBackendID`, and the backend ID is bound into the Fiat-Shamir
+transcript. Prover and verifier must use the same backend.
+
+For programs without setup commitments, pass the backend to both proving and
+verification:
+
+```go
+backend := loom.SHA256HashBackend()
+
+prf, err := loom.Prove(
+    statement,
+    witness,
+    loom.WithProverHashBackend(backend),
+)
+err = loom.Verify(
+    statement,
+    prf,
+    loom.WithVerifierHashBackend(backend),
+)
+```
+
+For programs with setup commitments, select the backend during setup. The
+proving and verification keys then carry the backend metadata, so `Prove` and
+`Verify` can infer it:
+
+```go
+backend := loom.SHA256HashBackend()
+
+provingKey, verificationKey, err := loom.Setup(
+    setupTrace,
+    pg,
+    loom.WithSetupHashBackend(backend),
+)
+
+statement := loom.Statement{Program: pg, VerificationKey: verificationKey}
+witness := loom.Witness{Trace: witnessTrace, ProvingKey: provingKey}
+prf, err := loom.Prove(statement, witness)
+err = loom.Verify(statement, prf)
+```
 
 ## Development
 
