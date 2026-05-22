@@ -197,7 +197,7 @@ type Proof struct {
 	LevelQueries [][]QueryLayer
 
 	// Running-polynomial FRI path
-	FRIRoots      []hash.HashOutput // Merkle roots for running poly T_1..T_{r-1}
+	FRIRoots      []hash.Digest // Merkle roots for running poly T_1..T_{r-1}
 	FinalField    field.Kind
 	FinalPolyBase []koalabear.Element // populated when FinalField == field.Base
 	FinalPolyExt  []ext.E4            // populated when FinalField == field.Ext
@@ -354,7 +354,7 @@ func proveBase(p Params, levels []Level, plan provePlan, ts *fiatshamir.Transcri
 
 	var prf Proof
 	if p.numRounds > 1 {
-		prf.FRIRoots = make([]hash.HashOutput, p.numRounds-1)
+		prf.FRIRoots = make([]hash.Digest, p.numRounds-1)
 	}
 
 	for j := 0; j < p.numRounds; j++ {
@@ -486,7 +486,7 @@ func proveExt(p Params, levels []Level, plan provePlan, ts *fiatshamir.Transcrip
 
 	var prf Proof
 	if p.numRounds > 1 {
-		prf.FRIRoots = make([]hash.HashOutput, p.numRounds-1)
+		prf.FRIRoots = make([]hash.Digest, p.numRounds-1)
 	}
 
 	for j := 0; j < p.numRounds; j++ {
@@ -616,7 +616,7 @@ func proveExt(p Params, levels []Level, plan provePlan, ts *fiatshamir.Transcrip
 // called (i.e. decreasing D).
 //
 // ts must be in the same state as when Prove was called.
-func Verify(p Params, levelRoots []hash.HashOutput, levelDs []int, prf Proof, ts *fiatshamir.Transcript) error {
+func Verify(p Params, levelRoots []hash.Digest, levelDs []int, prf Proof, ts *fiatshamir.Transcript) error {
 	if len(levelDs) == 0 {
 		return fmt.Errorf("fri: Verify: at least one level required")
 	}
@@ -682,13 +682,13 @@ func Verify(p Params, levelRoots []hash.HashOutput, levelDs []int, prf Proof, ts
 
 	// Assemble FRI running-polynomial roots: roots[0] is the level-0 root;
 	// roots[1..r-1] come from prf.FRIRoots.
-	roots := make([]hash.HashOutput, p.numRounds)
+	roots := make([]hash.Digest, p.numRounds)
 	roots[0] = levelRoots[0]
 	for j := 1; j < p.numRounds; j++ {
 		roots[j] = prf.FRIRoots[j-1]
 	}
 
-	var levelRootsExtra []hash.HashOutput
+	var levelRootsExtra []hash.Digest
 	if numExtraLevels > 0 {
 		levelRootsExtra = levelRoots[1:]
 	}
@@ -699,7 +699,7 @@ func Verify(p Params, levelRoots []hash.HashOutput, levelDs []int, prf Proof, ts
 	return verifyBase(p, levelRoots, levelRootsExtra, levelAtRound, roots, prf, ts)
 }
 
-func verifyBase(p Params, levelRoots, levelRootsExtra []hash.HashOutput, levelAtRound map[int]int, roots []hash.HashOutput, prf Proof, ts *fiatshamir.Transcript) error {
+func verifyBase(p Params, levelRoots, levelRootsExtra []hash.Digest, levelAtRound map[int]int, roots []hash.Digest, prf Proof, ts *fiatshamir.Transcript) error {
 	numLevels := len(levelRoots)
 	numExtraLevels := numLevels - 1
 
@@ -770,7 +770,7 @@ func verifyBase(p Params, levelRoots, levelRootsExtra []hash.HashOutput, levelAt
 	return nil
 }
 
-func verifyExt(p Params, levelRoots, levelRootsExtra []hash.HashOutput, levelAtRound map[int]int, roots []hash.HashOutput, prf Proof, ts *fiatshamir.Transcript) error {
+func verifyExt(p Params, levelRoots, levelRootsExtra []hash.Digest, levelAtRound map[int]int, roots []hash.Digest, prf Proof, ts *fiatshamir.Transcript) error {
 	numLevels := len(levelRoots)
 	numExtraLevels := numLevels - 1
 
@@ -862,7 +862,7 @@ func buildTreeBase(layer []koalabear.Element, lh commitment.LeafHasher, nh commi
 	if err != nil {
 		return nil, err
 	}
-	leaves := make([]hash.HashOutput, half)
+	leaves := make([]hash.Digest, half)
 	for k := 0; k < half; k++ {
 		pair := []commitment.PairBase{{layer[k], layer[k+half]}}
 		leaves[k] = lh.HashLeaf(pair, nil)
@@ -877,7 +877,7 @@ func buildTreeExt(layer []ext.E4, lh commitment.LeafHasher, nh commitment.NodeHa
 	if err != nil {
 		return nil, err
 	}
-	leaves := make([]hash.HashOutput, half)
+	leaves := make([]hash.Digest, half)
 	for k := 0; k < half; k++ {
 		pair := []commitment.PairExt{{layer[k], layer[k+half]}}
 		leaves[k] = lh.HashLeaf(nil, pair)
@@ -958,7 +958,7 @@ func transcriptExtPoly(poly []ext.E4) []koalabear.Element {
 	return res
 }
 
-func queryIndex(challenge hash.HashOutput, modulus int) int {
+func queryIndex(challenge hash.Digest, modulus int) int {
 	if modulus <= 0 {
 		return 0
 	}
@@ -1022,10 +1022,10 @@ func openQueryExt(s int, layers [][]ext.E4, trees []*merkle.Tree, numRounds int)
 // gammas[l] is the batching challenge for levels[l] (1-based; gammas[0] unused).
 func checkQuery(s int, fq Query,
 	levelQueriesForQuery []QueryLayer,
-	levelRoots []hash.HashOutput,
+	levelRoots []hash.Digest,
 	levelAtRound map[int]int,
 	gammas []koalabear.Element,
-	roots []hash.HashOutput,
+	roots []hash.Digest,
 	finalPoly []koalabear.Element,
 	alphas []koalabear.Element,
 	p Params) error {
@@ -1113,10 +1113,10 @@ func checkQuery(s int, fq Query,
 
 func checkQueryExt(s int, fq Query,
 	levelQueriesForQuery []QueryLayer,
-	levelRoots []hash.HashOutput,
+	levelRoots []hash.Digest,
 	levelAtRound map[int]int,
 	gammas []ext.E4,
-	roots []hash.HashOutput,
+	roots []hash.Digest,
 	finalPoly []ext.E4,
 	alphas []ext.E4,
 	p Params) error {

@@ -36,12 +36,12 @@ type ProvingKey struct {
 
 // VerificationKey is the verifier-side setup material.
 type VerificationKey struct {
-	Roots []hash.HashOutput
+	Roots []hash.Digest
 }
 
 // VerificationKey returns the verifier-side roots corresponding to pk.
 func (pk ProvingKey) VerificationKey() VerificationKey {
-	res := make([]hash.HashOutput, len(pk.Trees))
+	res := make([]hash.Digest, len(pk.Trees))
 	for i, tree := range pk.Trees {
 		res[i] = tree.Root()
 	}

@@ -28,11 +28,11 @@ func (h *recordingHasher) WriteExt(elements ...ext.E4) {
 	}
 }
 
-func (h *recordingHasher) Sum() hash.HashOutput {
+func (h *recordingHasher) Sum() hash.Digest {
 	input := append([]koalabear.Element(nil), h.current...)
 	h.inputs = append(h.inputs, input)
 
-	var out hash.HashOutput
+	var out hash.Digest
 	for i := range out {
 		out[i].SetUint64(uint64(100*len(h.inputs) + i + 1))
 	}

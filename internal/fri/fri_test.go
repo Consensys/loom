@@ -108,7 +108,7 @@ func TestProveVerify(t *testing.T) {
 			}
 
 			tsV := freshTS()
-			if err := fri.Verify(p, []hash.HashOutput{tree.Root()}, []int{p.D}, prf, tsV); err != nil {
+			if err := fri.Verify(p, []hash.Digest{tree.Root()}, []int{p.D}, prf, tsV); err != nil {
 				t.Fatalf("Verify: %v", err)
 			}
 		})
@@ -136,7 +136,7 @@ func TestProveVerifyExtRail(t *testing.T) {
 	}
 
 	tsV := freshTS()
-	if err := fri.Verify(p, []hash.HashOutput{tree.Root()}, []int{p.D}, prf, tsV); err != nil {
+	if err := fri.Verify(p, []hash.Digest{tree.Root()}, []int{p.D}, prf, tsV); err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
 }
@@ -180,7 +180,7 @@ func TestProveVerifyExtRailWithExtraLevel(t *testing.T) {
 	}
 
 	tsV := freshTS()
-	if err := fri.Verify(p, []hash.HashOutput{tree0.Root(), tree1.Root()}, []int{p.D, pSmall.D}, prf, tsV); err != nil {
+	if err := fri.Verify(p, []hash.Digest{tree0.Root(), tree1.Root()}, []int{p.D, pSmall.D}, prf, tsV); err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
 }
@@ -198,13 +198,13 @@ func TestVerifyRejectsWrongRoot(t *testing.T) {
 		Tree:  tree,
 	}}, tsP)
 
-	var badRoot hash.HashOutput
+	var badRoot hash.Digest
 	for i := range badRoot {
 		badRoot[i].SetRandom()
 	}
 
 	tsV := freshTS()
-	if err := fri.Verify(p, []hash.HashOutput{badRoot}, []int{p.D}, prf, tsV); err == nil {
+	if err := fri.Verify(p, []hash.Digest{badRoot}, []int{p.D}, prf, tsV); err == nil {
 		t.Fatal("Verify accepted a proof with a wrong root0")
 	}
 }
@@ -229,7 +229,7 @@ func TestVerifyRejectsFlippedLeaf(t *testing.T) {
 	prf.FRIQueries[0].Layers[0].LeafPBase.SetRandom()
 
 	tsV := freshTS()
-	if err := fri.Verify(p, []hash.HashOutput{tree.Root()}, []int{p.D}, prf, tsV); err == nil {
+	if err := fri.Verify(p, []hash.Digest{tree.Root()}, []int{p.D}, prf, tsV); err == nil {
 		t.Fatal("Verify accepted a proof with a corrupted leaf")
 	}
 }
@@ -252,7 +252,7 @@ func TestVerifyRejectsFlippedExtLeaf(t *testing.T) {
 	prf.FRIQueries[0].Layers[0].LeafPExt.MustSetRandom()
 
 	tsV := freshTS()
-	if err := fri.Verify(p, []hash.HashOutput{tree.Root()}, []int{p.D}, prf, tsV); err == nil {
+	if err := fri.Verify(p, []hash.Digest{tree.Root()}, []int{p.D}, prf, tsV); err == nil {
 		t.Fatal("Verify accepted a proof with a corrupted ext leaf")
 	}
 }

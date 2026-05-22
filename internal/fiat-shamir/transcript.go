@@ -46,7 +46,7 @@ type Transcript struct {
 type challenge struct {
 	bindings   []koalabear.Element // bindings stores the variables a challenge is binded to.
 	name       string
-	value      hash.HashOutput // value stores the computed challenge
+	value      hash.Digest // value stores the computed challenge
 	isComputed bool
 }
 

@@ -13,7 +13,7 @@ const (
 )
 
 // 8 to land in a space big enough to be collision resistant
-type HashOutput [8]koalabear.Element
+type Digest [8]koalabear.Element
 
 const StringChunkSize = 3
 
@@ -21,7 +21,7 @@ type FieldHasher interface {
 	Reset()
 	WriteElements(...koalabear.Element)
 	WriteExt(...ext.E4)
-	Sum() HashOutput
+	Sum() Digest
 }
 
 func NewElement(v uint64) koalabear.Element {
@@ -49,7 +49,7 @@ func StringToElements(domainTag uint64, s string) []koalabear.Element {
 	return res
 }
 
-func OutputToExt(out HashOutput) ext.E4 {
+func OutputToExt(out Digest) ext.E4 {
 	return ElementsToExt(out[0], out[1], out[2], out[3])
 }
 
@@ -91,7 +91,7 @@ func (ph *Poseidon2MDHasher) WriteExt(elmts ...ext.E4) {
 	}
 }
 
-func (ph *Poseidon2MDHasher) Sum() HashOutput {
+func (ph *Poseidon2MDHasher) Sum() Digest {
 	if len(ph.State)%WIDTH != 0 {
 		padding := make([]koalabear.Element, WIDTH-len(ph.State)%WIDTH)
 		ph.State = append(ph.State, padding...)
@@ -112,7 +112,7 @@ func (ph *Poseidon2MDHasher) Sum() HashOutput {
 		copy(ph.State, tmp)
 	}
 
-	var res HashOutput
+	var res Digest
 	copy(res[:], tmp)
 	return res
 }

@@ -125,7 +125,7 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 	if err := res.initSetupOpeningSources(); err != nil {
 		return proverRuntime{}, err
 	}
-	res.Proof.Commitments = make([]hash.HashOutput, res.layout.NumTrees-res.layout.SetupEnd)
+	res.Proof.Commitments = make([]hash.Digest, res.layout.NumTrees-res.layout.SetupEnd)
 
 	// find the largest module size N in program (used to size FRI's outer domain)
 	maxN := 0
@@ -699,7 +699,7 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 		}
 	}
 
-	pr.Proof.DeepQuotientCommitment = make([]hash.HashOutput, len(levels))
+	pr.Proof.DeepQuotientCommitment = make([]hash.Digest, len(levels))
 	for li := range levels {
 		pr.Proof.DeepQuotientCommitment[li] = levels[li].Tree.Root()
 	}

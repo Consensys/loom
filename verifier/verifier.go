@@ -69,7 +69,7 @@ type verifierRunTime struct {
 	// roots is the flat sequence of Merkle roots in canonical order:
 	//   setup roots (from VerificationKey) ++ proof.Commitments
 	// roots[i] aligns with proof.PointSamplings[q][i] for any query q.
-	roots []hash.HashOutput
+	roots []hash.Digest
 }
 
 func newVerifierRuntime(program board.Program, verificationKey setup.VerificationKey, publicInputs public.Inputs, prf proof.Proof, config Config) (verifierRunTime, error) {
@@ -92,7 +92,7 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 	}
 
 	// Flatten setup roots ++ proof.Commitments into res.roots.
-	res.roots = make([]hash.HashOutput, res.layout.NumTrees)
+	res.roots = make([]hash.Digest, res.layout.NumTrees)
 	if len(verificationKey.Roots) != res.layout.SetupEnd-res.layout.SetupBegin {
 		return res, fmt.Errorf("verifier: setup has %d trees, layout expects %d", len(verificationKey.Roots), res.layout.SetupEnd-res.layout.SetupBegin)
 	}
@@ -343,7 +343,7 @@ func (vr *verifierRunTime) checkFRIProof() error {
 	if len(vr.proof.DeepQuotientCommitment) != len(levelDs) {
 		return fmt.Errorf("checkFRIProof: proof has %d level commitments, want %d", len(vr.proof.DeepQuotientCommitment), len(levelDs))
 	}
-	levelRoots := make([]hash.HashOutput, len(levelDs))
+	levelRoots := make([]hash.Digest, len(levelDs))
 	for i := range levelDs {
 		levelRoots[i] = vr.proof.DeepQuotientCommitment[i]
 	}
@@ -353,7 +353,7 @@ func (vr *verifierRunTime) checkFRIProof() error {
 
 // verifyWMerkleProof checks wp opens to its leaf data under root, using the
 // same base-then-ext paired-leaf hashing as RSCommit.Commit.
-func verifyWMerkleProof(root hash.HashOutput, wp commitment.WMerkleProof) bool {
+func verifyWMerkleProof(root hash.Digest, wp commitment.WMerkleProof) bool {
 	leaf := commitment.DefaultLeafHasher.HashLeaf(wp.RawLeafBase, wp.RawLeafExt)
 	return merkle.Verify(root, wp.Proof, leaf, commitment.DefaultNodeHasher)
 }

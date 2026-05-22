@@ -27,15 +27,15 @@ const (
 	nodeDomainTag uint64 = 0x4e4f4445 // "NODE"
 )
 
-type LeafHash = hash.HashOutput
-type NodeHash = hash.HashOutput
+type LeafHash = hash.Digest
+type NodeHash = hash.Digest
 
 type LeafHasher interface {
-	HashLeaf(base []PairBase, ext []PairExt) hash.HashOutput
+	HashLeaf(base []PairBase, ext []PairExt) hash.Digest
 }
 
 type NodeHasher interface {
-	HashNode(left, right hash.HashOutput) hash.HashOutput
+	HashNode(left, right hash.Digest) hash.Digest
 }
 
 type Poseidon2LeafHasher struct{}
@@ -70,7 +70,7 @@ type WMerkleProof struct {
 	Proof       merkle.Proof
 }
 
-func (wt WMerkleTree) Root() hash.HashOutput {
+func (wt WMerkleTree) Root() hash.Digest {
 	return wt.Tree.Root()
 }
 
@@ -128,7 +128,7 @@ func WithDomainCache(cache *poly.DomainCache) CommitOption {
 	}
 }
 
-func (Poseidon2LeafHasher) HashLeaf(base []PairBase, ext []PairExt) hash.HashOutput {
+func (Poseidon2LeafHasher) HashLeaf(base []PairBase, ext []PairExt) hash.Digest {
 	h := hash.NewPoseidon2MDHasher()
 	h.WriteElements(hash.NewElement(leafDomainTag), hash.NewElement(uint64(len(base))), hash.NewElement(uint64(len(ext))))
 	for _, pair := range base {
@@ -140,7 +140,7 @@ func (Poseidon2LeafHasher) HashLeaf(base []PairBase, ext []PairExt) hash.HashOut
 	return h.Sum()
 }
 
-func (Poseidon2NodeHasher) HashNode(left, right hash.HashOutput) hash.HashOutput {
+func (Poseidon2NodeHasher) HashNode(left, right hash.Digest) hash.Digest {
 	h := hash.NewPoseidon2MDHasher()
 	h.WriteElements(hash.NewElement(nodeDomainTag))
 	h.WriteElements(left[:]...)
