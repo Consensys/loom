@@ -168,6 +168,44 @@ func TestRSCommitBatchLeafHasherMatchesScalarRoot(t *testing.T) {
 	}
 }
 
+func TestPoseidon2BatchLeafHasherMatchesScalarLeaves(t *testing.T) {
+	tests := []struct {
+		name    string
+		leaves  int
+		nbBase  int
+		nbExt   int
+		offset  int
+		wantEnd int
+	}{
+		{name: "small mixed fallback", leaves: 8, nbBase: 2, nbExt: 1},
+		{name: "exact base only", leaves: hash.Poseidon2SpongeBatchSize, nbBase: 3},
+		{name: "tail ext only", leaves: hash.Poseidon2SpongeBatchSize + 1, nbExt: 2},
+		{name: "multiple batches mixed", leaves: 2*hash.Poseidon2SpongeBatchSize + 1, nbBase: 4, nbExt: 2},
+		{name: "subrange", leaves: 2 * hash.Poseidon2SpongeBatchSize, nbBase: 2, nbExt: 2, offset: 3, wantEnd: hash.Poseidon2SpongeBatchSize + 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := testLeafSource(tt.leaves, tt.nbBase, tt.nbExt)
+			start := tt.offset
+			end := tt.wantEnd
+			if end == 0 {
+				end = tt.leaves
+			}
+			got := make([]hash.Digest, end-start)
+			DefaultLeafHasher.HashLeaves(got, src, start)
+
+			for k := range got {
+				i := start + k
+				baseLeaf, extLeaf := leafFromSource(src, i)
+				if want := DefaultLeafHasher.HashLeaf(baseLeaf, extLeaf); got[k] != want {
+					t.Fatalf("leaf %d: batched digest differs from scalar digest", i)
+				}
+			}
+		})
+	}
+}
+
 func TestRSCommitEmptyRails(t *testing.T) {
 	basePolys := []poly.Polynomial{
 		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},
@@ -207,6 +245,44 @@ type scalarOnlyLeafHasher struct {
 
 func (h scalarOnlyLeafHasher) HashLeaf(base []PairBase, ext []PairExt) hash.Digest {
 	return h.inner.HashLeaf(base, ext)
+}
+
+func testLeafSource(nLeaves, nbBase, nbExt int) LeafSource {
+	src := LeafSource{
+		Base:       make([]poly.Polynomial, nbBase),
+		Ext:        make([]poly.ExtPolynomial, nbExt),
+		PairOffset: nLeaves,
+	}
+	for j := range src.Base {
+		src.Base[j] = make(poly.Polynomial, 2*nLeaves)
+		for i := range src.Base[j] {
+			src.Base[j][i] = baseElement(uint64(1000*(j+1) + i + 1))
+		}
+	}
+	for j := range src.Ext {
+		src.Ext[j] = make(poly.ExtPolynomial, 2*nLeaves)
+		for i := range src.Ext[j] {
+			v := uint64(10000*(j+1) + 10*(i+1))
+			src.Ext[j][i] = extElement(v+1, v+2, v+3, v+4)
+		}
+	}
+	return src
+}
+
+func leafFromSource(src LeafSource, i int) ([]PairBase, []PairExt) {
+	baseLeaf := make([]PairBase, len(src.Base))
+	for j := range src.Base {
+		baseLeaf[j][0].Set(&src.Base[j][i])
+		baseLeaf[j][1].Set(&src.Base[j][i+src.PairOffset])
+	}
+
+	extLeaf := make([]PairExt, len(src.Ext))
+	for j := range src.Ext {
+		extLeaf[j][0].Set(&src.Ext[j][i])
+		extLeaf[j][1].Set(&src.Ext[j][i+src.PairOffset])
+	}
+
+	return baseLeaf, extLeaf
 }
 
 func baseElement(v uint64) koalabear.Element {

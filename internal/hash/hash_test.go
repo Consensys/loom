@@ -179,6 +179,53 @@ func TestPoseidon2SpongeHasherSumIsIdempotentAndResettable(t *testing.T) {
 	}
 }
 
+func TestPoseidon2SpongeBatch16MatchesScalar(t *testing.T) {
+	for _, n := range []int{0, 1, SPONGE_RATE - 1, SPONGE_RATE, SPONGE_RATE + 1, SPONGE_WIDTH, 2*SPONGE_RATE + 3} {
+		var inputs [Poseidon2SpongeBatchSize][]koalabear.Element
+		batchHasher := NewPoseidon2SpongeBatch16()
+		for i := 0; i < n; i++ {
+			var batch [Poseidon2SpongeBatchSize]koalabear.Element
+			for lane := 0; lane < Poseidon2SpongeBatchSize; lane++ {
+				batch[lane].SetUint64(uint64((lane+1)*1000 + i + 1))
+				inputs[lane] = append(inputs[lane], batch[lane])
+			}
+			batchHasher.WriteElementBatch(batch)
+		}
+
+		got := batchHasher.Sum()
+		for lane := 0; lane < Poseidon2SpongeBatchSize; lane++ {
+			scalarHasher := NewPoseidon2SpongeHasher()
+			scalarHasher.WriteElements(inputs[lane]...)
+			if want := scalarHasher.Sum(); got[lane] != want {
+				t.Fatalf("n=%d lane=%d: digest mismatch", n, lane)
+			}
+		}
+	}
+}
+
+func TestPoseidon2SpongeBatch16WriteExtMatchesScalar(t *testing.T) {
+	same := NewElement(42)
+	var exts [Poseidon2SpongeBatchSize]ext.E4
+	for lane := 0; lane < Poseidon2SpongeBatchSize; lane++ {
+		v := uint64((lane + 1) * 10)
+		exts[lane] = testExt(v+1, v+2, v+3, v+4)
+	}
+
+	batchHasher := NewPoseidon2SpongeBatch16()
+	batchHasher.WriteSameElement(same)
+	batchHasher.WriteExtBatch(exts)
+	got := batchHasher.Sum()
+
+	for lane := 0; lane < Poseidon2SpongeBatchSize; lane++ {
+		scalarHasher := NewPoseidon2SpongeHasher()
+		scalarHasher.WriteElements(same)
+		scalarHasher.WriteExt(exts[lane])
+		if want := scalarHasher.Sum(); got[lane] != want {
+			t.Fatalf("lane=%d: digest mismatch", lane)
+		}
+	}
+}
+
 func TestSHA256FieldHasherWriteExtMatchesCoordinates(t *testing.T) {
 	input := []ext.E4{
 		testExt(1, 2, 3, 4),

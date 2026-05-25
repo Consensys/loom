@@ -49,6 +49,7 @@ type LeafSource struct {
 // verifier checks.
 type BatchLeafHasher interface {
 	LeafHasher
+	BatchSize() int
 	HashLeaves(dst []hash.Digest, src LeafSource, start int)
 }
 
@@ -159,7 +160,23 @@ func (Poseidon2LeafHasher) HashLeaf(base []PairBase, ext []PairExt) hash.Digest 
 }
 
 func (lh Poseidon2LeafHasher) HashLeaves(dst []hash.Digest, src LeafSource, start int) {
-	hashLeavesScalar(lh, dst, src, start)
+	if src.PairOffset < hash.Poseidon2SpongeBatchSize || len(dst) < hash.Poseidon2SpongeBatchSize {
+		hashLeavesScalar(lh, dst, src, start)
+		return
+	}
+
+	fullBatches := len(dst) / hash.Poseidon2SpongeBatchSize
+	for batch := 0; batch < fullBatches; batch++ {
+		offset := batch * hash.Poseidon2SpongeBatchSize
+		lh.hashLeavesBatch16(dst[offset:offset+hash.Poseidon2SpongeBatchSize], src, start+offset)
+	}
+	if tail := fullBatches * hash.Poseidon2SpongeBatchSize; tail < len(dst) {
+		hashLeavesScalar(lh, dst[tail:], src, start+tail)
+	}
+}
+
+func (Poseidon2LeafHasher) BatchSize() int {
+	return hash.Poseidon2SpongeBatchSize
 }
 
 func (Poseidon2NodeHasher) HashNode(left, right hash.Digest) hash.Digest {
@@ -219,9 +236,7 @@ func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolyn
 		PairOffset: halfN,
 	}
 	if batchHasher, ok := rs.LeafHasher.(BatchLeafHasher); ok {
-		parallel.Execute(halfN, func(start, end int) {
-			batchHasher.HashLeaves(leaves[start:end], src, start)
-		})
+		hashLeavesBatchParallel(batchHasher, leaves, src)
 	} else {
 		parallel.Execute(halfN, func(start, end int) {
 			hashLeavesScalar(rs.LeafHasher, leaves[start:end], src, start)
@@ -233,6 +248,30 @@ func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolyn
 	}
 
 	return wTree, nil
+}
+
+func hashLeavesBatchParallel(lh BatchLeafHasher, dst []hash.Digest, src LeafSource) {
+	batchSize := lh.BatchSize()
+	if batchSize <= 0 {
+		batchSize = 1
+	}
+
+	if batchSize == 1 || len(dst) < batchSize {
+		parallel.Execute(len(dst), func(start, end int) {
+			lh.HashLeaves(dst[start:end], src, start)
+		})
+		return
+	}
+
+	full := (len(dst) / batchSize) * batchSize
+	parallel.Execute(full/batchSize, func(startBatch, endBatch int) {
+		start := startBatch * batchSize
+		end := endBatch * batchSize
+		lh.HashLeaves(dst[start:end], src, start)
+	})
+	if full < len(dst) {
+		lh.HashLeaves(dst[full:], src, full)
+	}
 }
 
 func hashLeavesScalar(lh LeafHasher, dst []hash.Digest, src LeafSource, start int) {
@@ -254,4 +293,36 @@ func hashLeavesScalar(lh LeafHasher, dst []hash.Digest, src LeafSource, start in
 		}
 		dst[k] = lh.HashLeaf(baseLeaf, extLeaf)
 	}
+}
+
+func (lh Poseidon2LeafHasher) hashLeavesBatch16(dst []hash.Digest, src LeafSource, start int) {
+	sponge := hash.NewPoseidon2SpongeBatch16()
+	sponge.WriteSameElement(hash.NewElement(leafDomainTag))
+	sponge.WriteSameElement(hash.NewElement(uint64(len(src.Base))))
+	sponge.WriteSameElement(hash.NewElement(uint64(len(src.Ext))))
+
+	for _, pol := range src.Base {
+		var lo, hi [hash.Poseidon2SpongeBatchSize]koalabear.Element
+		for lane := 0; lane < hash.Poseidon2SpongeBatchSize; lane++ {
+			i := start + lane
+			lo[lane].Set(&pol[i])
+			hi[lane].Set(&pol[i+src.PairOffset])
+		}
+		sponge.WriteElementBatch(lo)
+		sponge.WriteElementBatch(hi)
+	}
+
+	for _, pol := range src.Ext {
+		var lo, hi [hash.Poseidon2SpongeBatchSize]ext.E4
+		for lane := 0; lane < hash.Poseidon2SpongeBatchSize; lane++ {
+			i := start + lane
+			lo[lane].Set(&pol[i])
+			hi[lane].Set(&pol[i+src.PairOffset])
+		}
+		sponge.WriteExtBatch(lo)
+		sponge.WriteExtBatch(hi)
+	}
+
+	digests := sponge.Sum()
+	copy(dst, digests[:])
 }
