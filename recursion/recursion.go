@@ -18,21 +18,16 @@
 // universal proof-bytes verifier. It arithmetizes public-column reconstruction,
 // Lagrange values, logup bus checks, AIR quotient identities, the
 // DEEP-quotient-to-FRI bridge, FRI folding arithmetic, Poseidon2 transcript
-// reconstruction, and Poseidon2 Merkle paths for that proof. SHA-256 remains
-// Loom's default proof hash for compatibility, but callers can select the
-// Poseidon2 backend with UsePoseidon2. ProveNextLayer still native-verifies the
-// full inner proof before producing the recursive wrapper.
+// reconstruction, and Poseidon2 Merkle paths for that proof. ProveNextLayer
+// still native-verifies the full inner proof before producing the recursive
+// wrapper.
 package recursion
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
-	"hash"
 	"math/big"
 	"sort"
 
-	fiatshamir "github.com/consensys/gnark-crypto/fiat-shamir"
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/board"
@@ -41,7 +36,9 @@ import (
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/dag"
+	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/fri"
+	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/prover"
@@ -79,11 +76,11 @@ type Config struct {
 	innerVerifierOpts    []verifier.Option
 	outerProverOpts      []prover.Option
 	outerVerifierOpts    []verifier.Option
+	hashBackend          commitment.HashBackend
 	forceSkipInnerFRI    bool
 	forceSkipOuterFRI    bool
 	forceSkipOuterCheck  bool
 	arithmetizePoseidon2 bool
-	newTranscriptHash    func() hash.Hash
 }
 
 // Option configures ProveNextLayer.
@@ -118,28 +115,23 @@ func SkipOuterFRI() Option {
 	}
 }
 
-// UsePoseidon2 switches the inner verifier precheck, recursive wrapper proof,
-// and verifier-core transcript reconstruction to gnark-crypto's KoalaBear
-// Poseidon2 hash.
+// UsePoseidon2 explicitly selects Loom's Poseidon2 hash backend for the inner
+// verifier precheck, recursive wrapper proof, and verifier-core transcript
+// reconstruction. Poseidon2 is Loom's default backend on current main, so this
+// option is mostly kept for recursion callers that want an explicit setting.
 func UsePoseidon2() Option {
 	return func(c *Config) {
+		backend := commitment.Poseidon2HashBackend()
 		c.arithmetizePoseidon2 = true
-		c.newTranscriptHash = commitment.NewPoseidon2TranscriptHash
-		c.innerVerifierOpts = append(c.innerVerifierOpts, verifier.UsePoseidon2())
-		c.outerProverOpts = append(c.outerProverOpts, prover.UsePoseidon2())
-		c.outerVerifierOpts = append(c.outerVerifierOpts, verifier.UsePoseidon2())
+		c.hashBackend = backend
+		c.innerVerifierOpts = append(c.innerVerifierOpts, verifier.WithHashBackend(backend))
+		c.outerProverOpts = append(c.outerProverOpts, prover.WithHashBackend(backend))
+		c.outerVerifierOpts = append(c.outerVerifierOpts, verifier.WithHashBackend(backend))
 	}
 }
 
 func defaultConfig() Config {
-	return Config{verifyInner: true}
-}
-
-func (c Config) transcriptHash() hash.Hash {
-	if c.newTranscriptHash != nil {
-		return c.newTranscriptHash()
-	}
-	return sha256.New()
+	return Config{verifyInner: true, arithmetizePoseidon2: true}
 }
 
 // ProveNextLayer native-verifies input.Proof and then proves, with Loom, that
@@ -1218,6 +1210,24 @@ func (cb *coreBuilder) friRoundForLevel(level int) int {
 	return 0
 }
 
+func resolveRecursionHashBackend(input RecursionInput, config Config) (commitment.HashBackend, error) {
+	keyID := input.Setup.HashBackendID
+	if keyID == "" {
+		keyID = input.Proof.HashBackendID
+	}
+	hashBackend, err := commitment.ResolveHashBackend(config.hashBackend, keyID)
+	if err != nil {
+		return commitment.HashBackend{}, err
+	}
+	if input.Setup.HashBackendID != "" && commitment.NormalizeHashBackendID(input.Setup.HashBackendID) != hashBackend.ID {
+		return commitment.HashBackend{}, fmt.Errorf("recursion: setup hash backend %q does not match verifier backend %q", input.Setup.HashBackendID, hashBackend.ID)
+	}
+	if input.Proof.HashBackendID != "" && commitment.NormalizeHashBackendID(input.Proof.HashBackendID) != hashBackend.ID {
+		return commitment.HashBackend{}, fmt.Errorf("recursion: proof hash backend %q does not match verifier backend %q", input.Proof.HashBackendID, hashBackend.ID)
+	}
+	return hashBackend, nil
+}
+
 func deriveVerifierState(input RecursionInput, config Config) (verifierState, error) {
 	layout := prover.BuildLayout(input.Program, len(input.Setup.Roots))
 	wantCommitments := layout.NumTrees - layout.SetupEnd
@@ -1229,7 +1239,12 @@ func deriveVerifierState(input RecursionInput, config Config) (verifierState, er
 		return verifierState{}, fmt.Errorf("recursion: setup has %d trees, layout expects %d", len(input.Setup.Roots), layout.SetupEnd-layout.SetupBegin)
 	}
 
-	roots := make([][]byte, layout.NumTrees)
+	hashBackend, err := resolveRecursionHashBackend(input, config)
+	if err != nil {
+		return verifierState{}, err
+	}
+
+	roots := make([]hash.Digest, layout.NumTrees)
 	for i, root := range input.Setup.Roots {
 		roots[layout.SetupBegin+i] = root
 	}
@@ -1237,7 +1252,7 @@ func deriveVerifierState(input RecursionInput, config Config) (verifierState, er
 		roots[layout.SetupEnd+i] = root
 	}
 
-	fs := fiatshamir.NewTranscript(config.transcriptHash())
+	fs := fiatshamir.NewTranscript(hashBackend.NewTranscriptHasher())
 	numRounds := len(input.Program.FScolumnsDependencies)
 	for i := 0; i < numRounds; i++ {
 		if err := fs.NewChallenge(constants.CanonicalChallengeName(i)); err != nil {
@@ -1251,16 +1266,18 @@ func deriveVerifierState(input RecursionInput, config Config) (verifierState, er
 		return verifierState{}, err
 	}
 
-	if numRounds > 0 {
-		for _, root := range input.Setup.Roots {
-			if err := fs.Bind(constants.CanonicalChallengeName(0), root); err != nil {
-				return verifierState{}, err
-			}
+	initialChallenge := constants.InitialChallengeName(numRounds)
+	if err := fs.Bind(initialChallenge, hash.StringToElements(constants.HASH_BACKEND_DOMAIN_TAG, hashBackend.ID)); err != nil {
+		return verifierState{}, err
+	}
+	for _, root := range input.Setup.Roots {
+		if err := fs.Bind(initialChallenge, root[:]); err != nil {
+			return verifierState{}, err
 		}
-		if len(input.PublicInputs) > 0 {
-			if err := fs.Bind(constants.CanonicalChallengeName(0), input.PublicInputs.TranscriptBytes()); err != nil {
-				return verifierState{}, err
-			}
+	}
+	if len(input.PublicInputs) > 0 {
+		if err := fs.Bind(initialChallenge, input.PublicInputs.TranscriptElements()); err != nil {
+			return verifierState{}, err
 		}
 	}
 
@@ -1268,34 +1285,27 @@ func deriveVerifierState(input RecursionInput, config Config) (verifierState, er
 	for r := 0; r < numRounds; r++ {
 		challengeName := constants.CanonicalChallengeName(r)
 		for i := layout.TraceBegin[r]; i < layout.TraceEnd[r]; i++ {
-			if err := fs.Bind(challengeName, roots[i]); err != nil {
+			if err := fs.Bind(challengeName, roots[i][:]); err != nil {
 				return verifierState{}, err
 			}
 		}
-		challengeBytes, err := fs.ComputeChallenge(challengeName)
+		challenge, err := fs.ComputeChallenge(challengeName)
 		if err != nil {
 			return verifierState{}, err
 		}
-		var challenge ext.E4
-		if err := setExtFromBytes(&challenge, challengeBytes); err != nil {
-			return verifierState{}, err
-		}
-		values[challengeName] = challenge
+		values[challengeName] = hash.OutputToExt(challenge)
 	}
 
 	for i := layout.AIRBegin; i < layout.AIREnd; i++ {
-		if err := fs.Bind(constants.FINAL_EVALUATION_POINT, roots[i]); err != nil {
+		if err := fs.Bind(constants.FINAL_EVALUATION_POINT, roots[i][:]); err != nil {
 			return verifierState{}, err
 		}
 	}
-	zetaBytes, err := fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
+	zetaDigest, err := fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
 	if err != nil {
 		return verifierState{}, err
 	}
-	var zeta ext.E4
-	if err := setExtFromBytes(&zeta, zetaBytes); err != nil {
-		return verifierState{}, err
-	}
+	zeta := hash.OutputToExt(zetaDigest)
 
 	if err := computeExposedColumns(values, zeta, input.Program, input.Proof); err != nil {
 		return verifierState{}, err
@@ -1314,13 +1324,11 @@ func deriveVerifierState(input RecursionInput, config Config) (verifierState, er
 		if err := prover.BindDeepEvaluationClaims(fs, input.Proof, dqLayout); err != nil {
 			return verifierState{}, err
 		}
-		alphaBytes, err := fs.ComputeChallenge(constants.DEEP_ALPHA)
+		alphaDigest, err := fs.ComputeChallenge(constants.DEEP_ALPHA)
 		if err != nil {
 			return verifierState{}, err
 		}
-		if err := setExtFromBytes(&alpha, alphaBytes); err != nil {
-			return verifierState{}, err
-		}
+		alpha = hash.OutputToExt(alphaDigest)
 		friState, err = deriveFRIVerifierState(fs, input, dqLayout)
 		if err != nil {
 			return verifierState{}, err
@@ -1328,17 +1336,6 @@ func deriveVerifierState(input RecursionInput, config Config) (verifierState, er
 	}
 
 	return verifierState{values: values, zeta: zeta, alpha: alpha, fri: friState}, nil
-}
-
-func setExtFromBytes(z *ext.E4, b []byte) error {
-	if len(b) < 4*koalabear.Bytes {
-		return fmt.Errorf("need at least %d bytes, got %d", 4*koalabear.Bytes, len(b))
-	}
-	z.B0.A0.SetBytes(b[0*koalabear.Bytes : 1*koalabear.Bytes])
-	z.B0.A1.SetBytes(b[1*koalabear.Bytes : 2*koalabear.Bytes])
-	z.B1.A0.SetBytes(b[2*koalabear.Bytes : 3*koalabear.Bytes])
-	z.B1.A1.SetBytes(b[3*koalabear.Bytes : 4*koalabear.Bytes])
-	return nil
 }
 
 func computeExposedColumns(values map[string]ext.E4, zeta ext.E4, program board.Program, prf proof.Proof) error {
@@ -1479,7 +1476,7 @@ func deriveFRIVerifierState(fs *fiatshamir.Transcript, input RecursionInput, dqL
 		return friVerifierState{}, err
 	}
 
-	roots := make([][]byte, numRounds)
+	roots := make([]hash.Digest, numRounds)
 	roots[0] = input.Proof.DeepQuotientCommitment[0]
 	for round := 1; round < numRounds; round++ {
 		roots[round] = input.Proof.DeepQuotientFriProof.FRIRoots[round-1]
@@ -1491,32 +1488,26 @@ func deriveFRIVerifierState(fs *fiatshamir.Transcript, input RecursionInput, dqL
 		if round > 0 {
 			if level, ok := levelAtRound[round]; ok {
 				gammaName := friLevelGammaName(level)
-				if err := fs.Bind(gammaName, input.Proof.DeepQuotientCommitment[level]); err != nil {
+				if err := fs.Bind(gammaName, input.Proof.DeepQuotientCommitment[level][:]); err != nil {
 					return friVerifierState{}, err
 				}
-				b, err := fs.ComputeChallenge(gammaName)
+				challenge, err := fs.ComputeChallenge(gammaName)
 				if err != nil {
 					return friVerifierState{}, err
 				}
-				var gamma ext.E4
-				if err := setExtFromBytes(&gamma, b); err != nil {
-					return friVerifierState{}, err
-				}
-				levelGammas[level] = gamma
+				levelGammas[level] = hash.OutputToExt(challenge)
 			}
 		}
 
 		foldName := friFoldName(round)
-		if err := fs.Bind(foldName, roots[round]); err != nil {
+		if err := fs.Bind(foldName, roots[round][:]); err != nil {
 			return friVerifierState{}, err
 		}
-		b, err := fs.ComputeChallenge(foldName)
+		challenge, err := fs.ComputeChallenge(foldName)
 		if err != nil {
 			return friVerifierState{}, err
 		}
-		if err := setExtFromBytes(&foldAlphas[round], b); err != nil {
-			return friVerifierState{}, err
-		}
+		foldAlphas[round] = hash.OutputToExt(challenge)
 	}
 
 	if input.Proof.DeepQuotientFriProof.FinalField != field.Ext {
@@ -1525,23 +1516,20 @@ func deriveFRIVerifierState(fs *fiatshamir.Transcript, input RecursionInput, dqL
 	if len(input.Proof.DeepQuotientFriProof.FinalPolyExt) == 0 {
 		return friVerifierState{}, fmt.Errorf("recursion: FRI final extension polynomial is empty")
 	}
-	if err := fs.Bind(friQueryName(0), friSerialiseExt(input.Proof.DeepQuotientFriProof.FinalPolyExt)); err != nil {
+	if err := fs.Bind(friQueryName(0), friTranscriptExtPoly(input.Proof.DeepQuotientFriProof.FinalPolyExt)); err != nil {
 		return friVerifierState{}, err
 	}
 
 	queryIndices := make([]int, constants.NUM_QUERIES)
 	queryModulus := constants.RATE * maxN / 2
 	for query := 0; query < constants.NUM_QUERIES; query++ {
-		b, err := fs.ComputeChallenge(friQueryName(query))
+		challenge, err := fs.ComputeChallenge(friQueryName(query))
 		if err != nil {
 			return friVerifierState{}, err
 		}
-		if len(b) < 8 {
-			return friVerifierState{}, fmt.Errorf("recursion: FRI query challenge %d has %d bytes, want at least 8", query, len(b))
-		}
-		queryIndices[query] = int(binary.BigEndian.Uint64(b[:8]) % uint64(queryModulus))
+		queryIndices[query] = friQueryIndex(challenge, queryModulus)
 		if query < constants.NUM_QUERIES-1 {
-			if err := fs.Bind(friQueryName(query+1), b); err != nil {
+			if err := fs.Bind(friQueryName(query+1), challenge[:]); err != nil {
 				return friVerifierState{}, err
 			}
 		}
@@ -1591,20 +1579,21 @@ func friQueryName(query int) string {
 	return fmt.Sprintf("fri_query_%d", query)
 }
 
-func friSerialiseExt(poly []ext.E4) []byte {
-	buf := make([]byte, len(poly)*4*koalabear.Bytes)
-	offset := 0
-	for i := range poly {
-		copy(buf[offset:], poly[i].B0.A0.Marshal())
-		offset += koalabear.Bytes
-		copy(buf[offset:], poly[i].B0.A1.Marshal())
-		offset += koalabear.Bytes
-		copy(buf[offset:], poly[i].B1.A0.Marshal())
-		offset += koalabear.Bytes
-		copy(buf[offset:], poly[i].B1.A1.Marshal())
-		offset += koalabear.Bytes
+func friTranscriptExtPoly(poly []ext.E4) []koalabear.Element {
+	res := make([]koalabear.Element, 0, 2+4*len(poly))
+	res = append(res, hash.NewElement(0x45585450), hash.NewElement(uint64(len(poly)))) // "EXTP"
+	for _, v := range poly {
+		res = append(res, v.B0.A0, v.B0.A1, v.B1.A0, v.B1.A1)
 	}
-	return buf
+	return res
+}
+
+func friQueryIndex(challenge hash.Digest, modulus int) int {
+	if modulus <= 0 {
+		return 0
+	}
+	v := (challenge[0].Uint64() << 31) ^ challenge[1].Uint64()
+	return int(v % uint64(modulus))
 }
 
 func sortedModuleNames(modules map[string]board.CompiledModule) []string {

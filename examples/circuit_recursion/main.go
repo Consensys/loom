@@ -30,11 +30,11 @@ import (
 func main() {
 	program, tr := fibonacciInstance(16)
 
-	baseProof, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, prover.UsePoseidon2())
+	baseProof, err := prover.Prove(tr, setup.ProvingKey{}, nil, program)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := verifier.Verify(nil, setup.VerificationKey{}, program, baseProof, verifier.UsePoseidon2()); err != nil {
+	if err := verifier.Verify(nil, setup.VerificationKey{}, program, baseProof); err != nil {
 		log.Fatal(err)
 	}
 
@@ -45,7 +45,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := recursion.VerifyOutput(next, verifier.UsePoseidon2()); err != nil {
+	if err := recursion.VerifyOutput(next); err != nil {
 		log.Fatal(err)
 	}
 

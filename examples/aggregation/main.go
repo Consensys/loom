@@ -38,7 +38,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := recursion.VerifyOutput(aggregated, verifier.UsePoseidon2()); err != nil {
+	if err := recursion.VerifyOutput(aggregated); err != nil {
 		log.Fatal(err)
 	}
 
@@ -47,11 +47,11 @@ func main() {
 
 func proveFibonacci(n int) recursion.RecursionInput {
 	program, tr := fibonacciInstance(n)
-	prf, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, prover.UsePoseidon2())
+	prf, err := prover.Prove(tr, setup.ProvingKey{}, nil, program)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf, verifier.UsePoseidon2()); err != nil {
+	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf); err != nil {
 		log.Fatal(err)
 	}
 	return recursion.RecursionInput{Program: program, Proof: prf}

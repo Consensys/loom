@@ -50,11 +50,11 @@ func proveFibonacci(t *testing.T, n int) RecursionInput {
 
 	program, a, b := fibonacciProgram(t, n)
 	tr := prover.TraceFibonacci(n, a, b)
-	prf, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, prover.UsePoseidon2())
+	prf, err := prover.Prove(tr, setup.ProvingKey{}, nil, program)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf, verifier.UsePoseidon2()); err != nil {
+	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf); err != nil {
 		t.Fatal(err)
 	}
 
@@ -88,14 +88,14 @@ func proveExposedFibonacci(t *testing.T, n int) RecursionInput {
 
 	program, a, b := exposedFibonacciProgram(t, n)
 	tr := prover.TraceFibonacci(n, a, b)
-	prf, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, prover.UsePoseidon2())
+	prf, err := prover.Prove(tr, setup.ProvingKey{}, nil, program)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(prf.ExposedValues["exposed_b0"].Entries) != 1 {
 		t.Fatalf("expected one exposed entry, got %d", len(prf.ExposedValues["exposed_b0"].Entries))
 	}
-	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf, verifier.UsePoseidon2()); err != nil {
+	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf); err != nil {
 		t.Fatal(err)
 	}
 
@@ -109,7 +109,7 @@ func TestProveNextLayerPoseidon2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifyOutput(output, verifier.UsePoseidon2(), verifier.SkipFRI()); err != nil {
+	if err := VerifyOutput(output, verifier.SkipFRI()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -121,7 +121,7 @@ func TestProveNextLayerPoseidon2WithExposedValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifyOutput(output, verifier.UsePoseidon2(), verifier.SkipFRI()); err != nil {
+	if err := VerifyOutput(output, verifier.SkipFRI()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -134,7 +134,7 @@ func TestProveAggregationLayerPoseidon2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifyOutput(output, verifier.UsePoseidon2(), verifier.SkipFRI()); err != nil {
+	if err := VerifyOutput(output, verifier.SkipFRI()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -199,7 +199,8 @@ func TestPoseidon2MerkleModuleRejectsBadPointSamplingPath(t *testing.T) {
 		t.Fatal("expected proof to contain point-sampling Merkle siblings")
 	}
 	sibling := input.Proof.PointSamplings[0][0].Proof.Siblings[0]
-	sibling[len(sibling)-1] ^= 1
+	one := koalabear.One()
+	sibling[len(sibling)-1].Add(&sibling[len(sibling)-1], &one)
 	input.Proof.PointSamplings[0][0].Proof.Siblings[0] = sibling
 
 	module, tr, err := buildPoseidon2VerifierModule(
@@ -215,11 +216,11 @@ func TestPoseidon2MerkleModuleRejectsBadPointSamplingPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prf, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, prover.UsePoseidon2(), prover.SkipFRI())
+	prf, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, prover.SkipFRI())
 	if err != nil {
 		return
 	}
-	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf, verifier.UsePoseidon2(), verifier.SkipFRI()); err == nil {
+	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf, verifier.SkipFRI()); err == nil {
 		t.Fatal("expected Poseidon2 Merkle module to reject tampered sibling")
 	}
 }
@@ -233,7 +234,8 @@ func TestPoseidon2MerkleModuleRejectsBadFRIPath(t *testing.T) {
 		t.Fatal("expected proof to contain FRI Merkle siblings")
 	}
 	sibling := input.Proof.DeepQuotientFriProof.FRIQueries[0].Layers[0].Path.Siblings[0]
-	sibling[len(sibling)-1] ^= 1
+	one := koalabear.One()
+	sibling[len(sibling)-1].Add(&sibling[len(sibling)-1], &one)
 	input.Proof.DeepQuotientFriProof.FRIQueries[0].Layers[0].Path.Siblings[0] = sibling
 
 	module, tr, err := buildPoseidon2VerifierModule(
@@ -249,11 +251,11 @@ func TestPoseidon2MerkleModuleRejectsBadFRIPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prf, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, prover.UsePoseidon2(), prover.SkipFRI())
+	prf, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, prover.SkipFRI())
 	if err != nil {
 		return
 	}
-	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf, verifier.UsePoseidon2(), verifier.SkipFRI()); err == nil {
+	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf, verifier.SkipFRI()); err == nil {
 		t.Fatal("expected Poseidon2 Merkle module to reject tampered FRI sibling")
 	}
 }

@@ -14,7 +14,6 @@
 package recursion
 
 import (
-	"encoding/binary"
 	"fmt"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -26,6 +25,7 @@ import (
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/fri"
+	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/prover"
@@ -33,8 +33,23 @@ import (
 )
 
 const (
-	poseidon2Width     = 16
-	poseidon2HalfWidth = poseidon2Width / 2
+	poseidon2DigestWidth   = 8
+	poseidon2MDWidth       = 16
+	poseidon2SpongeWidth   = 24
+	poseidon2MDHalfWidth   = poseidon2MDWidth / 2
+	poseidon2SpongeRate    = 16
+	poseidon2FullRounds    = 6
+	poseidon2PartialRounds = 21
+	poseidon2LeafDomainTag = 0x4c454146 // "LEAF"
+	poseidon2NodeDomainTag = 0x4e4f4445 // "NODE"
+	poseidon2FSIDDomainTag = 0x46534944 // "FSID"
+)
+
+type poseidon2OutputMode uint8
+
+const (
+	poseidon2OutputMD poseidon2OutputMode = iota
+	poseidon2OutputSponge
 )
 
 type poseidon2MerkleTarget struct {
@@ -44,14 +59,16 @@ type poseidon2MerkleTarget struct {
 
 type poseidon2Op struct {
 	Label      string
+	Width      int
+	OutputMode poseidon2OutputMode
 	Input      []koalabear.Element
 	WantOutput []koalabear.Element
 }
 
 type poseidon2TranscriptChallenge struct {
 	name       string
-	bindings   [][]byte
-	value      []byte
+	bindings   [][]koalabear.Element
+	value      hash.Digest
 	isComputed bool
 }
 
@@ -63,6 +80,22 @@ type poseidon2TranscriptRecorder struct {
 type poseidon2ModuleBuilder struct {
 	module    *board.Module
 	lagranges map[int]expr.Expr
+}
+
+var (
+	poseidon2Params16 = p2crypto.NewParameters(poseidon2MDWidth, poseidon2FullRounds, poseidon2PartialRounds)
+	poseidon2Params24 = p2crypto.NewParameters(poseidon2SpongeWidth, poseidon2FullRounds, poseidon2PartialRounds)
+)
+
+func poseidon2Params(width int) (*p2crypto.Parameters, error) {
+	switch width {
+	case poseidon2MDWidth:
+		return poseidon2Params16, nil
+	case poseidon2SpongeWidth:
+		return poseidon2Params24, nil
+	default:
+		return nil, fmt.Errorf("recursion: unsupported Poseidon2 width %d", width)
+	}
 }
 
 func buildPoseidon2VerifierModule(moduleName string, targets []poseidon2MerkleTarget) (board.Module, trace.Trace, error) {
@@ -78,7 +111,10 @@ func buildPoseidon2VerifierModule(moduleName string, targets []poseidon2MerkleTa
 		return board.Module{}, trace.Trace{}, fmt.Errorf("recursion: no Poseidon2 Merkle operations to arithmetize")
 	}
 
-	params := p2crypto.GetDefaultParameters()
+	params, err := poseidon2Params(poseidon2MDWidth)
+	if err != nil {
+		return board.Module{}, trace.Trace{}, err
+	}
 	numRounds := params.NbFullRounds + params.NbPartialRounds
 	rowsPerOp := numRounds + 1
 	n := nextPowerOfTwo(maxInt(2, len(ops)*rowsPerOp))
@@ -91,26 +127,37 @@ func buildPoseidon2VerifierModule(moduleName string, targets []poseidon2MerkleTa
 	}
 
 	tr := trace.New()
-	stateNames := make([]string, poseidon2Width)
-	stateCols := make([][]koalabear.Element, poseidon2Width)
+	stateNames := make([]string, poseidon2SpongeWidth)
+	stateCols := make([][]koalabear.Element, poseidon2SpongeWidth)
 	for i := range stateNames {
 		stateNames[i] = fmt.Sprintf("%s.state.%d", moduleName, i)
 		stateCols[i] = make([]koalabear.Element, n)
 	}
 
 	for opIdx, op := range ops {
-		if len(op.Input) != poseidon2Width {
-			return board.Module{}, trace.Trace{}, fmt.Errorf("recursion: Poseidon2 op %s has input width %d, want %d", op.Label, len(op.Input), poseidon2Width)
+		if op.Width != poseidon2MDWidth && op.Width != poseidon2SpongeWidth {
+			return board.Module{}, trace.Trace{}, fmt.Errorf("recursion: Poseidon2 op %s has unsupported width %d", op.Label, op.Width)
 		}
-		if len(op.WantOutput) != poseidon2HalfWidth {
-			return board.Module{}, trace.Trace{}, fmt.Errorf("recursion: Poseidon2 op %s has output width %d, want %d", op.Label, len(op.WantOutput), poseidon2HalfWidth)
+		if len(op.Input) != op.Width {
+			return board.Module{}, trace.Trace{}, fmt.Errorf("recursion: Poseidon2 op %s has input width %d, want %d", op.Label, len(op.Input), op.Width)
+		}
+		if len(op.WantOutput) != poseidon2DigestWidth {
+			return board.Module{}, trace.Trace{}, fmt.Errorf("recursion: Poseidon2 op %s has output width %d, want %d", op.Label, len(op.WantOutput), poseidon2DigestWidth)
 		}
 
+		params, err := poseidon2Params(op.Width)
+		if err != nil {
+			return board.Module{}, trace.Trace{}, err
+		}
 		startRow := opIdx * rowsPerOp
 		state := poseidon2MatMulExternalValues(op.Input)
-		for i := range state {
-			stateCols[i][startRow].Set(&state[i])
-			builder.assertZeroAt(expr.Col(stateNames[i]).Sub(expr.Const(state[i])), startRow)
+		for i := 0; i < poseidon2SpongeWidth; i++ {
+			if i < op.Width {
+				stateCols[i][startRow].Set(&state[i])
+				builder.assertZeroAt(expr.Col(stateNames[i]).Sub(expr.Const(state[i])), startRow)
+				continue
+			}
+			builder.assertZeroAt(expr.Col(stateNames[i]), startRow)
 		}
 
 		for round := 0; round < numRounds; round++ {
@@ -123,10 +170,18 @@ func buildPoseidon2VerifierModule(moduleName string, targets []poseidon2MerkleTa
 		}
 
 		finalRow := startRow + numRounds
-		for i := 0; i < poseidon2HalfWidth; i++ {
-			relation := expr.Col(stateNames[poseidon2HalfWidth+i]).
-				Add(expr.Const(op.Input[poseidon2HalfWidth+i])).
-				Sub(expr.Const(op.WantOutput[i]))
+		for i := 0; i < poseidon2DigestWidth; i++ {
+			var relation expr.Expr
+			switch op.OutputMode {
+			case poseidon2OutputMD:
+				relation = expr.Col(stateNames[poseidon2MDHalfWidth+i]).
+					Add(expr.Const(op.Input[poseidon2MDHalfWidth+i])).
+					Sub(expr.Const(op.WantOutput[i]))
+			case poseidon2OutputSponge:
+				relation = expr.Col(stateNames[i]).Sub(expr.Const(op.WantOutput[i]))
+			default:
+				return board.Module{}, trace.Trace{}, fmt.Errorf("recursion: Poseidon2 op %s has unsupported output mode %d", op.Label, op.OutputMode)
+			}
 			builder.assertZeroAt(relation, finalRow)
 		}
 	}
@@ -135,31 +190,41 @@ func buildPoseidon2VerifierModule(moduleName string, targets []poseidon2MerkleTa
 		tr.SetBase(stateNames[i], stateCols[i])
 	}
 
-	stateExprs := make([]expr.Expr, poseidon2Width)
+	stateExprs := make([]expr.Expr, poseidon2SpongeWidth)
 	for i := range stateExprs {
 		stateExprs[i] = expr.Col(stateNames[i])
 	}
-	transitionSelector := zeroExpr()
-	expectedNext := make([]expr.Expr, poseidon2Width)
-	for i := range expectedNext {
-		expectedNext[i] = zeroExpr()
-	}
 	for round := 0; round < numRounds; round++ {
-		roundSelector := zeroExpr()
-		for opIdx := range ops {
-			roundSelector = roundSelector.Add(builder.lagrange(opIdx*rowsPerOp + round))
+		transitionSelector := zeroExpr()
+		roundSelectors := map[int]expr.Expr{
+			poseidon2MDWidth:     zeroExpr(),
+			poseidon2SpongeWidth: zeroExpr(),
 		}
-		transitionSelector = transitionSelector.Add(roundSelector)
+		for opIdx, op := range ops {
+			selector := builder.lagrange(opIdx*rowsPerOp + round)
+			transitionSelector = transitionSelector.Add(selector)
+			roundSelectors[op.Width] = roundSelectors[op.Width].Add(selector)
+		}
 
-		partial := poseidon2IsPartialRound(params, round)
-		next := poseidon2RoundExprs(stateExprs, params.RoundKeys[round], partial)
+		expectedNext := make([]expr.Expr, poseidon2SpongeWidth)
 		for i := range expectedNext {
-			expectedNext[i] = expectedNext[i].Add(roundSelector.Mul(next[i]))
+			expectedNext[i] = zeroExpr()
 		}
-	}
-	for i := range stateNames {
-		nextState := expr.Rot(stateNames[i], 1).Mul(transitionSelector)
-		builder.module.AssertZero(nextState.Sub(expectedNext[i]))
+		for _, width := range []int{poseidon2MDWidth, poseidon2SpongeWidth} {
+			selector := roundSelectors[width]
+			params, err := poseidon2Params(width)
+			if err != nil {
+				return board.Module{}, trace.Trace{}, err
+			}
+			next := poseidon2RoundExprs(stateExprs[:width], params.RoundKeys[round], poseidon2IsPartialRound(params, round))
+			for i := range next {
+				expectedNext[i] = expectedNext[i].Add(selector.Mul(next[i]))
+			}
+		}
+		for i := range stateNames {
+			nextState := expr.Rot(stateNames[i], 1).Mul(transitionSelector)
+			builder.module.AssertZero(nextState.Sub(expectedNext[i]))
+		}
 	}
 
 	return *builder.module, tr, nil
@@ -193,21 +258,15 @@ func collectPoseidon2TranscriptOps(namespace string, input RecursionInput) ([]po
 		if !challenge.isComputed {
 			return nil, fmt.Errorf("recursion: transcript challenge %q was registered but not computed", challenge.name)
 		}
-		writes := make([][]byte, 0, 2+len(challenge.bindings))
-		writes = append(writes, []byte(challenge.name))
+		writes := make([][]koalabear.Element, 0, 2+len(challenge.bindings))
+		writes = append(writes, hash.StringToElements(poseidon2FSIDDomainTag, challenge.name))
 		if pos != 0 {
-			writes = append(writes, recorder.challenges[pos-1].value)
+			writes = append(writes, recorder.challenges[pos-1].value[:])
 		}
 		writes = append(writes, challenge.bindings...)
 
-		expected, err := poseidon2DigestBytesToElements(challenge.value)
-		if err != nil {
-			return nil, fmt.Errorf("recursion: transcript challenge %q digest: %w", challenge.name, err)
-		}
-		_, challengeOps, err := poseidon2DigestWriteOps(fmt.Sprintf("%s.transcript.%d.%s", namespace, pos, challenge.name), writes)
-		if err != nil {
-			return nil, err
-		}
+		expected := cloneBaseElements(challenge.value[:])
+		_, challengeOps := poseidon2SpongeWriteOps(fmt.Sprintf("%s.transcript.%d.%s", namespace, pos, challenge.name), writes)
 		if len(challengeOps) == 0 {
 			return nil, fmt.Errorf("recursion: transcript challenge %q produced no Poseidon2 operations", challenge.name)
 		}
@@ -218,6 +277,14 @@ func collectPoseidon2TranscriptOps(namespace string, input RecursionInput) ([]po
 }
 
 func recordPoseidon2Transcript(input RecursionInput) (*poseidon2TranscriptRecorder, error) {
+	hashBackend, err := resolveRecursionHashBackend(input, Config{hashBackend: commitment.Poseidon2HashBackend()})
+	if err != nil {
+		return nil, err
+	}
+	if hashBackend.ID != commitment.HashBackendPoseidon2 {
+		return nil, fmt.Errorf("recursion: Poseidon2 arithmetization requires poseidon2 hash backend, got %q", hashBackend.ID)
+	}
+
 	layout := prover.BuildLayout(input.Program, len(input.Setup.Roots))
 	wantCommitments := layout.NumTrees - layout.SetupEnd
 	if len(input.Proof.Commitments) != wantCommitments {
@@ -227,7 +294,7 @@ func recordPoseidon2Transcript(input RecursionInput) (*poseidon2TranscriptRecord
 		return nil, fmt.Errorf("recursion: transcript setup has %d trees, layout expects %d", len(input.Setup.Roots), layout.SetupEnd-layout.SetupBegin)
 	}
 
-	roots := make([][]byte, layout.NumTrees)
+	roots := make([]hash.Digest, layout.NumTrees)
 	for i, root := range input.Setup.Roots {
 		roots[layout.SetupBegin+i] = root
 	}
@@ -249,22 +316,25 @@ func recordPoseidon2Transcript(input RecursionInput) (*poseidon2TranscriptRecord
 		return nil, err
 	}
 
-	if numRounds > 0 {
-		for _, root := range input.Setup.Roots {
-			if err := recorder.Bind(constants.CanonicalChallengeName(0), root); err != nil {
-				return nil, err
-			}
-		}
-		if len(input.PublicInputs) > 0 {
-			if err := recorder.Bind(constants.CanonicalChallengeName(0), input.PublicInputs.TranscriptBytes()); err != nil {
-				return nil, err
-			}
+	initialChallenge := constants.InitialChallengeName(numRounds)
+	if err := recorder.Bind(initialChallenge, hash.StringToElements(constants.HASH_BACKEND_DOMAIN_TAG, hashBackend.ID)); err != nil {
+		return nil, err
+	}
+	for _, root := range input.Setup.Roots {
+		if err := recorder.Bind(initialChallenge, root[:]); err != nil {
+			return nil, err
 		}
 	}
+	if len(input.PublicInputs) > 0 {
+		if err := recorder.Bind(initialChallenge, input.PublicInputs.TranscriptElements()); err != nil {
+			return nil, err
+		}
+	}
+
 	for round := 0; round < numRounds; round++ {
 		challengeName := constants.CanonicalChallengeName(round)
 		for i := layout.TraceBegin[round]; i < layout.TraceEnd[round]; i++ {
-			if err := recorder.Bind(challengeName, roots[i]); err != nil {
+			if err := recorder.Bind(challengeName, roots[i][:]); err != nil {
 				return nil, err
 			}
 		}
@@ -274,7 +344,7 @@ func recordPoseidon2Transcript(input RecursionInput) (*poseidon2TranscriptRecord
 	}
 
 	for i := layout.AIRBegin; i < layout.AIREnd; i++ {
-		if err := recorder.Bind(constants.FINAL_EVALUATION_POINT, roots[i]); err != nil {
+		if err := recorder.Bind(constants.FINAL_EVALUATION_POINT, roots[i][:]); err != nil {
 			return nil, err
 		}
 	}
@@ -318,7 +388,7 @@ func recordPoseidon2Transcript(input RecursionInput) (*poseidon2TranscriptRecord
 	if len(input.Proof.DeepQuotientFriProof.FRIRoots) != wantFRIRoots {
 		return nil, fmt.Errorf("recursion: transcript FRI has %d running roots, want %d", len(input.Proof.DeepQuotientFriProof.FRIRoots), wantFRIRoots)
 	}
-	runningRoots := make([][]byte, numFRIRounds)
+	runningRoots := make([]hash.Digest, numFRIRounds)
 	runningRoots[0] = input.Proof.DeepQuotientCommitment[0]
 	for round := 1; round < numFRIRounds; round++ {
 		runningRoots[round] = input.Proof.DeepQuotientFriProof.FRIRoots[round-1]
@@ -328,7 +398,7 @@ func recordPoseidon2Transcript(input RecursionInput) (*poseidon2TranscriptRecord
 		if round > 0 {
 			if level, ok := levelAtRound[round]; ok {
 				gammaName := friLevelGammaName(level)
-				if err := recorder.Bind(gammaName, input.Proof.DeepQuotientCommitment[level]); err != nil {
+				if err := recorder.Bind(gammaName, input.Proof.DeepQuotientCommitment[level][:]); err != nil {
 					return nil, err
 				}
 				if _, err := recorder.ComputeChallenge(gammaName); err != nil {
@@ -337,7 +407,7 @@ func recordPoseidon2Transcript(input RecursionInput) (*poseidon2TranscriptRecord
 			}
 		}
 		foldName := friFoldName(round)
-		if err := recorder.Bind(foldName, runningRoots[round]); err != nil {
+		if err := recorder.Bind(foldName, runningRoots[round][:]); err != nil {
 			return nil, err
 		}
 		if _, err := recorder.ComputeChallenge(foldName); err != nil {
@@ -348,16 +418,16 @@ func recordPoseidon2Transcript(input RecursionInput) (*poseidon2TranscriptRecord
 	if input.Proof.DeepQuotientFriProof.FinalField != field.Ext {
 		return nil, fmt.Errorf("recursion: transcript FRI final field is %s, want %s", input.Proof.DeepQuotientFriProof.FinalField, field.Ext)
 	}
-	if err := recorder.Bind(friQueryName(0), friSerialiseExt(input.Proof.DeepQuotientFriProof.FinalPolyExt)); err != nil {
+	if err := recorder.Bind(friQueryName(0), friTranscriptExtPoly(input.Proof.DeepQuotientFriProof.FinalPolyExt)); err != nil {
 		return nil, err
 	}
 	for query := 0; query < constants.NUM_QUERIES; query++ {
-		b, err := recorder.ComputeChallenge(friQueryName(query))
+		challenge, err := recorder.ComputeChallenge(friQueryName(query))
 		if err != nil {
 			return nil, err
 		}
 		if query < constants.NUM_QUERIES-1 {
-			if err := recorder.Bind(friQueryName(query+1), b); err != nil {
+			if err := recorder.Bind(friQueryName(query+1), challenge[:]); err != nil {
 				return nil, err
 			}
 		}
@@ -380,7 +450,7 @@ func (r *poseidon2TranscriptRecorder) NewChallenge(challengeID string) error {
 	return nil
 }
 
-func (r *poseidon2TranscriptRecorder) Bind(challengeID string, bValue []byte) error {
+func (r *poseidon2TranscriptRecorder) Bind(challengeID string, bValue []koalabear.Element) error {
 	pos, ok := r.nameToChallengePos[challengeID]
 	if !ok {
 		return fmt.Errorf("recursion: transcript challenge %q not found", challengeID)
@@ -388,32 +458,31 @@ func (r *poseidon2TranscriptRecorder) Bind(challengeID string, bValue []byte) er
 	if r.challenges[pos].isComputed {
 		return fmt.Errorf("recursion: transcript challenge %q already computed", challengeID)
 	}
-	bCopy := make([]byte, len(bValue))
-	copy(bCopy, bValue)
+	bCopy := cloneBaseElements(bValue)
 	r.challenges[pos].bindings = append(r.challenges[pos].bindings, bCopy)
 	return nil
 }
 
-func (r *poseidon2TranscriptRecorder) ComputeChallenge(challengeID string) ([]byte, error) {
+func (r *poseidon2TranscriptRecorder) ComputeChallenge(challengeID string) (hash.Digest, error) {
 	pos, ok := r.nameToChallengePos[challengeID]
 	if !ok {
-		return nil, fmt.Errorf("recursion: transcript challenge %q not found", challengeID)
+		return hash.Digest{}, fmt.Errorf("recursion: transcript challenge %q not found", challengeID)
 	}
 	challenge := &r.challenges[pos]
 	if challenge.isComputed {
 		return challenge.value, nil
 	}
-	writes := make([][]byte, 0, 2+len(challenge.bindings))
-	writes = append(writes, []byte(challengeID))
+	writes := make([][]koalabear.Element, 0, 2+len(challenge.bindings))
+	writes = append(writes, hash.StringToElements(poseidon2FSIDDomainTag, challengeID))
 	if pos != 0 {
 		prev := r.challenges[pos-1]
 		if !prev.isComputed {
-			return nil, fmt.Errorf("recursion: transcript previous challenge %q not computed", prev.name)
+			return hash.Digest{}, fmt.Errorf("recursion: transcript previous challenge %q not computed", prev.name)
 		}
-		writes = append(writes, prev.value)
+		writes = append(writes, prev.value[:])
 	}
 	writes = append(writes, challenge.bindings...)
-	value := poseidon2DigestWritesNative(writes)
+	value := poseidon2SpongeDigestNative(writes)
 	challenge.value = value
 	challenge.isComputed = true
 	return value, nil
@@ -442,7 +511,7 @@ func recorderBindValueAtZeta(recorder *poseidon2TranscriptRecorder, prf proof.Pr
 	if !ok {
 		return fmt.Errorf("recursion: transcript ValuesAtZeta %q not found", key)
 	}
-	return recorder.Bind(constants.DEEP_ALPHA, poseidon2SerializeE4(v))
+	return recorder.Bind(constants.DEEP_ALPHA, poseidon2E4Elements(v))
 }
 
 func recorderRegisterFRIChallenges(recorder *poseidon2TranscriptRecorder, numRounds int, levelAtRound map[int]int) error {
@@ -509,7 +578,7 @@ func collectPoseidon2PointSamplingMerkleOps(namespace string, input RecursionInp
 		return nil, fmt.Errorf("recursion: point-sampling Merkle has %d queries, want %d", len(input.Proof.PointSamplings), constants.NUM_QUERIES)
 	}
 
-	roots := make([][]byte, layout.NumTrees)
+	roots := make([]hash.Digest, layout.NumTrees)
 	for i, root := range input.Setup.Roots {
 		roots[layout.SetupBegin+i] = root
 	}
@@ -523,11 +592,8 @@ func collectPoseidon2PointSamplingMerkleOps(namespace string, input RecursionInp
 			return nil, fmt.Errorf("recursion: point-sampling query %d has %d trees, want %d", q, len(samplings), layout.NumTrees)
 		}
 		for treeIdx, wp := range samplings {
-			root, err := poseidon2DigestBytesToElements(roots[treeIdx])
-			if err != nil {
-				return nil, fmt.Errorf("recursion: point-sampling query %d tree %d root: %w", q, treeIdx, err)
-			}
-			proofOps, err := collectPoseidon2MerkleProofOps(fmt.Sprintf("%s.ps.q%d.t%d", namespace, q, treeIdx), poseidon2RawLeafElements(wp), wp.Proof, root)
+			root := cloneBaseElements(roots[treeIdx][:])
+			proofOps, err := collectPoseidon2MerkleProofOps(fmt.Sprintf("%s.ps.q%d.t%d", namespace, q, treeIdx), wp, wp.Proof, root)
 			if err != nil {
 				return nil, err
 			}
@@ -577,7 +643,7 @@ func collectPoseidon2FRIMerkleOps(namespace string, input RecursionInput) ([]pos
 		return nil, fmt.Errorf("recursion: FRI Merkle has %d level query sets, want %d", len(friProof.LevelQueries), len(levelDs)-1)
 	}
 
-	runningRoots := make([][]byte, numRounds)
+	runningRoots := make([]hash.Digest, numRounds)
 	runningRoots[0] = input.Proof.DeepQuotientCommitment[0]
 	for round := 1; round < numRounds; round++ {
 		runningRoots[round] = friProof.FRIRoots[round-1]
@@ -589,15 +655,8 @@ func collectPoseidon2FRIMerkleOps(namespace string, input RecursionInput) ([]pos
 			return nil, fmt.Errorf("recursion: FRI Merkle query %d has %d layers, want %d", q, len(query.Layers), numRounds)
 		}
 		for round, layer := range query.Layers {
-			root, err := poseidon2DigestBytesToElements(runningRoots[round])
-			if err != nil {
-				return nil, fmt.Errorf("recursion: FRI Merkle query %d round %d root: %w", q, round, err)
-			}
-			leafElements, err := poseidon2QueryLayerElements(layer)
-			if err != nil {
-				return nil, fmt.Errorf("recursion: FRI Merkle query %d round %d leaf: %w", q, round, err)
-			}
-			proofOps, err := collectPoseidon2MerkleProofOps(fmt.Sprintf("%s.fri.q%d.r%d", namespace, q, round), leafElements, layer.Path, root)
+			root := cloneBaseElements(runningRoots[round][:])
+			proofOps, err := collectPoseidon2MerkleProofOps(fmt.Sprintf("%s.fri.q%d.r%d", namespace, q, round), layer, layer.Path, root)
 			if err != nil {
 				return nil, err
 			}
@@ -609,15 +668,8 @@ func collectPoseidon2FRIMerkleOps(namespace string, input RecursionInput) ([]pos
 				return nil, fmt.Errorf("recursion: FRI Merkle level %d has %d queries, want %d", level, len(friProof.LevelQueries[level-1]), constants.NUM_QUERIES)
 			}
 			layer := friProof.LevelQueries[level-1][q]
-			root, err := poseidon2DigestBytesToElements(input.Proof.DeepQuotientCommitment[level])
-			if err != nil {
-				return nil, fmt.Errorf("recursion: FRI Merkle query %d level %d root: %w", q, level, err)
-			}
-			leafElements, err := poseidon2QueryLayerElements(layer)
-			if err != nil {
-				return nil, fmt.Errorf("recursion: FRI Merkle query %d level %d leaf: %w", q, level, err)
-			}
-			proofOps, err := collectPoseidon2MerkleProofOps(fmt.Sprintf("%s.fri.q%d.l%d", namespace, q, level), leafElements, layer.Path, root)
+			root := cloneBaseElements(input.Proof.DeepQuotientCommitment[level][:])
+			proofOps, err := collectPoseidon2MerkleProofOps(fmt.Sprintf("%s.fri.q%d.l%d", namespace, q, level), layer, layer.Path, root)
 			if err != nil {
 				return nil, err
 			}
@@ -627,15 +679,15 @@ func collectPoseidon2FRIMerkleOps(namespace string, input RecursionInput) ([]pos
 	return ops, nil
 }
 
-func collectPoseidon2MerkleProofOps(label string, leafElements []koalabear.Element, path merkle.Proof, root []koalabear.Element) ([]poseidon2Op, error) {
-	current, ops := poseidon2DigestElementOps(label+".leaf", 0, [][]koalabear.Element{leafElements})
+func collectPoseidon2MerkleProofOps(label string, leaf any, path merkle.Proof, root []koalabear.Element) ([]poseidon2Op, error) {
+	current, ops, err := poseidon2MerkleLeafDigestOps(label+".leaf", leaf)
+	if err != nil {
+		return nil, err
+	}
 
 	idx := path.LeafIdx
-	for depth, siblingBytes := range path.Siblings {
-		siblingVals, err := poseidon2DigestBytesToElements(siblingBytes)
-		if err != nil {
-			return nil, fmt.Errorf("recursion: %s sibling %d: %w", label, depth, err)
-		}
+	for depth, sibling := range path.Siblings {
+		siblingVals := cloneBaseElements(sibling[:])
 		left, right := current, siblingVals
 		if idx&1 == 1 {
 			left, right = siblingVals, current
@@ -646,8 +698,8 @@ func collectPoseidon2MerkleProofOps(label string, leafElements []koalabear.Eleme
 		idx >>= 1
 	}
 
-	if len(root) != poseidon2HalfWidth {
-		return nil, fmt.Errorf("recursion: %s root has %d elements, want %d", label, len(root), poseidon2HalfWidth)
+	if len(root) != poseidon2DigestWidth {
+		return nil, fmt.Errorf("recursion: %s root has %d elements, want %d", label, len(root), poseidon2DigestWidth)
 	}
 	if len(ops) == 0 {
 		return nil, fmt.Errorf("recursion: %s produced no Poseidon2 operations", label)
@@ -656,102 +708,174 @@ func collectPoseidon2MerkleProofOps(label string, leafElements []koalabear.Eleme
 	return ops, nil
 }
 
-func poseidon2QueryLayerElements(layer fri.QueryLayer) ([]koalabear.Element, error) {
-	switch layer.Field {
-	case field.Base:
-		return []koalabear.Element{layer.LeafPBase, layer.LeafQBase}, nil
-	case field.Ext:
-		return []koalabear.Element{
-			layer.LeafPExt.B0.A0, layer.LeafPExt.B0.A1, layer.LeafPExt.B1.A0, layer.LeafPExt.B1.A1,
-			layer.LeafQExt.B0.A0, layer.LeafQExt.B0.A1, layer.LeafQExt.B1.A0, layer.LeafQExt.B1.A1,
-		}, nil
+func poseidon2MerkleLeafDigestOps(label string, leaf any) ([]koalabear.Element, []poseidon2Op, error) {
+	switch v := leaf.(type) {
+	case commitment.WMerkleProof:
+		return poseidon2CommitmentLeafDigestOps(label, v.RawLeafBase, v.RawLeafExt)
+	case fri.QueryLayer:
+		switch v.Field {
+		case field.Base:
+			return poseidon2CommitmentLeafDigestOps(label, []commitment.PairBase{{v.LeafPBase, v.LeafQBase}}, nil)
+		case field.Ext:
+			return poseidon2CommitmentLeafDigestOps(label, nil, []commitment.PairExt{{v.LeafPExt, v.LeafQExt}})
+		default:
+			return nil, nil, fmt.Errorf("field is %s, want base or ext", v.Field)
+		}
 	default:
-		return nil, fmt.Errorf("field is %s, want base or ext", layer.Field)
+		return nil, nil, fmt.Errorf("recursion: unsupported Poseidon2 Merkle leaf type %T", leaf)
 	}
+}
+
+func poseidon2CommitmentLeafDigestOps(label string, base []commitment.PairBase, ext []commitment.PairExt) ([]koalabear.Element, []poseidon2Op, error) {
+	leafElements := poseidon2LeafHashElements(base, ext)
+	digest, ops := poseidon2SpongeWriteOps(label, [][]koalabear.Element{leafElements})
+	return digest, ops, nil
+}
+
+func poseidon2LeafHashElements(base []commitment.PairBase, extPairs []commitment.PairExt) []koalabear.Element {
+	total := 3 + 2*len(base) + 8*len(extPairs)
+	res := make([]koalabear.Element, 0, total)
+	res = append(res,
+		hash.NewElement(poseidon2LeafDomainTag),
+		hash.NewElement(uint64(len(base))),
+		hash.NewElement(uint64(len(extPairs))),
+	)
+	for _, pair := range base {
+		res = append(res, pair[0], pair[1])
+	}
+	for _, pair := range extPairs {
+		res = append(res, poseidon2E4Elements(pair[0])...)
+		res = append(res, poseidon2E4Elements(pair[1])...)
+	}
+	return res
 }
 
 func poseidon2NodeDigestOps(label string, left, right []koalabear.Element) ([]koalabear.Element, []poseidon2Op) {
-	lenBlock := poseidon2LengthBlock(poseidon2HalfWidth * koalabear.Bytes)
-	return poseidon2DigestBlockOps(label, 1, [][]koalabear.Element{lenBlock, left, lenBlock, right})
+	inputs := make([]koalabear.Element, 0, 1+len(left)+len(right))
+	inputs = append(inputs, hash.NewElement(poseidon2NodeDomainTag))
+	inputs = append(inputs, left...)
+	inputs = append(inputs, right...)
+	return poseidon2MDDigestOps(label, inputs)
 }
 
-func poseidon2DigestElementOps(label string, tag byte, parts [][]koalabear.Element) ([]koalabear.Element, []poseidon2Op) {
-	blocks := make([][]koalabear.Element, 0, 1+2*len(parts))
-	for _, part := range parts {
-		blocks = append(blocks, poseidon2LengthBlock(len(part)*koalabear.Bytes))
-		blocks = append(blocks, poseidon2ElementBlocks(part)...)
-	}
-	return poseidon2DigestBlockOps(label, tag, blocks)
-}
-
-func poseidon2DigestBlockOps(label string, tag byte, blocks [][]koalabear.Element) ([]koalabear.Element, []poseidon2Op) {
-	tagBlock := make([]koalabear.Element, poseidon2HalfWidth)
-	tagBlock[poseidon2HalfWidth-1].SetUint64(uint64(tag))
-
-	state := make([]koalabear.Element, poseidon2HalfWidth)
-	allBlocks := append([][]koalabear.Element{tagBlock}, blocks...)
-	ops := make([]poseidon2Op, 0, len(allBlocks))
-	for i, block := range allBlocks {
-		output := poseidon2CompressValues(state, block)
-		input := make([]koalabear.Element, poseidon2Width)
-		copy(input[:poseidon2HalfWidth], state)
-		copy(input[poseidon2HalfWidth:], block)
-		ops = append(ops, poseidon2Op{
-			Label:      fmt.Sprintf("%s.block.%d", label, i),
-			Input:      input,
-			WantOutput: cloneBaseElements(output),
-		})
-		state = output
-	}
-	return state, ops
-}
-
-func poseidon2DigestWriteOps(label string, writes [][]byte) ([]koalabear.Element, []poseidon2Op, error) {
-	state := make([]koalabear.Element, poseidon2HalfWidth)
-	ops := make([]poseidon2Op, 0)
-	for writeIdx, write := range writes {
-		blocks, err := poseidon2ByteBlocks(write)
-		if err != nil {
-			return nil, nil, fmt.Errorf("recursion: Poseidon2 transcript write %s.%d: %w", label, writeIdx, err)
-		}
-		for blockIdx, block := range blocks {
-			output := poseidon2CompressValues(state, block)
-			input := make([]koalabear.Element, poseidon2Width)
-			copy(input[:poseidon2HalfWidth], state)
-			copy(input[poseidon2HalfWidth:], block)
-			ops = append(ops, poseidon2Op{
-				Label:      fmt.Sprintf("%s.write.%d.block.%d", label, writeIdx, blockIdx),
-				Input:      input,
-				WantOutput: cloneBaseElements(output),
-			})
-			state = output
+func poseidon2MDDigestOps(label string, inputs []koalabear.Element) ([]koalabear.Element, []poseidon2Op) {
+	var state [poseidon2MDWidth]koalabear.Element
+	ops := make([]poseidon2Op, 0, (len(inputs)+poseidon2MDWidth-1)/poseidon2MDWidth+1)
+	pos := 0
+	wrote := false
+	compressed := false
+	for _, input := range inputs {
+		state[pos].Set(&input)
+		pos++
+		wrote = true
+		if pos == poseidon2MDWidth {
+			_, op := poseidon2MDCompressOp(fmt.Sprintf("%s.block.%d", label, len(ops)), &state)
+			ops = append(ops, op)
+			pos = poseidon2MDHalfWidth
+			compressed = true
 		}
 	}
-	return state, ops, nil
-}
-
-func poseidon2DigestWritesNative(writes [][]byte) []byte {
-	h := commitment.NewPoseidon2TranscriptHash()
-	for _, write := range writes {
-		_, _ = h.Write(write)
+	if !wrote {
+		return make([]koalabear.Element, poseidon2DigestWidth), ops
 	}
-	return h.Sum(nil)
+	if !compressed || pos > poseidon2MDHalfWidth {
+		for i := pos; i < poseidon2MDWidth; i++ {
+			state[i].SetZero()
+		}
+		_, op := poseidon2MDCompressOp(fmt.Sprintf("%s.block.%d", label, len(ops)), &state)
+		ops = append(ops, op)
+	}
+	return cloneBaseElements(state[:poseidon2DigestWidth]), ops
 }
 
-func poseidon2CompressValues(state, block []koalabear.Element) []koalabear.Element {
-	input := make([]koalabear.Element, poseidon2Width)
-	copy(input[:poseidon2HalfWidth], state)
-	copy(input[poseidon2HalfWidth:], block)
+func poseidon2MDCompressOp(label string, state *[poseidon2MDWidth]koalabear.Element) ([]koalabear.Element, poseidon2Op) {
+	input := cloneBaseElements(state[:])
 	perm := poseidon2PermutationValues(input)
-	output := make([]koalabear.Element, poseidon2HalfWidth)
+	output := make([]koalabear.Element, poseidon2DigestWidth)
 	for i := range output {
-		output[i].Add(&perm[poseidon2HalfWidth+i], &block[i])
+		output[i].Add(&perm[poseidon2MDHalfWidth+i], &input[poseidon2MDHalfWidth+i])
 	}
-	return output
+	for i := 0; i < poseidon2DigestWidth; i++ {
+		state[i].Set(&output[i])
+	}
+	for i := poseidon2DigestWidth; i < poseidon2MDWidth; i++ {
+		state[i].SetZero()
+	}
+	return output, poseidon2Op{
+		Label:      label,
+		Width:      poseidon2MDWidth,
+		OutputMode: poseidon2OutputMD,
+		Input:      input,
+		WantOutput: cloneBaseElements(output),
+	}
+}
+
+func poseidon2SpongeWriteOps(label string, writes [][]koalabear.Element) ([]koalabear.Element, []poseidon2Op) {
+	var state [poseidon2SpongeWidth]koalabear.Element
+	var block [poseidon2SpongeRate]koalabear.Element
+	blockLen := 0
+	wrote := false
+	ops := make([]poseidon2Op, 0)
+	for _, write := range writes {
+		for _, input := range write {
+			block[blockLen].Set(&input)
+			blockLen++
+			if blockLen == poseidon2SpongeRate {
+				copy(state[:poseidon2SpongeRate], block[:])
+				_, op := poseidon2SpongePermuteOp(fmt.Sprintf("%s.block.%d", label, len(ops)), &state)
+				ops = append(ops, op)
+				for i := range block {
+					block[i].SetZero()
+				}
+				blockLen = 0
+				wrote = true
+			}
+		}
+	}
+	if !wrote && blockLen == 0 {
+		return make([]koalabear.Element, poseidon2DigestWidth), ops
+	}
+	if blockLen > 0 {
+		for i := 0; i < blockLen; i++ {
+			state[i].Set(&block[i])
+		}
+		_, op := poseidon2SpongePermuteOp(fmt.Sprintf("%s.block.%d", label, len(ops)), &state)
+		ops = append(ops, op)
+	}
+	return cloneBaseElements(state[:poseidon2DigestWidth]), ops
+}
+
+func poseidon2SpongePermuteOp(label string, state *[poseidon2SpongeWidth]koalabear.Element) ([]koalabear.Element, poseidon2Op) {
+	input := cloneBaseElements(state[:])
+	perm := poseidon2PermutationValues(input)
+	copy(state[:], perm)
+	output := cloneBaseElements(state[:poseidon2DigestWidth])
+	return output, poseidon2Op{
+		Label:      label,
+		Width:      poseidon2SpongeWidth,
+		OutputMode: poseidon2OutputSponge,
+		Input:      input,
+		WantOutput: cloneBaseElements(output),
+	}
+}
+
+func poseidon2SpongeDigestNative(writes [][]koalabear.Element) hash.Digest {
+	h := hash.NewPoseidon2SpongeHasher()
+	for _, write := range writes {
+		h.WriteElements(write...)
+	}
+	return h.Sum()
+}
+
+func poseidon2E4Elements(v ext.E4) []koalabear.Element {
+	return []koalabear.Element{v.B0.A0, v.B0.A1, v.B1.A0, v.B1.A1}
 }
 
 func poseidon2PermutationValues(input []koalabear.Element) []koalabear.Element {
-	params := p2crypto.GetDefaultParameters()
+	params, err := poseidon2Params(len(input))
+	if err != nil {
+		panic(err)
+	}
 	state := poseidon2MatMulExternalValues(input)
 	totalRounds := params.NbFullRounds + params.NbPartialRounds
 	for round := 0; round < totalRounds; round++ {
@@ -812,96 +936,6 @@ func maxInt(a, b int) int {
 	return b
 }
 
-func poseidon2RawLeafElements(wp commitment.WMerkleProof) []koalabear.Element {
-	total := 2*len(wp.RawLeafBase) + 8*len(wp.RawLeafExt)
-	res := make([]koalabear.Element, 0, total)
-	for _, pair := range wp.RawLeafBase {
-		res = append(res, pair[0], pair[1])
-	}
-	for _, pair := range wp.RawLeafExt {
-		res = append(res,
-			pair[0].B0.A0, pair[0].B0.A1, pair[0].B1.A0, pair[0].B1.A1,
-			pair[1].B0.A0, pair[1].B0.A1, pair[1].B1.A0, pair[1].B1.A1,
-		)
-	}
-	return res
-}
-
-func poseidon2DigestBytesToElements(b []byte) ([]koalabear.Element, error) {
-	if len(b) != poseidon2HalfWidth*koalabear.Bytes {
-		return nil, fmt.Errorf("digest has %d bytes, want %d", len(b), poseidon2HalfWidth*koalabear.Bytes)
-	}
-	res := make([]koalabear.Element, poseidon2HalfWidth)
-	for i := range res {
-		if err := res[i].SetBytesCanonical(b[i*koalabear.Bytes : (i+1)*koalabear.Bytes]); err != nil {
-			return nil, err
-		}
-	}
-	return res, nil
-}
-
-func poseidon2ByteBlocks(data []byte) ([][]koalabear.Element, error) {
-	if len(data) == 0 {
-		return nil, nil
-	}
-	numBlocks := (len(data) + poseidon2HalfWidth*koalabear.Bytes - 1) / (poseidon2HalfWidth * koalabear.Bytes)
-	blocks := make([][]koalabear.Element, 0, numBlocks)
-	for len(data) > 0 {
-		take := len(data)
-		if take > poseidon2HalfWidth*koalabear.Bytes {
-			take = poseidon2HalfWidth * koalabear.Bytes
-		}
-		blockBytes := make([]byte, poseidon2HalfWidth*koalabear.Bytes)
-		copy(blockBytes[len(blockBytes)-take:], data[:take])
-		block := make([]koalabear.Element, poseidon2HalfWidth)
-		for i := range block {
-			if err := block[i].SetBytesCanonical(blockBytes[i*koalabear.Bytes : (i+1)*koalabear.Bytes]); err != nil {
-				return nil, err
-			}
-		}
-		blocks = append(blocks, block)
-		data = data[take:]
-	}
-	return blocks, nil
-}
-
-func poseidon2ElementBlocks(elements []koalabear.Element) [][]koalabear.Element {
-	if len(elements) == 0 {
-		return nil
-	}
-	numBlocks := (len(elements) + poseidon2HalfWidth - 1) / poseidon2HalfWidth
-	blocks := make([][]koalabear.Element, 0, numBlocks)
-	for len(elements) > 0 {
-		block := make([]koalabear.Element, poseidon2HalfWidth)
-		take := len(elements)
-		if take > poseidon2HalfWidth {
-			take = poseidon2HalfWidth
-		}
-		copy(block[poseidon2HalfWidth-take:], elements[:take])
-		blocks = append(blocks, block)
-		elements = elements[take:]
-	}
-	return blocks
-}
-
-func poseidon2LengthBlock(length int) []koalabear.Element {
-	var lenBuf [8]byte
-	binary.BigEndian.PutUint64(lenBuf[:], uint64(length))
-	block := make([]koalabear.Element, poseidon2HalfWidth)
-	block[poseidon2HalfWidth-2].SetBytes(lenBuf[:4])
-	block[poseidon2HalfWidth-1].SetBytes(lenBuf[4:])
-	return block
-}
-
-func poseidon2SerializeE4(v ext.E4) []byte {
-	res := make([]byte, 0, 4*koalabear.Bytes)
-	res = append(res, v.B0.A0.Marshal()...)
-	res = append(res, v.B0.A1.Marshal()...)
-	res = append(res, v.B1.A0.Marshal()...)
-	res = append(res, v.B1.A1.Marshal()...)
-	return res
-}
-
 func poseidon2RoundValues(input []koalabear.Element, roundKey []koalabear.Element, partial bool) []koalabear.Element {
 	state := cloneBaseElements(input)
 	for i := range roundKey {
@@ -946,12 +980,12 @@ func poseidon2SBoxExpr(value expr.Expr) expr.Expr {
 func poseidon2MatMulExternalValues(input []koalabear.Element) []koalabear.Element {
 	state := poseidon2MatMulM4Values(input)
 	tmp := make([]koalabear.Element, 4)
-	for i := 0; i < poseidon2Width/4; i++ {
+	for i := 0; i < len(state)/4; i++ {
 		for j := 0; j < 4; j++ {
 			tmp[j].Add(&tmp[j], &state[4*i+j])
 		}
 	}
-	for i := 0; i < poseidon2Width/4; i++ {
+	for i := 0; i < len(state)/4; i++ {
 		for j := 0; j < 4; j++ {
 			state[4*i+j].Add(&state[4*i+j], &tmp[j])
 		}
@@ -965,12 +999,12 @@ func poseidon2MatMulExternalExprs(input []expr.Expr) []expr.Expr {
 	for i := range tmp {
 		tmp[i] = zeroExpr()
 	}
-	for i := 0; i < poseidon2Width/4; i++ {
+	for i := 0; i < len(state)/4; i++ {
 		for j := 0; j < 4; j++ {
 			tmp[j] = tmp[j].Add(state[4*i+j])
 		}
 	}
-	for i := 0; i < poseidon2Width/4; i++ {
+	for i := 0; i < len(state)/4; i++ {
 		for j := 0; j < 4; j++ {
 			state[4*i+j] = state[4*i+j].Add(tmp[j])
 		}
@@ -980,7 +1014,7 @@ func poseidon2MatMulExternalExprs(input []expr.Expr) []expr.Expr {
 
 func poseidon2MatMulM4Values(input []koalabear.Element) []koalabear.Element {
 	res := cloneBaseElements(input)
-	for i := 0; i < poseidon2Width/4; i++ {
+	for i := 0; i < len(res)/4; i++ {
 		x0, x1, x2, x3 := res[4*i], res[4*i+1], res[4*i+2], res[4*i+3]
 		var t01, t23, t0123, t01123, t01233 koalabear.Element
 		t01.Add(&x0, &x1)
@@ -998,7 +1032,7 @@ func poseidon2MatMulM4Values(input []koalabear.Element) []koalabear.Element {
 
 func poseidon2MatMulM4Exprs(input []expr.Expr) []expr.Expr {
 	res := cloneExprs(input)
-	for i := 0; i < poseidon2Width/4; i++ {
+	for i := 0; i < len(res)/4; i++ {
 		x0, x1, x2, x3 := res[4*i], res[4*i+1], res[4*i+2], res[4*i+3]
 		t01 := x0.Add(x1)
 		t23 := x2.Add(x3)
@@ -1014,12 +1048,12 @@ func poseidon2MatMulM4Exprs(input []expr.Expr) []expr.Expr {
 }
 
 func poseidon2MatMulInternalValues(input []koalabear.Element) []koalabear.Element {
-	diag := poseidon2InternalDiag16()
+	diag := poseidon2InternalDiag(len(input))
 	var sum koalabear.Element
 	for i := range input {
 		sum.Add(&sum, &input[i])
 	}
-	res := make([]koalabear.Element, poseidon2Width)
+	res := make([]koalabear.Element, len(input))
 	for i := range res {
 		var term koalabear.Element
 		term.Mul(&input[i], &diag[i])
@@ -1029,24 +1063,39 @@ func poseidon2MatMulInternalValues(input []koalabear.Element) []koalabear.Elemen
 }
 
 func poseidon2MatMulInternalExprs(input []expr.Expr) []expr.Expr {
-	diag := poseidon2InternalDiag16()
+	diag := poseidon2InternalDiag(len(input))
 	sum := zeroExpr()
 	for i := range input {
 		sum = sum.Add(input[i])
 	}
-	res := make([]expr.Expr, poseidon2Width)
+	res := make([]expr.Expr, len(input))
 	for i := range res {
 		res[i] = sum.Add(input[i].Mul(expr.Const(diag[i])))
 	}
 	return res
 }
 
-func poseidon2InternalDiag16() []koalabear.Element {
-	vals := []uint64{
-		2130706431, 1, 2, 1065353217,
-		3, 4, 1065353216, 2130706430,
-		2130706429, 2122383361, 1864368129, 2130706306,
-		8323072, 266338304, 133169152, 127,
+func poseidon2InternalDiag(width int) []koalabear.Element {
+	var vals []uint64
+	switch width {
+	case poseidon2MDWidth:
+		vals = []uint64{
+			2130706431, 1, 2, 1065353217,
+			3, 4, 1065353216, 2130706430,
+			2130706429, 2122383361, 1864368129, 2130706306,
+			8323072, 266338304, 133169152, 127,
+		}
+	case poseidon2SpongeWidth:
+		vals = []uint64{
+			2130706431, 1, 2, 1065353217,
+			3, 4, 1065353216, 2130706430,
+			2130706429, 2122383361, 1598029825, 1864368129,
+			1997537281, 2064121857, 2097414145, 2130706306,
+			8323072, 266338304, 133169152, 66584576,
+			33292288, 16646144, 4161536, 127,
+		}
+	default:
+		panic(fmt.Errorf("recursion: unsupported Poseidon2 width %d", width))
 	}
 	res := make([]koalabear.Element, len(vals))
 	for i, v := range vals {
