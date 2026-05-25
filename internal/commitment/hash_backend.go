@@ -135,6 +135,10 @@ func (SHA256LeafHasher) HashLeaf(base []PairBase, ext []PairExt) hash.Digest {
 	return h.Sum()
 }
 
+func (lh SHA256LeafHasher) HashLeaves(dst []hash.Digest, src LeafSource, start int) {
+	hashLeavesScalar(lh, dst, src, start)
+}
+
 func (SHA256NodeHasher) HashNode(left, right hash.Digest) hash.Digest {
 	h := hash.NewSHA256FieldHasher()
 	h.WriteElements(hash.NewElement(nodeDomainTag))

@@ -35,6 +35,23 @@ type LeafHasher interface {
 	HashLeaf(base []PairBase, ext []PairExt) hash.Digest
 }
 
+// LeafSource describes the column-oriented data used to build paired Merkle
+// leaves. Leaf i absorbs values at i and i+PairOffset for every base and
+// extension polynomial.
+type LeafSource struct {
+	Base       []poly.Polynomial
+	Ext        []poly.ExtPolynomial
+	PairOffset int
+}
+
+// BatchLeafHasher hashes a consecutive range of leaves into dst. HashLeaf
+// remains the compatibility path and the source of truth for single-leaf
+// verifier checks.
+type BatchLeafHasher interface {
+	LeafHasher
+	HashLeaves(dst []hash.Digest, src LeafSource, start int)
+}
+
 type NodeHasher interface {
 	HashNode(left, right hash.Digest) hash.Digest
 }
@@ -141,6 +158,10 @@ func (Poseidon2LeafHasher) HashLeaf(base []PairBase, ext []PairExt) hash.Digest 
 	return h.Sum()
 }
 
+func (lh Poseidon2LeafHasher) HashLeaves(dst []hash.Digest, src LeafSource, start int) {
+	hashLeavesScalar(lh, dst, src, start)
+}
+
 func (Poseidon2NodeHasher) HashNode(left, right hash.Digest) hash.Digest {
 	h := hash.NewPoseidon2MDHasher()
 	h.WriteElements(hash.NewElement(nodeDomainTag))
@@ -191,27 +212,46 @@ func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolyn
 		baseWidth: len(encodedBase),
 		extWidth:  len(encodedExt),
 	}
-	parallel.Execute(halfN, func(start, end int) {
-		baseLeaf := make([]PairBase, len(encodedBase))
-		extLeaf := make([]PairExt, len(encodedExt))
-		for i := start; i < end; i++ {
-			if len(encodedBase) > 0 {
-				for j := range encodedBase {
-					baseLeaf[j][0].Set(&encodedBase[j][i])
-					baseLeaf[j][1].Set(&encodedBase[j][i+halfN])
-				}
-			}
-			if len(encodedExt) > 0 {
-				for j := range encodedExt {
-					extLeaf[j][0].Set(&encodedExt[j][i])
-					extLeaf[j][1].Set(&encodedExt[j][i+halfN])
-				}
-			}
-			_ = tree.BuildIthLeaf(rs.LeafHasher.HashLeaf(baseLeaf, extLeaf), i)
-		}
-	})
+	leaves := make([]hash.Digest, halfN)
+	src := LeafSource{
+		Base:       encodedBase,
+		Ext:        encodedExt,
+		PairOffset: halfN,
+	}
+	if batchHasher, ok := rs.LeafHasher.(BatchLeafHasher); ok {
+		parallel.Execute(halfN, func(start, end int) {
+			batchHasher.HashLeaves(leaves[start:end], src, start)
+		})
+	} else {
+		parallel.Execute(halfN, func(start, end int) {
+			hashLeavesScalar(rs.LeafHasher, leaves[start:end], src, start)
+		})
+	}
 
-	tree.BuildNodes()
+	if err := tree.Build(leaves); err != nil {
+		return WMerkleTree{}, err
+	}
 
 	return wTree, nil
+}
+
+func hashLeavesScalar(lh LeafHasher, dst []hash.Digest, src LeafSource, start int) {
+	baseLeaf := make([]PairBase, len(src.Base))
+	extLeaf := make([]PairExt, len(src.Ext))
+	for k := range dst {
+		i := start + k
+		if len(src.Base) > 0 {
+			for j := range src.Base {
+				baseLeaf[j][0].Set(&src.Base[j][i])
+				baseLeaf[j][1].Set(&src.Base[j][i+src.PairOffset])
+			}
+		}
+		if len(src.Ext) > 0 {
+			for j := range src.Ext {
+				extLeaf[j][0].Set(&src.Ext[j][i])
+				extLeaf[j][1].Set(&src.Ext[j][i+src.PairOffset])
+			}
+		}
+		dst[k] = lh.HashLeaf(baseLeaf, extLeaf)
+	}
 }

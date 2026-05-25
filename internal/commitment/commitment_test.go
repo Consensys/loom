@@ -18,6 +18,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
+	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
 )
@@ -116,6 +117,57 @@ func TestRSCommitWithDomainCache(t *testing.T) {
 	}
 }
 
+func TestRSCommitBatchLeafHasherMatchesScalarRoot(t *testing.T) {
+	basePolys := []poly.Polynomial{
+		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},
+		{baseElement(5), baseElement(6), baseElement(7), baseElement(8)},
+	}
+	extPolys := []poly.ExtPolynomial{
+		{
+			extElement(1, 2, 3, 4),
+			extElement(5, 6, 7, 8),
+			extElement(9, 10, 11, 12),
+			extElement(13, 14, 15, 16),
+		},
+	}
+
+	tests := []struct {
+		name string
+		lh   LeafHasher
+		nh   NodeHasher
+	}{
+		{
+			name: "poseidon2",
+			lh:   DefaultLeafHasher,
+			nh:   DefaultNodeHasher,
+		},
+		{
+			name: "sha256",
+			lh:   SHA256LeafHasher{},
+			nh:   SHA256NodeHasher{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			batchCommitter := NewRSCommit(4, 2, tt.lh, tt.nh)
+			batchTree, err := batchCommitter.Commit(basePolys, extPolys)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			scalarCommitter := NewRSCommit(4, 2, scalarOnlyLeafHasher{inner: tt.lh}, tt.nh)
+			scalarTree, err := scalarCommitter.Commit(basePolys, extPolys)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if batchTree.Root() != scalarTree.Root() {
+				t.Fatalf("batched root differs from scalar root: got %v, want %v", batchTree.Root(), scalarTree.Root())
+			}
+		})
+	}
+}
+
 func TestRSCommitEmptyRails(t *testing.T) {
 	basePolys := []poly.Polynomial{
 		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},
@@ -147,6 +199,14 @@ func TestRSCommitEmptyRails(t *testing.T) {
 	if got := extTree.NumLeaves(); got != 4 {
 		t.Fatalf("ext-only NumLeaves = %d, want 4", got)
 	}
+}
+
+type scalarOnlyLeafHasher struct {
+	inner LeafHasher
+}
+
+func (h scalarOnlyLeafHasher) HashLeaf(base []PairBase, ext []PairExt) hash.Digest {
+	return h.inner.HashLeaf(base, ext)
 }
 
 func baseElement(v uint64) koalabear.Element {
