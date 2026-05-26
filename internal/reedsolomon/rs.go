@@ -14,8 +14,9 @@
 package reedsolomon
 
 import (
+	"math/bits"
+
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
-	"github.com/consensys/gnark-crypto/utils"
 	"github.com/consensys/loom/internal/poly"
 )
 
@@ -33,6 +34,28 @@ type Encoder struct {
 	Domain *fft.Domain
 }
 
+// scatterBitReversedCoeffs expands n-bit-reversed coefficients into the
+// matching N-bit-reversed zero-padded slots, in place.
+func scatterBitReversedCoeffs[T any](p []T, n, N int) {
+	if n <= 1 {
+		return
+	}
+	shift := bits.TrailingZeros64(uint64(N)) - bits.TrailingZeros64(uint64(n))
+	stride := 1 << shift
+	for i := n - 1; i >= 0; i-- {
+		p[i<<shift] = p[i]
+	}
+	if stride == 1 {
+		return
+	}
+	var zero T
+	for i := 1; i < n; i++ {
+		if i&(stride-1) != 0 {
+			p[i] = zero
+		}
+	}
+}
+
 // RSEncode evalutes p on the N-th roots of unity (N must be > len(p))
 // p is in Lagrange form
 // it returns a copy of p
@@ -46,15 +69,12 @@ func (encoder *Encoder) Encode(p poly.Polynomial, d *fft.Domain) poly.Polynomial
 	_p := make(poly.Polynomial, N)
 	copy(_p, p)
 
-	// compute fftinv(_p[:n]) using d (d must be of the size of p)
-	// Lagrange normal → canonical bit-reversed (w.r.t. n); then un-reverse to canonical normal
+	// Lagrange normal to canonical bit-reversed (w.r.t. n). We place those
+	// coefficients directly in N-bit-reversed order and use a DIT FFT, avoiding
+	// the two explicit BitReverse passes previously needed for normal order.
 	d.FFTInverse(_p[:n], fft.DIF)
-	utils.BitReverse(_p[:n])
-
-	// compute fft(_p) using the Encoder domain
-	// canonical normal (zero-padded to N) → Lagrange bit-reversed (w.r.t. N) → Lagrange normal
-	encoder.Domain.FFT(_p, fft.DIF)
-	utils.BitReverse(_p)
+	scatterBitReversedCoeffs(_p, n, int(N))
+	encoder.Domain.FFT(_p, fft.DIT)
 
 	// return _p
 	return _p
@@ -71,10 +91,8 @@ func (encoder *Encoder) EncodeExt(p poly.ExtPolynomial, d *fft.Domain) poly.ExtP
 	copy(_p, p)
 
 	d.FFTInverseExt(_p[:n], fft.DIF)
-	utils.BitReverse(_p[:n])
-
-	encoder.Domain.FFTExt(_p, fft.DIF)
-	utils.BitReverse(_p)
+	scatterBitReversedCoeffs(_p, n, int(N))
+	encoder.Domain.FFTExt(_p, fft.DIT)
 
 	return _p
 }
