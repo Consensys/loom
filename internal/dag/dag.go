@@ -1403,15 +1403,12 @@ func copyChildVectorToExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.El
 func addChildVectorToExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.Element, extVec [][]ext.E4, N int) {
 	if child.Field == field.Ext {
 		src := extVec[child.Index]
-		for j := range N {
-			dst[j].Add(&dst[j], &src[j])
-		}
+		ext.Vector(dst).Add(ext.Vector(dst), ext.Vector(src))
 		return
 	}
 	src := baseVec[child.Index]
 	for j := range N {
-		rhs := liftBaseToE4(src[j])
-		dst[j].Add(&dst[j], &rhs)
+		dst[j].B0.A0.Add(&dst[j].B0.A0, &src[j])
 	}
 }
 
@@ -1420,15 +1417,12 @@ func addChildVectorToExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.Ele
 func subChildVectorFromExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.Element, extVec [][]ext.E4, N int) {
 	if child.Field == field.Ext {
 		src := extVec[child.Index]
-		for j := range N {
-			dst[j].Sub(&dst[j], &src[j])
-		}
+		ext.Vector(dst).Sub(ext.Vector(dst), ext.Vector(src))
 		return
 	}
 	src := baseVec[child.Index]
 	for j := range N {
-		rhs := liftBaseToE4(src[j])
-		dst[j].Sub(&dst[j], &rhs)
+		dst[j].B0.A0.Sub(&dst[j].B0.A0, &src[j])
 	}
 }
 
@@ -1437,16 +1431,11 @@ func subChildVectorFromExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.E
 func mulChildVectorIntoExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.Element, extVec [][]ext.E4, N int) {
 	if child.Field == field.Ext {
 		src := extVec[child.Index]
-		for j := range N {
-			dst[j].Mul(&dst[j], &src[j])
-		}
+		ext.Vector(dst).Mul(ext.Vector(dst), ext.Vector(src))
 		return
 	}
 	src := baseVec[child.Index]
-	for j := range N {
-		rhs := liftBaseToE4(src[j])
-		dst[j].Mul(&dst[j], &rhs)
-	}
+	ext.Vector(dst).MulByElement(ext.Vector(dst), koalabear.Vector(src))
 }
 
 // EvalWithCache evaluates the DAG using the caller-supplied cache slice instead
