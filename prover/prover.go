@@ -25,11 +25,13 @@ import (
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/field"
+	"github.com/consensys/loom/internal/dag"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
 	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/fri"
 	"github.com/consensys/loom/internal/hash"
+	"github.com/consensys/loom/internal/parallel"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/internal/reedsolomon"
 	"github.com/consensys/loom/proof"
@@ -414,69 +416,116 @@ func (pr *proverRuntime) ExecuteSteps() error {
 	return nil
 }
 
+// computeExtAIRChunks computes the AIR quotient for a single ext-rooted module
+// and returns its N-sized chunks in Lagrange form, ready to commit. Chunks
+// alias non-overlapping windows of the quotient backing array (no per-chunk
+// copy); after this returns the caller owns the chunks and the original
+// quotient is unreachable.
+func computeExtAIRChunks(piBase map[string]poly.Polynomial, piExt map[string]poly.ExtPolynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache) ([]poly.ExtPolynomial, error) {
+	quotient, err := poly.ComputeQuotientMixed(piBase, piExt, *vrel, N, poly.WithDomainCache(cache))
+	if err != nil {
+		return nil, err
+	}
+	// quotient is in coset-Lagrange Normal; convert directly to canonical
+	// Normal so chunking can sub-slice the backing array.
+	poly.CosetExtLagrangeNormalToCanonicalWithCache(quotient, cache)
+
+	chunks := make([]poly.ExtPolynomial, len(quotient)/N)
+	for i := range chunks {
+		chunk := quotient[i*N : (i+1)*N : (i+1)*N]
+		D.FFTExt(chunk, fft.DIF)
+		utils.BitReverse(chunk)
+		chunks[i] = chunk
+	}
+	return chunks, nil
+}
+
+// computeBaseAIRChunks is the base-field counterpart of computeExtAIRChunks.
+func computeBaseAIRChunks(piBase map[string]poly.Polynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache) ([]poly.Polynomial, error) {
+	quotient, err := poly.ComputeQuotient(piBase, *vrel, N, poly.WithDomainCache(cache))
+	if err != nil {
+		return nil, err
+	}
+	poly.CosetLagrangeNormalToCanonicalWithCache(quotient, cache)
+
+	chunks := make([]poly.Polynomial, len(quotient)/N)
+	for i := range chunks {
+		chunk := quotient[i*N : (i+1)*N : (i+1)*N]
+		D.FFT(chunk, fft.DIF)
+		utils.BitReverse(chunk)
+		chunks[i] = chunk
+	}
+	return chunks, nil
+}
+
 func (pr *proverRuntime) ComputeAIRQuotients() error {
 	chunkDomains := make(map[string]*fft.Domain)
 
-	for moduleName, module := range pr.program.Modules {
-		if module.VanishingRelation.Degree() <= 0 {
-			continue
-		}
-
-		N := module.N
-		if module.VanishingRelation.Root.Field == field.Ext {
-			quotient, err := poly.ComputeQuotientMixed(pr.t.Base, pr.t.Ext, *module.VanishingRelation, N, poly.WithDomainCache(&pr.domainCache))
-			if err != nil {
-				return err
-			}
-
-			poly.CosetExtLagrangeToLagrangeNormalWithCache(quotient, &pr.domainCache)
-			bigSize := len(quotient)
-			bigD := pr.domainCache.Get(uint64(bigSize))
-			bigD.FFTInverseExt(quotient, fft.DIF)
-			utils.BitReverse(quotient)
-
-			numChunks := bigSize / N
-			for i := 0; i < numChunks; i++ {
-				chunk := make(poly.ExtPolynomial, N)
-				copy(chunk, quotient[i*N:(i+1)*N])
-				module.D.FFTExt(chunk, fft.DIF)
-				utils.BitReverse(chunk)
-				chunkName := constants.QuotientChunkName(moduleName, i)
-				pr.airTrace.SetExt(chunkName, chunk)
-				chunkDomains[chunkName] = module.D
-			}
-			continue
-		}
-
-		quotient, err := poly.ComputeQuotient(pr.t.Base, *module.VanishingRelation, N, poly.WithDomainCache(&pr.domainCache))
-		if err != nil {
-			return err
-		}
-
-		poly.CosetLagrangeToLagrangeNormalWithCache(quotient, &pr.domainCache)
-		bigSize := len(quotient)
-		bigD := pr.domainCache.Get(uint64(bigSize))
-		bigD.FFTInverse(quotient, fft.DIF)
-		utils.BitReverse(quotient)
-
-		numChunks := bigSize / N
-		for i := 0; i < numChunks; i++ {
-			chunk := make(poly.Polynomial, N)
-			copy(chunk, quotient[i*N:(i+1)*N])
-			module.D.FFT(chunk, fft.DIF)
-			utils.BitReverse(chunk)
-			chunkName := constants.QuotientChunkName(moduleName, i)
-			pr.airTrace.SetBase(chunkName, chunk)
-			chunkDomains[chunkName] = module.D
-		}
-	}
-
-	chunksByN := map[int]*mixedCommitGroup{}
 	moduleNames := make([]string, 0, len(pr.program.Modules))
 	for name := range pr.program.Modules {
 		moduleNames = append(moduleNames, name)
 	}
 	sort.Strings(moduleNames)
+
+	// Per-module quotient computation is independent: each writes disjoint chunk
+	// names into airTrace, reads only from the shared pr.t. pr.domainCache is
+	// internally locked; trace map writes need an explicit lock. The DAG is
+	// cloned per goroutine because ComputeQuotient* mutates Leaf.Idx and modules
+	// can share *expr.Leaf pointers via cross-module arguments (Lookup, etc.).
+	var (
+		writeMu  sync.Mutex
+		errMu    sync.Mutex
+		firstErr error
+	)
+	parallel.Execute(len(moduleNames), func(start, end int) {
+		for idx := start; idx < end; idx++ {
+			moduleName := moduleNames[idx]
+			module := pr.program.Modules[moduleName]
+			if module.VanishingRelation.Degree() <= 0 {
+				continue
+			}
+
+			N := module.N
+			vrel := module.VanishingRelation.Clone()
+
+			var (
+				baseChunks []poly.Polynomial
+				extChunks  []poly.ExtPolynomial
+				err        error
+			)
+			if module.VanishingRelation.Root.Field == field.Ext {
+				extChunks, err = computeExtAIRChunks(pr.t.Base, pr.t.Ext, vrel, N, module.D, &pr.domainCache)
+			} else {
+				baseChunks, err = computeBaseAIRChunks(pr.t.Base, vrel, N, module.D, &pr.domainCache)
+			}
+			if err != nil {
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				errMu.Unlock()
+				return
+			}
+
+			writeMu.Lock()
+			for i, c := range baseChunks {
+				name := constants.QuotientChunkName(moduleName, i)
+				pr.airTrace.SetBase(name, c)
+				chunkDomains[name] = module.D
+			}
+			for i, c := range extChunks {
+				name := constants.QuotientChunkName(moduleName, i)
+				pr.airTrace.SetExt(name, c)
+				chunkDomains[name] = module.D
+			}
+			writeMu.Unlock()
+		}
+	})
+	if firstErr != nil {
+		return firstErr
+	}
+
+	chunksByN := map[int]*mixedCommitGroup{}
 	for _, moduleName := range moduleNames {
 		module := pr.program.Modules[moduleName]
 		N := module.N

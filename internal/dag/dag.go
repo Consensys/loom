@@ -66,6 +66,42 @@ type DAG struct {
 	VarIndex map[string]int // leaf name → index in vars slice for EvalWithCacheVars
 }
 
+// Clone returns a deep copy of the DAG: fresh DAGNodes and fresh *expr.Leaf for
+// every leaf, with Children rewired to the new nodes. Use this to make per-call
+// mutations (e.g. ComputeQuotient*'s assignment of Leaf.Idx) safe across
+// goroutines that would otherwise share leaf pointers via shared sub-expressions
+// upstream of ExprToDAG.
+//
+// VarIndex is shared (read-only after build).
+func (d *DAG) Clone() *DAG {
+	if d == nil {
+		return nil
+	}
+	cloneOf := make(map[*DAGNode]*DAGNode, len(d.Nodes))
+	nodes := make([]*DAGNode, len(d.Nodes))
+	for i, n := range d.Nodes {
+		nn := *n
+		if n.Leaf != nil {
+			leafCp := *n.Leaf
+			nn.Leaf = &leafCp
+		}
+		if len(n.Children) > 0 {
+			nn.Children = make([]*DAGNode, len(n.Children))
+			for j, c := range n.Children {
+				// children come before parents in topological order, so cloneOf[c] is populated
+				nn.Children[j] = cloneOf[c]
+			}
+		}
+		nodes[i] = &nn
+		cloneOf[n] = &nn
+	}
+	return &DAG{
+		Root:     cloneOf[d.Root],
+		Nodes:    nodes,
+		VarIndex: d.VarIndex,
+	}
+}
+
 // ExprToDAG converts an Expr tree into a DAG by merging identical
 // sub-expressions into shared nodes. Commutativity is respected: (a+b) and
 // (b+a) produce the same node, as do (a*b) and (b*a). Sub is not commutative.

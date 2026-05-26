@@ -1,6 +1,8 @@
 playground/
 *.html
 *.prof
+*.pprof
+bench_profiles/
 *.txt
 *.tmp
 *.csv
