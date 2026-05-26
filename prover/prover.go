@@ -25,9 +25,9 @@ import (
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/field"
-	"github.com/consensys/loom/internal/dag"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/internal/dag"
 	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/fri"
 	"github.com/consensys/loom/internal/hash"
@@ -592,11 +592,28 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 		pr.zeta = hash.OutputToExt(zeta)
 	}
 
-	for chunkName, chunkPoly := range pr.airTrace.Base {
-		pr.Proof.SetValueAtZetaExt(chunkName, poly.EvaluateAtExt(chunkPoly, chunkDomains[chunkName], pr.zeta))
+	chunkNames := make([]string, 0, len(pr.airTrace.Base)+len(pr.airTrace.Ext))
+	for name := range pr.airTrace.Base {
+		chunkNames = append(chunkNames, name)
 	}
-	for chunkName, chunkPoly := range pr.airTrace.Ext {
-		pr.Proof.SetValueAtZetaExt(chunkName, poly.ExtEvaluateAtExt(chunkPoly, chunkDomains[chunkName], pr.zeta))
+	for name := range pr.airTrace.Ext {
+		chunkNames = append(chunkNames, name)
+	}
+	sort.Strings(chunkNames)
+
+	evals := make([]ext.E4, len(chunkNames))
+	parallel.Execute(len(chunkNames), func(start, end int) {
+		for i := start; i < end; i++ {
+			name := chunkNames[i]
+			if p, ok := pr.airTrace.Base[name]; ok {
+				evals[i] = poly.EvaluateAtExt(p, chunkDomains[name], pr.zeta)
+			} else {
+				evals[i] = poly.ExtEvaluateAtExt(pr.airTrace.Ext[name], chunkDomains[name], pr.zeta)
+			}
+		}
+	})
+	for i, name := range chunkNames {
+		pr.Proof.SetValueAtZetaExt(name, evals[i])
 	}
 
 	return nil
@@ -612,34 +629,88 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 		expr.WithoutPublicColumns(),
 	)
 
-	for _, module := range pr.program.Modules {
-		leaves := module.VanishingRelation.LeavesFull(config)
-		for _, leaf := range leaves {
-			evalPoint := pr.zeta
-			if leaf.Type == expr.RotatedColumn {
-				shift := ((leaf.Shift % module.N) + module.N) % module.N
-				var omegaPow koalabear.Element
-				omegaPow.SetOne()
-				for k := 0; k < shift; k++ {
-					omegaPow.Mul(&omegaPow, &module.D.Generator)
-				}
-				evalPoint.MulByElement(&evalPoint, &omegaPow)
-			}
+	type zetaEval struct {
+		key string
+		val ext.E4
+	}
 
-			if p, ok := pr.t.Ext[leaf.Name]; ok {
-				val := poly.ExtEvaluateAtExt(p, module.D, evalPoint)
-				pr.Proof.SetValueAtZetaExt(leaf.String(), val)
-				continue
+	moduleNames := make([]string, 0, len(pr.program.Modules))
+	for name := range pr.program.Modules {
+		moduleNames = append(moduleNames, name)
+	}
+	sort.Strings(moduleNames)
+
+	results := make([][]zetaEval, len(moduleNames))
+	errs := make([]error, len(moduleNames))
+	parallel.Execute(len(moduleNames), func(start, end int) {
+		for idx := start; idx < end; idx++ {
+			module := pr.program.Modules[moduleNames[idx]]
+			leaves := module.VanishingRelation.LeavesFull(config)
+			local := make([]zetaEval, 0, len(leaves))
+			for _, leaf := range leaves {
+				evalPoint := pr.zeta
+				if leaf.Type == expr.RotatedColumn {
+					shift := ((leaf.Shift % module.N) + module.N) % module.N
+					var omegaPow koalabear.Element
+					omegaPow.SetOne()
+					for k := 0; k < shift; k++ {
+						omegaPow.Mul(&omegaPow, &module.D.Generator)
+					}
+					evalPoint.MulByElement(&evalPoint, &omegaPow)
+				}
+
+				if p, ok := pr.t.Ext[leaf.Name]; ok {
+					val := poly.ExtEvaluateAtExt(p, module.D, evalPoint)
+					local = append(local, zetaEval{key: leaf.String(), val: val})
+					continue
+				}
+				p, ok := pr.t.Base[leaf.Name]
+				if !ok {
+					errs[idx] = fmt.Errorf("ComputeEvaluationsAtZeta: column %q not found in trace", leaf.Name)
+					return
+				}
+				val := poly.EvaluateAtExt(p, module.D, evalPoint)
+				local = append(local, zetaEval{key: leaf.String(), val: val})
 			}
-			p, ok := pr.t.Base[leaf.Name]
-			if !ok {
-				return fmt.Errorf("ComputeEvaluationsAtZeta: column %q not found in trace", leaf.Name)
-			}
-			val := poly.EvaluateAtExt(p, module.D, evalPoint)
-			pr.Proof.SetValueAtZetaExt(leaf.String(), val)
+			results[idx] = local
+		}
+	})
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	for _, local := range results {
+		for _, ev := range local {
+			pr.Proof.SetValueAtZetaExt(ev.key, ev.val)
 		}
 	}
 	return nil
+}
+
+func addScaledExtColumn(dst, col, scratch poly.ExtPolynomial, alpha *ext.E4) {
+	if len(col) == 1 {
+		var term ext.E4
+		term.Mul(&col[0], alpha)
+		for i := range dst {
+			dst[i].Add(&dst[i], &term)
+		}
+		return
+	}
+	ext.Vector(scratch).ScalarMul(ext.Vector(col), alpha)
+	ext.Vector(dst).Add(ext.Vector(dst), ext.Vector(scratch))
+}
+
+func addScaledBaseColumn(dst poly.ExtPolynomial, col poly.Polynomial, alpha *ext.E4) {
+	if len(col) == 1 {
+		var term ext.E4
+		term.MulByElement(alpha, &col[0])
+		for i := range dst {
+			dst[i].Add(&dst[i], &term)
+		}
+		return
+	}
+	ext.Vector(dst).MulAccByElement(col, alpha)
 }
 
 func (pr *proverRuntime) ComputeDeepQuotient() error {
@@ -665,6 +736,7 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 		alphaAcc.SetOne()
 
 		domainN := domainBySize[N]
+		scratch := make(poly.ExtPolynomial, N)
 
 		for j, shift := range dqLayout.Shifts[i] {
 			var omegaShift koalabear.Element
@@ -689,21 +761,10 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 				if !hasExt && !hasBase {
 					return fmt.Errorf("ComputeDeepQuotient: column %q not found in trace", names[k])
 				}
-				for x := 0; x < N; x++ {
-					var value, term ext.E4
-					if hasExt {
-						if len(colExt) == 1 {
-							value.Set(&colExt[0])
-						} else {
-							value.Set(&colExt[x])
-						}
-					} else if len(colBase) == 1 {
-						value.Lift(&colBase[0])
-					} else {
-						value.Lift(&colBase[x])
-					}
-					term.Mul(&value, &alphaAcc)
-					C_s[x].Add(&C_s[x], &term)
+				if hasExt {
+					addScaledExtColumn(C_s, colExt, scratch, &alphaAcc)
+				} else {
+					addScaledBaseColumn(C_s, colBase, &alphaAcc)
 				}
 				var term ext.E4
 				term.Mul(&evalAtZ, &alphaAcc)
@@ -730,15 +791,10 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 				if !hasExt && !hasBase {
 					return fmt.Errorf("ComputeDeepQuotient: AIR chunk %q not found in trace", chunkName)
 				}
-				for x := 0; x < N; x++ {
-					var value, term ext.E4
-					if hasExt {
-						value.Set(&chunkExt[x])
-					} else {
-						value.Lift(&chunkBase[x])
-					}
-					term.Mul(&value, &alphaAcc)
-					C_s[x].Add(&C_s[x], &term)
+				if hasExt {
+					addScaledExtColumn(C_s, chunkExt, scratch, &alphaAcc)
+				} else {
+					addScaledBaseColumn(C_s, chunkBase, &alphaAcc)
 				}
 				var term ext.E4
 				term.Mul(&evalAtZ, &alphaAcc)
