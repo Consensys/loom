@@ -416,12 +416,12 @@ func (pr *proverRuntime) ExecuteSteps() error {
 	return nil
 }
 
-// computeExtAIRChunks computes the AIR quotient for a single ext-rooted module
+// computeExtAIRQuotientChunks computes the AIR quotient for a single ext-rooted module
 // and returns its N-sized chunks in Lagrange form, ready to commit. Chunks
 // alias non-overlapping windows of the quotient backing array (no per-chunk
 // copy); after this returns the caller owns the chunks and the original
 // quotient is unreachable.
-func computeExtAIRChunks(piBase map[string]poly.Polynomial, piExt map[string]poly.ExtPolynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache) ([]poly.ExtPolynomial, error) {
+func computeExtAIRQuotientChunks(piBase map[string]poly.Polynomial, piExt map[string]poly.ExtPolynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache) ([]poly.ExtPolynomial, error) {
 	quotient, err := poly.ComputeQuotientMixed(piBase, piExt, *vrel, N, poly.WithDomainCache(cache))
 	if err != nil {
 		return nil, err
@@ -440,8 +440,8 @@ func computeExtAIRChunks(piBase map[string]poly.Polynomial, piExt map[string]pol
 	return chunks, nil
 }
 
-// computeBaseAIRChunks is the base-field counterpart of computeExtAIRChunks.
-func computeBaseAIRChunks(piBase map[string]poly.Polynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache) ([]poly.Polynomial, error) {
+// computeBaseAIRQuotientChunks is the base-field counterpart of computeExtAIRQuotientChunks.
+func computeBaseAIRQuotientChunks(piBase map[string]poly.Polynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache) ([]poly.Polynomial, error) {
 	quotient, err := poly.ComputeQuotient(piBase, *vrel, N, poly.WithDomainCache(cache))
 	if err != nil {
 		return nil, err
@@ -493,9 +493,9 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 				err        error
 			)
 			if module.VanishingRelation.Root.Field == field.Ext {
-				extChunks, err = computeExtAIRChunks(pr.t.Base, pr.t.Ext, vrel, N, module.D, &pr.domainCache)
+				extChunks, err = computeExtAIRQuotientChunks(pr.t.Base, pr.t.Ext, vrel, N, module.D, &pr.domainCache)
 			} else {
-				baseChunks, err = computeBaseAIRChunks(pr.t.Base, vrel, N, module.D, &pr.domainCache)
+				baseChunks, err = computeBaseAIRQuotientChunks(pr.t.Base, vrel, N, module.D, &pr.domainCache)
 			}
 			if err != nil {
 				errMu.Lock()
