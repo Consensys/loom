@@ -17,7 +17,12 @@ import (
 	"fmt"
 
 	"github.com/consensys/loom/internal/hash"
+	"github.com/consensys/loom/internal/parallel"
 )
+
+// parallelLevelThreshold is the smallest level width (in nodes) at which
+// fan-out beats serial bottom-up hashing.
+const parallelLevelThreshold = 64
 
 type LeafHash = hash.Digest
 type NodeHash = hash.Digest
@@ -72,10 +77,7 @@ func (t *Tree) BuildIthLeaf(leaf hash.Digest, i int) error {
 
 // BuildNodes call this function after all the BuildIthLeaf have been called
 func (t *Tree) BuildNodes() error {
-	n := t.nLeaves
-	for i := n - 1; i >= 1; i-- {
-		t.nodes[i] = t.nodeHasher.HashNode(t.nodes[2*i], t.nodes[2*i+1])
-	}
+	t.buildInternalNodes()
 	return nil
 }
 
@@ -86,13 +88,24 @@ func (t *Tree) Build(leaves []hash.Digest) error {
 		return fmt.Errorf("merkle: got %d leaves, want %d", len(leaves), t.nLeaves)
 	}
 	n := t.nLeaves
-	for i, leaf := range leaves {
-		t.nodes[n+i] = leaf
-	}
-	for i := n - 1; i >= 1; i-- {
-		t.nodes[i] = t.nodeHasher.HashNode(t.nodes[2*i], t.nodes[2*i+1])
-	}
+	copy(t.nodes[n:], leaves)
+	t.buildInternalNodes()
 	return nil
+}
+
+// buildInternalNodes hashes internal nodes bottom-up, fanning out across
+// goroutines once a level is wide enough. Within a level all nodes are
+// independent; only the level-to-level walk is serial.
+func (t *Tree) buildInternalNodes() {
+	// At each iteration 'start' is the index of the leftmost node on the
+	// current level and 'start' nodes live on the level (its width).
+	for start := t.nLeaves >> 1; start >= 1; start >>= 1 {
+		parallel.ExecuteWithThreshold(start, parallelLevelThreshold, func(lo, hi int) {
+			for i := start + lo; i < start+hi; i++ {
+				t.nodes[i] = t.nodeHasher.HashNode(t.nodes[2*i], t.nodes[2*i+1])
+			}
+		})
+	}
 }
 
 // Root returns the Merkle root digest. Build must be called first.

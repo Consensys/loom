@@ -26,8 +26,14 @@ import (
 	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/merkle"
+	"github.com/consensys/loom/internal/parallel"
+	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/internal/reedsolomon"
 )
+
+// foldParallelThreshold is the smallest half-layer size at which fan-out
+// across goroutines beats the precomputed-xInv seeding overhead per chunk.
+const foldParallelThreshold = 1 << 12
 
 // Params holds the FRI configuration and precomputed per-level data.
 // Build once with NewParams; reuse across many Prove/Verify calls.
@@ -855,7 +861,7 @@ func log2(n int) int {
 }
 
 // buildTreeBase builds a Merkle tree of Nⱼ/2 leaves where
-// leaf k = LeafHasher(encode(layer[k]) || encode(layer[k + Nⱼ/2])).
+// leaf k = LeafHasher(layer[k] || layer[k + Nⱼ/2]).
 func buildTreeBase(layer []koalabear.Element, lh commitment.LeafHasher, nh commitment.NodeHasher) (*merkle.Tree, error) {
 	half := len(layer) / 2
 	tree, err := merkle.New(half, nh)
@@ -863,10 +869,10 @@ func buildTreeBase(layer []koalabear.Element, lh commitment.LeafHasher, nh commi
 		return nil, err
 	}
 	leaves := make([]hash.Digest, half)
-	for k := 0; k < half; k++ {
-		pair := []commitment.PairBase{{layer[k], layer[k+half]}}
-		leaves[k] = lh.HashLeaf(pair, nil)
-	}
+	commitment.HashLeavesParallel(lh, leaves, commitment.LeafSource{
+		Base:       []poly.Polynomial{layer},
+		PairOffset: half,
+	})
 	return tree, tree.Build(leaves)
 }
 
@@ -878,67 +884,65 @@ func buildTreeExt(layer []ext.E4, lh commitment.LeafHasher, nh commitment.NodeHa
 		return nil, err
 	}
 	leaves := make([]hash.Digest, half)
-	for k := 0; k < half; k++ {
-		pair := []commitment.PairExt{{layer[k], layer[k+half]}}
-		leaves[k] = lh.HashLeaf(nil, pair)
-	}
+	commitment.HashLeavesParallel(lh, leaves, commitment.LeafSource{
+		Ext:        []poly.ExtPolynomial{layer},
+		PairOffset: half,
+	})
 	return tree, tree.Build(leaves)
 }
 
 // foldLayerBase folds a base-field layer of size Nⱼ into a layer of size Nⱼ/2.
+//
+// The naive loop carries a serial dependency on xInv = GeneratorInv^i; each
+// parallel chunk seeds xInv with GeneratorInv^chunkStart so chunks run
+// independently.
 func foldLayerBase(layer []koalabear.Element, alpha koalabear.Element, domain *fft.Domain, invTwo koalabear.Element) []koalabear.Element {
 	half := len(layer) / 2
 	next := make([]koalabear.Element, half)
+	parallel.ExecuteWithThreshold(half, foldParallelThreshold, func(start, end int) {
+		xInv := poly.PowUint64(domain.GeneratorInv, uint64(start))
+		var sum, diff koalabear.Element
+		for i := start; i < end; i++ {
+			p, q := layer[i], layer[i+half]
 
-	var xInv, sum, diff koalabear.Element
-	xInv.SetOne()
+			sum.Add(&p, &q)
+			sum.Mul(&sum, &invTwo)
 
-	for i := 0; i < half; i++ {
-		p, q := layer[i], layer[i+half]
+			diff.Sub(&p, &q)
+			diff.Mul(&diff, &invTwo)
+			diff.Mul(&diff, &xInv)
+			diff.Mul(&diff, &alpha)
 
-		sum.Add(&p, &q)
-		sum.Mul(&sum, &invTwo)
-
-		diff.Sub(&p, &q)
-		diff.Mul(&diff, &invTwo)
-		diff.Mul(&diff, &xInv)
-		diff.Mul(&diff, &alpha)
-
-		next[i].Add(&sum, &diff)
-
-		xInv.Mul(&xInv, &domain.GeneratorInv)
-	}
-
+			next[i].Add(&sum, &diff)
+			xInv.Mul(&xInv, &domain.GeneratorInv)
+		}
+	})
 	return next
 }
 
-// foldLayerExt folds an extension-field layer of size Nⱼ into a layer of size
-// Nⱼ/2. Domain factors remain base-field elements and are multiplied with
-// MulByElement.
+// foldLayerExt is the extension-field counterpart of foldLayerBase; domain
+// factors stay in the base field and are multiplied via MulByElement.
 func foldLayerExt(layer []ext.E4, alpha ext.E4, domain *fft.Domain, invTwo koalabear.Element) []ext.E4 {
 	half := len(layer) / 2
 	next := make([]ext.E4, half)
+	parallel.ExecuteWithThreshold(half, foldParallelThreshold, func(start, end int) {
+		xInv := poly.PowUint64(domain.GeneratorInv, uint64(start))
+		for i := start; i < end; i++ {
+			p, q := layer[i], layer[i+half]
 
-	var xInv koalabear.Element
-	xInv.SetOne()
+			var sum, diff ext.E4
+			sum.Add(&p, &q)
+			sum.MulByElement(&sum, &invTwo)
 
-	for i := 0; i < half; i++ {
-		p, q := layer[i], layer[i+half]
+			diff.Sub(&p, &q)
+			diff.MulByElement(&diff, &invTwo)
+			diff.MulByElement(&diff, &xInv)
+			diff.Mul(&diff, &alpha)
 
-		var sum, diff ext.E4
-		sum.Add(&p, &q)
-		sum.MulByElement(&sum, &invTwo)
-
-		diff.Sub(&p, &q)
-		diff.MulByElement(&diff, &invTwo)
-		diff.MulByElement(&diff, &xInv)
-		diff.Mul(&diff, &alpha)
-
-		next[i].Add(&sum, &diff)
-
-		xInv.Mul(&xInv, &domain.GeneratorInv)
-	}
-
+			next[i].Add(&sum, &diff)
+			xInv.Mul(&xInv, &domain.GeneratorInv)
+		}
+	})
 	return next
 }
 

@@ -18,6 +18,20 @@ import (
 	"sync"
 )
 
+// ExecuteWithThreshold runs work in parallel when nbIterations >= threshold,
+// otherwise invokes it once in the current goroutine. Saves the scheduler
+// round-trip when nbIterations is tiny.
+func ExecuteWithThreshold(nbIterations, threshold int, work func(int, int)) {
+	if nbIterations <= 0 {
+		return
+	}
+	if nbIterations < threshold {
+		work(0, nbIterations)
+		return
+	}
+	Execute(nbIterations, work)
+}
+
 func Execute(nbIterations int, work func(int, int), maxCpus ...int) {
 
 	nbTasks := runtime.NumCPU()

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
@@ -41,9 +42,10 @@ import (
 )
 
 type Config struct {
-	EmulateFS   bool
-	SkipFRI     bool
-	HashBackend commitment.HashBackend
+	EmulateFS     bool
+	SkipFRI       bool
+	HashBackend   commitment.HashBackend
+	PhaseCallback func(name string, d time.Duration)
 }
 
 type Option func(c *Config) error
@@ -65,6 +67,17 @@ func SkipFRI() Option {
 func WithHashBackend(backend commitment.HashBackend) Option {
 	return func(c *Config) error {
 		c.HashBackend = backend
+		return nil
+	}
+}
+
+// WithPhaseCallback installs a callback that fires after each major prover
+// phase with the phase name and wall-clock duration. Phases reported (in
+// order): "execute-steps", "compute-air-quotients", "evaluations-at-zeta",
+// "deep-quotient+fri-commit", "fri-query-open".
+func WithPhaseCallback(cb func(name string, d time.Duration)) Option {
+	return func(c *Config) error {
+		c.PhaseCallback = cb
 		return nil
 	}
 }
@@ -899,33 +912,49 @@ func Prove(t trace.Trace, provingKey setup.ProvingKey, publicInputs public.Input
 		return proof.Proof{}, err
 	}
 
+	report := func(name string, d time.Duration) {
+		if config.PhaseCallback != nil {
+			config.PhaseCallback(name, d)
+		}
+	}
+
 	// run ExecuteSteps
+	t0 := time.Now()
 	if err := pr.ExecuteSteps(); err != nil {
 		return proof.Proof{}, err
 	}
+	report("execute-steps", time.Since(t0))
 
 	// run ComputeAIRQuotients
+	t0 = time.Now()
 	if err := pr.ComputeAIRQuotients(); err != nil {
 		return proof.Proof{}, err
 	}
+	report("compute-air-quotients", time.Since(t0))
 
 	// run ComputeEvaluationsAtZeta
+	t0 = time.Now()
 	if err := pr.ComputeEvaluationsAtZeta(); err != nil {
 		return proof.Proof{}, err
 	}
+	report("evaluations-at-zeta", time.Since(t0))
 
 	// ------ PCS related verification ------
 
 	if !config.SkipFRI {
 		// Compute DEEP quotient and FRI-prove that it is the evaluation of a polynomial of degree N
+		t0 = time.Now()
 		if err := pr.ComputeDeepQuotient(); err != nil {
 			return proof.Proof{}, err
 		}
+		report("deep-quotient+fri-commit", time.Since(t0))
 
 		// Brige FRI <-> polynomial commitments, using sample at queryPositions
+		t0 = time.Now()
 		if err := pr.SampleEvaluations(); err != nil {
 			return proof.Proof{}, err
 		}
+		report("fri-query-open", time.Since(t0))
 	}
 
 	return pr.Proof, nil

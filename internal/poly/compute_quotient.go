@@ -24,7 +24,12 @@ import (
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/dag"
+	"github.com/consensys/loom/internal/parallel"
 )
+
+// quotientParallelThreshold is the smallest size (in koalabear ops) for
+// which fan-out across goroutines is worth the scheduler overhead.
+const quotientParallelThreshold = 1 << 12
 
 // QuotientConfig configures quotient computation.
 type QuotientConfig struct {
@@ -137,20 +142,24 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int,
 
 	// at this stage, all polynomials in PiCopies are in Lagrange form. We write them in canonical basis, shifted by twiddles[i][0]
 	// to prepare the FFT on the cosets (twiddles[i][0] is <bigDomain.FrMultiplicativeGen^i>), used to avoid the zeroes on X^N-1).
-	for _, pCopy := range piNonConst {
-		// shift coset manually
-		smallDomain.FFTInverse(pCopy, fft.DIF)             // pCopy: bit reversed, canonical
-		scaleByTwiddles(pCopy, twiddleFrMultiplicativeGen) // pCopy: scaled by <bigDomain.FrMultiplicativeGen^i> to avoid zeroes of X^N-1
-	}
+	parallel.Execute(len(piNonConst), func(start, end int) {
+		for k := start; k < end; k++ {
+			pCopy := piNonConst[k]
+			smallDomain.FFTInverse(pCopy, fft.DIF)
+			scaleByTwiddles(pCopy, twiddleFrMultiplicativeGen)
+		}
+	})
 
 	// at this stage, all the polynomials c[i] in c are in canonical, bit reverse, scaled by <bigDomain.FrMultiplicativeGen^i>
 	for i := range rho {
 
 		// evaluate the polys shifted by <bigDomain.FrMultiplicativeGen> on  <bigDomain.Generator^i> -> the result is the polys
 		// evaluated on the coset bigDomain.FrMultiplicativeGen*<bigDomain.Generator^i>
-		for _, pCopy := range piNonConst {
-			smallDomain.FFT(pCopy, fft.DIT) // pCopy: evaluated on coset i
-		}
+		parallel.Execute(len(piNonConst), func(start, end int) {
+			for k := start; k < end; k++ {
+				smallDomain.FFT(piNonConst[k], fft.DIT)
+			}
+		})
 
 		// at this stage, the polys are evaluated on bigDomain.FrMultiplicativeGen*<bigDomain.Generator^i>. We can compute the rho-ith
 		// component of the numerator
@@ -160,10 +169,13 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int,
 		}
 
 		// FFTInv on piNonConst -> polys become canonical again, k-th coeff shifted by bigDomain.FrMultiplicativeGen^k*<bigDomain.Generator^ik>
-		for _, pCopy := range piNonConst {
-			smallDomain.FFTInverse(pCopy, fft.DIF)            // pCopy: bit reversed, canonical
-			scaleByTwiddles(pCopy, twiddleGeneratorBigDomain) // k-th coeff now shifted by bigDomain.FrMultiplicativeGen^k*<bigDomain.Generator^(i+1)k>
-		}
+		parallel.Execute(len(piNonConst), func(start, end int) {
+			for k := start; k < end; k++ {
+				pCopy := piNonConst[k]
+				smallDomain.FFTInverse(pCopy, fft.DIF)
+				scaleByTwiddles(pCopy, twiddleGeneratorBigDomain)
+			}
+		})
 	}
 
 	// X^N-1 evaluated at coset representative FrGen·bigDomain.Generator^i:
@@ -189,9 +201,11 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int,
 	for i := range rho {
 		xnMinusOneInv[i].Inverse(&xnMinusOne[i])
 	}
-	for i := range bigSize {
-		numerator[i].Mul(&numerator[i], &xnMinusOneInv[i%rho])
-	}
+	parallel.ExecuteWithThreshold(bigSize, quotientParallelThreshold, func(start, end int) {
+		for i := start; i < end; i++ {
+			numerator[i].Mul(&numerator[i], &xnMinusOneInv[i%rho])
+		}
+	})
 
 	return numerator, nil
 }
@@ -313,38 +327,54 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 		}
 	}
 
-	for _, pCopy := range baseNonConst {
-		smallDomain.FFTInverse(pCopy, fft.DIF)
-		scaleBaseByTwiddles(pCopy, twiddleFrMultiplicativeGen)
-	}
-	for _, pCopy := range extNonConst {
-		smallDomain.FFTInverseExt(pCopy, fft.DIF)
-		scaleExtByTwiddles(pCopy, twiddleFrMultiplicativeGen)
-	}
+	parallel.Execute(len(baseNonConst), func(start, end int) {
+		for k := start; k < end; k++ {
+			pCopy := baseNonConst[k]
+			smallDomain.FFTInverse(pCopy, fft.DIF)
+			scaleBaseByTwiddles(pCopy, twiddleFrMultiplicativeGen)
+		}
+	})
+	parallel.Execute(len(extNonConst), func(start, end int) {
+		for k := start; k < end; k++ {
+			pCopy := extNonConst[k]
+			smallDomain.FFTInverseExt(pCopy, fft.DIF)
+			scaleExtByTwiddles(pCopy, twiddleFrMultiplicativeGen)
+		}
+	})
 
 	vals := make([]ext.E4, N)
 	var evalWorkspace dag.EvalWorkspace
 	for i := range rho {
-		for _, pCopy := range baseNonConst {
-			smallDomain.FFT(pCopy, fft.DIT)
-		}
-		for _, pCopy := range extNonConst {
-			smallDomain.FFTExt(pCopy, fft.DIT)
-		}
+		parallel.Execute(len(baseNonConst), func(start, end int) {
+			for k := start; k < end; k++ {
+				smallDomain.FFT(baseNonConst[k], fft.DIT)
+			}
+		})
+		parallel.Execute(len(extNonConst), func(start, end int) {
+			for k := start; k < end; k++ {
+				smallDomain.FFTExt(extNonConst[k], fft.DIT)
+			}
+		})
 
 		vanishingRelation.EvalOnAllEntriesMixedInto(vals, _PiBase, _PiExt, N, &evalWorkspace)
 		for j := 0; j < N; j++ {
 			numerator[rho*j+i] = vals[j]
 		}
 
-		for _, pCopy := range baseNonConst {
-			smallDomain.FFTInverse(pCopy, fft.DIF)
-			scaleBaseByTwiddles(pCopy, twiddleGeneratorBigDomain)
-		}
-		for _, pCopy := range extNonConst {
-			smallDomain.FFTInverseExt(pCopy, fft.DIF)
-			scaleExtByTwiddles(pCopy, twiddleGeneratorBigDomain)
-		}
+		parallel.Execute(len(baseNonConst), func(start, end int) {
+			for k := start; k < end; k++ {
+				pCopy := baseNonConst[k]
+				smallDomain.FFTInverse(pCopy, fft.DIF)
+				scaleBaseByTwiddles(pCopy, twiddleGeneratorBigDomain)
+			}
+		})
+		parallel.Execute(len(extNonConst), func(start, end int) {
+			for k := start; k < end; k++ {
+				pCopy := extNonConst[k]
+				smallDomain.FFTInverseExt(pCopy, fft.DIF)
+				scaleExtByTwiddles(pCopy, twiddleGeneratorBigDomain)
+			}
+		})
 	}
 
 	xnMinusOne := make([]koalabear.Element, rho)
@@ -364,9 +394,11 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 	for i := range rho {
 		xnMinusOneInv[i].Inverse(&xnMinusOne[i])
 	}
-	for i := range bigSize {
-		numerator[i].MulByElement(&numerator[i], &xnMinusOneInv[i%rho])
-	}
+	parallel.ExecuteWithThreshold(bigSize, quotientParallelThreshold, func(start, end int) {
+		for i := start; i < end; i++ {
+			numerator[i].MulByElement(&numerator[i], &xnMinusOneInv[i%rho])
+		}
+	})
 
 	return numerator, nil
 }
@@ -400,13 +432,17 @@ func CosetLagrangeNormalToCanonicalWithCache(p Polynomial, cache *DomainCache) {
 	utils.BitReverse(p)      // → coset-canonical Normal
 
 	// Multiply by invFrGen^k to get standard canonical coefficients c_k.
+	// The serial acc dependency is broken per chunk by seeding acc with
+	// invFrGen^chunkStart.
 	invFrGen := d.FrMultiplicativeGen
 	invFrGen.Inverse(&invFrGen)
-	acc := koalabear.One()
-	for k := range p {
-		p[k].Mul(&p[k], &acc)
-		acc.Mul(&acc, &invFrGen)
-	}
+	parallel.ExecuteWithThreshold(len(p), quotientParallelThreshold, func(start, end int) {
+		acc := PowUint64(invFrGen, uint64(start))
+		for k := start; k < end; k++ {
+			p[k].Mul(&p[k], &acc)
+			acc.Mul(&acc, &invFrGen)
+		}
+	})
 }
 
 // CosetExtLagrangeToLagrangeNormal converts an extension polynomial from
@@ -433,9 +469,11 @@ func CosetExtLagrangeNormalToCanonicalWithCache(p ExtPolynomial, cache *DomainCa
 
 	invFrGen := d.FrMultiplicativeGen
 	invFrGen.Inverse(&invFrGen)
-	acc := koalabear.One()
-	for k := range p {
-		p[k].MulByElement(&p[k], &acc)
-		acc.Mul(&acc, &invFrGen)
-	}
+	parallel.ExecuteWithThreshold(len(p), quotientParallelThreshold, func(start, end int) {
+		acc := PowUint64(invFrGen, uint64(start))
+		for k := start; k < end; k++ {
+			p[k].MulByElement(&p[k], &acc)
+			acc.Mul(&acc, &invFrGen)
+		}
+	})
 }

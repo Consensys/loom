@@ -26,6 +26,23 @@ func isPowerOfTwo(n int) bool {
 	return n > 0 && (n&(n-1)) == 0
 }
 
+// PowUint64 returns base^exp in koalabear via binary exponentiation.
+// Used to seed per-chunk accumulators when parallelizing loops that
+// otherwise carry a serial multiplicative dependency (a_{i+1} = a_i · g).
+func PowUint64(base koalabear.Element, exp uint64) koalabear.Element {
+	var res koalabear.Element
+	res.SetOne()
+	b := base
+	for exp != 0 {
+		if exp&1 == 1 {
+			res.Mul(&res, &b)
+		}
+		b.Mul(&b, &b)
+		exp >>= 1
+	}
+	return res
+}
+
 // NextPowerOfTwo returns the next power of two greater than or equal to n
 func NextPowerOfTwo(n int) int {
 	if n <= 0 {

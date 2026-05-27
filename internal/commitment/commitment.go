@@ -202,18 +202,23 @@ func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolyn
 		domainCache = &poly.DomainCache{}
 	}
 
-	// 1- encode every polynomial on its rail
+	// 1- encode every polynomial on its rail. Each Encode is independent
+	//    (disjoint input/output slices, shared read-only domain).
 	encodedBase := make([]poly.Polynomial, len(basePolys))
-	for i, pol := range basePolys {
-		n := len(pol)
-		encodedBase[i] = rs.Encoder.Encode(pol, domainCache.Get(uint64(n)))
-	}
+	parallel.Execute(len(basePolys), func(start, end int) {
+		for i := start; i < end; i++ {
+			pol := basePolys[i]
+			encodedBase[i] = rs.Encoder.Encode(pol, domainCache.Get(uint64(len(pol))))
+		}
+	})
 
 	encodedExt := make([]poly.ExtPolynomial, len(extPolys))
-	for i, pol := range extPolys {
-		n := len(pol)
-		encodedExt[i] = rs.Encoder.EncodeExt(pol, domainCache.Get(uint64(n)))
-	}
+	parallel.Execute(len(extPolys), func(start, end int) {
+		for i := start; i < end; i++ {
+			pol := extPolys[i]
+			encodedExt[i] = rs.Encoder.EncodeExt(pol, domainCache.Get(uint64(len(pol))))
+		}
+	})
 
 	// 2- build the merkle tree, with rs.N/2 leafs
 	// the i-th leaf is base pairs followed by extension pairs.
@@ -235,19 +240,26 @@ func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolyn
 		Ext:        encodedExt,
 		PairOffset: halfN,
 	}
-	if batchHasher, ok := rs.LeafHasher.(BatchLeafHasher); ok {
-		hashLeavesBatchParallel(batchHasher, leaves, src)
-	} else {
-		parallel.Execute(halfN, func(start, end int) {
-			hashLeavesScalar(rs.LeafHasher, leaves[start:end], src, start)
-		})
-	}
+	HashLeavesParallel(rs.LeafHasher, leaves, src)
 
 	if err := tree.Build(leaves); err != nil {
 		return WMerkleTree{}, err
 	}
 
 	return wTree, nil
+}
+
+// HashLeavesParallel hashes len(dst) paired leaves from src into dst, using
+// the batched leaf hasher when available (rate-16 Poseidon2 sponge) and
+// fanning the work out across goroutines.
+func HashLeavesParallel(lh LeafHasher, dst []hash.Digest, src LeafSource) {
+	if batchHasher, ok := lh.(BatchLeafHasher); ok {
+		hashLeavesBatchParallel(batchHasher, dst, src)
+		return
+	}
+	parallel.Execute(len(dst), func(start, end int) {
+		hashLeavesScalar(lh, dst[start:end], src, start)
+	})
 }
 
 func hashLeavesBatchParallel(lh BatchLeafHasher, dst []hash.Digest, src LeafSource) {
