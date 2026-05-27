@@ -21,7 +21,13 @@ import (
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/field"
+	"github.com/consensys/loom/internal/parallel"
 )
+
+// dagRowParallelThreshold is the smallest per-node row count at which fan-out
+// across goroutines beats the scheduler overhead. Below this, evalBaseNode /
+// evalExtNode iterate the row range serially.
+const dagRowParallelThreshold = 1 << 12
 
 // NodeKind identifies the type of an expression DAG node.
 type NodeKind int
@@ -1236,43 +1242,55 @@ func evalBaseNodeOnAllEntries(dst []koalabear.Element, n *DAGNode, baseVec [][]k
 		copy(dst, baseVec[n.Children[0].Index])
 		for _, child := range n.Children[1:] {
 			src := baseVec[child.Index]
-			for j := range N {
-				dst[j].Add(&dst[j], &src[j])
-			}
+			parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+				for j := start; j < end; j++ {
+					dst[j].Add(&dst[j], &src[j])
+				}
+			})
 		}
 
 	case KindSub:
 		l, r := baseVec[n.Children[0].Index], baseVec[n.Children[1].Index]
-		for j := range N {
-			dst[j].Sub(&l[j], &r[j])
-		}
+		parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+			for j := start; j < end; j++ {
+				dst[j].Sub(&l[j], &r[j])
+			}
+		})
 
 	case KindMul:
 		copy(dst, baseVec[n.Children[0].Index])
 		for _, child := range n.Children[1:] {
 			src := baseVec[child.Index]
-			for j := range N {
-				dst[j].Mul(&dst[j], &src[j])
-			}
+			parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+				for j := start; j < end; j++ {
+					dst[j].Mul(&dst[j], &src[j])
+				}
+			})
 		}
 
 	case KindPow:
 		base := baseVec[n.Children[0].Index]
 		tmp := alloc()
 		copy(tmp, base)
-		for j := range N {
-			dst[j].SetOne()
-		}
+		parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+			for j := start; j < end; j++ {
+				dst[j].SetOne()
+			}
+		})
 		exp := n.Exp
 		for exp > 0 {
 			if exp&1 == 1 {
-				for j := range N {
-					dst[j].Mul(&dst[j], &tmp[j])
+				parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+					for j := start; j < end; j++ {
+						dst[j].Mul(&dst[j], &tmp[j])
+					}
+				})
+			}
+			parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+				for j := start; j < end; j++ {
+					tmp[j].Mul(&tmp[j], &tmp[j])
 				}
-			}
-			for j := range N {
-				tmp[j].Mul(&tmp[j], &tmp[j])
-			}
+			})
 			exp >>= 1
 		}
 		release(tmp)
@@ -1287,22 +1305,28 @@ func evalBaseNodeOnAllEntries(dst []koalabear.Element, n *DAGNode, baseVec [][]k
 // regular columns using the same row-selection convention as EvalOnAllEntries.
 func fillBaseLeafVector(dst []koalabear.Element, n *DAGNode, PiBase [][]koalabear.Element, N int) {
 	if n.IsConst {
-		for j := range N {
-			dst[j] = n.ConstVal
-		}
+		parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+			for j := start; j < end; j++ {
+				dst[j] = n.ConstVal
+			}
+		})
 		return
 	}
 
 	l := n.Leaf
 	p := PiBase[l.Idx]
 	if len(p) == 1 {
-		for j := range N {
-			dst[j] = p[0]
-		}
+		parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+			for j := start; j < end; j++ {
+				dst[j] = p[0]
+			}
+		})
 	} else if l.Type == expr.RotatedColumn {
-		for j := range N {
-			dst[j] = p[(j+N+l.Shift)%N]
-		}
+		parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+			for j := start; j < end; j++ {
+				dst[j] = p[(j+N+l.Shift)%N]
+			}
+		})
 	} else {
 		copy(dst, p[:N])
 	}
@@ -1335,19 +1359,25 @@ func evalExtNodeOnAllEntries(dst []ext.E4, n *DAGNode, baseVec [][]koalabear.Ele
 	case KindPow:
 		tmp := alloc()
 		copyChildVectorToExt(tmp, n.Children[0], baseVec, extVec, N)
-		for j := range N {
-			dst[j].SetOne()
-		}
+		parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+			for j := start; j < end; j++ {
+				dst[j].SetOne()
+			}
+		})
 		exp := n.Exp
 		for exp > 0 {
 			if exp&1 == 1 {
-				for j := range N {
-					dst[j].Mul(&dst[j], &tmp[j])
+				parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+					for j := start; j < end; j++ {
+						dst[j].Mul(&dst[j], &tmp[j])
+					}
+				})
+			}
+			parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+				for j := start; j < end; j++ {
+					tmp[j].Mul(&tmp[j], &tmp[j])
 				}
-			}
-			for j := range N {
-				tmp[j].Mul(&tmp[j], &tmp[j])
-			}
+			})
 			exp >>= 1
 		}
 		release(tmp)
@@ -1363,22 +1393,28 @@ func evalExtNodeOnAllEntries(dst []ext.E4, n *DAGNode, baseVec [][]koalabear.Ele
 func fillExtLeafVector(dst []ext.E4, n *DAGNode, PiExt [][]ext.E4, N int) {
 	if n.IsConst {
 		v := liftBaseToE4(n.ConstVal)
-		for j := range N {
-			dst[j] = v
-		}
+		parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+			for j := start; j < end; j++ {
+				dst[j] = v
+			}
+		})
 		return
 	}
 
 	l := n.Leaf
 	p := PiExt[l.Idx]
 	if len(p) == 1 {
-		for j := range N {
-			dst[j] = p[0]
-		}
+		parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+			for j := start; j < end; j++ {
+				dst[j] = p[0]
+			}
+		})
 	} else if l.Type == expr.RotatedColumn {
-		for j := range N {
-			dst[j] = p[(j+N+l.Shift)%N]
-		}
+		parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+			for j := start; j < end; j++ {
+				dst[j] = p[(j+N+l.Shift)%N]
+			}
+		})
 	} else {
 		copy(dst, p[:N])
 	}
@@ -1393,9 +1429,11 @@ func copyChildVectorToExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.El
 		return
 	}
 	src := baseVec[child.Index]
-	for j := range N {
-		dst[j].Lift(&src[j])
-	}
+	parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+		for j := start; j < end; j++ {
+			dst[j].Lift(&src[j])
+		}
+	})
 }
 
 // addChildVectorToExt accumulates a child vector into an extension destination.
@@ -1403,13 +1441,17 @@ func copyChildVectorToExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.El
 func addChildVectorToExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.Element, extVec [][]ext.E4, N int) {
 	if child.Field == field.Ext {
 		src := extVec[child.Index]
-		ext.Vector(dst).Add(ext.Vector(dst), ext.Vector(src))
+		parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+			ext.Vector(dst[start:end]).Add(ext.Vector(dst[start:end]), ext.Vector(src[start:end]))
+		})
 		return
 	}
 	src := baseVec[child.Index]
-	for j := range N {
-		dst[j].B0.A0.Add(&dst[j].B0.A0, &src[j])
-	}
+	parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+		for j := start; j < end; j++ {
+			dst[j].B0.A0.Add(&dst[j].B0.A0, &src[j])
+		}
+	})
 }
 
 // subChildVectorFromExt subtracts a child vector from an extension destination.
@@ -1417,13 +1459,17 @@ func addChildVectorToExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.Ele
 func subChildVectorFromExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.Element, extVec [][]ext.E4, N int) {
 	if child.Field == field.Ext {
 		src := extVec[child.Index]
-		ext.Vector(dst).Sub(ext.Vector(dst), ext.Vector(src))
+		parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+			ext.Vector(dst[start:end]).Sub(ext.Vector(dst[start:end]), ext.Vector(src[start:end]))
+		})
 		return
 	}
 	src := baseVec[child.Index]
-	for j := range N {
-		dst[j].B0.A0.Sub(&dst[j].B0.A0, &src[j])
-	}
+	parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+		for j := start; j < end; j++ {
+			dst[j].B0.A0.Sub(&dst[j].B0.A0, &src[j])
+		}
+	})
 }
 
 // mulChildVectorIntoExt multiplies an extension destination by a child vector.
@@ -1431,11 +1477,15 @@ func subChildVectorFromExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.E
 func mulChildVectorIntoExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.Element, extVec [][]ext.E4, N int) {
 	if child.Field == field.Ext {
 		src := extVec[child.Index]
-		ext.Vector(dst).Mul(ext.Vector(dst), ext.Vector(src))
+		parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+			ext.Vector(dst[start:end]).Mul(ext.Vector(dst[start:end]), ext.Vector(src[start:end]))
+		})
 		return
 	}
 	src := baseVec[child.Index]
-	ext.Vector(dst).MulByElement(ext.Vector(dst), koalabear.Vector(src))
+	parallel.ExecuteWithThreshold(N, dagRowParallelThreshold, func(start, end int) {
+		ext.Vector(dst[start:end]).MulByElement(ext.Vector(dst[start:end]), koalabear.Vector(src[start:end]))
+	})
 }
 
 // EvalWithCache evaluates the DAG using the caller-supplied cache slice instead
