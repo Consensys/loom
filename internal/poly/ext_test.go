@@ -151,6 +151,68 @@ func TestExtEvaluateAtExt(t *testing.T) {
 	}
 }
 
+func TestEvaluateAtExtWithZPowMatchesHorner(t *testing.T) {
+	for _, n := range []int{2, 4, 8, 16, 64} {
+		t.Run("n="+itoa(n), func(t *testing.T) {
+			p := make(Polynomial, n)
+			for i := range p {
+				p[i].SetUint64(uint64(0xabc123 + i))
+			}
+			d := fft.NewDomain(uint64(n))
+			for _, zeta := range []ext.E4{
+				e4FromU64(2, 3, 5, 7),
+				e4FromU64(1, 0, 0, 0),
+				e4FromU64(0xdeadbeef, 0xcafef00d, 1, 42),
+			} {
+				want := EvaluateAtExt(p, d, zeta)
+				zPow := BuildZPowBitReversed(zeta, n)
+				got := EvaluateAtExtWithZPow(p, d, zPow)
+				if !got.Equal(&want) {
+					t.Fatalf("n=%d zeta=%s: WithZPow=%s Horner=%s", n, zeta.String(), got.String(), want.String())
+				}
+			}
+		})
+	}
+}
+
+func TestExtEvaluateAtExtWithZPowMatchesHorner(t *testing.T) {
+	for _, n := range []int{2, 4, 8, 16, 64} {
+		t.Run("n="+itoa(n), func(t *testing.T) {
+			p := make(ExtPolynomial, n)
+			for i := range p {
+				p[i] = e4FromU64(uint64(i+1), uint64(2*i+3), uint64(3*i+5), uint64(5*i+7))
+			}
+			d := fft.NewDomain(uint64(n))
+			for _, zeta := range []ext.E4{
+				e4FromU64(2, 3, 5, 7),
+				e4FromU64(1, 0, 0, 0),
+				e4FromU64(11, 22, 33, 44),
+			} {
+				want := ExtEvaluateAtExt(p, d, zeta)
+				zPow := BuildZPowBitReversed(zeta, n)
+				got := ExtEvaluateAtExtWithZPow(p, d, zPow)
+				if !got.Equal(&want) {
+					t.Fatalf("n=%d zeta=%s: WithZPow=%s Horner=%s", n, zeta.String(), got.String(), want.String())
+				}
+			}
+		})
+	}
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b [20]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(b[i:])
+}
+
 func TestDeepQuotientExt(t *testing.T) {
 	coeffs := ExtPolynomial{
 		e4FromU64(1, 2, 3, 4),
