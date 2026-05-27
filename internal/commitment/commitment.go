@@ -16,6 +16,7 @@ package commitment
 import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
+	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/parallel"
@@ -203,12 +204,17 @@ func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolyn
 	}
 
 	// 1- encode every polynomial on its rail. Each Encode is independent
-	//    (disjoint input/output slices, shared read-only domain).
+	//    (disjoint input/output slices, shared read-only domain). Each outer
+	//    worker calls 2 FFTs in Encode; cap the FFT's internal parallelism so
+	//    outer × inner ≤ NumCPU.
+	fftOuter := max(len(basePolys), len(extPolys))
+	fftOpt := fft.WithNbTasks(parallel.NbTasksPerJob(fftOuter))
+
 	encodedBase := make([]poly.Polynomial, len(basePolys))
 	parallel.Execute(len(basePolys), func(start, end int) {
 		for i := start; i < end; i++ {
 			pol := basePolys[i]
-			encodedBase[i] = rs.Encoder.Encode(pol, domainCache.Get(uint64(len(pol))))
+			encodedBase[i] = rs.Encoder.Encode(pol, domainCache.Get(uint64(len(pol))), fftOpt)
 		}
 	})
 
@@ -216,7 +222,7 @@ func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolyn
 	parallel.Execute(len(extPolys), func(start, end int) {
 		for i := start; i < end; i++ {
 			pol := extPolys[i]
-			encodedExt[i] = rs.Encoder.EncodeExt(pol, domainCache.Get(uint64(len(pol))))
+			encodedExt[i] = rs.Encoder.EncodeExt(pol, domainCache.Get(uint64(len(pol))), fftOpt)
 		}
 	})
 

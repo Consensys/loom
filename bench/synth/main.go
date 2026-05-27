@@ -3,7 +3,7 @@
 // proof size. It is the loom counterpart of plonky3's prove_prime_field_31
 // example: both stacks build a deg-2 row-local constraint over a tall or
 // wide trace and use matching FRI parameters, so the two can be compared
-// apple-to-apple.
+// apples-to-apples.
 //
 // Per row group of 3 columns (a, b, c), one constraint is enforced:
 //
@@ -133,13 +133,13 @@ func main() {
 	}
 	verifyWall := time.Since(t0)
 
-	// Report.
+	// Report — sorted by duration so the heaviest phases come first.
+	sort.Slice(phases, func(i, j int) bool { return phases[i].d > phases[j].d })
 	fmt.Println("prove-phase breakdown:")
 	for _, p := range phases {
 		share := 100 * float64(p.d) / float64(proveWall)
 		fmt.Printf("  %-26s %s  %5.1f%%\n", p.name, fmtDur(p.d), share)
 	}
-	sort.Slice(phases, func(i, j int) bool { return phases[i].d > phases[j].d })
 
 	fmt.Printf("\nprove wall : %s\n", fmtDur(proveWall))
 	fmt.Printf("verify wall: %s\n", fmtDur(verifyWall))

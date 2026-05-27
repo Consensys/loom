@@ -434,7 +434,10 @@ func (pr *proverRuntime) ExecuteSteps() error {
 // alias non-overlapping windows of the quotient backing array (no per-chunk
 // copy); after this returns the caller owns the chunks and the original
 // quotient is unreachable.
-func computeExtAIRQuotientChunks(piBase map[string]poly.Polynomial, piExt map[string]poly.ExtPolynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache) ([]poly.ExtPolynomial, error) {
+// fftNbTasks caps the inner parallelism of the per-chunk FFTs so that, when
+// this function is itself invoked inside a parallel.Execute over modules,
+// outer × inner goroutines stays bounded.
+func computeExtAIRQuotientChunks(piBase map[string]poly.Polynomial, piExt map[string]poly.ExtPolynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache, fftNbTasks int) ([]poly.ExtPolynomial, error) {
 	quotient, err := poly.ComputeQuotientMixed(piBase, piExt, *vrel, N, poly.WithDomainCache(cache))
 	if err != nil {
 		return nil, err
@@ -443,10 +446,11 @@ func computeExtAIRQuotientChunks(piBase map[string]poly.Polynomial, piExt map[st
 	// Normal so chunking can sub-slice the backing array.
 	poly.CosetExtLagrangeNormalToCanonicalWithCache(quotient, cache)
 
+	fftOpt := fft.WithNbTasks(fftNbTasks)
 	chunks := make([]poly.ExtPolynomial, len(quotient)/N)
 	for i := range chunks {
 		chunk := quotient[i*N : (i+1)*N : (i+1)*N]
-		D.FFTExt(chunk, fft.DIF)
+		D.FFTExt(chunk, fft.DIF, fftOpt)
 		utils.BitReverse(chunk)
 		chunks[i] = chunk
 	}
@@ -454,17 +458,18 @@ func computeExtAIRQuotientChunks(piBase map[string]poly.Polynomial, piExt map[st
 }
 
 // computeBaseAIRQuotientChunks is the base-field counterpart of computeExtAIRQuotientChunks.
-func computeBaseAIRQuotientChunks(piBase map[string]poly.Polynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache) ([]poly.Polynomial, error) {
+func computeBaseAIRQuotientChunks(piBase map[string]poly.Polynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache, fftNbTasks int) ([]poly.Polynomial, error) {
 	quotient, err := poly.ComputeQuotient(piBase, *vrel, N, poly.WithDomainCache(cache))
 	if err != nil {
 		return nil, err
 	}
 	poly.CosetLagrangeNormalToCanonicalWithCache(quotient, cache)
 
+	fftOpt := fft.WithNbTasks(fftNbTasks)
 	chunks := make([]poly.Polynomial, len(quotient)/N)
 	for i := range chunks {
 		chunk := quotient[i*N : (i+1)*N : (i+1)*N]
-		D.FFT(chunk, fft.DIF)
+		D.FFT(chunk, fft.DIF, fftOpt)
 		utils.BitReverse(chunk)
 		chunks[i] = chunk
 	}
@@ -489,6 +494,9 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 		errMu    sync.Mutex
 		firstErr error
 	)
+	// Per-chunk FFTs inside each module run with their internal parallelism
+	// capped so the outer module fan-out doesn't multiply with the FFT's own.
+	fftNbTasks := parallel.NbTasksPerJob(len(moduleNames))
 	parallel.Execute(len(moduleNames), func(start, end int) {
 		for idx := start; idx < end; idx++ {
 			moduleName := moduleNames[idx]
@@ -506,9 +514,9 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 				err        error
 			)
 			if module.VanishingRelation.Root.Field == field.Ext {
-				extChunks, err = computeExtAIRQuotientChunks(pr.t.Base, pr.t.Ext, vrel, N, module.D, &pr.domainCache)
+				extChunks, err = computeExtAIRQuotientChunks(pr.t.Base, pr.t.Ext, vrel, N, module.D, &pr.domainCache, fftNbTasks)
 			} else {
-				baseChunks, err = computeBaseAIRQuotientChunks(pr.t.Base, vrel, N, module.D, &pr.domainCache)
+				baseChunks, err = computeBaseAIRQuotientChunks(pr.t.Base, vrel, N, module.D, &pr.domainCache, fftNbTasks)
 			}
 			if err != nil {
 				errMu.Lock()
