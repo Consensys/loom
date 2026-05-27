@@ -32,6 +32,17 @@ type NodeHasher interface {
 	HashNode(left, right hash.Digest) hash.Digest
 }
 
+// BatchNodeHasher is an optional fast path for hashers that can compress
+// BatchSize() (left, right) pairs in parallel (e.g. Poseidon2 via the
+// 16-lane batched permutation). Tree construction falls back to per-pair
+// HashNode for the tail (count < BatchSize()) and for hashers that don't
+// implement this interface.
+type BatchNodeHasher interface {
+	NodeHasher
+	BatchSize() int
+	HashNodes(dst, left, right []hash.Digest)
+}
+
 // Tree is a binary Merkle tree whose number of leaves is a power of two.
 //
 // Nodes are stored 1-indexed in a flat slice of length 2*nLeaves:
@@ -95,16 +106,62 @@ func (t *Tree) Build(leaves []hash.Digest) error {
 
 // buildInternalNodes hashes internal nodes bottom-up, fanning out across
 // goroutines once a level is wide enough. Within a level all nodes are
-// independent; only the level-to-level walk is serial.
+// independent; only the level-to-level walk is serial. When the node hasher
+// implements BatchNodeHasher, each level is processed in BatchSize() chunks
+// to amortise the SIMD-batched permutation; the tail (count < BatchSize) and
+// non-batched hashers fall back to HashNode.
 func (t *Tree) buildInternalNodes() {
+	batchHasher, hasBatch := t.nodeHasher.(BatchNodeHasher)
+	batchSize := 0
+	if hasBatch {
+		batchSize = batchHasher.BatchSize()
+		if batchSize <= 1 {
+			hasBatch = false
+		}
+	}
+
 	// At each iteration 'start' is the index of the leftmost node on the
 	// current level and 'start' nodes live on the level (its width).
 	for start := t.nLeaves >> 1; start >= 1; start >>= 1 {
-		parallel.ExecuteWithThreshold(start, parallelLevelThreshold, func(lo, hi int) {
-			for i := start + lo; i < start+hi; i++ {
-				t.nodes[i] = t.nodeHasher.HashNode(t.nodes[2*i], t.nodes[2*i+1])
+		if !hasBatch || start < batchSize {
+			parallel.ExecuteWithThreshold(start, parallelLevelThreshold, func(lo, hi int) {
+				for i := start + lo; i < start+hi; i++ {
+					t.nodes[i] = t.nodeHasher.HashNode(t.nodes[2*i], t.nodes[2*i+1])
+				}
+			})
+			continue
+		}
+
+		// Batched fast path. Each goroutine works on a contiguous range of
+		// batches; the per-batch gather/scatter goes through small stack
+		// buffers so there's no shared scratch contention.
+		nbBatches := start / batchSize
+		parallel.ExecuteWithThreshold(nbBatches, parallelLevelThreshold/batchSize+1, func(lo, hi int) {
+			left := make([]hash.Digest, batchSize)
+			right := make([]hash.Digest, batchSize)
+			dst := make([]hash.Digest, batchSize)
+			for b := lo; b < hi; b++ {
+				base := start + b*batchSize
+				for k := 0; k < batchSize; k++ {
+					i := base + k
+					left[k] = t.nodes[2*i]
+					right[k] = t.nodes[2*i+1]
+				}
+				batchHasher.HashNodes(dst, left, right)
+				for k := 0; k < batchSize; k++ {
+					t.nodes[base+k] = dst[k]
+				}
 			}
 		})
+
+		// Tail: nodes beyond the last full batch.
+		tail := start - nbBatches*batchSize
+		if tail > 0 {
+			base := start + nbBatches*batchSize
+			for i := base; i < base+tail; i++ {
+				t.nodes[i] = t.nodeHasher.HashNode(t.nodes[2*i], t.nodes[2*i+1])
+			}
+		}
 	}
 }
 

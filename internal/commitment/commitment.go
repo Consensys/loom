@@ -181,11 +181,24 @@ func (Poseidon2LeafHasher) BatchSize() int {
 }
 
 func (Poseidon2NodeHasher) HashNode(left, right hash.Digest) hash.Digest {
-	h := hash.NewPoseidon2MDHasher()
-	h.WriteElements(hash.NewElement(nodeDomainTag))
-	h.WriteElements(left[:]...)
-	h.WriteElements(right[:]...)
-	return h.Sum()
+	return hash.Poseidon2NodeCompress(nodeDomainTag, left, right)
+}
+
+// BatchSize is the lane width of the SIMD-batched Poseidon2 permutation.
+func (Poseidon2NodeHasher) BatchSize() int { return hash.Poseidon2SpongeBatchSize }
+
+// HashNodes compresses BatchSize() (left, right) pairs in one batched
+// permutation. dst, left, right must all have length BatchSize().
+func (Poseidon2NodeHasher) HashNodes(dst, left, right []hash.Digest) {
+	const n = hash.Poseidon2SpongeBatchSize
+	if len(dst) != n || len(left) != n || len(right) != n {
+		panic("Poseidon2NodeHasher.HashNodes: input slices must have length BatchSize()")
+	}
+	var l, r [n]hash.Digest
+	copy(l[:], left)
+	copy(r[:], right)
+	out := hash.Poseidon2NodeCompressBatch16(nodeDomainTag, &l, &r)
+	copy(dst, out[:])
 }
 
 // Commit commits to base and extension polynomials in one Merkle tree. Inputs

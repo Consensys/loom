@@ -206,6 +206,28 @@ func TestPoseidon2BatchLeafHasherMatchesScalarLeaves(t *testing.T) {
 	}
 }
 
+func TestPoseidon2BatchNodeHasherMatchesScalarHash(t *testing.T) {
+	const n = hash.Poseidon2SpongeBatchSize
+	left := make([]hash.Digest, n)
+	right := make([]hash.Digest, n)
+	for i := 0; i < n; i++ {
+		for j := 0; j < len(left[i]); j++ {
+			left[i][j].SetUint64(uint64(0xabcd0000 + i*16 + j))
+			right[i][j].SetUint64(uint64(0xdcba0000 + i*16 + j))
+		}
+	}
+
+	got := make([]hash.Digest, n)
+	DefaultNodeHasher.HashNodes(got, left, right)
+
+	for i := 0; i < n; i++ {
+		want := DefaultNodeHasher.HashNode(left[i], right[i])
+		if got[i] != want {
+			t.Fatalf("pair %d: batched node digest differs from scalar digest:\n got  %v\n want %v", i, got[i], want)
+		}
+	}
+}
+
 func TestRSCommitEmptyRails(t *testing.T) {
 	basePolys := []poly.Polynomial{
 		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},
