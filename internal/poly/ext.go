@@ -21,6 +21,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
+	"github.com/consensys/loom/internal/parallel"
 )
 
 // ExtPolynomial is a polynomial whose coefficients/evaluations live in the
@@ -125,6 +126,102 @@ func ExtEvaluateAtExt(p ExtPolynomial, d *fft.Domain, zeta ext.E4, fftOpts ...ff
 		res.Mul(&res, &zeta)
 		res.Add(&res, &coeff)
 	}
+	putExtBuf(_p)
+	return res
+}
+
+// BuildZPowBitReversed precomputes (zeta^bitRev(0), zeta^bitRev(1), …,
+// zeta^bitRev(n-1)) so that the SIMD InnerProduct[ByElement] can replace
+// the Horner loop in {Ext,}EvaluateAtExtWithZPow. The result is in
+// bit-reversed-canonical order to match the post-DIF FFTInverse layout
+// used by those functions.
+//
+// n must be a power of two. The work scales as O(n) ext-muls and is
+// chunked across goroutines using PowUint64 to seed each chunk
+// independently, so build cost amortises well when shared across tasks
+// that evaluate at the same zeta.
+func BuildZPowBitReversed(zeta ext.E4, n int) []ext.E4 {
+	if n <= 0 {
+		return nil
+	}
+	out := make([]ext.E4, n)
+	if n == 1 {
+		out[0].SetOne()
+		return out
+	}
+	nn := uint64(64 - bits.TrailingZeros64(uint64(n)))
+
+	// First sweep produces zeta^i in normal order using parallel chunks
+	// seeded with PowUint64Ext (binary exponentiation for ext.E4).
+	normal := make([]ext.E4, n)
+	parallel.ExecuteWithThreshold(n, zetaPowParallelThreshold, func(start, end int) {
+		acc := powUint64Ext(zeta, uint64(start))
+		for i := start; i < end; i++ {
+			normal[i].Set(&acc)
+			acc.Mul(&acc, &zeta)
+		}
+	})
+
+	// Permute into bit-reversed order.
+	parallel.ExecuteWithThreshold(n, zetaPowParallelThreshold, func(start, end int) {
+		for i := start; i < end; i++ {
+			iRev := bits.Reverse64(uint64(i)) >> nn
+			out[iRev] = normal[i]
+		}
+	})
+	return out
+}
+
+const zetaPowParallelThreshold = 1 << 12
+
+// powUint64Ext returns base^exp via binary exponentiation.
+func powUint64Ext(base ext.E4, exp uint64) ext.E4 {
+	var res ext.E4
+	res.SetOne()
+	b := base
+	for exp != 0 {
+		if exp&1 == 1 {
+			res.Mul(&res, &b)
+		}
+		b.Mul(&b, &b)
+		exp >>= 1
+	}
+	return res
+}
+
+// EvaluateAtExtWithZPow is EvaluateAtExt where the bit-reversed powers of
+// zeta have been precomputed by the caller (typically once per (n, zeta)
+// across many polynomials). Replaces the per-Horner ext-mul chain with a
+// single SIMD InnerProductByElement on the FFTInverse output.
+func EvaluateAtExtWithZPow(p Polynomial, d *fft.Domain, zPowBitRev []ext.E4, fftOpts ...fft.Option) ext.E4 {
+	n := len(p)
+	if n == 1 {
+		return liftBaseToExt(p[0])
+	}
+	if len(zPowBitRev) != n {
+		panic("EvaluateAtExtWithZPow: zPow length must equal len(p)")
+	}
+	_p := getBuf(n)
+	copy(_p, p)
+	d.FFTInverse(_p, fft.DIF, fftOpts...)
+	res := ext.Vector(zPowBitRev).InnerProductByElement(koalabear.Vector(_p))
+	putBuf(_p)
+	return res
+}
+
+// ExtEvaluateAtExtWithZPow is the ext-rail counterpart of EvaluateAtExtWithZPow.
+func ExtEvaluateAtExtWithZPow(p ExtPolynomial, d *fft.Domain, zPowBitRev []ext.E4, fftOpts ...fft.Option) ext.E4 {
+	n := len(p)
+	if n == 1 {
+		return p[0]
+	}
+	if len(zPowBitRev) != n {
+		panic("ExtEvaluateAtExtWithZPow: zPow length must equal len(p)")
+	}
+	_p := getExtBuf(n)
+	copy(_p, p)
+	d.FFTInverseExt(_p, fft.DIF, fftOpts...)
+	res := ext.Vector(zPowBitRev).InnerProduct(ext.Vector(_p))
 	putExtBuf(_p)
 	return res
 }
