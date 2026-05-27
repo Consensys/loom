@@ -19,50 +19,53 @@ import (
 	"github.com/consensys/loom/expr"
 )
 
-// BuildModule registers a Poseidon2 gadget module named `name` in the builder
-// with capacity for n permutations. n must be a power of two (caller's
-// responsibility) since module sizes are FFT-domain sizes.
+// BuildModule registers a standalone width-16 Poseidon2 gadget module
+// named `name` in the builder with capacity for n permutations. n must
+// be a power of two (caller's responsibility) since module sizes are
+// FFT-domain sizes.
 //
-// The returned ColumnNames describe every witness column the trace generator
-// must fill. Consumers can wire their constraints to the input or output of
-// the gadget via expr.Col(InColName(...)) / expr.Col(OutColName(...)).
+// For composing with other gadgets in the same module, use Register.
 func BuildModule(builder *board.Builder, name string, n int) ColumnNames {
 	if n <= 0 || n&(n-1) != 0 {
 		panic("poseidon2.BuildModule: n must be a power of two")
 	}
 
-	params := Params()
 	mod := board.NewModule(name)
 	mod.N = n
+	cn := Register(&mod, name)
+	builder.AddModule(mod)
+	return cn
+}
 
-	// Input columns referenced via expr.Col by lane.
+// Register appends the width-16 Poseidon2 columns and constraints to an
+// existing module under the given prefix. mod.N must already be set.
+// This is the composition path used by Merkle / leaf-hash / node-hash
+// gadgets that need to share one module.
+func Register(mod *board.Module, prefix string) ColumnNames {
+	params := Params()
+	cn := makeColumnNames(prefix)
+
 	inExpr := make([]expr.Expr, Width)
 	for i := 0; i < Width; i++ {
-		inExpr[i] = expr.Col(InColName(name, i))
+		inExpr[i] = expr.Col(InColName(prefix, i))
 	}
 
-	// State going into round R (prev_state). For R == 0 this is the external
-	// linear layer applied to the inputs; for R > 0 it is the previous post.
 	prev := matMulExternalExpr(inExpr)
 
 	for r := 0; r < NbRounds; r++ {
 		rc := params.RoundKeys[r]
 		full := IsFullRound(r)
 
-		// sbox witness columns referenced by lane.
 		var sboxExpr [Width]expr.Expr
 
 		if full {
-			// sbox[i] = (prev[i] + RC[r][i])^3
 			for i := 0; i < Width; i++ {
-				sboxExpr[i] = expr.Col(SBoxColName(name, r, i))
+				sboxExpr[i] = expr.Col(SBoxColName(prefix, r, i))
 				rhs := prev[i].Add(expr.Const(rc[i])).Pow(3)
 				mod.AssertZero(sboxExpr[i].Sub(rhs))
 			}
 		} else {
-			// Partial round: only lane 0 has an S-box; other lanes pass through
-			// the previous post unchanged.
-			sboxExpr[0] = expr.Col(SBoxColName(name, r, 0))
+			sboxExpr[0] = expr.Col(SBoxColName(prefix, r, 0))
 			rhs := prev[0].Add(expr.Const(rc[0])).Pow(3)
 			mod.AssertZero(sboxExpr[0].Sub(rhs))
 			for i := 1; i < Width; i++ {
@@ -70,7 +73,6 @@ func BuildModule(builder *board.Builder, name string, n int) ColumnNames {
 			}
 		}
 
-		// Linear layer: post[i] = M_*(sbox)[i].
 		var postLinear [Width]expr.Expr
 		if full {
 			ext := matMulExternalExpr(sboxExpr[:])
@@ -80,19 +82,16 @@ func BuildModule(builder *board.Builder, name string, n int) ColumnNames {
 			copy(postLinear[:], intl)
 		}
 
-		// Bind post witness columns to the computed linear layer.
 		postExpr := make([]expr.Expr, Width)
 		for i := 0; i < Width; i++ {
-			postExpr[i] = expr.Col(PostColName(name, r, i))
+			postExpr[i] = expr.Col(PostColName(prefix, r, i))
 			mod.AssertZero(postExpr[i].Sub(postLinear[i]))
 		}
 
 		prev = postExpr
 	}
 
-	builder.AddModule(mod)
-
-	return makeColumnNames(name)
+	return cn
 }
 
 // ColumnNames lists every witness column the trace generator must fill for
