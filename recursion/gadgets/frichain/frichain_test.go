@@ -310,3 +310,269 @@ func nameForRound(base string, j int) string {
 	return base + "_" + string('0'+rune(j))
 }
 
+// TestEndToEndMultiDegreeFRI exercises level-batching: a second-level
+// polynomial of smaller degree is introduced at round 1 via the gamma-mix
+// step. The chain constraint at round-0 -> round-1 uses LinkWithLevel
+// instead of Link.
+//
+// Setup: N = 16, level_0 has D_0 = 4 (full degree, so layer_0 size = N),
+// level_1 has D_1 = 2 (smaller; layer at round 1 size = N/2 = 8). Level 1
+// enters at round j_1 = log2(D_0 / D_1) = 1.
+//
+// The verifier flow:
+//
+//	Round 0: fold layer_0 -> layer_1_unmixed
+//	Level 1 enters: layer_1_mixed = layer_1_unmixed + gamma_1 * level_1
+//	Round 1: fold layer_1_mixed -> layer_2 (= finalPoly, size 4)
+func TestEndToEndMultiDegreeFRI(t *testing.T) {
+	const N = 16
+	const numRounds = 2
+	queries := []int{5, 2}
+
+	// Initial layer (level_0.evals) and level_1.evals.
+	layer0 := make([]ext.E4, N)
+	for i := range layer0 {
+		layer0[i] = randExt(t)
+	}
+	level1Evals := make([]ext.E4, N/2)
+	for i := range level1Evals {
+		level1Evals[i] = randExt(t)
+	}
+
+	alphas := []ext.E4{randExt(t), randExt(t)}
+	gamma1 := randExt(t)
+
+	// Native commit phase:
+	domain0 := fft.NewDomain(uint64(N))
+	layer1Unmixed := foldLayer(layer0, alphas[0], domain0)
+	// Mix: layer1 += gamma_1 * level_1.evals (pointwise).
+	layer1Mixed := make([]ext.E4, len(layer1Unmixed))
+	for i := range layer1Mixed {
+		var term ext.E4
+		term.Mul(&gamma1, &level1Evals[i])
+		layer1Mixed[i].Add(&layer1Unmixed[i], &term)
+	}
+	domain1 := fft.NewDomain(uint64(N / 2))
+	layer2 := foldLayer(layer1Mixed, alphas[1], domain1)
+	finalPoly := layer2 // size N/D = 4
+
+	omegasInv := []koalabear.Element{domain0.GeneratorInv, domain1.GeneratorInv}
+	kBits := []int{log2(N / 2), log2(N / 4)} // {3, 2}
+
+	// Build the verifier circuit.
+	capacity := len(queries)
+	mod := board.NewModule("fri_multi")
+	mod.N = capacity
+
+	groups := make([]friround.ColumnNames, numRounds)
+	for j := 0; j < numRounds; j++ {
+		groups[j] = friround.Register(&mod, nameForRound("r", j), omegasInv[j], kBits[j])
+	}
+
+	// Level 1 enters at round 1: use LinkWithLevel.
+	ld := frichain.RegisterLevel(&mod, "level1")
+	frichain.LinkWithLevel(&mod, groups[0], groups[1], ld)
+
+	// Final-poly check at the last round.
+	lastGroup := groups[numRounds-1]
+	selCN := idxselect.Register(&mod, "final.sel", finalPoly, lastGroup.Bits)
+	for i := 0; i < extfield.Limbs; i++ {
+		rel := expr.Col(lastGroup.Expected[i]).Sub(expr.Col(selCN.Out[i]))
+		mod.AssertZero(rel)
+	}
+
+	builder := board.NewBuilder()
+	builder.AddModule(mod)
+
+	// Fill the trace.
+	tr := trace.New()
+
+	// Round 0 trace: P, Q from layer_0; alpha_0; base = s mod (N/2) = s.
+	r0Queries := make([]friround.Query, len(queries))
+	for qi, s := range queries {
+		base := s
+		r0Queries[qi] = friround.Query{
+			P:     layer0[base],
+			Q:     layer0[base+N/2],
+			Alpha: alphas[0],
+			Base:  uint64(base),
+		}
+	}
+	for k, v := range friround.GenerateTrace(groups[0], capacity, r0Queries) {
+		tr.SetBase(k, v)
+	}
+
+	// Round 1 trace: P, Q from layer_1_MIXED; alpha_1; base = s mod (N/4).
+	r1Queries := make([]friround.Query, len(queries))
+	for qi, s := range queries {
+		base := s % (N / 4)
+		r1Queries[qi] = friround.Query{
+			P:     layer1Mixed[base],
+			Q:     layer1Mixed[base+N/4],
+			Alpha: alphas[1],
+			Base:  uint64(base),
+		}
+	}
+	for k, v := range friround.GenerateTrace(groups[1], capacity, r1Queries) {
+		tr.SetBase(k, v)
+	}
+
+	// Level 1 trace: gamma, leafP, leafQ at base_1 and base_1 + 4 of
+	// level_1.evals (length 8).
+	levelCols := make(map[string][]koalabear.Element, 3*extfield.Limbs)
+	allocLevelCol := func(name string) []koalabear.Element {
+		c := make([]koalabear.Element, capacity)
+		levelCols[name] = c
+		return c
+	}
+	gammaCols := [extfield.Limbs][]koalabear.Element{}
+	leafPCols := [extfield.Limbs][]koalabear.Element{}
+	leafQCols := [extfield.Limbs][]koalabear.Element{}
+	for i := 0; i < extfield.Limbs; i++ {
+		gammaCols[i] = allocLevelCol(ld.Gamma[i])
+		leafPCols[i] = allocLevelCol(ld.LeafP[i])
+		leafQCols[i] = allocLevelCol(ld.LeafQ[i])
+	}
+	gammaLimbs := extfield.FromE4(gamma1)
+	for qi, s := range queries {
+		base1 := s % (N / 4)
+		leafP := extfield.FromE4(level1Evals[base1])
+		leafQ := extfield.FromE4(level1Evals[base1+N/4])
+		for i := 0; i < extfield.Limbs; i++ {
+			gammaCols[i][qi].Set(&gammaLimbs[i])
+			leafPCols[i][qi].Set(&leafP[i])
+			leafQCols[i][qi].Set(&leafQ[i])
+		}
+	}
+	for k, v := range levelCols {
+		tr.SetBase(k, v)
+	}
+
+	// idxselect trace: index = s mod len(finalPoly) = s mod 4.
+	idxs := make([]uint64, len(queries))
+	for qi, s := range queries {
+		idxs[qi] = uint64(s % len(finalPoly))
+	}
+	for k, v := range idxselect.GenerateTrace(selCN, capacity, finalPoly, idxs) {
+		tr.SetBase(k, v)
+	}
+
+	testutil.ProveAndVerify(t, &builder, tr)
+}
+
+// TestEndToEndMultiDegreeFRIRejectsBadLevel tampers with the level-1 leaf
+// value and confirms the gamma-mix chain catches the inconsistency.
+func TestEndToEndMultiDegreeFRIRejectsBadLevel(t *testing.T) {
+	const N = 16
+	const numRounds = 2
+	queries := []int{5, 2}
+
+	layer0 := make([]ext.E4, N)
+	for i := range layer0 {
+		layer0[i] = randExt(t)
+	}
+	level1Evals := make([]ext.E4, N/2)
+	for i := range level1Evals {
+		level1Evals[i] = randExt(t)
+	}
+	alphas := []ext.E4{randExt(t), randExt(t)}
+	gamma1 := randExt(t)
+
+	domain0 := fft.NewDomain(uint64(N))
+	layer1Unmixed := foldLayer(layer0, alphas[0], domain0)
+	layer1Mixed := make([]ext.E4, len(layer1Unmixed))
+	for i := range layer1Mixed {
+		var term ext.E4
+		term.Mul(&gamma1, &level1Evals[i])
+		layer1Mixed[i].Add(&layer1Unmixed[i], &term)
+	}
+	domain1 := fft.NewDomain(uint64(N / 2))
+	layer2 := foldLayer(layer1Mixed, alphas[1], domain1)
+	finalPoly := layer2
+
+	omegasInv := []koalabear.Element{domain0.GeneratorInv, domain1.GeneratorInv}
+	kBits := []int{log2(N / 2), log2(N / 4)}
+
+	capacity := len(queries)
+	mod := board.NewModule("fri_multi_bad")
+	mod.N = capacity
+
+	groups := make([]friround.ColumnNames, numRounds)
+	for j := 0; j < numRounds; j++ {
+		groups[j] = friround.Register(&mod, nameForRound("r", j), omegasInv[j], kBits[j])
+	}
+	ld := frichain.RegisterLevel(&mod, "level1")
+	frichain.LinkWithLevel(&mod, groups[0], groups[1], ld)
+
+	lastGroup := groups[numRounds-1]
+	selCN := idxselect.Register(&mod, "final.sel", finalPoly, lastGroup.Bits)
+	for i := 0; i < extfield.Limbs; i++ {
+		rel := expr.Col(lastGroup.Expected[i]).Sub(expr.Col(selCN.Out[i]))
+		mod.AssertZero(rel)
+	}
+
+	builder := board.NewBuilder()
+	builder.AddModule(mod)
+
+	tr := trace.New()
+	for j := 0; j < numRounds; j++ {
+		Nj := N >> uint(j)
+		roundQueries := make([]friround.Query, len(queries))
+		for qi, s := range queries {
+			base := s % (Nj / 2)
+			var P, Q ext.E4
+			if j == 0 {
+				P = layer0[base]
+				Q = layer0[base+Nj/2]
+			} else {
+				P = layer1Mixed[base]
+				Q = layer1Mixed[base+Nj/2]
+			}
+			roundQueries[qi] = friround.Query{P: P, Q: Q, Alpha: alphas[j], Base: uint64(base)}
+		}
+		for k, v := range friround.GenerateTrace(groups[j], capacity, roundQueries) {
+			tr.SetBase(k, v)
+		}
+	}
+
+	// Level 1 trace.
+	levelCols := make(map[string][]koalabear.Element, 3*extfield.Limbs)
+	gammaLimbs := extfield.FromE4(gamma1)
+	for i := 0; i < extfield.Limbs; i++ {
+		levelCols[ld.Gamma[i]] = make([]koalabear.Element, capacity)
+		levelCols[ld.LeafP[i]] = make([]koalabear.Element, capacity)
+		levelCols[ld.LeafQ[i]] = make([]koalabear.Element, capacity)
+	}
+	for qi, s := range queries {
+		base1 := s % (N / 4)
+		leafP := extfield.FromE4(level1Evals[base1])
+		leafQ := extfield.FromE4(level1Evals[base1+N/4])
+		for i := 0; i < extfield.Limbs; i++ {
+			levelCols[ld.Gamma[i]][qi].Set(&gammaLimbs[i])
+			levelCols[ld.LeafP[i]][qi].Set(&leafP[i])
+			levelCols[ld.LeafQ[i]][qi].Set(&leafQ[i])
+		}
+	}
+
+	// Corrupt gamma_0 at query 0. gamma multiplies the leaf in BOTH
+	// branches of the selector, so corruption breaks the chain regardless
+	// of which branch top_bit selects.
+	var one koalabear.Element
+	one.SetOne()
+	levelCols[ld.Gamma[0]][0].Add(&levelCols[ld.Gamma[0]][0], &one)
+
+	for k, v := range levelCols {
+		tr.SetBase(k, v)
+	}
+
+	idxs := make([]uint64, len(queries))
+	for qi, s := range queries {
+		idxs[qi] = uint64(s % len(finalPoly))
+	}
+	for k, v := range idxselect.GenerateTrace(selCN, capacity, finalPoly, idxs) {
+		tr.SetBase(k, v)
+	}
+
+	testutil.ExpectProveOrVerifyFailure(t, &builder, tr)
+}
+

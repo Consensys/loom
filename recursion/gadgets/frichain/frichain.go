@@ -47,29 +47,121 @@ import (
 	"github.com/consensys/loom/recursion/gadgets/friround"
 )
 
-// Link adds chain + bit-inheritance constraints linking cnPrev (round j) to
-// cnNext (round j+1) inside mod.
-func Link(mod *board.Module, cnPrev, cnNext friround.ColumnNames) {
-	kPrev := cnPrev.KBits
-	kNext := cnNext.KBits
-	if kNext != kPrev-1 {
-		panic(fmt.Sprintf("frichain.Link: cnNext.KBits=%d must equal cnPrev.KBits-1=%d", kNext, kPrev-1))
+// LevelData holds the column names for one mid-FRI level introduction:
+// gamma (the batching challenge for this level), and the (LeafP, LeafQ)
+// pair opened from this level's evaluations at the running query index.
+type LevelData struct {
+	Prefix string
+	Gamma  [extfield.Limbs]string
+	LeafP  [extfield.Limbs]string
+	LeafQ  [extfield.Limbs]string
+}
+
+// GammaColName / LeafPColName / LeafQColName follow the package convention
+// for column naming.
+func GammaColName(prefix string, i int) string { return fmt.Sprintf("%s.gamma_%d", prefix, i) }
+func LeafPColName(prefix string, i int) string { return fmt.Sprintf("%s.leafP_%d", prefix, i) }
+func LeafQColName(prefix string, i int) string { return fmt.Sprintf("%s.leafQ_%d", prefix, i) }
+
+// RegisterLevel allocates the witness column names for one level
+// introduction inside mod. No constraints are added here — the level data
+// is supplied by the trace generator and consumed by LinkWithLevel. The
+// surrounding context is expected to also bind these columns to the
+// inner-proof's level opening (e.g. via a Merkle proof lookup, deferred).
+func RegisterLevel(_ *board.Module, prefix string) LevelData {
+	ld := LevelData{Prefix: prefix}
+	for i := 0; i < extfield.Limbs; i++ {
+		ld.Gamma[i] = GammaColName(prefix, i)
+		ld.LeafP[i] = LeafPColName(prefix, i)
+		ld.LeafQ[i] = LeafQColName(prefix, i)
 	}
+	return ld
+}
 
-	topBit := expr.Col(cnPrev.Bits.Bits[kPrev-1])
+// Link adds chain + bit-inheritance constraints linking cnPrev (round j)
+// to cnNext (round j+1) inside mod. Use this when NO level enters at round
+// j+1; for level introductions, use LinkWithLevel instead.
+func Link(mod *board.Module, cnPrev, cnNext friround.ColumnNames) {
+	checkRoundShapes(cnPrev, cnNext)
+	registerBitInheritance(mod, cnPrev, cnNext)
 
-	// (1) Chain constraint, limb-wise.
+	topBit := expr.Col(cnPrev.Bits.Bits[cnPrev.KBits-1])
+
+	// Chain: expected_j[i] = P_{j+1}[i] + topBit*(Q_{j+1}[i] - P_{j+1}[i])
 	for i := 0; i < extfield.Limbs; i++ {
 		expected := expr.Col(cnPrev.Expected[i])
 		pNext := expr.Col(cnNext.P[i])
 		qNext := expr.Col(cnNext.Q[i])
-		// selected = pNext + topBit * (qNext - pNext)
 		selected := pNext.Add(topBit.Mul(qNext.Sub(pNext)))
 		mod.AssertZero(expected.Sub(selected))
 	}
+}
 
-	// (2) Bit-inheritance constraint.
-	for i := 0; i < kNext; i++ {
+// LinkWithLevel adds chain + bit-inheritance constraints linking cnPrev
+// (round j) to cnNext (round j+1) when a NEW level enters at round j+1.
+//
+// The chain target is shifted by gamma * leaf:
+//
+//	(expected_j + gamma_l * leaf_l) = selected(P_{j+1}, Q_{j+1}, top_bit_j)
+//
+// where leaf_l = selected(LeafP_l, LeafQ_l, top_bit_j) — i.e. the level
+// opening is picked on the same branch as the running fold.
+//
+// gamma is E4, leaf is E4, so gamma*leaf is a full E4 multiplication; the
+// resulting constraint is degree 2 in witness columns.
+func LinkWithLevel(mod *board.Module, cnPrev, cnNext friround.ColumnNames, ld LevelData) {
+	checkRoundShapes(cnPrev, cnNext)
+	registerBitInheritance(mod, cnPrev, cnNext)
+
+	topBit := expr.Col(cnPrev.Bits.Bits[cnPrev.KBits-1])
+
+	expected := extfield.FromLimbs(
+		expr.Col(cnPrev.Expected[0]), expr.Col(cnPrev.Expected[1]),
+		expr.Col(cnPrev.Expected[2]), expr.Col(cnPrev.Expected[3]),
+	)
+	nextP := extfield.FromLimbs(
+		expr.Col(cnNext.P[0]), expr.Col(cnNext.P[1]),
+		expr.Col(cnNext.P[2]), expr.Col(cnNext.P[3]),
+	)
+	nextQ := extfield.FromLimbs(
+		expr.Col(cnNext.Q[0]), expr.Col(cnNext.Q[1]),
+		expr.Col(cnNext.Q[2]), expr.Col(cnNext.Q[3]),
+	)
+	gamma := extfield.FromLimbs(
+		expr.Col(ld.Gamma[0]), expr.Col(ld.Gamma[1]),
+		expr.Col(ld.Gamma[2]), expr.Col(ld.Gamma[3]),
+	)
+	leafP := extfield.FromLimbs(
+		expr.Col(ld.LeafP[0]), expr.Col(ld.LeafP[1]),
+		expr.Col(ld.LeafP[2]), expr.Col(ld.LeafP[3]),
+	)
+	leafQ := extfield.FromLimbs(
+		expr.Col(ld.LeafQ[0]), expr.Col(ld.LeafQ[1]),
+		expr.Col(ld.LeafQ[2]), expr.Col(ld.LeafQ[3]),
+	)
+
+	// leaf_l = leafP + top_bit*(leafQ - leafP)
+	leaf := leafP.Add(leafQ.Sub(leafP).MulByBase(topBit))
+
+	// expectedNext = expected + gamma * leaf
+	expectedNext := expected.Add(gamma.Mul(leaf))
+
+	// chainTarget = nextP + top_bit*(nextQ - nextP)
+	chainTarget := nextP.Add(nextQ.Sub(nextP).MulByBase(topBit))
+
+	for _, rel := range chainTarget.EqualityConstraints(expectedNext) {
+		mod.AssertZero(rel)
+	}
+}
+
+func checkRoundShapes(cnPrev, cnNext friround.ColumnNames) {
+	if cnNext.KBits != cnPrev.KBits-1 {
+		panic(fmt.Sprintf("frichain: cnNext.KBits=%d must equal cnPrev.KBits-1=%d", cnNext.KBits, cnPrev.KBits-1))
+	}
+}
+
+func registerBitInheritance(mod *board.Module, cnPrev, cnNext friround.ColumnNames) {
+	for i := 0; i < cnNext.KBits; i++ {
 		prevBit := expr.Col(cnPrev.Bits.Bits[i])
 		nextBit := expr.Col(cnNext.Bits.Bits[i])
 		mod.AssertZero(nextBit.Sub(prevBit))
