@@ -17,6 +17,8 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/hash"
+	"github.com/consensys/loom/recursion/gadgets/nodehash"
+	"github.com/consensys/loom/recursion/gadgets/poseidon2"
 )
 
 // Path captures the inputs for a single Merkle-path verification.
@@ -75,6 +77,10 @@ func GenerateTrace(cn ColumnNames, capacity int, path Path) map[string][]koalabe
 	current := path.Leaf
 	idx := path.LeafIdx
 
+	// Collect per-row (left, right) digests for the in-module nodehash
+	// trace generation.
+	nodes := make([]nodehash.Node, n)
+
 	for row := 0; row < n; row++ {
 		var sibling hash.Digest
 		var bit uint64
@@ -105,8 +111,39 @@ func GenerateTrace(cn ColumnNames, capacity int, path Path) map[string][]koalabe
 		}
 		bitCol[row].SetUint64(bit)
 
+		// Stash the (left, right) for nodehash trace generation.
+		var nh nodehash.Node
+		for i := 0; i < DigestWidth; i++ {
+			nh.Left[i].Set(&l[i])
+			nh.Right[i].Set(&r[i])
+		}
+		nodes[row] = nh
+
 		current = nextParent
 		idx >>= 1
+	}
+
+	// Fill the nodehash sub-columns. Each row independently computes
+	// HashNode(left, right) via two width-16 Poseidon2 permutations + MD
+	// feedforward.
+	c1Inputs, c2Inputs := nodehash.BuildCompressInputs(nodes)
+
+	c1Cols, _ := poseidon2.GenerateTrace(cn.NodeHash.Compress, n, c1Inputs)
+	for k, v := range c1Cols {
+		cols[k] = v
+	}
+	c2Cols, _ := poseidon2.GenerateTrace(cn.NodeHash.Tail, n, c2Inputs)
+	for k, v := range c2Cols {
+		cols[k] = v
+	}
+
+	// Fill nodehash.Digest columns — must equal the parent columns so the
+	// equality constraint added by BuildModule is satisfied.
+	for i := 0; i < nodehash.DigestLen; i++ {
+		col := alloc(cn.NodeHash.Digest[i])
+		for row := 0; row < n; row++ {
+			col[row].Set(&parent[i][row])
+		}
 	}
 
 	return cols

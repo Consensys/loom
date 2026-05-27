@@ -17,6 +17,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/recursion/gadgets/nodehash"
 )
 
 // ColumnNames lists every witness column the trace generator must fill.
@@ -28,6 +29,10 @@ type ColumnNames struct {
 	Left       [DigestWidth]string
 	Right      [DigestWidth]string
 	Parent     [DigestWidth]string
+	// NodeHash exposes the in-module Poseidon2-MD HashNode sub-columns so
+	// the trace generator can populate them. The gadget enforces
+	// Parent[i] == NodeHash.Digest[i] at every row.
+	NodeHash nodehash.ColumnNames
 }
 
 func makeColumnNames(name string) ColumnNames {
@@ -92,10 +97,16 @@ func BuildModule(builder *board.Builder, name string, capacity int) ColumnNames 
 		mod.AssertZeroExceptAt(cur.Sub(prevParent), 0)
 	}
 
-	// TODO (next milestone): assert parent[i] = Poseidon2-MD-HashNode(left, right)[i]
-	// via a cross-module lookup into the Poseidon2 gadget. Without that
-	// constraint, the gadget only checks structural consistency of the path,
-	// not the cryptographic hash binding.
+	// Hash equality: per-row in-circuit HashNode(left, right) check.
+	// Registers two width-16 Poseidon2 sub-groups inside this module and
+	// constrains parent[i] to equal the resulting digest. This closes the
+	// hash-binding gap that used to be a TODO — a malicious prover can no
+	// longer claim arbitrary parent digests; every parent must be the
+	// real Poseidon2-MD compression of (left, right).
+	cn.NodeHash = nodehash.Register(&mod, name+".nh", cn.Left, cn.Right)
+	for i := 0; i < DigestWidth; i++ {
+		mod.AssertZero(expr.Col(cn.Parent[i]).Sub(expr.Col(cn.NodeHash.Digest[i])))
+	}
 
 	builder.AddModule(mod)
 	return cn

@@ -121,6 +121,43 @@ func TestMerkleGadgetRejectsCorruptedBit(t *testing.T) {
 	testutil.ExpectProveOrVerifyFailure(t, &builder, tr)
 }
 
+// TestMerkleGadgetRejectsForgedParent flips parent[0] at row 0 while
+// leaving the nodehash sub-columns honest. The new in-circuit hash-
+// equality constraint should catch the inconsistency between the parent
+// column and nodehash.Digest.
+func TestMerkleGadgetRejectsForgedParent(t *testing.T) {
+	const nLeaves = 8
+	const leafIdx = 2
+	leaves := makeRandomDigests(nLeaves)
+	_, nativeProof := buildNativePath(t, leaves, leafIdx)
+
+	builder := board.NewBuilder()
+	cn := merkle.BuildModule(&builder, "merk_forge", len(nativeProof.Siblings))
+
+	cols := merkle.GenerateTrace(cn, len(nativeProof.Siblings), merkle.Path{
+		Leaf:     leaves[leafIdx],
+		LeafIdx:  leafIdx,
+		Siblings: nativeProof.Siblings,
+	})
+
+	// Flip parent[0] at row 0. nodehash.Digest[0] still holds the true
+	// hash output, so the parent == nodehash.Digest equality constraint
+	// now fails. (Even if chaining might still be satisfied at row 1 if
+	// we also corrupted current there — which we don't — the per-row
+	// hash-equality constraint catches this immediately.)
+	col := cols[cn.Parent[0]]
+	var one koalabear.Element
+	one.SetOne()
+	col[0].Add(&col[0], &one)
+
+	tr := trace.New()
+	for k, v := range cols {
+		tr.SetBase(k, v)
+	}
+
+	testutil.ExpectProveOrVerifyFailure(t, &builder, tr)
+}
+
 // TestMerkleGadgetRejectsBrokenChaining tampers with the current[*] column at
 // row 1 (which is constrained to equal row 0's parent[*]).
 func TestMerkleGadgetRejectsBrokenChaining(t *testing.T) {
