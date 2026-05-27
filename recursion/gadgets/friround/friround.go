@@ -86,49 +86,61 @@ func invTwo() koalabear.Element {
 	return r
 }
 
-// BuildModule registers a friround module in the builder. capacity is the
-// number of queries to be verified at this round; it is rounded up to the
-// next power of two. omegaInv is omega_j^{-1}, the inverse of the round-j
-// domain generator. kBits is the number of bits used to decompose `base`;
-// it must be >= ceil(log2(N_j / 2)).
-//
-// The module includes:
-//   - bit decomposition of `base` (via bits.Register, prefix = name+".base")
-//   - binexp computation of xInv = omegaInv^base
-//   - fold equation per row, using the derived xInv
+// BuildModule registers a standalone friround module in the builder.
+// capacity is the number of queries to be verified at this round; it is
+// rounded up to the next power of two. omegaInv is omega_j^{-1}, the
+// inverse of the round-j domain generator. kBits is the number of bits
+// used to decompose `base`; it must be >= ceil(log2(N_j / 2)).
 //
 // Padding rows store P=Q=alpha=expected=0, base=0 (all bits 0; xInv via
 // binexp = 1, which is correct for base=0). The fold equation then
 // degenerates to 0 = 0 + 0*0*1*1 = 0, which holds.
+//
+// For composing multiple rounds in a single module (e.g. for cross-round
+// chaining), use Register instead.
 func BuildModule(builder *board.Builder, name string, capacity int, omegaInv koalabear.Element, kBits int) ColumnNames {
 	if capacity <= 0 {
 		panic("friround.BuildModule: capacity must be positive")
-	}
-	if kBits <= 0 {
-		panic("friround.BuildModule: kBits must be positive")
 	}
 	n := nextPow2(capacity)
 
 	mod := board.NewModule(name)
 	mod.N = n
+	cn := Register(&mod, name, omegaInv, kBits)
+	builder.AddModule(mod)
+	return cn
+}
+
+// Register appends a friround column-group and its constraints to an
+// existing module under the given prefix. The caller is responsible for
+// setting mod.N (must be a power of two) and for calling
+// builder.AddModule(*mod) once every group is registered.
+//
+// Using Register multiple times on the same module (with distinct prefixes
+// and per-round omegaInv values) lets a single module hold every round of
+// a per-query FRI verifier — the rows index queries, the column-groups
+// index rounds. See gadgets/frichain for the cross-round linkage that
+// glues consecutive groups together.
+func Register(mod *board.Module, prefix string, omegaInv koalabear.Element, kBits int) ColumnNames {
+	if kBits <= 0 {
+		panic("friround.Register: kBits must be positive")
+	}
 
 	cn := ColumnNames{
-		ModuleName: name,
+		ModuleName: prefix,
 		OmegaInv:   omegaInv,
 		KBits:      kBits,
 	}
 	for i := 0; i < extfield.Limbs; i++ {
-		cn.P[i] = PColName(name, i)
-		cn.Q[i] = QColName(name, i)
-		cn.Alpha[i] = AlphaColName(name, i)
-		cn.Expected[i] = ExpColName(name, i)
+		cn.P[i] = PColName(prefix, i)
+		cn.Q[i] = QColName(prefix, i)
+		cn.Alpha[i] = AlphaColName(prefix, i)
+		cn.Expected[i] = ExpColName(prefix, i)
 	}
 
-	// Bit decomposition of base and binexp for xInv.
-	cn.Bits = bits.Register(&mod, name+".base", kBits)
-	cn.BinExp = binexp.Register(&mod, name+".xinv", omegaInv, cn.Bits)
+	cn.Bits = bits.Register(mod, prefix+".base", kBits)
+	cn.BinExp = binexp.Register(mod, prefix+".xinv", omegaInv, cn.Bits)
 
-	// Fold equation per row, using cn.XInvColName() as xInv.
 	invHalf := expr.Const(invTwo())
 	xInv := expr.Col(cn.XInvColName())
 
@@ -146,7 +158,6 @@ func BuildModule(builder *board.Builder, name string, capacity int, omegaInv koa
 		mod.AssertZero(rel)
 	}
 
-	builder.AddModule(mod)
 	return cn
 }
 
