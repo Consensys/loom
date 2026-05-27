@@ -163,6 +163,23 @@ prf, err := loom.Prove(statement, witness)
 err = loom.Verify(statement, prf)
 ```
 
+## Recursion
+
+`recursion/` provides a first Loom-native recursive wrapper:
+
+- `recursion.ProveNextLayer` checks one Loom proof and proves the verifier's algebraic core with Loom.
+- `recursion.ProveAggregationLayer` folds two Loom proofs into one wrapper proof.
+
+Examples:
+
+```sh
+go run ./examples/circuit_recursion
+go run ./examples/aggregation
+```
+
+Current recursion is specialized to a concrete inner proof and arithmetizes the verifier core: public inputs, exposed values, Lagrange values, logup bus checks, AIR quotient identities, the DEEP-quotient-to-FRI bridge, FRI folding arithmetic, Poseidon2 transcript reconstruction, and Poseidon2 Merkle authentication for point sampling and FRI paths.
+
+
 ## Development
 
 ```sh
