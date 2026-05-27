@@ -459,7 +459,6 @@ func computeBaseAIRChunks(piBase map[string]poly.Polynomial, vrel *dag.DAG, N in
 }
 
 func (pr *proverRuntime) ComputeAIRQuotients() error {
-	chunkDomains := make(map[string]*fft.Domain)
 
 	moduleNames := make([]string, 0, len(pr.program.Modules))
 	for name := range pr.program.Modules {
@@ -511,12 +510,10 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 			for i, c := range baseChunks {
 				name := constants.QuotientChunkName(moduleName, i)
 				pr.airTrace.SetBase(name, c)
-				chunkDomains[name] = module.D
 			}
 			for i, c := range extChunks {
 				name := constants.QuotientChunkName(moduleName, i)
 				pr.airTrace.SetExt(name, c)
-				chunkDomains[name] = module.D
 			}
 			writeMu.Unlock()
 		}
@@ -592,30 +589,6 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 		pr.zeta = hash.OutputToExt(zeta)
 	}
 
-	chunkNames := make([]string, 0, len(pr.airTrace.Base)+len(pr.airTrace.Ext))
-	for name := range pr.airTrace.Base {
-		chunkNames = append(chunkNames, name)
-	}
-	for name := range pr.airTrace.Ext {
-		chunkNames = append(chunkNames, name)
-	}
-	sort.Strings(chunkNames)
-
-	evals := make([]ext.E4, len(chunkNames))
-	parallel.Execute(len(chunkNames), func(start, end int) {
-		for i := start; i < end; i++ {
-			name := chunkNames[i]
-			if p, ok := pr.airTrace.Base[name]; ok {
-				evals[i] = poly.EvaluateAtExt(p, chunkDomains[name], pr.zeta)
-			} else {
-				evals[i] = poly.ExtEvaluateAtExt(pr.airTrace.Ext[name], chunkDomains[name], pr.zeta)
-			}
-		}
-	})
-	for i, name := range chunkNames {
-		pr.Proof.SetValueAtZetaExt(name, evals[i])
-	}
-
 	return nil
 }
 
@@ -644,6 +617,8 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 	errs := make([]error, len(moduleNames))
 	parallel.Execute(len(moduleNames), func(start, end int) {
 		for idx := start; idx < end; idx++ {
+
+			// trace polynomials
 			module := pr.program.Modules[moduleNames[idx]]
 			leaves := module.VanishingRelation.LeavesFull(config)
 			local := make([]zetaEval, 0, len(leaves))
@@ -672,6 +647,24 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 				val := poly.EvaluateAtExt(p, module.D, evalPoint)
 				local = append(local, zetaEval{key: leaf.String(), val: val})
 			}
+
+			// air chunks
+			evalPoint := pr.zeta
+			for i := 0; ; i++ {
+				chunkName := constants.QuotientChunkName(moduleNames[idx], i)
+				if chunk, ok := pr.airTrace.Base[chunkName]; ok {
+					val := poly.EvaluateAtExt(chunk, module.D, evalPoint)
+					local = append(local, zetaEval{key: chunkName, val: val})
+					continue
+				}
+				if chunk, ok := pr.airTrace.Ext[chunkName]; ok {
+					val := poly.ExtEvaluateAtExt(chunk, module.D, evalPoint)
+					local = append(local, zetaEval{key: chunkName, val: val})
+					continue
+				}
+				break
+			}
+
 			results[idx] = local
 		}
 	})
@@ -685,6 +678,7 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 			pr.Proof.SetValueAtZetaExt(ev.key, ev.val)
 		}
 	}
+
 	return nil
 }
 
