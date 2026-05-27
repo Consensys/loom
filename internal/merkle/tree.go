@@ -15,6 +15,7 @@ package merkle
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/parallel"
@@ -120,6 +121,23 @@ func (t *Tree) buildInternalNodes() {
 		}
 	}
 
+	// Per-worker scratch slices for the batched path. Allocated once and
+	// reused across all levels (a worker takes a buffer for the duration of
+	// one level's ExecuteWithThreshold and returns it on completion). The
+	// slice header escapes through the BatchNodeHasher interface call, so a
+	// pool avoids the per-batch heap allocation Copilot flagged.
+	type batchScratch struct{ left, right, dst []hash.Digest }
+	var scratchPool sync.Pool
+	if hasBatch {
+		scratchPool.New = func() any {
+			return &batchScratch{
+				left:  make([]hash.Digest, batchSize),
+				right: make([]hash.Digest, batchSize),
+				dst:   make([]hash.Digest, batchSize),
+			}
+		}
+	}
+
 	// At each iteration 'start' is the index of the leftmost node on the
 	// current level and 'start' nodes live on the level (its width).
 	for start := t.nLeaves >> 1; start >= 1; start >>= 1 {
@@ -133,23 +151,22 @@ func (t *Tree) buildInternalNodes() {
 		}
 
 		// Batched fast path. Each goroutine works on a contiguous range of
-		// batches; the per-batch gather/scatter goes through small stack
-		// buffers so there's no shared scratch contention.
+		// batches; the per-batch gather/scatter goes through pooled scratch
+		// buffers so there's no shared contention and no per-batch alloc.
 		nbBatches := start / batchSize
 		parallel.ExecuteWithThreshold(nbBatches, parallelLevelThreshold/batchSize+1, func(lo, hi int) {
-			left := make([]hash.Digest, batchSize)
-			right := make([]hash.Digest, batchSize)
-			dst := make([]hash.Digest, batchSize)
+			s := scratchPool.Get().(*batchScratch)
+			defer scratchPool.Put(s)
 			for b := lo; b < hi; b++ {
 				base := start + b*batchSize
 				for k := 0; k < batchSize; k++ {
 					i := base + k
-					left[k] = t.nodes[2*i]
-					right[k] = t.nodes[2*i+1]
+					s.left[k] = t.nodes[2*i]
+					s.right[k] = t.nodes[2*i+1]
 				}
-				batchHasher.HashNodes(dst, left, right)
+				batchHasher.HashNodes(s.dst, s.left, s.right)
 				for k := 0; k < batchSize; k++ {
-					t.nodes[base+k] = dst[k]
+					t.nodes[base+k] = s.dst[k]
 				}
 			}
 		})

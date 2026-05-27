@@ -365,7 +365,8 @@ func (ph *Poseidon2SpongeBatch16) digest() [Poseidon2SpongeBatchSize]Digest {
 //	state[8..15]  = left[0..7]    (rate, low half)
 //	state[16..23] = right[0..7]   (rate, high half)
 //
-// One Permutation, then the digest is state[0..8].
+// One Permutation, then the digest is the first DIGEST_NB_ELEMENTS (=8)
+// state slots.
 //
 // This replaces the previous MD-style width-16 hasher (two permutations per
 // node, no SIMD path). One permutation per node is enough for collision
