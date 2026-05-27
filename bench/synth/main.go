@@ -21,7 +21,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
+	"runtime/pprof"
+	"runtime/trace"
 	"sort"
 	"sync"
 	"time"
@@ -32,7 +35,7 @@ import (
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/prover"
 	"github.com/consensys/loom/setup"
-	"github.com/consensys/loom/trace"
+	loomtrace "github.com/consensys/loom/trace"
 	"github.com/consensys/loom/verifier"
 )
 
@@ -41,6 +44,7 @@ var (
 	repetitions = flag.Int("repetitions", 16, "number of (a,b,c) tuples per row; trace width = 3 * repetitions")
 	hashName    = flag.String("hash", "poseidon2", "hash backend: poseidon2 | sha256")
 	gomaxprocs  = flag.Int("gomaxprocs", 0, "override GOMAXPROCS (0 = leave default)")
+	profileDir  = flag.String("profile-dir", "", "if non-empty, write cpu_prove.pprof + heap_after_prove.pprof + trace_prove.out into this directory (created if missing)")
 )
 
 const moduleName = "synth"
@@ -78,7 +82,7 @@ func main() {
 
 	// Synthesize trace (column-major). Values are derived from cheap
 	// deterministic arithmetic so trace generation isn't the bottleneck.
-	t := trace.New(width)
+	t := loomtrace.New(width)
 	for k := 0; k < *repetitions; k++ {
 		a := make([]koalabear.Element, rows)
 		b := make([]koalabear.Element, rows)
@@ -113,12 +117,60 @@ func main() {
 		}),
 	}
 
+	// Optional profiling: CPU + execution trace start before Prove,
+	// stop after; heap profile is taken once Prove returns.
+	var cpuFile, traceFile, heapFile *os.File
+	if *profileDir != "" {
+		if err := os.MkdirAll(*profileDir, 0o755); err != nil {
+			fail("mkdir profile dir: %v", err)
+		}
+		var err error
+		cpuFile, err = os.Create(filepath.Join(*profileDir, "cpu_prove.pprof"))
+		if err != nil {
+			fail("create cpu profile: %v", err)
+		}
+		if err := pprof.StartCPUProfile(cpuFile); err != nil {
+			fail("start cpu profile: %v", err)
+		}
+		traceFile, err = os.Create(filepath.Join(*profileDir, "trace_prove.out"))
+		if err != nil {
+			fail("create trace: %v", err)
+		}
+		if err := trace.Start(traceFile); err != nil {
+			fail("start trace: %v", err)
+		}
+	}
+
 	t0 := time.Now()
 	prf, err := prover.Prove(t, setup.ProvingKey{}, nil, program, opts...)
 	if err != nil {
 		fail("Prove: %v", err)
 	}
 	proveWall := time.Since(t0)
+
+	if *profileDir != "" {
+		pprof.StopCPUProfile()
+		trace.Stop()
+		if err := cpuFile.Close(); err != nil {
+			fail("close cpu profile: %v", err)
+		}
+		if err := traceFile.Close(); err != nil {
+			fail("close trace: %v", err)
+		}
+		runtime.GC()
+		var herr error
+		heapFile, herr = os.Create(filepath.Join(*profileDir, "heap_after_prove.pprof"))
+		if herr != nil {
+			fail("create heap profile: %v", herr)
+		}
+		if herr := pprof.Lookup("heap").WriteTo(heapFile, 0); herr != nil {
+			fail("write heap profile: %v", herr)
+		}
+		if herr := heapFile.Close(); herr != nil {
+			fail("close heap profile: %v", herr)
+		}
+		fmt.Printf("profiles -> %s\n", *profileDir)
+	}
 
 	// Serialize for size, then verify.
 	var buf bytes.Buffer
