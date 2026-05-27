@@ -694,16 +694,52 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 		}
 	}
 
+	// Precompute zeta-powers per distinct (n, evalPoint). Tasks evaluating the
+	// same poly size at the same point — which is the common case (no shifts,
+	// or one shift class) — share the bit-reversed power table and the per-
+	// task work drops to one SIMD InnerProduct{,ByElement}.
+	type zPowKey struct {
+		n    int
+		zeta ext.E4
+	}
+	zPowKeyOf := func(t task) zPowKey {
+		n := len(t.basePoly)
+		if t.extPoly != nil {
+			n = len(t.extPoly)
+		}
+		return zPowKey{n: n, zeta: t.evalPoint}
+	}
+	zPowCache := make(map[zPowKey][]ext.E4)
+	for _, t := range tasks {
+		k := zPowKeyOf(t)
+		if k.n <= 1 {
+			continue // EvaluateAtExt has a constant-poly fast path
+		}
+		if _, ok := zPowCache[k]; !ok {
+			zPowCache[k] = poly.BuildZPowBitReversed(k.zeta, k.n)
+		}
+	}
+
 	values := make([]ext.E4, len(tasks))
 	// Inner FFTs run serial: the per-column fan-out already saturates the CPUs.
 	fftOpt := fft.WithNbTasks(1)
 	parallel.Execute(len(tasks), func(start, end int) {
 		for i := start; i < end; i++ {
 			t := tasks[i]
+			k := zPowKeyOf(t)
+			zPow := zPowCache[k]
 			if t.extPoly != nil {
-				values[i] = poly.ExtEvaluateAtExt(t.extPoly, t.D, t.evalPoint, fftOpt)
+				if k.n <= 1 {
+					values[i] = poly.ExtEvaluateAtExt(t.extPoly, t.D, t.evalPoint, fftOpt)
+				} else {
+					values[i] = poly.ExtEvaluateAtExtWithZPow(t.extPoly, t.D, zPow, fftOpt)
+				}
 			} else {
-				values[i] = poly.EvaluateAtExt(t.basePoly, t.D, t.evalPoint, fftOpt)
+				if k.n <= 1 {
+					values[i] = poly.EvaluateAtExt(t.basePoly, t.D, t.evalPoint, fftOpt)
+				} else {
+					values[i] = poly.EvaluateAtExtWithZPow(t.basePoly, t.D, zPow, fftOpt)
+				}
 			}
 		}
 	})
