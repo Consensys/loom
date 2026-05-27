@@ -149,13 +149,8 @@ func EvaluateLagrangeWithWeights(p Polynomial, weights []koalabear.Element) koal
 	if len(p) != len(weights) {
 		panic("EvaluateLagrangeWithWeights: length mismatch")
 	}
-	var res koalabear.Element
-	for i := range p {
-		var term koalabear.Element
-		term.Mul(&p[i], &weights[i])
-		res.Add(&res, &term)
-	}
-	return res
+	pv := koalabear.Vector(p)
+	return (&pv).InnerProduct(koalabear.Vector(weights))
 }
 
 // ExtEvaluateLagrangeWithWeights is the extension-field counterpart of
@@ -164,13 +159,7 @@ func ExtEvaluateLagrangeWithWeights(p ExtPolynomial, weights []koalabear.Element
 	if len(p) != len(weights) {
 		panic("ExtEvaluateLagrangeWithWeights: length mismatch")
 	}
-	var res ext.E4
-	for i := range p {
-		var term ext.E4
-		term.MulByElement(&p[i], &weights[i])
-		res.Add(&res, &term)
-	}
-	return res
+	return ext.Vector(p).InnerProductByElement(koalabear.Vector(weights))
 }
 
 // EvaluateOnExtendedDomainRoot evaluates p, given in Lagrange form over d, at

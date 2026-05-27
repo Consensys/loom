@@ -66,6 +66,42 @@ type DAG struct {
 	VarIndex map[string]int // leaf name → index in vars slice for EvalWithCacheVars
 }
 
+// Clone returns a deep copy of the DAG: fresh DAGNodes and fresh *expr.Leaf for
+// every leaf, with Children rewired to the new nodes. Use this to make per-call
+// mutations (e.g. ComputeQuotient*'s assignment of Leaf.Idx) safe across
+// goroutines that would otherwise share leaf pointers via shared sub-expressions
+// upstream of ExprToDAG.
+//
+// VarIndex is shared (read-only after build).
+func (d *DAG) Clone() *DAG {
+	if d == nil {
+		return nil
+	}
+	cloneOf := make(map[*DAGNode]*DAGNode, len(d.Nodes))
+	nodes := make([]*DAGNode, len(d.Nodes))
+	for i, n := range d.Nodes {
+		nn := *n
+		if n.Leaf != nil {
+			leafCp := *n.Leaf
+			nn.Leaf = &leafCp
+		}
+		if len(n.Children) > 0 {
+			nn.Children = make([]*DAGNode, len(n.Children))
+			for j, c := range n.Children {
+				// children come before parents in topological order, so cloneOf[c] is populated
+				nn.Children[j] = cloneOf[c]
+			}
+		}
+		nodes[i] = &nn
+		cloneOf[n] = &nn
+	}
+	return &DAG{
+		Root:     cloneOf[d.Root],
+		Nodes:    nodes,
+		VarIndex: d.VarIndex,
+	}
+}
+
 // ExprToDAG converts an Expr tree into a DAG by merging identical
 // sub-expressions into shared nodes. Commutativity is respected: (a+b) and
 // (b+a) produce the same node, as do (a*b) and (b*a). Sub is not commutative.
@@ -1367,15 +1403,12 @@ func copyChildVectorToExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.El
 func addChildVectorToExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.Element, extVec [][]ext.E4, N int) {
 	if child.Field == field.Ext {
 		src := extVec[child.Index]
-		for j := range N {
-			dst[j].Add(&dst[j], &src[j])
-		}
+		ext.Vector(dst).Add(ext.Vector(dst), ext.Vector(src))
 		return
 	}
 	src := baseVec[child.Index]
 	for j := range N {
-		rhs := liftBaseToE4(src[j])
-		dst[j].Add(&dst[j], &rhs)
+		dst[j].B0.A0.Add(&dst[j].B0.A0, &src[j])
 	}
 }
 
@@ -1384,15 +1417,12 @@ func addChildVectorToExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.Ele
 func subChildVectorFromExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.Element, extVec [][]ext.E4, N int) {
 	if child.Field == field.Ext {
 		src := extVec[child.Index]
-		for j := range N {
-			dst[j].Sub(&dst[j], &src[j])
-		}
+		ext.Vector(dst).Sub(ext.Vector(dst), ext.Vector(src))
 		return
 	}
 	src := baseVec[child.Index]
 	for j := range N {
-		rhs := liftBaseToE4(src[j])
-		dst[j].Sub(&dst[j], &rhs)
+		dst[j].B0.A0.Sub(&dst[j].B0.A0, &src[j])
 	}
 }
 
@@ -1401,16 +1431,11 @@ func subChildVectorFromExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.E
 func mulChildVectorIntoExt(dst []ext.E4, child *DAGNode, baseVec [][]koalabear.Element, extVec [][]ext.E4, N int) {
 	if child.Field == field.Ext {
 		src := extVec[child.Index]
-		for j := range N {
-			dst[j].Mul(&dst[j], &src[j])
-		}
+		ext.Vector(dst).Mul(ext.Vector(dst), ext.Vector(src))
 		return
 	}
 	src := baseVec[child.Index]
-	for j := range N {
-		rhs := liftBaseToE4(src[j])
-		dst[j].Mul(&dst[j], &rhs)
-	}
+	ext.Vector(dst).MulByElement(ext.Vector(dst), koalabear.Vector(src))
 }
 
 // EvalWithCache evaluates the DAG using the caller-supplied cache slice instead

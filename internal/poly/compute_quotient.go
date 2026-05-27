@@ -382,16 +382,24 @@ func CosetLagrangeToLagrangeNormal(p Polynomial) {
 // CosetLagrangeToLagrangeNormalWithCache converts p in place using cache for
 // the FFT domain.
 func CosetLagrangeToLagrangeNormalWithCache(p Polynomial, cache *DomainCache) {
-	N := uint64(len(p))
-	d := cache.Get(N)
-
-	// Step 1: coset-Lagrange Normal → BitReversed IFFT (= c_k * FrGen^k, BitReversed)
-	d.FFTInverse(p, fft.DIF)
-
-	// Step 2: BitReverse → Normal order (= c_k * FrGen^k)
+	CosetLagrangeNormalToCanonicalWithCache(p, cache)
+	cache.Get(uint64(len(p))).FFT(p, fft.DIF)
 	utils.BitReverse(p)
+}
 
-	// Step 3: divide by FrGen^k to get canonical coefficients c_k
+// CosetLagrangeNormalToCanonicalWithCache converts p in place from
+// coset-Lagrange Normal form (evaluations on the coset {FrGen·ω^j}) to
+// canonical Normal form (coefficients c_k in standard order). This is the
+// first half of CosetLagrangeToLagrangeNormalWithCache; callers that
+// subsequently need a different transform (e.g. AIR quotient chunking, which
+// FFTs each N-sized chunk individually) avoid a redundant round-trip FFT.
+func CosetLagrangeNormalToCanonicalWithCache(p Polynomial, cache *DomainCache) {
+	d := cache.Get(uint64(len(p)))
+
+	d.FFTInverse(p, fft.DIF) // coset-Lagrange Normal → coset-canonical BitReversed
+	utils.BitReverse(p)      // → coset-canonical Normal
+
+	// Multiply by invFrGen^k to get standard canonical coefficients c_k.
 	invFrGen := d.FrMultiplicativeGen
 	invFrGen.Inverse(&invFrGen)
 	acc := koalabear.One()
@@ -399,12 +407,6 @@ func CosetLagrangeToLagrangeNormalWithCache(p Polynomial, cache *DomainCache) {
 		p[k].Mul(&p[k], &acc)
 		acc.Mul(&acc, &invFrGen)
 	}
-
-	// Step 4: canonical Normal → Lagrange BitReversed
-	d.FFT(p, fft.DIF)
-
-	// Step 5: BitReverse → Lagrange Normal
-	utils.BitReverse(p)
 }
 
 // CosetExtLagrangeToLagrangeNormal converts an extension polynomial from
@@ -416,8 +418,15 @@ func CosetExtLagrangeToLagrangeNormal(p ExtPolynomial) {
 // CosetExtLagrangeToLagrangeNormalWithCache converts p in place using cache for
 // the FFT domain.
 func CosetExtLagrangeToLagrangeNormalWithCache(p ExtPolynomial, cache *DomainCache) {
-	N := uint64(len(p))
-	d := cache.Get(N)
+	CosetExtLagrangeNormalToCanonicalWithCache(p, cache)
+	cache.Get(uint64(len(p))).FFTExt(p, fft.DIF)
+	utils.BitReverse(p)
+}
+
+// CosetExtLagrangeNormalToCanonicalWithCache is the ext-field counterpart of
+// CosetLagrangeNormalToCanonicalWithCache.
+func CosetExtLagrangeNormalToCanonicalWithCache(p ExtPolynomial, cache *DomainCache) {
+	d := cache.Get(uint64(len(p)))
 
 	d.FFTInverseExt(p, fft.DIF)
 	utils.BitReverse(p)
@@ -429,7 +438,4 @@ func CosetExtLagrangeToLagrangeNormalWithCache(p ExtPolynomial, cache *DomainCac
 		p[k].MulByElement(&p[k], &acc)
 		acc.Mul(&acc, &invFrGen)
 	}
-
-	d.FFTExt(p, fft.DIF)
-	utils.BitReverse(p)
 }

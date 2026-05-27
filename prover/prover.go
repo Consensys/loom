@@ -27,9 +27,11 @@ import (
 	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/internal/dag"
 	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/fri"
 	"github.com/consensys/loom/internal/hash"
+	"github.com/consensys/loom/internal/parallel"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/internal/reedsolomon"
 	"github.com/consensys/loom/proof"
@@ -414,69 +416,113 @@ func (pr *proverRuntime) ExecuteSteps() error {
 	return nil
 }
 
-func (pr *proverRuntime) ComputeAIRQuotients() error {
-	chunkDomains := make(map[string]*fft.Domain)
-
-	for moduleName, module := range pr.program.Modules {
-		if module.VanishingRelation.Degree() <= 0 {
-			continue
-		}
-
-		N := module.N
-		if module.VanishingRelation.Root.Field == field.Ext {
-			quotient, err := poly.ComputeQuotientMixed(pr.t.Base, pr.t.Ext, *module.VanishingRelation, N, poly.WithDomainCache(&pr.domainCache))
-			if err != nil {
-				return err
-			}
-
-			poly.CosetExtLagrangeToLagrangeNormalWithCache(quotient, &pr.domainCache)
-			bigSize := len(quotient)
-			bigD := pr.domainCache.Get(uint64(bigSize))
-			bigD.FFTInverseExt(quotient, fft.DIF)
-			utils.BitReverse(quotient)
-
-			numChunks := bigSize / N
-			for i := 0; i < numChunks; i++ {
-				chunk := make(poly.ExtPolynomial, N)
-				copy(chunk, quotient[i*N:(i+1)*N])
-				module.D.FFTExt(chunk, fft.DIF)
-				utils.BitReverse(chunk)
-				chunkName := constants.QuotientChunkName(moduleName, i)
-				pr.airTrace.SetExt(chunkName, chunk)
-				chunkDomains[chunkName] = module.D
-			}
-			continue
-		}
-
-		quotient, err := poly.ComputeQuotient(pr.t.Base, *module.VanishingRelation, N, poly.WithDomainCache(&pr.domainCache))
-		if err != nil {
-			return err
-		}
-
-		poly.CosetLagrangeToLagrangeNormalWithCache(quotient, &pr.domainCache)
-		bigSize := len(quotient)
-		bigD := pr.domainCache.Get(uint64(bigSize))
-		bigD.FFTInverse(quotient, fft.DIF)
-		utils.BitReverse(quotient)
-
-		numChunks := bigSize / N
-		for i := 0; i < numChunks; i++ {
-			chunk := make(poly.Polynomial, N)
-			copy(chunk, quotient[i*N:(i+1)*N])
-			module.D.FFT(chunk, fft.DIF)
-			utils.BitReverse(chunk)
-			chunkName := constants.QuotientChunkName(moduleName, i)
-			pr.airTrace.SetBase(chunkName, chunk)
-			chunkDomains[chunkName] = module.D
-		}
+// computeExtAIRQuotientChunks computes the AIR quotient for a single ext-rooted module
+// and returns its N-sized chunks in Lagrange form, ready to commit. Chunks
+// alias non-overlapping windows of the quotient backing array (no per-chunk
+// copy); after this returns the caller owns the chunks and the original
+// quotient is unreachable.
+func computeExtAIRQuotientChunks(piBase map[string]poly.Polynomial, piExt map[string]poly.ExtPolynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache) ([]poly.ExtPolynomial, error) {
+	quotient, err := poly.ComputeQuotientMixed(piBase, piExt, *vrel, N, poly.WithDomainCache(cache))
+	if err != nil {
+		return nil, err
 	}
+	// quotient is in coset-Lagrange Normal; convert directly to canonical
+	// Normal so chunking can sub-slice the backing array.
+	poly.CosetExtLagrangeNormalToCanonicalWithCache(quotient, cache)
 
-	chunksByN := map[int]*mixedCommitGroup{}
+	chunks := make([]poly.ExtPolynomial, len(quotient)/N)
+	for i := range chunks {
+		chunk := quotient[i*N : (i+1)*N : (i+1)*N]
+		D.FFTExt(chunk, fft.DIF)
+		utils.BitReverse(chunk)
+		chunks[i] = chunk
+	}
+	return chunks, nil
+}
+
+// computeBaseAIRQuotientChunks is the base-field counterpart of computeExtAIRQuotientChunks.
+func computeBaseAIRQuotientChunks(piBase map[string]poly.Polynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache) ([]poly.Polynomial, error) {
+	quotient, err := poly.ComputeQuotient(piBase, *vrel, N, poly.WithDomainCache(cache))
+	if err != nil {
+		return nil, err
+	}
+	poly.CosetLagrangeNormalToCanonicalWithCache(quotient, cache)
+
+	chunks := make([]poly.Polynomial, len(quotient)/N)
+	for i := range chunks {
+		chunk := quotient[i*N : (i+1)*N : (i+1)*N]
+		D.FFT(chunk, fft.DIF)
+		utils.BitReverse(chunk)
+		chunks[i] = chunk
+	}
+	return chunks, nil
+}
+
+func (pr *proverRuntime) ComputeAIRQuotients() error {
+
 	moduleNames := make([]string, 0, len(pr.program.Modules))
 	for name := range pr.program.Modules {
 		moduleNames = append(moduleNames, name)
 	}
 	sort.Strings(moduleNames)
+
+	// Per-module quotient computation is independent: each writes disjoint chunk
+	// names into airTrace, reads only from the shared pr.t. pr.domainCache is
+	// internally locked; trace map writes need an explicit lock. The DAG is
+	// cloned per goroutine because ComputeQuotient* mutates Leaf.Idx and modules
+	// can share *expr.Leaf pointers via cross-module arguments (Lookup, etc.).
+	var (
+		writeMu  sync.Mutex
+		errMu    sync.Mutex
+		firstErr error
+	)
+	parallel.Execute(len(moduleNames), func(start, end int) {
+		for idx := start; idx < end; idx++ {
+			moduleName := moduleNames[idx]
+			module := pr.program.Modules[moduleName]
+			if module.VanishingRelation.Degree() <= 0 {
+				continue
+			}
+
+			N := module.N
+			vrel := module.VanishingRelation.Clone()
+
+			var (
+				baseChunks []poly.Polynomial
+				extChunks  []poly.ExtPolynomial
+				err        error
+			)
+			if module.VanishingRelation.Root.Field == field.Ext {
+				extChunks, err = computeExtAIRQuotientChunks(pr.t.Base, pr.t.Ext, vrel, N, module.D, &pr.domainCache)
+			} else {
+				baseChunks, err = computeBaseAIRQuotientChunks(pr.t.Base, vrel, N, module.D, &pr.domainCache)
+			}
+			if err != nil {
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				errMu.Unlock()
+				return
+			}
+
+			writeMu.Lock()
+			for i, c := range baseChunks {
+				name := constants.QuotientChunkName(moduleName, i)
+				pr.airTrace.SetBase(name, c)
+			}
+			for i, c := range extChunks {
+				name := constants.QuotientChunkName(moduleName, i)
+				pr.airTrace.SetExt(name, c)
+			}
+			writeMu.Unlock()
+		}
+	})
+	if firstErr != nil {
+		return firstErr
+	}
+
+	chunksByN := map[int]*mixedCommitGroup{}
 	for _, moduleName := range moduleNames {
 		module := pr.program.Modules[moduleName]
 		N := module.N
@@ -543,13 +589,6 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 		pr.zeta = hash.OutputToExt(zeta)
 	}
 
-	for chunkName, chunkPoly := range pr.airTrace.Base {
-		pr.Proof.SetValueAtZetaExt(chunkName, poly.EvaluateAtExt(chunkPoly, chunkDomains[chunkName], pr.zeta))
-	}
-	for chunkName, chunkPoly := range pr.airTrace.Ext {
-		pr.Proof.SetValueAtZetaExt(chunkName, poly.ExtEvaluateAtExt(chunkPoly, chunkDomains[chunkName], pr.zeta))
-	}
-
 	return nil
 }
 
@@ -563,34 +602,109 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 		expr.WithoutPublicColumns(),
 	)
 
-	for _, module := range pr.program.Modules {
-		leaves := module.VanishingRelation.LeavesFull(config)
-		for _, leaf := range leaves {
-			evalPoint := pr.zeta
-			if leaf.Type == expr.RotatedColumn {
-				shift := ((leaf.Shift % module.N) + module.N) % module.N
-				var omegaPow koalabear.Element
-				omegaPow.SetOne()
-				for k := 0; k < shift; k++ {
-					omegaPow.Mul(&omegaPow, &module.D.Generator)
+	type zetaEval struct {
+		key string
+		val ext.E4
+	}
+
+	moduleNames := make([]string, 0, len(pr.program.Modules))
+	for name := range pr.program.Modules {
+		moduleNames = append(moduleNames, name)
+	}
+	sort.Strings(moduleNames)
+
+	results := make([][]zetaEval, len(moduleNames))
+	errs := make([]error, len(moduleNames))
+	parallel.Execute(len(moduleNames), func(start, end int) {
+		for idx := start; idx < end; idx++ {
+
+			// trace polynomials
+			module := pr.program.Modules[moduleNames[idx]]
+			leaves := module.VanishingRelation.LeavesFull(config)
+			local := make([]zetaEval, 0, len(leaves))
+			for _, leaf := range leaves {
+				evalPoint := pr.zeta
+				if leaf.Type == expr.RotatedColumn {
+					shift := ((leaf.Shift % module.N) + module.N) % module.N
+					var omegaPow koalabear.Element
+					omegaPow.SetOne()
+					for k := 0; k < shift; k++ {
+						omegaPow.Mul(&omegaPow, &module.D.Generator)
+					}
+					evalPoint.MulByElement(&evalPoint, &omegaPow)
 				}
-				evalPoint.MulByElement(&evalPoint, &omegaPow)
+
+				if p, ok := pr.t.Ext[leaf.Name]; ok {
+					val := poly.ExtEvaluateAtExt(p, module.D, evalPoint)
+					local = append(local, zetaEval{key: leaf.String(), val: val})
+					continue
+				}
+				p, ok := pr.t.Base[leaf.Name]
+				if !ok {
+					errs[idx] = fmt.Errorf("ComputeEvaluationsAtZeta: column %q not found in trace", leaf.Name)
+					return
+				}
+				val := poly.EvaluateAtExt(p, module.D, evalPoint)
+				local = append(local, zetaEval{key: leaf.String(), val: val})
 			}
 
-			if p, ok := pr.t.Ext[leaf.Name]; ok {
-				val := poly.ExtEvaluateAtExt(p, module.D, evalPoint)
-				pr.Proof.SetValueAtZetaExt(leaf.String(), val)
-				continue
+			// air chunks
+			evalPoint := pr.zeta
+			for i := 0; ; i++ {
+				chunkName := constants.QuotientChunkName(moduleNames[idx], i)
+				if chunk, ok := pr.airTrace.Base[chunkName]; ok {
+					val := poly.EvaluateAtExt(chunk, module.D, evalPoint)
+					local = append(local, zetaEval{key: chunkName, val: val})
+					continue
+				}
+				if chunk, ok := pr.airTrace.Ext[chunkName]; ok {
+					val := poly.ExtEvaluateAtExt(chunk, module.D, evalPoint)
+					local = append(local, zetaEval{key: chunkName, val: val})
+					continue
+				}
+				break
 			}
-			p, ok := pr.t.Base[leaf.Name]
-			if !ok {
-				return fmt.Errorf("ComputeEvaluationsAtZeta: column %q not found in trace", leaf.Name)
-			}
-			val := poly.EvaluateAtExt(p, module.D, evalPoint)
-			pr.Proof.SetValueAtZetaExt(leaf.String(), val)
+
+			results[idx] = local
+		}
+	})
+	for _, err := range errs {
+		if err != nil {
+			return err
 		}
 	}
+	for _, local := range results {
+		for _, ev := range local {
+			pr.Proof.SetValueAtZetaExt(ev.key, ev.val)
+		}
+	}
+
 	return nil
+}
+
+func addScaledExtColumn(dst, col, scratch poly.ExtPolynomial, alpha *ext.E4) {
+	if len(col) == 1 {
+		var term ext.E4
+		term.Mul(&col[0], alpha)
+		for i := range dst {
+			dst[i].Add(&dst[i], &term)
+		}
+		return
+	}
+	ext.Vector(scratch).ScalarMul(ext.Vector(col), alpha)
+	ext.Vector(dst).Add(ext.Vector(dst), ext.Vector(scratch))
+}
+
+func addScaledBaseColumn(dst poly.ExtPolynomial, col poly.Polynomial, alpha *ext.E4) {
+	if len(col) == 1 {
+		var term ext.E4
+		term.MulByElement(alpha, &col[0])
+		for i := range dst {
+			dst[i].Add(&dst[i], &term)
+		}
+		return
+	}
+	ext.Vector(dst).MulAccByElement(col, alpha)
 }
 
 func (pr *proverRuntime) ComputeDeepQuotient() error {
@@ -616,6 +730,7 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 		alphaAcc.SetOne()
 
 		domainN := domainBySize[N]
+		scratch := make(poly.ExtPolynomial, N)
 
 		for j, shift := range dqLayout.Shifts[i] {
 			var omegaShift koalabear.Element
@@ -640,21 +755,10 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 				if !hasExt && !hasBase {
 					return fmt.Errorf("ComputeDeepQuotient: column %q not found in trace", names[k])
 				}
-				for x := 0; x < N; x++ {
-					var value, term ext.E4
-					if hasExt {
-						if len(colExt) == 1 {
-							value.Set(&colExt[0])
-						} else {
-							value.Set(&colExt[x])
-						}
-					} else if len(colBase) == 1 {
-						value.Lift(&colBase[0])
-					} else {
-						value.Lift(&colBase[x])
-					}
-					term.Mul(&value, &alphaAcc)
-					C_s[x].Add(&C_s[x], &term)
+				if hasExt {
+					addScaledExtColumn(C_s, colExt, scratch, &alphaAcc)
+				} else {
+					addScaledBaseColumn(C_s, colBase, &alphaAcc)
 				}
 				var term ext.E4
 				term.Mul(&evalAtZ, &alphaAcc)
@@ -681,15 +785,10 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 				if !hasExt && !hasBase {
 					return fmt.Errorf("ComputeDeepQuotient: AIR chunk %q not found in trace", chunkName)
 				}
-				for x := 0; x < N; x++ {
-					var value, term ext.E4
-					if hasExt {
-						value.Set(&chunkExt[x])
-					} else {
-						value.Lift(&chunkBase[x])
-					}
-					term.Mul(&value, &alphaAcc)
-					C_s[x].Add(&C_s[x], &term)
+				if hasExt {
+					addScaledExtColumn(C_s, chunkExt, scratch, &alphaAcc)
+				} else {
+					addScaledBaseColumn(C_s, chunkBase, &alphaAcc)
 				}
 				var term ext.E4
 				term.Mul(&evalAtZ, &alphaAcc)
