@@ -976,19 +976,40 @@ func openWMerkleAt(tree commitment.WMerkleTree, source commitmentOpeningSource, 
 // commitments. Trees are walked in the canonical layout order
 // (setup → trace per round → AIR), and each tree is opened at
 // `s mod tree.NumLeaves()` (= s reduced mod RATE·N/2 for the tree's size N).
+//
+// The (query, tree) opens are fully independent — disjoint output slots,
+// read-only access to allTrees / openingSources / domainCache — so we
+// flatten them into one work list and fan it out.
 func (pr *proverRuntime) SampleEvaluations() error {
 	NQ := len(pr.queryPositions)
 	pr.Proof.PointSamplings = make([][]commitment.WMerkleProof, NQ)
-	for q, s := range pr.queryPositions {
-		samplings := make([]commitment.WMerkleProof, pr.layout.NumTrees)
-		for i, tree := range pr.allTrees {
-			wp, err := openWMerkleAt(tree, pr.openingSources[i], s, &pr.domainCache)
+	for q := range pr.Proof.PointSamplings {
+		pr.Proof.PointSamplings[q] = make([]commitment.WMerkleProof, pr.layout.NumTrees)
+	}
+
+	numTrees := pr.layout.NumTrees
+	total := NQ * numTrees
+	if total == 0 {
+		return nil
+	}
+
+	errs := make([]error, total)
+	parallel.Execute(total, func(start, end int) {
+		for t := start; t < end; t++ {
+			q := t / numTrees
+			i := t % numTrees
+			wp, err := openWMerkleAt(pr.allTrees[i], pr.openingSources[i], pr.queryPositions[q], &pr.domainCache)
 			if err != nil {
-				return fmt.Errorf("SampleEvaluations: tree %d query %d: %w", i, q, err)
+				errs[t] = fmt.Errorf("SampleEvaluations: tree %d query %d: %w", i, q, err)
+				return
 			}
-			samplings[i] = wp
+			pr.Proof.PointSamplings[q][i] = wp
 		}
-		pr.Proof.PointSamplings[q] = samplings
+	})
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
