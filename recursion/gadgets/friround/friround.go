@@ -158,6 +158,17 @@ func Register(mod *board.Module, prefix string, omegaInv koalabear.Element, kBit
 		mod.AssertZero(rel)
 	}
 
+	// Pin alpha constant across all rows: alpha is one FS challenge per
+	// round, shared by every query. Without this constraint a malicious
+	// prover could supply a different alpha per row. Applied at every row
+	// except the last (the wraparound at row N-1 is excluded).
+	if mod.N >= 2 {
+		for i := 0; i < extfield.Limbs; i++ {
+			rel := expr.Col(cn.Alpha[i]).Sub(expr.Rot(cn.Alpha[i], 1))
+			mod.AssertZeroExceptAt(rel, mod.N-1)
+		}
+	}
+
 	return cn
 }
 

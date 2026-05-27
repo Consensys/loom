@@ -164,6 +164,33 @@ func TestFriRoundGadgetRejectsCorruptBase(t *testing.T) {
 	testutil.ExpectProveOrVerifyFailure(t, &builder, tr)
 }
 
+// TestFriRoundGadgetRejectsVaryingAlpha confirms the new alpha-pinning
+// constraint rejects a witness where alpha differs between rows. The
+// fold equation would still hold on each row in isolation; pinning
+// catches the cross-row inconsistency.
+func TestFriRoundGadgetRejectsVaryingAlpha(t *testing.T) {
+	const halfNj = 16
+	omegaInv, kBits := roundDomainParams(halfNj)
+
+	q1 := friround.Query{P: randomExt(t), Q: randomExt(t), Alpha: randomExt(t), Base: 1}
+	q2 := friround.Query{P: randomExt(t), Q: randomExt(t), Alpha: randomExt(t), Base: 2}
+
+	builder := board.NewBuilder()
+	cn := friround.BuildModule(&builder, "round_alpha", 2, omegaInv, kBits)
+	cols := friround.GenerateTrace(cn, 2, []friround.Query{q1, q2})
+
+	// q1.Alpha != q2.Alpha (overwhelmingly likely for random samples), so
+	// the alpha columns already differ row-to-row. The trace remains
+	// self-consistent on each row (each row's expected matches its own
+	// fold formula), but the pinning constraint detects the mismatch.
+
+	tr := trace.New()
+	for k, v := range cols {
+		tr.SetBase(k, v)
+	}
+	testutil.ExpectProveOrVerifyFailure(t, &builder, tr)
+}
+
 // TestFriRoundGadgetRejectsCorruptXInv tampers with one binexp step,
 // breaking the xInv derivation chain and hence the fold equation.
 func TestFriRoundGadgetRejectsCorruptXInv(t *testing.T) {

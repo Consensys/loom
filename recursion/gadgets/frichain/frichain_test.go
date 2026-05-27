@@ -110,14 +110,14 @@ func log2(n int) int {
 // SINGLE module to verify a complete FRI traversal (commit phase replayed
 // natively, fold equations + cross-round chaining checked in-circuit).
 //
-// Setup: N = 16, D = 4, numRounds = 2. One query at position s.
+// Setup: N = 16, D = 4, numRounds = 2. Two queries in one module — alpha
+// is now pinned constant across rows, so we need at least two real queries
+// (padding rows with alpha=0 would break the pinning constraint).
 func TestEndToEndFRIQueryWithChain(t *testing.T) {
 	const N = 16
 	const numRounds = 2
-	const s = 5 // query position in [0, N/2 = 8)
+	queries := []int{5, 2}
 
-	// 1. Build a native FRI traversal so we know each round's (P, Q, alpha)
-	// at the query position.
 	initialLayer := make([]ext.E4, N)
 	for i := range initialLayer {
 		initialLayer[i] = randExt(t)
@@ -128,9 +128,7 @@ func TestEndToEndFRIQueryWithChain(t *testing.T) {
 	}
 	layers, omegasInv, kBits := simulateFRI(initialLayer, alphas)
 
-	// 2. Build the verifier circuit: one module with numRounds friround
-	// groups + frichain links between them.
-	const capacity = 2 // 1 query padded to N=2
+	capacity := len(queries)
 	mod := board.NewModule("fri_query")
 	mod.N = capacity
 
@@ -146,22 +144,20 @@ func TestEndToEndFRIQueryWithChain(t *testing.T) {
 	builder := board.NewBuilder()
 	builder.AddModule(mod)
 
-	// 3. Fill the trace.
 	tr := trace.New()
-
 	for j := 0; j < numRounds; j++ {
 		Nj := N >> uint(j)
-		base := s % (Nj / 2)
-
-		query := friround.Query{
-			P:     layers[j][base],
-			Q:     layers[j][base+Nj/2],
-			Alpha: alphas[j],
-			Base:  uint64(base),
+		roundQueries := make([]friround.Query, len(queries))
+		for qi, s := range queries {
+			base := s % (Nj / 2)
+			roundQueries[qi] = friround.Query{
+				P:     layers[j][base],
+				Q:     layers[j][base+Nj/2],
+				Alpha: alphas[j],
+				Base:  uint64(base),
+			}
 		}
-		// Pad row uses base=0 / zero values.
-		queries := []friround.Query{query}
-		cols := friround.GenerateTrace(groups[j], capacity, queries)
+		cols := friround.GenerateTrace(groups[j], capacity, roundQueries)
 		for k, v := range cols {
 			tr.SetBase(k, v)
 		}
@@ -170,12 +166,13 @@ func TestEndToEndFRIQueryWithChain(t *testing.T) {
 	testutil.ProveAndVerify(t, &builder, tr)
 }
 
-// TestEndToEndFRIQueryRejectsCorruptedRound tampers with round 0's expected
-// limb and confirms the chain catches the mismatch with round 1's P/Q.
+// TestEndToEndFRIQueryRejectsCorruptedRound tampers with round 1's P and Q
+// limbs and confirms the chain catches the mismatch with round 0's
+// expected.
 func TestEndToEndFRIQueryRejectsCorruptedRound(t *testing.T) {
 	const N = 16
 	const numRounds = 2
-	const s = 5
+	queries := []int{5, 2}
 
 	initialLayer := make([]ext.E4, N)
 	for i := range initialLayer {
@@ -184,7 +181,7 @@ func TestEndToEndFRIQueryRejectsCorruptedRound(t *testing.T) {
 	alphas := []ext.E4{randExt(t), randExt(t)}
 	layers, omegasInv, kBits := simulateFRI(initialLayer, alphas)
 
-	const capacity = 2
+	capacity := len(queries)
 	mod := board.NewModule("fri_chain_corrupt")
 	mod.N = capacity
 
@@ -201,21 +198,24 @@ func TestEndToEndFRIQueryRejectsCorruptedRound(t *testing.T) {
 	tr := trace.New()
 	for j := 0; j < numRounds; j++ {
 		Nj := N >> uint(j)
-		base := s % (Nj / 2)
-		queries := []friround.Query{{
-			P:     layers[j][base],
-			Q:     layers[j][base+Nj/2],
-			Alpha: alphas[j],
-			Base:  uint64(base),
-		}}
-		cols := friround.GenerateTrace(groups[j], capacity, queries)
+		roundQueries := make([]friround.Query, len(queries))
+		for qi, s := range queries {
+			base := s % (Nj / 2)
+			roundQueries[qi] = friround.Query{
+				P:     layers[j][base],
+				Q:     layers[j][base+Nj/2],
+				Alpha: alphas[j],
+				Base:  uint64(base),
+			}
+		}
+		cols := friround.GenerateTrace(groups[j], capacity, roundQueries)
 		for k, v := range cols {
 			tr.SetBase(k, v)
 		}
 	}
 
-	// Tamper round 1's P[0] limb so the chain check from round 0's expected
-	// to round 1's selected fails.
+	// Tamper round 1's P[0] and Q[0] at query 0 so the chain check fails
+	// on whichever branch top_bit selects.
 	var one koalabear.Element
 	one.SetOne()
 	pCol := tr.Base[groups[1].P[0]]

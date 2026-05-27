@@ -152,6 +152,15 @@ func LinkWithLevel(mod *board.Module, cnPrev, cnNext friround.ColumnNames, ld Le
 	for _, rel := range chainTarget.EqualityConstraints(expectedNext) {
 		mod.AssertZero(rel)
 	}
+
+	// Pin gamma constant across all rows (one FS challenge per level,
+	// shared by every query). Applied at every row except the last.
+	if mod.N >= 2 {
+		for i := 0; i < extfield.Limbs; i++ {
+			rel := expr.Col(ld.Gamma[i]).Sub(expr.Rot(ld.Gamma[i], 1))
+			mod.AssertZeroExceptAt(rel, mod.N-1)
+		}
+	}
 }
 
 func checkRoundShapes(cnPrev, cnNext friround.ColumnNames) {
