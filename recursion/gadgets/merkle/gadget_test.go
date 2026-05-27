@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/hash"
@@ -26,19 +27,30 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-// makeRandomDigests returns nLeaves deterministic-but-arbitrary digests.
-func makeRandomDigests(nLeaves int) []hash.Digest {
-	leaves := make([]hash.Digest, nLeaves)
-	for i := range leaves {
-		for j := 0; j < hash.DIGEST_NB_ELEMENTS; j++ {
-			leaves[i][j].SetUint64(uint64(i*100 + j + 1))
-		}
+// makeRandomLeafPairs returns nLeaves deterministic (LeafP, LeafQ) ext
+// pairs and their HashLeaf digests.
+func makeRandomLeafPairs(nLeaves int) (pairs [][2]ext.E4, digests []hash.Digest) {
+	pairs = make([][2]ext.E4, nLeaves)
+	digests = make([]hash.Digest, nLeaves)
+	h := commitment.Poseidon2LeafHasher{}
+	for i := range pairs {
+		var P, Q ext.E4
+		P.B0.A0.SetUint64(uint64(i*1000 + 1))
+		P.B0.A1.SetUint64(uint64(i*1000 + 2))
+		P.B1.A0.SetUint64(uint64(i*1000 + 3))
+		P.B1.A1.SetUint64(uint64(i*1000 + 4))
+		Q.B0.A0.SetUint64(uint64(i*1000 + 5))
+		Q.B0.A1.SetUint64(uint64(i*1000 + 6))
+		Q.B1.A0.SetUint64(uint64(i*1000 + 7))
+		Q.B1.A1.SetUint64(uint64(i*1000 + 8))
+		pairs[i] = [2]ext.E4{P, Q}
+		digests[i] = h.HashLeaf(nil, []commitment.PairExt{{P, Q}})
 	}
-	return leaves
+	return
 }
 
-// buildNativePath builds a native Merkle tree over the given leaves and
-// returns the path proof for leafIdx.
+// buildNativePath builds a native Merkle tree over the given leaf digests
+// and returns the path proof for leafIdx.
 func buildNativePath(t *testing.T, leaves []hash.Digest, leafIdx int) (hash.Digest, internalmerkle.Proof) {
 	t.Helper()
 	tree, err := internalmerkle.New(len(leaves), commitment.Poseidon2NodeHasher{})
@@ -58,15 +70,15 @@ func buildNativePath(t *testing.T, leaves []hash.Digest, leafIdx int) (hash.Dige
 func TestMerkleGadgetDepth8(t *testing.T) {
 	const nLeaves = 256
 	const leafIdx = 42
-	leaves := makeRandomDigests(nLeaves)
-	root, nativeProof := buildNativePath(t, leaves, leafIdx)
-	_ = root // root binding is left for a follow-up milestone.
+	pairs, digests := makeRandomLeafPairs(nLeaves)
+	root, nativeProof := buildNativePath(t, digests, leafIdx)
 
 	builder := board.NewBuilder()
 	cn := merkle.BuildModule(&builder, "merk", len(nativeProof.Siblings))
 
 	cols := merkle.GenerateTrace(cn, len(nativeProof.Siblings), merkle.Path{
-		Leaf:     leaves[leafIdx],
+		LeafP:    pairs[leafIdx][0],
+		LeafQ:    pairs[leafIdx][1],
 		LeafIdx:  leafIdx,
 		Siblings: nativeProof.Siblings,
 	})
@@ -93,19 +105,19 @@ func TestMerkleGadgetDepth8(t *testing.T) {
 func TestMerkleGadgetRejectsCorruptedBit(t *testing.T) {
 	const nLeaves = 8
 	const leafIdx = 3
-	leaves := makeRandomDigests(nLeaves)
-	_, nativeProof := buildNativePath(t, leaves, leafIdx)
+	pairs, digests := makeRandomLeafPairs(nLeaves)
+	_, nativeProof := buildNativePath(t, digests, leafIdx)
 
 	builder := board.NewBuilder()
-	cn := merkle.BuildModule(&builder, "merk", len(nativeProof.Siblings))
+	cn := merkle.BuildModule(&builder, "merk_bit", len(nativeProof.Siblings))
 
 	cols := merkle.GenerateTrace(cn, len(nativeProof.Siblings), merkle.Path{
-		Leaf:     leaves[leafIdx],
+		LeafP:    pairs[leafIdx][0],
+		LeafQ:    pairs[leafIdx][1],
 		LeafIdx:  leafIdx,
 		Siblings: nativeProof.Siblings,
 	})
 
-	// Flip the bit at row 0 (the leaf step).
 	bit := cols[cn.Bit]
 	if bit[0].IsZero() {
 		bit[0].SetOne()
@@ -122,29 +134,24 @@ func TestMerkleGadgetRejectsCorruptedBit(t *testing.T) {
 }
 
 // TestMerkleGadgetRejectsForgedParent flips parent[0] at row 0 while
-// leaving the nodehash sub-columns honest. The new in-circuit hash-
-// equality constraint should catch the inconsistency between the parent
-// column and nodehash.Digest.
+// leaving the nodehash sub-columns honest. The hash-equality constraint
+// catches the mismatch.
 func TestMerkleGadgetRejectsForgedParent(t *testing.T) {
 	const nLeaves = 8
 	const leafIdx = 2
-	leaves := makeRandomDigests(nLeaves)
-	_, nativeProof := buildNativePath(t, leaves, leafIdx)
+	pairs, digests := makeRandomLeafPairs(nLeaves)
+	_, nativeProof := buildNativePath(t, digests, leafIdx)
 
 	builder := board.NewBuilder()
 	cn := merkle.BuildModule(&builder, "merk_forge", len(nativeProof.Siblings))
 
 	cols := merkle.GenerateTrace(cn, len(nativeProof.Siblings), merkle.Path{
-		Leaf:     leaves[leafIdx],
+		LeafP:    pairs[leafIdx][0],
+		LeafQ:    pairs[leafIdx][1],
 		LeafIdx:  leafIdx,
 		Siblings: nativeProof.Siblings,
 	})
 
-	// Flip parent[0] at row 0. nodehash.Digest[0] still holds the true
-	// hash output, so the parent == nodehash.Digest equality constraint
-	// now fails. (Even if chaining might still be satisfied at row 1 if
-	// we also corrupted current there — which we don't — the per-row
-	// hash-equality constraint catches this immediately.)
 	col := cols[cn.Parent[0]]
 	var one koalabear.Element
 	one.SetOne()
@@ -163,23 +170,62 @@ func TestMerkleGadgetRejectsForgedParent(t *testing.T) {
 func TestMerkleGadgetRejectsBrokenChaining(t *testing.T) {
 	const nLeaves = 8
 	const leafIdx = 0
-	leaves := makeRandomDigests(nLeaves)
-	_, nativeProof := buildNativePath(t, leaves, leafIdx)
+	pairs, digests := makeRandomLeafPairs(nLeaves)
+	_, nativeProof := buildNativePath(t, digests, leafIdx)
 
 	builder := board.NewBuilder()
-	cn := merkle.BuildModule(&builder, "merk", len(nativeProof.Siblings))
+	cn := merkle.BuildModule(&builder, "merk_chain", len(nativeProof.Siblings))
 
 	cols := merkle.GenerateTrace(cn, len(nativeProof.Siblings), merkle.Path{
-		Leaf:     leaves[leafIdx],
+		LeafP:    pairs[leafIdx][0],
+		LeafQ:    pairs[leafIdx][1],
 		LeafIdx:  leafIdx,
 		Siblings: nativeProof.Siblings,
 	})
 
-	// Corrupt current[0] at row 1.
 	cur := cols[cn.Current[0]]
 	var one koalabear.Element
 	one.SetOne()
 	cur[1].Add(&cur[1], &one)
+
+	tr := trace.New()
+	for k, v := range cols {
+		tr.SetBase(k, v)
+	}
+
+	testutil.ExpectProveOrVerifyFailure(t, &builder, tr)
+}
+
+// TestMerkleGadgetRejectsBadLeafP tampers with LeafP[0] at row 0. The
+// leafhash sub-trace still computes a valid digest from the tampered
+// LeafP, but that digest no longer matches the path's root (which was
+// built from the honest leaf). The leafhash equality constraint at row 0
+// catches the mismatch indirectly via the chain reaching the wrong root.
+//
+// To make the failure local and unambiguous, we tamper with LeafP at row
+// 0 in the trace WITHOUT regenerating the sponge sub-columns: that breaks
+// the leafhash gadget's own input-equality constraint (sponge.In[3..6] =
+// LeafP limbs) — caught immediately.
+func TestMerkleGadgetRejectsBadLeafP(t *testing.T) {
+	const nLeaves = 8
+	const leafIdx = 1
+	pairs, digests := makeRandomLeafPairs(nLeaves)
+	_, nativeProof := buildNativePath(t, digests, leafIdx)
+
+	builder := board.NewBuilder()
+	cn := merkle.BuildModule(&builder, "merk_leaf", len(nativeProof.Siblings))
+
+	cols := merkle.GenerateTrace(cn, len(nativeProof.Siblings), merkle.Path{
+		LeafP:    pairs[leafIdx][0],
+		LeafQ:    pairs[leafIdx][1],
+		LeafIdx:  leafIdx,
+		Siblings: nativeProof.Siblings,
+	})
+
+	leafP0 := cols[cn.LeafP[0]]
+	var one koalabear.Element
+	one.SetOne()
+	leafP0[0].Add(&leafP0[0], &one)
 
 	tr := trace.New()
 	for k, v := range cols {

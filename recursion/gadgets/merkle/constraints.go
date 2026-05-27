@@ -17,6 +17,8 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/recursion/extfield"
+	"github.com/consensys/loom/recursion/gadgets/leafhash"
 	"github.com/consensys/loom/recursion/gadgets/nodehash"
 )
 
@@ -29,9 +31,19 @@ type ColumnNames struct {
 	Left       [DigestWidth]string
 	Right      [DigestWidth]string
 	Parent     [DigestWidth]string
-	// NodeHash exposes the in-module Poseidon2-MD HashNode sub-columns so
-	// the trace generator can populate them. The gadget enforces
-	// Parent[i] == NodeHash.Digest[i] at every row.
+	// LeafP / LeafQ are the ext-rail opening pair limbs (extfield order:
+	// B0.A0, B1.A0, B0.A1, B1.A1). Only the row-0 values are meaningful;
+	// other rows are filled with arbitrary self-consistent values to
+	// satisfy the per-row leafhash constraints.
+	LeafP [extfield.Limbs]string
+	LeafQ [extfield.Limbs]string
+	// LeafHash exposes the in-module width-24 Poseidon2 sponge sub-
+	// columns used to bind (LeafP, LeafQ) to a digest. The gadget
+	// enforces Current[i] == LeafHash.Digest[i] at row 0.
+	LeafHash leafhash.ColumnNames
+	// NodeHash exposes the per-row in-module Poseidon2-MD HashNode
+	// sub-columns. The gadget enforces Parent[i] == NodeHash.Digest[i]
+	// at every row.
 	NodeHash nodehash.ColumnNames
 }
 
@@ -43,6 +55,10 @@ func makeColumnNames(name string) ColumnNames {
 		cn.Left[i] = LeftColName(name, i)
 		cn.Right[i] = RightColName(name, i)
 		cn.Parent[i] = ParentColName(name, i)
+	}
+	for i := 0; i < extfield.Limbs; i++ {
+		cn.LeafP[i] = LeafPColName(name, i)
+		cn.LeafQ[i] = LeafQColName(name, i)
 	}
 	return cn
 }
@@ -99,13 +115,25 @@ func BuildModule(builder *board.Builder, name string, capacity int) ColumnNames 
 
 	// Hash equality: per-row in-circuit HashNode(left, right) check.
 	// Registers two width-16 Poseidon2 sub-groups inside this module and
-	// constrains parent[i] to equal the resulting digest. This closes the
-	// hash-binding gap that used to be a TODO — a malicious prover can no
-	// longer claim arbitrary parent digests; every parent must be the
-	// real Poseidon2-MD compression of (left, right).
+	// constrains parent[i] to equal the resulting digest. A malicious
+	// prover can no longer claim arbitrary parent digests; every parent
+	// must be the real Poseidon2-MD compression of (left, right).
 	cn.NodeHash = nodehash.Register(&mod, name+".nh", cn.Left, cn.Right)
 	for i := 0; i < DigestWidth; i++ {
 		mod.AssertZero(expr.Col(cn.Parent[i]).Sub(expr.Col(cn.NodeHash.Digest[i])))
+	}
+
+	// Leaf binding: register an ext-rail leafhash in this module and
+	// constrain current[i] at row 0 to equal the leafhash digest. The
+	// leafhash applies at every row (its sponge sub-columns are part of
+	// the AIR), but the digest equality is gated to row 0 via
+	// AssertZeroAt — leafP/leafQ at other rows can be arbitrary.
+	cn.LeafHash = leafhash.RegisterExtLeafHash(&mod, name+".lh", cn.LeafP, cn.LeafQ)
+	for i := 0; i < DigestWidth; i++ {
+		mod.AssertZeroAt(
+			expr.Col(cn.Current[i]).Sub(expr.Col(cn.LeafHash.Digest[i])),
+			0,
+		)
 	}
 
 	builder.AddModule(mod)

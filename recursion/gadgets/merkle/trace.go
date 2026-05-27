@@ -15,17 +15,27 @@ package merkle
 
 import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
+	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/hash"
+	"github.com/consensys/loom/recursion/extfield"
+	"github.com/consensys/loom/recursion/gadgets/leafhash"
 	"github.com/consensys/loom/recursion/gadgets/nodehash"
 	"github.com/consensys/loom/recursion/gadgets/poseidon2"
+	"github.com/consensys/loom/recursion/gadgets/poseidon2sponge"
 )
 
-// Path captures the inputs for a single Merkle-path verification.
+// Path captures the inputs for one ext-rail Merkle-path verification.
+//
+// The leaf is supplied as an opening pair (LeafP, LeafQ); the gadget
+// computes its digest in-circuit via leafhash and constrains the path's
+// row-0 current to equal that digest. LeafIdx selects the path direction
+// (its low bit per layer).
 type Path struct {
-	Leaf     hash.Digest
-	LeafIdx  int           // 0-based index of the leaf within its layer
-	Siblings []hash.Digest // length = number of Merkle steps
+	LeafP    ext.E4
+	LeafQ    ext.E4
+	LeafIdx  int
+	Siblings []hash.Digest
 }
 
 // GenerateTrace fills every column referenced by cn with the witness values
@@ -73,8 +83,23 @@ func GenerateTrace(cn ColumnNames, capacity int, path Path) map[string][]koalabe
 	}
 	bitCol := alloc(cn.Bit)
 
+	// Allocate leafP / leafQ columns (ext-rail opening pair, extfield limb
+	// order). They are meaningful only at row 0; rows 1..n-1 are filled
+	// with the same row-0 values so the per-row leafhash constraints
+	// stay consistent.
+	leafP := [extfield.Limbs][]koalabear.Element{}
+	leafQ := [extfield.Limbs][]koalabear.Element{}
+	for i := 0; i < extfield.Limbs; i++ {
+		leafP[i] = alloc(cn.LeafP[i])
+		leafQ[i] = alloc(cn.LeafQ[i])
+	}
+
 	hasher := commitment.Poseidon2NodeHasher{}
-	current := path.Leaf
+	leafHasher := commitment.Poseidon2LeafHasher{}
+
+	// The path starts from the LEAF DIGEST = HashLeaf(LeafP, LeafQ).
+	leafDigest := leafHasher.HashLeaf(nil, []commitment.PairExt{{path.LeafP, path.LeafQ}})
+	current := leafDigest
 	idx := path.LeafIdx
 
 	// Collect per-row (left, right) digests for the in-module nodehash
@@ -119,6 +144,17 @@ func GenerateTrace(cn ColumnNames, capacity int, path Path) map[string][]koalabe
 		}
 		nodes[row] = nh
 
+		// Fill leafP / leafQ at every row with the row-0 leaf values, so
+		// the per-row leafhash gadget is self-consistent across the
+		// entire module domain. (Only row 0 is constrained to match
+		// current; other rows just keep the leafhash AIR satisfied.)
+		pLimbs := extfield.FromE4(path.LeafP)
+		qLimbs := extfield.FromE4(path.LeafQ)
+		for i := 0; i < extfield.Limbs; i++ {
+			leafP[i][row].Set(&pLimbs[i])
+			leafQ[i][row].Set(&qLimbs[i])
+		}
+
 		current = nextParent
 		idx >>= 1
 	}
@@ -145,6 +181,30 @@ func GenerateTrace(cn ColumnNames, capacity int, path Path) map[string][]koalabe
 			col[row].Set(&parent[i][row])
 		}
 	}
+
+	// Fill the in-module leafhash sub-columns. Every row computes
+	// HashLeaf(leafP, leafQ) on its own (leafP/leafQ are the same row-0
+	// values across all rows in our trace, so every row's digest equals
+	// the actual leaf digest — which matches current at row 0 thanks to
+	// the AssertZeroAt constraint).
+	rowLeaves := make([]leafhash.ExtLeaf, n)
+	for row := 0; row < n; row++ {
+		var leaf leafhash.ExtLeaf
+		for i := 0; i < extfield.Limbs; i++ {
+			leaf.P[i].Set(&leafP[i][row])
+			leaf.Q[i].Set(&leafQ[i][row])
+		}
+		rowLeaves[row] = leaf
+	}
+	spongeInputs := leafhash.BuildSpongeInputs(rowLeaves)
+	spongeCols, _ := poseidon2sponge.GenerateTrace(cn.LeafHash.Sponge, n, spongeInputs)
+	for k, v := range spongeCols {
+		cols[k] = v
+	}
+	// The leafhash digest columns are aliases of the sponge's last-round
+	// post[0..7] cells (Register sets cn.LeafHash.Digest[i] =
+	// sponge.Post[NbRounds-1][i]). poseidon2sponge.GenerateTrace already
+	// fills those, so no separate writes are needed here.
 
 	return cols
 }
