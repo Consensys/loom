@@ -131,6 +131,41 @@ func RegisterAIRCheck(
 	zeta extfield.E4Expr,
 	chunks []extfield.E4Expr,
 ) {
+	for _, rel := range buildAIRRelations(d, N, leafValues, zeta, chunks) {
+		mod.AssertZero(rel)
+	}
+}
+
+// RegisterAIRCheckAtRow is the row-gated variant of RegisterAIRCheck:
+// the 4 limb equalities are applied via AssertZeroAt(rel, rowIdx) so
+// the check only fires at the specified row. Use this when zeta is
+// supplied as an exposed value or as a sparse witness that only holds
+// the real challenge at one row (e.g. the digest row of an in-module
+// challenger24 sequence). Other rows are unconstrained.
+func RegisterAIRCheckAtRow(
+	mod *board.Module,
+	d *dag.DAG,
+	N int,
+	leafValues map[string]extfield.E4Expr,
+	zeta extfield.E4Expr,
+	chunks []extfield.E4Expr,
+	rowIdx int,
+) {
+	for _, rel := range buildAIRRelations(d, N, leafValues, zeta, chunks) {
+		mod.AssertZeroAt(rel, rowIdx)
+	}
+}
+
+// buildAIRRelations is the shared expression-building core used by
+// RegisterAIRCheck and RegisterAIRCheckAtRow. Returns the 4 per-limb
+// constraint expressions for V(zeta) - (zeta^N - 1) * Q(zeta).
+func buildAIRRelations(
+	d *dag.DAG,
+	N int,
+	leafValues map[string]extfield.E4Expr,
+	zeta extfield.E4Expr,
+	chunks []extfield.E4Expr,
+) [extfield.Limbs]expr.Expr {
 	v := EvalDAG(d, leafValues)
 	zetaPowN := PowExt(zeta, N)
 	one := extfield.One()
@@ -152,8 +187,6 @@ func RegisterAIRCheck(
 	}
 
 	rhs := zetaPowNMinusOne.Mul(qZeta)
-	for _, rel := range v.EqualityConstraints(rhs) {
-		mod.AssertZero(rel)
-	}
+	return v.EqualityConstraints(rhs)
 }
 

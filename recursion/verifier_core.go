@@ -31,8 +31,14 @@ import (
 	"github.com/consensys/loom/public"
 	"github.com/consensys/loom/recursion/extfield"
 	"github.com/consensys/loom/recursion/gadgets/airzeta"
+	"github.com/consensys/loom/recursion/gadgets/challenger24"
 	"github.com/consensys/loom/trace"
 )
+
+// fiatshamir-private constant from internal/fiat-shamir/transcript.go.
+// Duplicated here because the original is unexported. If Loom ever
+// changes that value, this constant must change too.
+const challengeIDDomainTag uint64 = 0x46534944 // "FSID"
 
 
 // buildVerifierCore compiles a board.Program that verifies a single
@@ -116,13 +122,63 @@ func buildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 		mods = append(mods, data)
 	}
 
+	// Stage 3: derive zeta in-circuit via a chain of challenger24 sponges
+	// (one per FS challenge in the inner proof's transcript). Each
+	// sponge's input expressions include constants for name/bindings
+	// and Rot references to the previous sponge's digest for the
+	// previous-challenge slot.
+	chain, err := computeChallengeChain(input)
+	if err != nil {
+		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: build challenge chain: %w", err)
+	}
+
+	// Total sponge rows across the chain.
+	totalPerms := 0
+	for _, step := range chain {
+		totalPerms += challenger24.NumPermutationsExternal(len(step.NativeInputs))
+	}
+	n := nextPow2Internal(totalPerms)
+	if n < 2 {
+		n = 2
+	}
+
 	builder := board.NewBuilder()
 	verifierMod := board.NewModule("airverify")
-	verifierMod.N = 2
+	verifierMod.N = n
 
-	// Allocate zeta limb columns (shared across all module checks).
+	// Register sponges in chain order. Each sponge gets its own prefix.
+	chSpongeCNs := make([]challenger24.ColumnNames, len(chain))
+	startRow := 0
+	for i, step := range chain {
+		inputs := make([]expr.Expr, len(step.NativeInputs))
+		for j, v := range step.NativeInputs {
+			inputs[j] = expr.Const(v)
+		}
+		// If this isn't the first challenge, override the previous-digest
+		// slots with Rot references to the previous sponge's digest
+		// columns. The Rot offset is -1 because the previous sponge's
+		// digest lives at module row (startRow - 1).
+		if !step.IsFirst {
+			prevCN := chSpongeCNs[i-1]
+			for d := 0; d < challenger24.DigestLen; d++ {
+				inputs[step.PrevDigestStart+d] = expr.Rot(prevCN.Digest[d], -1)
+			}
+		}
+		prefix := fmt.Sprintf("airverify.ch%d", i)
+		cn := challenger24.RegisterAt(&verifierMod, prefix, inputs, startRow)
+		chSpongeCNs[i] = cn
+		startRow += cn.NPermutations
+	}
+	// Final challenger (last in chain) produces zeta.
+	chCN := chSpongeCNs[len(chSpongeCNs)-1]
+
+	// zeta limbs are the first 4 digest limbs in OutputToExt order:
+	//   limb[0] = digest[0]   (B0.A0)
+	//   limb[1] = digest[2]   (B1.A0)
+	//   limb[2] = digest[1]   (B0.A1)
+	//   limb[3] = digest[3]   (B1.A1)
 	zetaCols := [extfield.Limbs]string{
-		"airverify.zeta_0", "airverify.zeta_1", "airverify.zeta_2", "airverify.zeta_3",
+		chCN.Digest[0], chCN.Digest[2], chCN.Digest[1], chCN.Digest[3],
 	}
 	zetaExpr := extfield.FromLimbs(
 		expr.Col(zetaCols[0]), expr.Col(zetaCols[1]),
@@ -149,15 +205,9 @@ func buildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 		)
 	}
 
-	for i := 0; i < extfield.Limbs; i++ {
-		zetaLimbs := extfield.FromE4(zeta)
-		traceFill = append(traceFill, allocation{colName: zetaCols[i], value: zetaLimbs[i]})
-	}
-
 	for _, data := range mods {
 		// Allocate leaf-value E4 columns for this module's DAG.
 		leafExprs := make(map[string]extfield.E4Expr, len(data.leafVals))
-		// Iterate in sorted order so column naming is deterministic.
 		leafKeys := make([]string, 0, len(data.leafVals))
 		for k := range data.leafVals {
 			leafKeys = append(leafKeys, k)
@@ -173,19 +223,25 @@ func buildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 			chunkExprs[i] = addE4(fmt.Sprintf("airverify.%s.chunk_%d", data.name, i), c)
 		}
 
-		airzeta.RegisterAIRCheck(
+		// AIR check fires at the digest row only — that's the single row
+		// where zeta-limb columns actually hold the FS-derived value.
+		airzeta.RegisterAIRCheckAtRow(
 			&verifierMod,
 			data.mod.VanishingRelation,
 			data.mod.N,
 			leafExprs,
 			zetaExpr,
 			chunkExprs,
+			chCN.DigestRow,
 		)
 	}
 
 	builder.AddModule(verifierMod)
 
-	// Fill trace: every witness column gets `value` repeated across all N rows.
+	// Fill trace: the witness leaf/chunk columns get their value at every
+	// row (the value-at-zeta is constant; padding rows are fine since the
+	// AIR check is row-gated). Then layer in the challenger24 sponge
+	// sub-columns from the native sponge replay.
 	tr := trace.New()
 	for _, a := range traceFill {
 		col := make([]koalabear.Element, verifierMod.N)
@@ -195,11 +251,204 @@ func buildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 		tr.SetBase(a.colName, col)
 	}
 
+	// Trace fill for each sponge in the chain. Each call to
+	// GenerateTraceWithSize produces a different set of columns (its
+	// own poseidon2sponge sub-trace under prefix airverify.ch<i>.sp).
+	for i, step := range chain {
+		chCols, _ := challenger24.GenerateTraceWithSize(chSpongeCNs[i], n, step.NativeInputs)
+		for k, v := range chCols {
+			tr.SetBase(k, v)
+		}
+	}
+
+	// Sanity check: the final sponge's digest must equal the natively-
+	// derived zeta. If this fails, the FS replay / chain build has a bug.
+	expectedZeta := hashDigestToE4(chain[len(chain)-1].NativeDigest)
+	if !expectedZeta.Equal(&zeta) {
+		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: chain digest != native zeta")
+	}
+
 	pg, err := board.Compile(&builder)
 	if err != nil {
 		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: compile verifier: %w", err)
 	}
 	return pg, tr, nil
+}
+
+// challengeStep describes one challenge in the inner proof's FS chain.
+// PrevDigestStart is the position in NativeInputs where the previous
+// challenge's digest is absorbed (only meaningful when IsFirst is
+// false). PrevDigestStart + 8 must be <= Rate so the prev digest fits
+// in chunk_0 — that simplifies the in-circuit Rot wiring (currently
+// the only supported layout).
+type challengeStep struct {
+	Name            string
+	NativeInputs    []koalabear.Element
+	NativeDigest    hash.Digest
+	IsFirst         bool
+	PrevDigestStart int
+}
+
+// computeChallengeChain replays the inner proof's FS transcript to
+// produce, for every challenge in the chain, the absorbed-element
+// sequence and the resulting digest. Each step's native sequence is:
+//
+//	NameEncoded || PrevDigest (if not first) || Bindings
+//
+// where Bindings is everything fs.Bind()ed to this challenge in order.
+//
+// The chain terminates with the __zeta challenge — DEEP_ALPHA and
+// later challenges aren't included yet (they'd be the next milestone
+// for full FS soundness).
+func computeChallengeChain(input RecursionInput) ([]challengeStep, error) {
+	hb, err := commitment.HashBackendByID(input.Proof.HashBackendID)
+	if err != nil {
+		return nil, err
+	}
+
+	pg := input.Program
+	layout := prover.BuildLayout(pg, 0)
+
+	roots := make([]hash.Digest, layout.NumTrees)
+	for i, r := range input.Proof.Commitments {
+		roots[layout.SetupEnd+i] = r
+	}
+
+	numRounds := len(pg.FScolumnsDependencies)
+	fs := fiatshamir.NewTranscript(hb.NewTranscriptHasher())
+	for i := 0; i < numRounds; i++ {
+		if err := fs.NewChallenge(constants.CanonicalChallengeName(i)); err != nil {
+			return nil, err
+		}
+	}
+	if err := fs.NewChallenge(constants.FINAL_EVALUATION_POINT); err != nil {
+		return nil, err
+	}
+
+	// Build the per-challenge binding sequences in the order the inner
+	// verifier accumulates them.
+	bindings := make(map[string][]koalabear.Element)
+	initialChallenge := constants.InitialChallengeName(numRounds)
+
+	bindings[initialChallenge] = append(bindings[initialChallenge],
+		hash.StringToElements(constants.HASH_BACKEND_DOMAIN_TAG, hb.ID)...)
+	if err := fs.Bind(initialChallenge, hash.StringToElements(constants.HASH_BACKEND_DOMAIN_TAG, hb.ID)); err != nil {
+		return nil, err
+	}
+	if len(input.PublicInputs) > 0 {
+		te := input.PublicInputs.TranscriptElements()
+		bindings[initialChallenge] = append(bindings[initialChallenge], te...)
+		if err := fs.Bind(initialChallenge, te); err != nil {
+			return nil, err
+		}
+	}
+
+	// Per-round trace roots get bound to canonical_<r>.
+	for r := 0; r < numRounds; r++ {
+		name := constants.CanonicalChallengeName(r)
+		for i := layout.TraceBegin[r]; i < layout.TraceEnd[r]; i++ {
+			root := roots[i]
+			bindings[name] = append(bindings[name], root[:]...)
+			if err := fs.Bind(name, root[:]); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	// AIR roots bind to __zeta.
+	for i := layout.AIRBegin; i < layout.AIREnd; i++ {
+		root := roots[i]
+		bindings[constants.FINAL_EVALUATION_POINT] = append(bindings[constants.FINAL_EVALUATION_POINT], root[:]...)
+		if err := fs.Bind(constants.FINAL_EVALUATION_POINT, root[:]); err != nil {
+			return nil, err
+		}
+	}
+
+	// Compute each challenge in order, recording the sequence absorbed.
+	challengeNames := make([]string, 0, numRounds+1)
+	for r := 0; r < numRounds; r++ {
+		challengeNames = append(challengeNames, constants.CanonicalChallengeName(r))
+	}
+	challengeNames = append(challengeNames, constants.FINAL_EVALUATION_POINT)
+
+	steps := make([]challengeStep, 0, len(challengeNames))
+	for i, name := range challengeNames {
+		var seq []koalabear.Element
+		seq = append(seq, hash.StringToElements(challengeIDDomainTag, name)...)
+		nameLen := len(seq)
+		prevDigestStart := -1
+		if i > 0 {
+			prevDigestStart = nameLen
+			seq = append(seq, steps[i-1].NativeDigest[:]...)
+		}
+		seq = append(seq, bindings[name]...)
+
+		digest, err := fs.ComputeChallenge(name)
+		if err != nil {
+			return nil, err
+		}
+		// Cross-check: native digest should equal the value the fs
+		// transcript just produced. (This is a sanity check on our
+		// chain reconstruction.)
+		if !chainDigestsEqual(digest, sumOf(seq, hb)) {
+			return nil, fmt.Errorf("recursion: computeChallengeChain reconstruction mismatch for challenge %q", name)
+		}
+
+		if i > 0 && prevDigestStart+8 > challenger24.Rate {
+			return nil, fmt.Errorf("recursion: challenge %q has prev_digest spanning sponge chunks (name encoding %d elts, total before bindings %d); current wiring requires it to fit in chunk_0 (Rate=%d)", name, nameLen, prevDigestStart+8, challenger24.Rate)
+		}
+
+		steps = append(steps, challengeStep{
+			Name:            name,
+			NativeInputs:    seq,
+			NativeDigest:    digest,
+			IsFirst:         i == 0,
+			PrevDigestStart: prevDigestStart,
+		})
+	}
+	return steps, nil
+}
+
+// chainDigestsEqual compares two digests element-wise (avoids needing a
+// dependency on hash.Digest equality method).
+func chainDigestsEqual(a, b hash.Digest) bool {
+	for i := range a {
+		if !a[i].Equal(&b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// sumOf returns the Poseidon2-sponge digest of seq using a fresh hasher
+// for hb — a standalone reference value to cross-check the FS replay.
+func sumOf(seq []koalabear.Element, hb commitment.HashBackend) hash.Digest {
+	h := hb.NewTranscriptHasher()
+	h.Reset()
+	h.WriteElements(seq...)
+	return h.Sum()
+}
+
+// hashDigestToE4 mirrors hash.OutputToExt for an 8-element digest:
+// the first 4 elements become an E4 with the OutputToExt mapping.
+func hashDigestToE4(d hash.Digest) ext.E4 {
+	var v ext.E4
+	v.B0.A0.Set(&d[0])
+	v.B0.A1.Set(&d[1])
+	v.B1.A0.Set(&d[2])
+	v.B1.A1.Set(&d[3])
+	return v
+}
+
+func nextPow2Internal(n int) int {
+	if n <= 1 {
+		return 1
+	}
+	r := 1
+	for r < n {
+		r <<= 1
+	}
+	return r
 }
 
 // replayInnerFS replays the inner proof's Fiat-Shamir transcript to
