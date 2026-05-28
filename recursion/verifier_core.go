@@ -21,6 +21,7 @@ import (
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
 	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
@@ -408,15 +409,65 @@ func computeChallengeChain(input RecursionInput) ([]challengeStep, error) {
 	if err := fs.NewChallenge(constants.DEEP_ALPHA); err != nil {
 		return nil, err
 	}
-	// Stage 6: extend transcript registration through FRI's first fold
-	// challenge when the inner proof carries FRI data. Loom's fri.Prove
-	// registers this challenge after the prover-side FS setup; we mirror
-	// the same registration order so our chain's previous_digest links
-	// are correct.
+	// Stage 6/7: extend transcript registration through every FRI
+	// challenge when the inner proof carries FRI data. The registration
+	// order must mirror fri.registerChallenges:
+	//
+	//   fri_fold_0
+	//   for j in 1..friNumRounds-1: (fri_level_l_gamma)? fri_fold_j
+	//   fri_query_0 .. fri_query_{NUM_QUERIES-1}
 	hasFRI := len(input.Proof.DeepQuotientCommitment) > 0
+	var (
+		friNumRounds int
+		levelAtRound map[int]int // round j -> level index l
+	)
 	if hasFRI {
+		maxN := 0
+		for _, m := range pg.Modules {
+			if m.N > maxN {
+				maxN = m.N
+			}
+		}
+		friNumRounds = log2int(maxN)
+
+		// Distinct sizes (decreasing) — level 0 = largest, then smaller.
+		sizesSet := map[int]bool{}
+		for _, m := range pg.Modules {
+			sizesSet[m.N] = true
+		}
+		sortedSizes := make([]int, 0, len(sizesSet))
+		for sz := range sizesSet {
+			sortedSizes = append(sortedSizes, sz)
+		}
+		sort.Sort(sort.Reverse(sort.IntSlice(sortedSizes)))
+
+		levelAtRound = map[int]int{}
+		for l := 1; l < len(sortedSizes); l++ {
+			ratio := sortedSizes[0] / sortedSizes[l]
+			jl := log2int(ratio)
+			if jl >= 1 && jl < friNumRounds {
+				levelAtRound[jl] = l
+			}
+		}
+
+		// Register in fri.Prove's order.
 		if err := fs.NewChallenge(friFoldName(0)); err != nil {
 			return nil, err
+		}
+		for j := 1; j < friNumRounds; j++ {
+			if l, ok := levelAtRound[j]; ok {
+				if err := fs.NewChallenge(friLevelGammaName(l)); err != nil {
+					return nil, err
+				}
+			}
+			if err := fs.NewChallenge(friFoldName(j)); err != nil {
+				return nil, err
+			}
+		}
+		for k := 0; k < constants.NUM_QUERIES; k++ {
+			if err := fs.NewChallenge(friQueryName(k)); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -499,11 +550,49 @@ func computeChallengeChain(input RecursionInput) ([]challengeStep, error) {
 		}
 	}
 
-	// fri_fold_0 binds the level-0 DEEP-quotient commitment root.
+	// FRI static bindings:
+	//   - fri_fold_0          binds DeepQuotientCommitment[0] (T_0 root)
+	//   - fri_fold_j (j > 0)  binds DeepQuotientFriProof.FRIRoots[j-1] (T_j root)
+	//   - fri_level_l_gamma   binds DeepQuotientCommitment[l] (level-l root)
+	//   - fri_query_0         binds transcriptExtPoly(FinalPolyExt)
+	//                          (or transcriptBasePoly for base-rail FRI;
+	//                          Loom's DEEP rail is ext, so we expect ext)
+	// fri_query_k (k > 0) bindings are DYNAMIC: bound in the step loop
+	// from the previous query's just-computed digest.
 	if hasFRI {
-		root := input.Proof.DeepQuotientCommitment[0]
-		bindings[friFoldName(0)] = append(bindings[friFoldName(0)], root[:]...)
-		if err := fs.Bind(friFoldName(0), root[:]); err != nil {
+		root0 := input.Proof.DeepQuotientCommitment[0]
+		bindings[friFoldName(0)] = append(bindings[friFoldName(0)], root0[:]...)
+		if err := fs.Bind(friFoldName(0), root0[:]); err != nil {
+			return nil, err
+		}
+
+		for j := 1; j < friNumRounds; j++ {
+			if l, ok := levelAtRound[j]; ok {
+				levelRoot := input.Proof.DeepQuotientCommitment[l]
+				name := friLevelGammaName(l)
+				bindings[name] = append(bindings[name], levelRoot[:]...)
+				if err := fs.Bind(name, levelRoot[:]); err != nil {
+					return nil, err
+				}
+			}
+			tjRoot := input.Proof.DeepQuotientFriProof.FRIRoots[j-1]
+			fname := friFoldName(j)
+			bindings[fname] = append(bindings[fname], tjRoot[:]...)
+			if err := fs.Bind(fname, tjRoot[:]); err != nil {
+				return nil, err
+			}
+		}
+
+		var finalEnc []koalabear.Element
+		fp := input.Proof.DeepQuotientFriProof
+		if fp.FinalField == field.Ext {
+			finalEnc = transcriptExtPolyElements(fp.FinalPolyExt)
+		} else {
+			finalEnc = transcriptBasePolyElements(fp.FinalPolyBase)
+		}
+		q0 := friQueryName(0)
+		bindings[q0] = append(bindings[q0], finalEnc...)
+		if err := fs.Bind(q0, finalEnc); err != nil {
 			return nil, err
 		}
 	}
@@ -517,10 +606,30 @@ func computeChallengeChain(input RecursionInput) ([]challengeStep, error) {
 	challengeNames = append(challengeNames, constants.DEEP_ALPHA)
 	if hasFRI {
 		challengeNames = append(challengeNames, friFoldName(0))
+		for j := 1; j < friNumRounds; j++ {
+			if l, ok := levelAtRound[j]; ok {
+				challengeNames = append(challengeNames, friLevelGammaName(l))
+			}
+			challengeNames = append(challengeNames, friFoldName(j))
+		}
+		for k := 0; k < constants.NUM_QUERIES; k++ {
+			challengeNames = append(challengeNames, friQueryName(k))
+		}
 	}
 
 	steps := make([]challengeStep, 0, len(challengeNames))
 	for i, name := range challengeNames {
+		// Dynamic binding: fri_query_k for k > 0 binds the previous
+		// query's just-computed digest. We do this BEFORE computing
+		// this challenge so it's included in the absorbed sequence.
+		if k, ok := parseQueryK(name); ok && k > 0 {
+			prev := steps[i-1].NativeDigest
+			bindings[name] = append(bindings[name], prev[:]...)
+			if err := fs.Bind(name, prev[:]); err != nil {
+				return nil, err
+			}
+		}
+
 		var seq []koalabear.Element
 		seq = append(seq, hash.StringToElements(challengeIDDomainTag, name)...)
 		nameLen := len(seq)
@@ -600,6 +709,54 @@ func sumOf(seq []koalabear.Element, hb commitment.HashBackend) hash.Digest {
 func friFoldName(j int) string       { return fmt.Sprintf("fri_fold_%d", j) }
 func friLevelGammaName(l int) string { return fmt.Sprintf("fri_level_%d_gamma", l) }
 func friQueryName(k int) string      { return fmt.Sprintf("fri_query_%d", k) }
+
+// parseQueryK returns (k, true) if name has the form "fri_query_<k>".
+func parseQueryK(name string) (int, bool) {
+	const prefix = "fri_query_"
+	if len(name) <= len(prefix) || name[:len(prefix)] != prefix {
+		return 0, false
+	}
+	var k int
+	if _, err := fmt.Sscanf(name[len(prefix):], "%d", &k); err != nil {
+		return 0, false
+	}
+	return k, true
+}
+
+func log2int(n int) int {
+	k := 0
+	for n > 1 {
+		n >>= 1
+		k++
+	}
+	return k
+}
+
+// transcriptBasePolyElements / transcriptExtPolyElements mirror fri's
+// unexported helpers used to encode a final-poly for FS binding.
+//
+// "BASE" / "EXTP" domain tags must match fri.transcriptBasePoly and
+// fri.transcriptExtPoly exactly.
+const (
+	friBaseDomainTag uint64 = 0x42415345 // "BASE"
+	friExtDomainTag  uint64 = 0x45585450 // "EXTP"
+)
+
+func transcriptBasePolyElements(poly []koalabear.Element) []koalabear.Element {
+	res := make([]koalabear.Element, 0, 2+len(poly))
+	res = append(res, hash.NewElement(friBaseDomainTag), hash.NewElement(uint64(len(poly))))
+	res = append(res, poly...)
+	return res
+}
+
+func transcriptExtPolyElements(poly []ext.E4) []koalabear.Element {
+	res := make([]koalabear.Element, 0, 2+4*len(poly))
+	res = append(res, hash.NewElement(friExtDomainTag), hash.NewElement(uint64(len(poly))))
+	for _, v := range poly {
+		res = append(res, v.B0.A0, v.B0.A1, v.B1.A0, v.B1.A1)
+	}
+	return res
+}
 
 // extToElements flattens an E4 into the 4-element order Loom's FS uses
 // when binding extension values: (B0.A0, B0.A1, B1.A0, B1.A1). Mirrors
