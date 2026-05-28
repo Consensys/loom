@@ -1054,6 +1054,351 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 					}
 				}
 			}
+		} else {
+			// Stage 13: multi-degree DEEP bridge.
+			//
+			// For multi-size inner proofs, the FRI verifier computes a
+			// SEPARATE DEEP-quotient per running-poly size and equates
+			// each to the corresponding FRI level's query leaves:
+			//   level 0     -> FRIQueries[q].Layers[0]
+			//   level i > 0 -> LevelQueries[i-1][q]
+			//
+			// The bridge math is identical to single-size — same per-
+			// shift accumulators, same denominators (z_s - X), same
+			// alpha^k chain — applied independently per size with that
+			// size's domain generator and bit slice from digest[1].
+			// (alpha resets to 1 at the top of each size in the native
+			// verifier; the same alphaPow chain works because we re-
+			// index from alphaPowChain[0] per size.)
+			//
+			// Per-column Merkle openings for the multi-degree sample
+			// witnesses, plus Merkle for the level i > 0 query leaves
+			// against DeepQuotientCommitment[i], remain follow-up
+			// stages — those leaves are trusted here.
+			dqLayout := prover.BuildDeepQuotientLayout(input.Program)
+			numSizes := len(dqLayout.Sizes)
+			if numSizes < 2 {
+				return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: stage 13 expected ≥2 sizes, got %d (single-size path should have handled this)", numSizes)
+			}
+			if numSizes-1 != len(friProof.LevelQueries) {
+				return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: stage 13 size/LevelQueries mismatch: %d sizes, %d LevelQueries", numSizes, len(friProof.LevelQueries))
+			}
+
+			// Anchor zeta_const + DEEP_ALPHA (same pattern as single-size).
+			zetaConst := addE4("airverify.zeta_const_md", zeta)
+			for _, rel := range zetaConst.EqualityConstraints(zetaExpr) {
+				verifierMod.AssertZeroAt(rel, chCN.DigestRow)
+			}
+			deepAlphaIdx := -1
+			for i, step := range chain {
+				if step.Name == constants.DEEP_ALPHA {
+					deepAlphaIdx = i
+					break
+				}
+			}
+			if deepAlphaIdx < 0 {
+				return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: DEEP_ALPHA missing from chain")
+			}
+			deepAlphaCN := chSpongeCNs[deepAlphaIdx]
+			deepAlphaDigestExpr := extfield.FromLimbs(
+				expr.Col(deepAlphaCN.Digest[0]), expr.Col(deepAlphaCN.Digest[2]),
+				expr.Col(deepAlphaCN.Digest[1]), expr.Col(deepAlphaCN.Digest[3]),
+			)
+			deepAlphaNative := hashDigestToE4(chain[deepAlphaIdx].NativeDigest)
+			deepAlphaExpr := addE4("airverify.deep_alpha_md", deepAlphaNative)
+			for _, rel := range deepAlphaExpr.EqualityConstraints(deepAlphaDigestExpr) {
+				verifierMod.AssertZeroAt(rel, deepAlphaCN.DigestRow)
+			}
+
+			// Materialize alpha^k chain up to max K across all sizes.
+			maxK := 0
+			for i := 0; i < numSizes; i++ {
+				K := 0
+				for _, names := range dqLayout.Names[i] {
+					K += len(names)
+				}
+				K += len(dqLayout.AIRChunks[i])
+				if K > maxK {
+					maxK = K
+				}
+			}
+			alphaPowChain := make([]extfield.E4Expr, maxK)
+			alphaPowNative := make([]ext.E4, maxK)
+			if maxK > 0 {
+				alphaPowNative[0].SetOne()
+				alphaPowChain[0] = extfield.One()
+			}
+			for k := 1; k < maxK; k++ {
+				alphaPowNative[k].Mul(&alphaPowNative[k-1], &deepAlphaNative)
+				curr := addE4(fmt.Sprintf("airverify.deep_alphaPow_md_%d", k), alphaPowNative[k])
+				prevTimesAlpha := alphaPowChain[k-1].Mul(deepAlphaExpr)
+				for _, rel := range curr.EqualityConstraints(prevTimesAlpha) {
+					verifierMod.AssertZeroAt(rel, 0)
+				}
+				alphaPowChain[k] = curr
+			}
+
+			// Unified leaf-by-key + chunk-by-name lookups across all sizes.
+			leafByKey := map[string]extfield.E4Expr{}
+			chunkByName := map[string]extfield.E4Expr{}
+			for mi, data := range mods {
+				for key, e := range witnesses[mi].leafExprs {
+					leafByKey[key] = e
+				}
+				for ci, ce := range witnesses[mi].chunkExprs {
+					chunkName := constants.QuotientChunkName(data.name, ci)
+					chunkByName[chunkName] = ce
+				}
+			}
+
+			// Allocate samples for all bare cols + chunks across all sizes.
+			bareSeen := map[string]bool{}
+			var bareList []string
+			chunkSeen := map[string]bool{}
+			var chunkList []string
+			for i := 0; i < numSizes; i++ {
+				for _, names := range dqLayout.Names[i] {
+					for _, n := range names {
+						if !bareSeen[n] {
+							bareSeen[n] = true
+							bareList = append(bareList, n)
+						}
+					}
+				}
+				for _, n := range dqLayout.AIRChunks[i] {
+					if !chunkSeen[n] {
+						chunkSeen[n] = true
+						chunkList = append(chunkList, n)
+					}
+				}
+			}
+			sort.Strings(bareList)
+			sort.Strings(chunkList)
+
+			innerLayout := prover.BuildLayout(input.Program, 0)
+			sampleE4 := func(slot prover.Slot, q int) (ext.E4, ext.E4, error) {
+				if slot.TreeIdx >= len(input.Proof.PointSamplings[q]) {
+					return ext.E4{}, ext.E4{}, fmt.Errorf("tree %d out of range for query %d", slot.TreeIdx, q)
+				}
+				wp := input.Proof.PointSamplings[q][slot.TreeIdx]
+				if slot.Field == field.Ext {
+					if slot.PolyIdx >= len(wp.RawLeafExt) {
+						return ext.E4{}, ext.E4{}, fmt.Errorf("ext raw leaf %d out of range", slot.PolyIdx)
+					}
+					return wp.RawLeafExt[slot.PolyIdx][0], wp.RawLeafExt[slot.PolyIdx][1], nil
+				}
+				if slot.PolyIdx >= len(wp.RawLeafBase) {
+					return ext.E4{}, ext.E4{}, fmt.Errorf("base raw leaf %d out of range", slot.PolyIdx)
+				}
+				var p, qE ext.E4
+				p.B0.A0.Set(&wp.RawLeafBase[slot.PolyIdx][0])
+				qE.B0.A0.Set(&wp.RawLeafBase[slot.PolyIdx][1])
+				return p, qE, nil
+			}
+
+			sampleP := map[string][]extfield.E4Expr{}
+			sampleQ := map[string][]extfield.E4Expr{}
+			for _, n := range bareList {
+				slot, ok := innerLayout.ColSlot[n]
+				if !ok {
+					return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: column %q missing from layout.ColSlot", n)
+				}
+				sampleP[n] = make([]extfield.E4Expr, len(queries))
+				sampleQ[n] = make([]extfield.E4Expr, len(queries))
+				for qi := range queries {
+					pNative, qNative, err := sampleE4(slot, qi)
+					if err != nil {
+						return board.Program{}, trace.Trace{}, err
+					}
+					sampleP[n][qi] = addE4(fmt.Sprintf("airverify.deep_md_sP_%d_%s", qi, sanitizeName(n)), pNative)
+					sampleQ[n][qi] = addE4(fmt.Sprintf("airverify.deep_md_sQ_%d_%s", qi, sanitizeName(n)), qNative)
+				}
+			}
+			chunkSampleP := map[string][]extfield.E4Expr{}
+			chunkSampleQ := map[string][]extfield.E4Expr{}
+			for _, n := range chunkList {
+				slot, ok := innerLayout.AIRChunkSlot[n]
+				if !ok {
+					return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: chunk %q missing from layout.AIRChunkSlot", n)
+				}
+				chunkSampleP[n] = make([]extfield.E4Expr, len(queries))
+				chunkSampleQ[n] = make([]extfield.E4Expr, len(queries))
+				for qi := range queries {
+					pNative, qNative, err := sampleE4(slot, qi)
+					if err != nil {
+						return board.Program{}, trace.Trace{}, err
+					}
+					chunkSampleP[n][qi] = addE4(fmt.Sprintf("airverify.deep_md_csP_%d_%s", qi, sanitizeName(n)), pNative)
+					chunkSampleQ[n][qi] = addE4(fmt.Sprintf("airverify.deep_md_csQ_%d_%s", qi, sanitizeName(n)), qNative)
+				}
+			}
+
+			// Per size, per query: compute DQ_P/Q and equate to level leaves.
+			for li := 0; li < numSizes; li++ {
+				size := dqLayout.Sizes[li]
+				nFRIsize := constants.RATE * size
+				halfDomain := nFRIsize / 2
+				sLBits := log2int(halfDomain)
+				if sLBits <= 0 {
+					return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: stage 13 sLBits=%d for size %d", sLBits, size)
+				}
+				friDomainGen, err := koalabear.Generator(uint64(nFRIsize))
+				if err != nil {
+					return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: stage 13 friDomainGen size %d: %w", size, err)
+				}
+				omegaSize, err := koalabear.Generator(uint64(size))
+				if err != nil {
+					return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: stage 13 omegaSize %d: %w", size, err)
+				}
+				omegaShiftE4 := make([]ext.E4, len(dqLayout.Shifts[li]))
+				omegaShiftExpr := make([]extfield.E4Expr, len(dqLayout.Shifts[li]))
+				for j, shift := range dqLayout.Shifts[li] {
+					var w koalabear.Element
+					w.Exp(omegaSize, big.NewInt(int64(shift)))
+					omegaShiftE4[j].B0.A0.Set(&w)
+					omegaShiftExpr[j] = extfield.Const(omegaShiftE4[j])
+				}
+
+				// Level-leaf expressions per query.
+				type lp struct{ P, Q extfield.E4Expr }
+				levelLeaves := make([]lp, len(queries))
+				if li == 0 {
+					for qi := range queries {
+						levelLeaves[qi] = lp{P: leafExprs[0][qi].P, Q: leafExprs[0][qi].Q}
+					}
+				} else {
+					for qi := range queries {
+						lvq := friProof.LevelQueries[li-1][qi]
+						pE := addE4(fmt.Sprintf("airverify.deep_md_levelP_%d_%d", li, qi), lvq.LeafPExt)
+						qE := addE4(fmt.Sprintf("airverify.deep_md_levelQ_%d_%d", li, qi), lvq.LeafQExt)
+						levelLeaves[qi] = lp{P: pE, Q: qE}
+					}
+				}
+
+				for qi, query := range queries {
+					sLBitsCN := bits.ColumnNames{
+						ModuleName: query.bitsCN.ModuleName,
+						Value:      query.bitsCN.Value,
+						Bits:       query.bitsCN.Bits[:sLBits],
+						NumBits:    sLBits,
+					}
+					xPrefix := fmt.Sprintf("airverify.deep_md_q%d_l%d_X", qi, li)
+					xCN := binexp.Register(&verifierMod, xPrefix, friDomainGen, sLBitsCN)
+					xBase := expr.Col(xCN.Steps[sLBits-1])
+					xExpr := extfield.FromBase(xBase)
+					negXExpr := extfield.Zero().Sub(xExpr)
+					bitsAtRow := make([]bool, sLBits)
+					for bi := 0; bi < sLBits; bi++ {
+						bitsAtRow[bi] = (query.digestNat>>uint(bi))&1 == 1
+					}
+					pendingBinexps = append(pendingBinexps, pendingBinexp{cn: xCN, rowIdx: query.digestRow, bitsAtRow: bitsAtRow})
+
+					// Native helpers for inverse witness fill.
+					sLNat := query.digestNat % uint64(halfDomain)
+					var xNat ext.E4
+					xNat.B0.A0.Exp(friDomainGen, big.NewInt(int64(sLNat)))
+					var negXNat ext.E4
+					negXNat.B0.A0.Neg(&xNat.B0.A0)
+
+					dqP := extfield.Zero()
+					dqQ := extfield.Zero()
+					alphaIdx := 0
+
+					for j := range dqLayout.Shifts[li] {
+						zsExpr := zetaConst.Mul(omegaShiftExpr[j])
+						names := dqLayout.Names[li][j]
+						keys := dqLayout.Keys[li][j]
+
+						vs := extfield.Zero()
+						cX := extfield.Zero()
+						cNegX := extfield.Zero()
+						for k, key := range keys {
+							evalAtZ, ok := leafByKey[key]
+							if !ok {
+								return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: stage 13 missing leaf key %q", key)
+							}
+							a := alphaPowChain[alphaIdx]
+							alphaIdx++
+							vs = vs.Add(evalAtZ.Mul(a))
+							cX = cX.Add(sampleP[names[k]][qi].Mul(a))
+							cNegX = cNegX.Add(sampleQ[names[k]][qi].Mul(a))
+						}
+
+						denomX := zsExpr.Sub(xExpr)
+						denomNegX := zsExpr.Sub(negXExpr)
+
+						var zsNat ext.E4
+						zsNat.MulByElement(&zeta, &omegaShiftE4[j].B0.A0)
+						var dXNat, dNegXNat ext.E4
+						dXNat.Sub(&zsNat, &xNat)
+						dNegXNat.Sub(&zsNat, &negXNat)
+						var invDXNat, invDNegXNat ext.E4
+						invDXNat.Inverse(&dXNat)
+						invDNegXNat.Inverse(&dNegXNat)
+						invDXExpr := addE4(fmt.Sprintf("airverify.deep_md_q%d_l%d_g%d_invX", qi, li, j), invDXNat)
+						invDNegXExpr := addE4(fmt.Sprintf("airverify.deep_md_q%d_l%d_g%d_invNegX", qi, li, j), invDNegXNat)
+
+						oneE4 := extfield.One()
+						for _, rel := range invDXExpr.Mul(denomX).EqualityConstraints(oneE4) {
+							verifierMod.AssertZeroAt(rel, query.digestRow)
+						}
+						for _, rel := range invDNegXExpr.Mul(denomNegX).EqualityConstraints(oneE4) {
+							verifierMod.AssertZeroAt(rel, query.digestRow)
+						}
+
+						dqP = dqP.Add(vs.Sub(cX).Mul(invDXExpr))
+						dqQ = dqQ.Add(vs.Sub(cNegX).Mul(invDNegXExpr))
+					}
+
+					if len(dqLayout.AIRChunks[li]) > 0 {
+						zsExpr := zetaConst
+						vs := extfield.Zero()
+						cX := extfield.Zero()
+						cNegX := extfield.Zero()
+						for _, chunkName := range dqLayout.AIRChunks[li] {
+							chunkExpr, ok := chunkByName[chunkName]
+							if !ok {
+								return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: stage 13 missing chunk %q", chunkName)
+							}
+							a := alphaPowChain[alphaIdx]
+							alphaIdx++
+							vs = vs.Add(chunkExpr.Mul(a))
+							cX = cX.Add(chunkSampleP[chunkName][qi].Mul(a))
+							cNegX = cNegX.Add(chunkSampleQ[chunkName][qi].Mul(a))
+						}
+
+						denomX := zsExpr.Sub(xExpr)
+						denomNegX := zsExpr.Sub(negXExpr)
+
+						var dXNat, dNegXNat ext.E4
+						dXNat.Sub(&zeta, &xNat)
+						dNegXNat.Sub(&zeta, &negXNat)
+						var invDXNat, invDNegXNat ext.E4
+						invDXNat.Inverse(&dXNat)
+						invDNegXNat.Inverse(&dNegXNat)
+						invDXExpr := addE4(fmt.Sprintf("airverify.deep_md_q%d_l%d_chunks_invX", qi, li), invDXNat)
+						invDNegXExpr := addE4(fmt.Sprintf("airverify.deep_md_q%d_l%d_chunks_invNegX", qi, li), invDNegXNat)
+
+						oneE4 := extfield.One()
+						for _, rel := range invDXExpr.Mul(denomX).EqualityConstraints(oneE4) {
+							verifierMod.AssertZeroAt(rel, query.digestRow)
+						}
+						for _, rel := range invDNegXExpr.Mul(denomNegX).EqualityConstraints(oneE4) {
+							verifierMod.AssertZeroAt(rel, query.digestRow)
+						}
+
+						dqP = dqP.Add(vs.Sub(cX).Mul(invDXExpr))
+						dqQ = dqQ.Add(vs.Sub(cNegX).Mul(invDNegXExpr))
+					}
+
+					for _, rel := range dqP.EqualityConstraints(levelLeaves[qi].P) {
+						verifierMod.AssertZeroAt(rel, query.digestRow)
+					}
+					for _, rel := range dqQ.EqualityConstraints(levelLeaves[qi].Q) {
+						verifierMod.AssertZeroAt(rel, query.digestRow)
+					}
+				}
+			}
 		}
 	}
 

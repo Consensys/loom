@@ -626,6 +626,126 @@ func TestBuildVerifierCoreRejectsBadColumnTreeSibling(t *testing.T) {
 	}
 }
 
+// makeMultiSizeFibInner builds a multi-module Fibonacci inner program
+// with sizes [16, 8] — small enough that the outer prove/verify
+// remains test-affordable, while still triggering Loom's multi-degree
+// FRI path (LevelQueries non-empty) so Stage 13 fires.
+func makeMultiSizeFibInner(t *testing.T) (board.Program, trace.Trace) {
+	t.Helper()
+	builder := board.NewBuilder()
+	cols := make(map[string][]koalabear.Element)
+	for _, n := range []int{16, 8} {
+		modName := "fib_" + string('0'+rune(n/10)) + string('0'+rune(n%10))
+		aN := modName + ".A"
+		bN := modName + ".B"
+		cN := modName + ".C"
+		mod := board.NewModule(modName)
+		mod.N = n
+		mod.AssertZeroExceptAt(expr.Rot(aN, 1).Sub(expr.Col(bN)), n-1)
+		mod.AssertZeroExceptAt(expr.Rot(bN, 1).Sub(expr.Col(aN).Add(expr.Col(bN))), n-1)
+		mod.AssertZero(expr.Col(cN).Sub(expr.Col(aN).Add(expr.Col(bN))))
+		builder.AddModule(mod)
+		a := make([]koalabear.Element, n)
+		b := make([]koalabear.Element, n)
+		c := make([]koalabear.Element, n)
+		a[0].SetZero()
+		b[0].SetOne()
+		for i := 0; i < n; i++ {
+			c[i].Add(&a[i], &b[i])
+			if i+1 < n {
+				a[i+1].Set(&b[i])
+				b[i+1].Set(&c[i])
+			}
+		}
+		cols[aN] = a
+		cols[bN] = b
+		cols[cN] = c
+	}
+	program, err := board.Compile(&builder)
+	if err != nil {
+		t.Fatalf("multi-size inner Compile: %v", err)
+	}
+	tr := trace.New()
+	for name, vals := range cols {
+		tr.SetBase(name, vals)
+	}
+	return program, tr
+}
+
+// TestBuildVerifierCoreMultiDegreeNonSkipFRI exercises Stage 13 — the
+// inner is a 2-size Fibonacci program (sizes 16 and 8) so Loom uses
+// multi-degree FRI (len(LevelQueries) > 0). Stages 11/12 are gated
+// off for multi-degree; only Stage 13 covers the DEEP bridge here.
+func TestBuildVerifierCoreMultiDegreeNonSkipFRI(t *testing.T) {
+	innerProgram, innerTrace := makeMultiSizeFibInner(t)
+	innerProof, err := prover.Prove(innerTrace, setup.ProvingKey{}, nil, innerProgram)
+	if err != nil {
+		t.Fatalf("inner prove: %v", err)
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, innerProgram, innerProof); err != nil {
+		t.Fatalf("inner verify: %v", err)
+	}
+	if len(innerProof.DeepQuotientFriProof.LevelQueries) == 0 {
+		t.Fatal("expected multi-degree FRI (non-empty LevelQueries)")
+	}
+
+	outerProgram, outerTrace, err := BuildVerifierCore(
+		RecursionInput{Program: innerProgram, Proof: innerProof},
+		DefaultConfig(),
+	)
+	if err != nil {
+		t.Fatalf("BuildVerifierCore: %v", err)
+	}
+	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
+	if err != nil {
+		t.Fatalf("outer prove: %v", err)
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, outerProgram, outerProof, verifier.SkipFRI()); err != nil {
+		t.Fatalf("outer verify: %v", err)
+	}
+}
+
+// TestBuildVerifierCoreRejectsBadLevelLeaf tampers a LevelQueries
+// (i > 0) leaf P value. The single-degree DEEP bridge never reads
+// LevelQueries; the cross-round fold chain is gated off for multi-
+// degree; FRI level Merkle is also gated off — Stage 13's multi-
+// degree DEEP bridge is the only thing that constrains these leaves.
+// Outer verifier must reject.
+func TestBuildVerifierCoreRejectsBadLevelLeaf(t *testing.T) {
+	innerProgram, innerTrace := makeMultiSizeFibInner(t)
+	innerProof, err := prover.Prove(innerTrace, setup.ProvingKey{}, nil, innerProgram)
+	if err != nil {
+		t.Fatalf("inner prove: %v", err)
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, innerProgram, innerProof); err != nil {
+		t.Fatalf("inner verify: %v", err)
+	}
+	if len(innerProof.DeepQuotientFriProof.LevelQueries) == 0 {
+		t.Fatal("expected multi-degree FRI")
+	}
+
+	// Tamper level 1's query 0 LeafPExt (= level 2 in the sizes
+	// numbering since level 0 is the running poly).
+	innerProof.DeepQuotientFriProof.LevelQueries[0][0].LeafPExt.B0.A0.SetUint64(
+		innerProof.DeepQuotientFriProof.LevelQueries[0][0].LeafPExt.B0.A0.Uint64() + 1,
+	)
+
+	outerProgram, outerTrace, err := BuildVerifierCore(
+		RecursionInput{Program: innerProgram, Proof: innerProof},
+		DefaultConfig(),
+	)
+	if err != nil {
+		t.Fatalf("BuildVerifierCore: %v", err)
+	}
+	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
+	if err != nil {
+		return
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, outerProgram, outerProof, verifier.SkipFRI()); err == nil {
+		t.Fatalf("outer verify accepted tampered LevelQueries leaf")
+	}
+}
+
 // TestBuildVerifierCoreRejectsBadAIRChunkSample tampers a RawLeafExt
 // entry for the AIR-quotient tree (tree 1 in the Fibonacci(n=4) setup).
 // Tree 1 has 2 ext chunks (= 19 sponge input elements), exercising the
