@@ -31,6 +31,7 @@ package airzeta
 import (
 	"fmt"
 
+	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/internal/dag"
 	"github.com/consensys/loom/recursion/extfield"
@@ -105,3 +106,54 @@ func PowExt(base extfield.E4Expr, n int) extfield.E4Expr {
 	}
 	return res
 }
+
+// RegisterAIRCheck adds the per-module AIR-at-zeta equality constraint
+//
+//	V(zeta) == (zeta^N - 1) * Q(zeta)
+//
+// where V(zeta) is the value of the inner module's vanishing-relation
+// DAG at zeta (computed via EvalDAG over leafValues) and
+//
+//	Q(zeta) = sum_{i=0..len(chunks)-1} chunks[i] * (zeta^N)^i
+//
+// is the AIR quotient reconstructed from per-chunk evaluations at zeta.
+//
+// Four constraints are emitted on mod, one per E4 limb. The constraint
+// degree grows with N (zeta^N is inlined); for inner modules with
+// N <= 16 this is comfortably within Loom's degree budget. For larger
+// N a future variant should materialize the zeta-power chain as
+// witness columns to flatten the constraint degree.
+func RegisterAIRCheck(
+	mod *board.Module,
+	d *dag.DAG,
+	N int,
+	leafValues map[string]extfield.E4Expr,
+	zeta extfield.E4Expr,
+	chunks []extfield.E4Expr,
+) {
+	v := EvalDAG(d, leafValues)
+	zetaPowN := PowExt(zeta, N)
+	one := extfield.One()
+	zetaPowNMinusOne := zetaPowN.Sub(one)
+
+	var qZeta extfield.E4Expr
+	switch len(chunks) {
+	case 0:
+		qZeta = extfield.Zero()
+	default:
+		qZeta = chunks[0]
+		zetaPowIN := zetaPowN
+		for i := 1; i < len(chunks); i++ {
+			qZeta = qZeta.Add(chunks[i].Mul(zetaPowIN))
+			if i+1 < len(chunks) {
+				zetaPowIN = zetaPowIN.Mul(zetaPowN)
+			}
+		}
+	}
+
+	rhs := zetaPowNMinusOne.Mul(qZeta)
+	for _, rel := range v.EqualityConstraints(rhs) {
+		mod.AssertZero(rel)
+	}
+}
+

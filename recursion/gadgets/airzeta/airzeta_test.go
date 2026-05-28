@@ -162,6 +162,142 @@ func TestEvalDAGConstants(t *testing.T) {
 	runDAGTest(t, "consts", rel, vals)
 }
 
+// TestAIRCheckHappyPath constructs synthetic values that satisfy
+// V(zeta) == (zeta^N - 1) * Q(zeta) and proves the gadget accepts
+// them. Uses a trivial DAG V = X so we can freely choose X to match.
+func TestAIRCheckHappyPath(t *testing.T) {
+	const N = 8
+	zeta := randExt(t)
+	chunkVals := []ext.E4{randExt(t), randExt(t), randExt(t)}
+
+	// Compute target V = (zeta^N - 1) * sum_i chunks[i] * (zeta^N)^i
+	var zetaN ext.E4
+	zetaN.Set(&zeta)
+	for i := 1; i < N; i++ {
+		zetaN.Mul(&zetaN, &zeta)
+	}
+	var zetaNm1 ext.E4
+	var one ext.E4
+	one.SetOne()
+	zetaNm1.Sub(&zetaN, &one)
+	var qZeta ext.E4
+	qZeta.Set(&chunkVals[0])
+	var zetaPowIN ext.E4
+	zetaPowIN.Set(&zetaN)
+	for i := 1; i < len(chunkVals); i++ {
+		var term ext.E4
+		term.Mul(&chunkVals[i], &zetaPowIN)
+		qZeta.Add(&qZeta, &term)
+		if i+1 < len(chunkVals) {
+			zetaPowIN.Mul(&zetaPowIN, &zetaN)
+		}
+	}
+	var V ext.E4
+	V.Mul(&zetaNm1, &qZeta)
+
+	rel := expr.Col("X")
+	d := dag.ExprToDAG(rel)
+
+	mod := board.NewModule("aircheck")
+	mod.N = 4
+
+	cols := make(map[string][]koalabear.Element)
+	allocAndFill := func(name string, v koalabear.Element) {
+		c := make([]koalabear.Element, mod.N)
+		for i := range c {
+			c[i].Set(&v)
+		}
+		cols[name] = c
+	}
+	makeE4Expr := func(prefix string, v ext.E4) extfield.E4Expr {
+		limbs := extfield.FromE4(v)
+		names := [4]string{
+			prefix + "_0", prefix + "_1", prefix + "_2", prefix + "_3",
+		}
+		for i := 0; i < extfield.Limbs; i++ {
+			allocAndFill(names[i], limbs[i])
+		}
+		return extfield.FromLimbs(
+			expr.Col(names[0]), expr.Col(names[1]),
+			expr.Col(names[2]), expr.Col(names[3]),
+		)
+	}
+
+	leafValues := map[string]extfield.E4Expr{
+		"X": makeE4Expr("X", V),
+	}
+	zetaExpr := makeE4Expr("zeta", zeta)
+	chunks := make([]extfield.E4Expr, len(chunkVals))
+	for i, c := range chunkVals {
+		chunks[i] = makeE4Expr("chunk_"+string('0'+rune(i)), c)
+	}
+
+	airzeta.RegisterAIRCheck(&mod, d, N, leafValues, zetaExpr, chunks)
+
+	builder := board.NewBuilder()
+	builder.AddModule(mod)
+
+	tr := trace.New()
+	for k, v := range cols {
+		tr.SetBase(k, v)
+	}
+	testutil.ProveAndVerify(t, &builder, tr)
+}
+
+// TestAIRCheckRejectsBadV tampers V (sets X to a non-matching value)
+// and expects the equality constraint to fail.
+func TestAIRCheckRejectsBadV(t *testing.T) {
+	const N = 4
+	zeta := randExt(t)
+	chunks := []ext.E4{randExt(t)}
+
+	rel := expr.Col("X")
+	d := dag.ExprToDAG(rel)
+
+	mod := board.NewModule("aircheck_bad")
+	mod.N = 4
+
+	cols := make(map[string][]koalabear.Element)
+	allocAndFill := func(name string, v koalabear.Element) {
+		c := make([]koalabear.Element, mod.N)
+		for i := range c {
+			c[i].Set(&v)
+		}
+		cols[name] = c
+	}
+	makeE4Expr := func(prefix string, v ext.E4) extfield.E4Expr {
+		limbs := extfield.FromE4(v)
+		names := [4]string{
+			prefix + "_0", prefix + "_1", prefix + "_2", prefix + "_3",
+		}
+		for i := 0; i < extfield.Limbs; i++ {
+			allocAndFill(names[i], limbs[i])
+		}
+		return extfield.FromLimbs(
+			expr.Col(names[0]), expr.Col(names[1]),
+			expr.Col(names[2]), expr.Col(names[3]),
+		)
+	}
+
+	// Set X to a random value that does NOT match (zeta^N - 1) * Q.
+	leafValues := map[string]extfield.E4Expr{
+		"X": makeE4Expr("X", randExt(t)),
+	}
+	zetaExpr := makeE4Expr("zeta", zeta)
+	chunkExprs := []extfield.E4Expr{makeE4Expr("chunk", chunks[0])}
+
+	airzeta.RegisterAIRCheck(&mod, d, N, leafValues, zetaExpr, chunkExprs)
+
+	builder := board.NewBuilder()
+	builder.AddModule(mod)
+
+	tr := trace.New()
+	for k, v := range cols {
+		tr.SetBase(k, v)
+	}
+	testutil.ExpectProveOrVerifyFailure(t, &builder, tr)
+}
+
 // TestPowExtMatchesNative cross-checks PowExt for several small exponents.
 // Larger exponents (e.g. 64+) work but are slow under the current
 // expression-blowup; if production needs zeta^N for N ~ 1024, PowExt
