@@ -15,6 +15,7 @@ package prover
 
 import (
 	"fmt"
+	"math/big"
 	"sort"
 	"sync"
 	"time"
@@ -695,29 +696,26 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 	return nil
 }
 
-func addScaledExtColumn(dst, col, scratch poly.ExtPolynomial, alpha *ext.E4) {
-	if len(col) == 1 {
-		var term ext.E4
-		term.Mul(&col[0], alpha)
-		for i := range dst {
-			dst[i].Add(&dst[i], &term)
-		}
-		return
-	}
-	ext.Vector(scratch).ScalarMul(ext.Vector(col), alpha)
-	ext.Vector(dst).Add(ext.Vector(dst), ext.Vector(scratch))
-}
+// deepQuotientBundle aggregates everything needed to add one DEEP-quotient
+// shift block's contribution to deepQuotient[*]:
+//
+//	deepQuotient[x] += (vs - sum_k(scales_k * cols_k[x])) / (zs - omega^x)
+//
+// The serial alpha-power chain in the original code is unrolled into the
+// scales slices below, so the per-row loop has no cross-column data dependency
+// and can be chunked across goroutines.
+type deepQuotientBundle struct {
+	zs ext.E4 // shifted evaluation point
+	vs ext.E4 // alpha-weighted sum of evaluations at zs
 
-func addScaledBaseColumn(dst poly.ExtPolynomial, col poly.Polynomial, alpha *ext.E4) {
-	if len(col) == 1 {
-		var term ext.E4
-		term.MulByElement(alpha, &col[0])
-		for i := range dst {
-			dst[i].Add(&dst[i], &term)
-		}
-		return
-	}
-	ext.Vector(dst).MulAccByElement(col, alpha)
+	// constContrib is the contribution from constant (len-1) columns, summed
+	// in advance so the per-row loop only iterates real-width columns.
+	constContrib ext.E4
+
+	extCols    []poly.ExtPolynomial
+	extScales  []ext.E4
+	baseCols   []poly.Polynomial
+	baseScales []ext.E4
 }
 
 func (pr *proverRuntime) ComputeDeepQuotient() error {
@@ -743,81 +741,52 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 		alphaAcc.SetOne()
 
 		domainN := domainBySize[N]
-		scratch := make(poly.ExtPolynomial, N)
 
+		// ---- Phase 1: vanishing-relation columns, one bundle per shift ----
+		bundles := make([]deepQuotientBundle, 0, len(dqLayout.Shifts[i])+1)
 		for j, shift := range dqLayout.Shifts[i] {
 			var omegaShift koalabear.Element
-			omegaShift.SetOne()
-			for k := 0; k < shift; k++ {
-				omegaShift.Mul(&omegaShift, &domainN.Generator)
-			}
-			z_s := pr.zeta
-			z_s.MulByElement(&z_s, &omegaShift)
+			omegaShift.Exp(domainN.Generator, big.NewInt(int64(shift)))
+			zs := pr.zeta
+			zs.MulByElement(&zs, &omegaShift)
 
-			C_s := make(poly.ExtPolynomial, N)
-			var v_s ext.E4
-			names := dqLayout.Names[i][j]
-			keys := dqLayout.Keys[i][j]
-			for k := range names {
-				evalAtZ, ok := pr.Proof.ValueAtZetaExt(keys[k])
-				if !ok {
-					return fmt.Errorf("ComputeDeepQuotient: %q not found in ValuesAtZeta", keys[k])
-				}
-				colExt, hasExt := pr.t.Ext[names[k]]
-				colBase, hasBase := pr.t.Base[names[k]]
-				if !hasExt && !hasBase {
-					return fmt.Errorf("ComputeDeepQuotient: column %q not found in trace", names[k])
-				}
-				if hasExt {
-					addScaledExtColumn(C_s, colExt, scratch, &alphaAcc)
-				} else {
-					addScaledBaseColumn(C_s, colBase, &alphaAcc)
-				}
-				var term ext.E4
-				term.Mul(&evalAtZ, &alphaAcc)
-				v_s.Add(&v_s, &term)
-				alphaAcc.Mul(&alphaAcc, &pr.alpha)
+			b, nextAlpha, err := pr.buildDeepQuotientBundle(
+				zs,
+				dqLayout.Names[i][j],
+				dqLayout.Keys[i][j],
+				pr.t.Base, pr.t.Ext,
+				alphaAcc,
+			)
+			if err != nil {
+				return err
 			}
-
-			DQ_s := poly.DeepQuotientExt(C_s, v_s, z_s, domainN)
-			for x := 0; x < N; x++ {
-				deepQuotient[x].Add(&deepQuotient[x], &DQ_s[x])
-			}
+			bundles = append(bundles, b)
+			alphaAcc = nextAlpha
 		}
 
+		// ---- Phase 2: AIR chunks at z=zeta (no shift) ----
 		if len(dqLayout.AIRChunks[i]) > 0 {
-			C_s := make(poly.ExtPolynomial, N)
-			var v_s ext.E4
-			for _, chunkName := range dqLayout.AIRChunks[i] {
-				evalAtZ, ok := pr.Proof.ValueAtZetaExt(chunkName)
-				if !ok {
-					return fmt.Errorf("ComputeDeepQuotient: %q not found in ValuesAtZeta", chunkName)
-				}
-				chunkExt, hasExt := pr.airTrace.Ext[chunkName]
-				chunkBase, hasBase := pr.airTrace.Base[chunkName]
-				if !hasExt && !hasBase {
-					return fmt.Errorf("ComputeDeepQuotient: AIR chunk %q not found in trace", chunkName)
-				}
-				if hasExt {
-					addScaledExtColumn(C_s, chunkExt, scratch, &alphaAcc)
-				} else {
-					addScaledBaseColumn(C_s, chunkBase, &alphaAcc)
-				}
-				var term ext.E4
-				term.Mul(&evalAtZ, &alphaAcc)
-				v_s.Add(&v_s, &term)
-				alphaAcc.Mul(&alphaAcc, &pr.alpha)
+			b, nextAlpha, err := pr.buildDeepQuotientBundle(
+				pr.zeta,
+				dqLayout.AIRChunks[i],
+				dqLayout.AIRChunks[i], // keys == names for AIR chunks
+				pr.airTrace.Base, pr.airTrace.Ext,
+				alphaAcc,
+			)
+			if err != nil {
+				return err
 			}
-
-			DQ_air := poly.DeepQuotientExt(C_s, v_s, pr.zeta, domainN)
-			for x := 0; x < N; x++ {
-				deepQuotient[x].Add(&deepQuotient[x], &DQ_air[x])
-			}
+			bundles = append(bundles, b)
+			alphaAcc = nextAlpha
 		}
+
+		accumulateDeepQuotient(deepQuotient, bundles, domainN)
 
 		deepQuotients[N] = deepQuotient
 	}
 
+	// The DEEP quotients chunks are computed and grouped in decreasing size order, we can build the levels to call
+	// multi degree FRI
 	levels := make([]fri.Level, len(sizes))
 	for li, N := range sizes {
 		encoder := reedsolomon.NewEncoderWithDomainCache(uint64(constants.RATE)*uint64(N), &pr.domainCache)
@@ -847,6 +816,116 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 	}
 
 	return nil
+}
+
+// buildDeepQuotientBundle collects column data + per-column alpha scale factors
+// for one shift block and returns the bundle plus the next alpha accumulator.
+// Constant (len-1) columns are folded into bundle.constContrib so the per-row
+// loop only iterates real-width columns.
+//
+// names and keys are parallel: names[k] looks up the trace polynomial,
+// keys[k] looks up the value at zeta in pr.Proof (for AIR chunks the two
+// coincide).
+func (pr *proverRuntime) buildDeepQuotientBundle(
+	zs ext.E4,
+	names, keys []string,
+	traceBase map[string]poly.Polynomial,
+	traceExt map[string]poly.ExtPolynomial,
+	alphaStart ext.E4,
+) (deepQuotientBundle, ext.E4, error) {
+	b := deepQuotientBundle{zs: zs}
+	scale := alphaStart
+	for k, name := range names {
+		evalAtZ, ok := pr.Proof.ValueAtZetaExt(keys[k])
+		if !ok {
+			return deepQuotientBundle{}, ext.E4{}, fmt.Errorf("ComputeDeepQuotient: %q not found in ValuesAtZeta", keys[k])
+		}
+		colExt, hasExt := traceExt[name]
+		colBase, hasBase := traceBase[name]
+		if !hasExt && !hasBase {
+			return deepQuotientBundle{}, ext.E4{}, fmt.Errorf("ComputeDeepQuotient: column %q not found in trace", name)
+		}
+
+		var term ext.E4
+		term.Mul(&evalAtZ, &scale)
+		b.vs.Add(&b.vs, &term)
+
+		switch {
+		case hasExt && len(colExt) == 1:
+			term.Mul(&colExt[0], &scale)
+			b.constContrib.Add(&b.constContrib, &term)
+		case hasExt:
+			b.extCols = append(b.extCols, colExt)
+			b.extScales = append(b.extScales, scale)
+		case len(colBase) == 1:
+			term.MulByElement(&scale, &colBase[0])
+			b.constContrib.Add(&b.constContrib, &term)
+		default:
+			b.baseCols = append(b.baseCols, colBase)
+			b.baseScales = append(b.baseScales, scale)
+		}
+
+		scale.Mul(&scale, &pr.alpha)
+	}
+	return b, scale, nil
+}
+
+// accumulateDeepQuotient adds every bundle's DEEP-quotient contribution into
+// deepQuotient using a single row-chunked parallel pass: each chunk computes
+// (z_s - omega^x)^-1 in batch (BatchInvertE4), then sweeps every bundle to
+// fold its (vs - sum_k scale_k * col_k[x]) numerator and add to deepQuotient[x].
+// One pass amortises C_s materialisation away — only a row-sized denominator
+// buffer per chunk is allocated.
+func accumulateDeepQuotient(deepQuotient poly.ExtPolynomial, bundles []deepQuotientBundle, domain *fft.Domain) {
+	N := len(deepQuotient)
+	if N == 0 || len(bundles) == 0 {
+		return
+	}
+
+	parallel.Execute(N, func(start, end int) {
+		chunkLen := end - start
+
+		// Compute denominators (z_s - omega^x) for every bundle, batch invert.
+		denoms := make([]ext.E4, chunkLen*len(bundles))
+		var omegaX koalabear.Element
+		if start == 0 {
+			omegaX.SetOne()
+		} else {
+			omegaX.Exp(domain.Generator, big.NewInt(int64(start)))
+		}
+		for x := 0; x < chunkLen; x++ {
+			var omegaExt ext.E4
+			omegaExt.Lift(&omegaX)
+			for b := range bundles {
+				denoms[b*chunkLen+x].Sub(&bundles[b].zs, &omegaExt)
+			}
+			omegaX.Mul(&omegaX, &domain.Generator)
+		}
+		invs := ext.BatchInvertE4(denoms)
+
+		// Sweep bundles into deepQuotient row by row.
+		for b := range bundles {
+			bun := &bundles[b]
+			invRow := invs[b*chunkLen : (b+1)*chunkLen]
+			for x := start; x < end; x++ {
+				Cx := bun.constContrib
+				for k, col := range bun.extCols {
+					var term ext.E4
+					term.Mul(&bun.extScales[k], &col[x])
+					Cx.Add(&Cx, &term)
+				}
+				for k, col := range bun.baseCols {
+					var term ext.E4
+					term.MulByElement(&bun.baseScales[k], &col[x])
+					Cx.Add(&Cx, &term)
+				}
+				var num, dqx ext.E4
+				num.Sub(&bun.vs, &Cx)
+				dqx.Mul(&num, &invRow[x-start])
+				deepQuotient[x].Add(&deepQuotient[x], &dqx)
+			}
+		}
+	})
 }
 
 // openWMerkleAt opens a WMerkleTree at the leaf index corresponding to FRI
