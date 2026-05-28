@@ -116,6 +116,61 @@ func Register(mod *board.Module, prefix string, k int) ColumnNames {
 	return cn
 }
 
+// RegisterAt is the row-gated variant of Register. Constraints are
+// applied via AssertZeroAt at rowIdx, and the value being decomposed
+// is supplied by the caller as an existing column name (e.g. a
+// challenger24 sponge digest limb). The gadget does NOT allocate a
+// separate value column.
+//
+// Off-row, bit columns are unconstrained — the trace generator should
+// fill them with zeros at non-rowIdx positions.
+//
+// Soundness note: with k = 31 the constraint
+//
+//	value = sum_{i=0..30} 2^i * b_i
+//
+// almost uniquely determines the bits, except when value < 2^24 - 1,
+// where value + p is also a 31-bit representation (p = 2^31 - 2^24 + 1
+// is the Koalabear modulus). For uniformly sampled digest limbs the
+// collision probability is ~2^-7 per query — acceptable for an
+// initial FRI verifier; tighten with an explicit range check if
+// stronger soundness is required.
+func RegisterAt(mod *board.Module, prefix string, valueColName string, k, rowIdx int) ColumnNames {
+	if k <= 0 {
+		panic("bits.RegisterAt: k must be positive")
+	}
+	cn := ColumnNames{
+		ModuleName: prefix,
+		Value:      valueColName,
+		NumBits:    k,
+		Bits:       make([]string, k),
+	}
+	for i := 0; i < k; i++ {
+		cn.Bits[i] = BitColName(prefix, i)
+	}
+
+	one := expr.Const(koalabear.One())
+	for i := 0; i < k; i++ {
+		b := expr.Col(cn.Bits[i])
+		mod.AssertZeroAt(b.Mul(one.Sub(b)), rowIdx)
+	}
+
+	var weighted expr.Expr
+	for i := 0; i < k; i++ {
+		var pow2 koalabear.Element
+		pow2.SetUint64(uint64(1) << uint(i))
+		term := expr.Col(cn.Bits[i]).Mul(expr.Const(pow2))
+		if i == 0 {
+			weighted = term
+		} else {
+			weighted = weighted.Add(term)
+		}
+	}
+	mod.AssertZeroAt(expr.Col(valueColName).Sub(weighted), rowIdx)
+
+	return cn
+}
+
 // GenerateTrace fills witness columns. values[r] is the value to decompose
 // at row r; rows beyond len(values) are padded with zeros. Each value is
 // reduced modulo 2^k before decomposition — values >= 2^k cause a panic

@@ -18,6 +18,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/board"
+	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/recursion/gadgets/bits"
 	"github.com/consensys/loom/recursion/internal/testutil"
 	"github.com/consensys/loom/trace"
@@ -96,6 +97,92 @@ func TestBitsGadgetRejectsBadSum(t *testing.T) {
 	for kn, v := range cols {
 		tr.SetBase(kn, v)
 	}
+	testutil.ExpectProveOrVerifyFailure(t, &builder, tr)
+}
+
+// TestBitsRegisterAt exercises the sparse-row variant: the bit
+// decomposition is only enforced at one row, and the value column is
+// supplied by the caller (rather than allocated by the gadget). The
+// off-row positions of the bits and value can hold arbitrary garbage
+// without breaking the proof.
+func TestBitsRegisterAt(t *testing.T) {
+	const k = 8
+	const rowIdx = 2
+	const valueColName = "sponge.digest_1"
+
+	mod := board.NewModule("bits_at")
+	mod.N = 4
+	// Identity constraint so the module isn't empty for the prover.
+	mod.AssertZero(expr.Col("dummy").Sub(expr.Col("dummy")))
+
+	cn := bits.RegisterAt(&mod, "bits_at", valueColName, k, rowIdx)
+
+	builder := board.NewBuilder()
+	builder.AddModule(mod)
+
+	// At rowIdx the value is 173 = 0b10101101 and bits decompose
+	// accordingly. Other rows hold garbage on both the value column and
+	// the bit columns to verify the constraint is row-gated.
+	valueAtRow := uint64(173)
+	valCol := make([]koalabear.Element, mod.N)
+	valCol[0].SetUint64(99)
+	valCol[1].SetUint64(7)
+	valCol[2].SetUint64(valueAtRow)
+	valCol[3].SetUint64(42)
+
+	tr := trace.New()
+	tr.SetBase(valueColName, valCol)
+	tr.SetBase("dummy", make([]koalabear.Element, mod.N))
+
+	for i := 0; i < k; i++ {
+		col := make([]koalabear.Element, mod.N)
+		// Random garbage off-row; bits gadget only checks rowIdx.
+		col[0].SetUint64(uint64(i + 7))
+		col[1].SetUint64(uint64(i*3 + 1))
+		col[3].SetUint64(uint64(i + 100))
+		if (valueAtRow>>uint(i))&1 == 1 {
+			col[rowIdx].SetOne()
+		}
+		tr.SetBase(cn.Bits[i], col)
+	}
+
+	testutil.ProveAndVerify(t, &builder, tr)
+}
+
+// TestBitsRegisterAtRejectsBadBitsAtRow corrupts a bit at the gated
+// row; the sparse constraint must catch it.
+func TestBitsRegisterAtRejectsBadBitsAtRow(t *testing.T) {
+	const k = 4
+	const rowIdx = 1
+	const valueColName = "sponge.digest_1"
+
+	mod := board.NewModule("bits_at_bad")
+	mod.N = 2
+
+	cn := bits.RegisterAt(&mod, "bits_at_bad", valueColName, k, rowIdx)
+
+	builder := board.NewBuilder()
+	builder.AddModule(mod)
+
+	valCol := make([]koalabear.Element, mod.N)
+	valCol[rowIdx].SetUint64(5) // 0b0101
+
+	tr := trace.New()
+	tr.SetBase(valueColName, valCol)
+
+	// Correct decomposition for 5 is bits [1, 0, 1, 0]; flip bit_0 to 0 to
+	// break the sum constraint at the gated row.
+	for i := 0; i < k; i++ {
+		col := make([]koalabear.Element, mod.N)
+		tr.SetBase(cn.Bits[i], col)
+	}
+	col := make([]koalabear.Element, mod.N)
+	col[rowIdx].SetUint64(0) // should be 1
+	tr.SetBase(cn.Bits[0], col)
+	col2 := make([]koalabear.Element, mod.N)
+	col2[rowIdx].SetUint64(1)
+	tr.SetBase(cn.Bits[2], col2)
+
 	testutil.ExpectProveOrVerifyFailure(t, &builder, tr)
 }
 
