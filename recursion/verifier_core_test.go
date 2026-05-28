@@ -60,7 +60,7 @@ func makeEqualityInner(t *testing.T, n int) (board.Program, trace.Trace) {
 
 // TestBuildVerifierCoreAIROnlyEquality builds a tiny inner program,
 // proves it natively, then constructs the recursive verifier with
-// buildVerifierCore (Stage 1) and proves+verifies the outer program.
+// BuildVerifierCore (Stage 1) and proves+verifies the outer program.
 // The outer proof attests to the AIR relation V(zeta) == (zeta^N - 1) * Q(zeta).
 func TestBuildVerifierCoreAIROnlyEquality(t *testing.T) {
 	innerProgram, innerTrace := makeEqualityInner(t, 4)
@@ -75,12 +75,12 @@ func TestBuildVerifierCoreAIROnlyEquality(t *testing.T) {
 	}
 
 	cfg := DefaultConfig()
-	outerProgram, outerTrace, err := buildVerifierCore(
+	outerProgram, outerTrace, err := BuildVerifierCore(
 		RecursionInput{Program: innerProgram, Proof: innerProof},
 		cfg,
 	)
 	if err != nil {
-		t.Fatalf("buildVerifierCore: %v", err)
+		t.Fatalf("BuildVerifierCore: %v", err)
 	}
 
 	// Prove + verify the outer recursive program.
@@ -97,7 +97,7 @@ func TestBuildVerifierCoreAIROnlyEquality(t *testing.T) {
 // columns A, B, C with constraints A_{i+1} = B_i, B_{i+1} = C_i (except
 // at the last row to avoid wraparound), and C_i = A_i + B_i. Uses
 // AssertZeroExceptAt which introduces LagrangeColumn leaves — exercising
-// the Lagrange path in buildVerifierCore.
+// the Lagrange path in BuildVerifierCore.
 func makeFibonacciInner(t *testing.T, n int) (board.Program, trace.Trace) {
 	t.Helper()
 
@@ -149,12 +149,12 @@ func TestBuildVerifierCoreFibonacci(t *testing.T) {
 		t.Fatalf("inner verify: %v", err)
 	}
 
-	outerProgram, outerTrace, err := buildVerifierCore(
+	outerProgram, outerTrace, err := BuildVerifierCore(
 		RecursionInput{Program: innerProgram, Proof: innerProof},
 		DefaultConfig(),
 	)
 	if err != nil {
-		t.Fatalf("buildVerifierCore: %v", err)
+		t.Fatalf("BuildVerifierCore: %v", err)
 	}
 
 	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
@@ -205,12 +205,12 @@ func TestBuildVerifierCoreWithExposedValues(t *testing.T) {
 		t.Fatalf("inner verify: %v", err)
 	}
 
-	outerProgram, outerTrace, err := buildVerifierCore(
+	outerProgram, outerTrace, err := BuildVerifierCore(
 		RecursionInput{Program: innerProgram, Proof: innerProof},
 		DefaultConfig(),
 	)
 	if err != nil {
-		t.Fatalf("buildVerifierCore: %v", err)
+		t.Fatalf("BuildVerifierCore: %v", err)
 	}
 
 	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
@@ -224,7 +224,7 @@ func TestBuildVerifierCoreWithExposedValues(t *testing.T) {
 
 // TestBuildVerifierCoreWithPublicInputs exercises PublicInputColumn
 // leaves. Builds an inner program that references a verifier-supplied
-// public input column at row 0; buildVerifierCore reconstructs the
+// public input column at row 0; BuildVerifierCore reconstructs the
 // public value at zeta natively.
 func TestBuildVerifierCoreWithPublicInputs(t *testing.T) {
 	const n = 4
@@ -271,12 +271,12 @@ func TestBuildVerifierCoreWithPublicInputs(t *testing.T) {
 		t.Fatalf("inner verify: %v", err)
 	}
 
-	outerProgram, outerTrace, err := buildVerifierCore(
+	outerProgram, outerTrace, err := BuildVerifierCore(
 		RecursionInput{Program: innerProgram, Proof: innerProof, PublicInputs: publicInputs},
 		DefaultConfig(),
 	)
 	if err != nil {
-		t.Fatalf("buildVerifierCore: %v", err)
+		t.Fatalf("BuildVerifierCore: %v", err)
 	}
 
 	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
@@ -289,7 +289,7 @@ func TestBuildVerifierCoreWithPublicInputs(t *testing.T) {
 	_ = one
 }
 
-// TestBuildVerifierCoreNonSkipFRI confirms buildVerifierCore extends
+// TestBuildVerifierCoreNonSkipFRI confirms BuildVerifierCore extends
 // the FS chain through fri_fold_0 when the inner proof carries real
 // FRI data (DeepQuotientCommitment non-empty). The recursive verifier
 // still only checks the AIR relation in-circuit; FRI verification
@@ -311,12 +311,12 @@ func TestBuildVerifierCoreNonSkipFRI(t *testing.T) {
 		t.Fatal("expected inner proof to carry FRI DEEP-quotient commitments")
 	}
 
-	outerProgram, outerTrace, err := buildVerifierCore(
+	outerProgram, outerTrace, err := BuildVerifierCore(
 		RecursionInput{Program: innerProgram, Proof: innerProof},
 		DefaultConfig(),
 	)
 	if err != nil {
-		t.Fatalf("buildVerifierCore: %v", err)
+		t.Fatalf("BuildVerifierCore: %v", err)
 	}
 
 	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
@@ -347,12 +347,12 @@ func TestBuildVerifierCoreNonSkipFRIFibonacci(t *testing.T) {
 		t.Fatal("expected inner proof to carry FRI DEEP-quotient commitments")
 	}
 
-	outerProgram, outerTrace, err := buildVerifierCore(
+	outerProgram, outerTrace, err := BuildVerifierCore(
 		RecursionInput{Program: innerProgram, Proof: innerProof},
 		DefaultConfig(),
 	)
 	if err != nil {
-		t.Fatalf("buildVerifierCore: %v", err)
+		t.Fatalf("BuildVerifierCore: %v", err)
 	}
 
 	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
@@ -397,12 +397,12 @@ func TestBuildVerifierCoreRejectsAtZetaTamperingViaDeepAlpha(t *testing.T) {
 	b.B0.A0.Add(&b.B0.A0, &two)
 	innerProof.SetValueAtZetaExt("B", b)
 
-	outerProgram, outerTrace, err := buildVerifierCore(
+	outerProgram, outerTrace, err := BuildVerifierCore(
 		RecursionInput{Program: innerProgram, Proof: innerProof},
 		DefaultConfig(),
 	)
 	if err != nil {
-		t.Fatalf("buildVerifierCore: %v", err)
+		t.Fatalf("BuildVerifierCore: %v", err)
 	}
 
 	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
@@ -438,12 +438,12 @@ func TestBuildVerifierCoreRejectsBadInnerProof(t *testing.T) {
 	innerProof.SetValueAtZetaExt("A", a)
 
 	cfg := DefaultConfig()
-	outerProgram, outerTrace, err := buildVerifierCore(
+	outerProgram, outerTrace, err := BuildVerifierCore(
 		RecursionInput{Program: innerProgram, Proof: innerProof},
 		cfg,
 	)
 	if err != nil {
-		t.Fatalf("buildVerifierCore: %v", err)
+		t.Fatalf("BuildVerifierCore: %v", err)
 	}
 
 	// Outer prove should fail (or verify fails) because the AIR constraint

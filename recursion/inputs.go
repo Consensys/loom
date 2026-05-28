@@ -21,7 +21,7 @@ import (
 
 // RecursionInput is a single inner proof together with the program it
 // satisfies and any verifier-supplied public inputs. The verifier circuit
-// produced by buildVerifierCore checks the proof against the program +
+// produced by BuildVerifierCore checks the proof against the program +
 // public inputs.
 type RecursionInput struct {
 	Program      board.Program

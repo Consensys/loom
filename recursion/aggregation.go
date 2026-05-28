@@ -24,7 +24,7 @@ import (
 // proofs at once, enabling tree-based aggregation: pairs of leaf proofs are
 // folded into a single aggregated proof at each level of the tree.
 //
-// Stub for milestone 1. The planned implementation invokes buildVerifierCore
+// Stub for milestone 1. The planned implementation invokes BuildVerifierCore
 // twice into the same builder (so the two sub-verifiers share the same outer
 // transcript, lookup buses, and Poseidon2 gadget module), then commits the
 // concatenated verification claims.

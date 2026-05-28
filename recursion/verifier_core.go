@@ -42,7 +42,7 @@ import (
 const challengeIDDomainTag uint64 = 0x46534944 // "FSID"
 
 
-// buildVerifierCore compiles a board.Program that verifies a single
+// BuildVerifierCore compiles a board.Program that verifies a single
 // inner Loom proof, along with a witness trace satisfying it.
 //
 // STAGE 1 SCOPE: implements only the per-module AIR-at-zeta check
@@ -75,7 +75,7 @@ const challengeIDDomainTag uint64 = 0x46534944 // "FSID"
 //     PublicInputs; future work.
 //   - ExposedColumn — requires reconstructing from proof.ExposedValues;
 //     future work.
-func buildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.Trace, error) {
+func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.Trace, error) {
 	if err := validateInnerProof(input.Proof, cfg); err != nil {
 		return board.Program{}, trace.Trace{}, err
 	}

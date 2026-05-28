@@ -15,7 +15,7 @@
 //
 // Two top-level entry points are planned:
 //
-//   - buildVerifierCore  compiles a verifier circuit for a single inner proof
+//   - BuildVerifierCore  compiles a verifier circuit for a single inner proof
 //     (used for proof compression by repeated wrapping).
 //   - buildAggregationCore  compiles a verifier circuit that verifies two
 //     inner proofs at once (used for tree-based aggregation of segmented
@@ -31,7 +31,7 @@
 //   - gadgets/challenger Fiat-Shamir sponge layered over the Poseidon2 gadget
 //   - extfield           E4 arithmetic helpers inlined as expr.Expr trees
 //
-// The buildVerifierCore / buildAggregationCore wiring is intentionally left as
+// The BuildVerifierCore / buildAggregationCore wiring is intentionally left as
 // stubs returning an error; subsequent milestones will assemble these gadgets
 // into a complete verifier circuit (AIR-at-zeta check, FRI verification,
 // Merkle-opening verification, DEEP-quotient bridge).
