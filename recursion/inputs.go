@@ -16,14 +16,17 @@ package recursion
 import (
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/proof"
+	"github.com/consensys/loom/public"
 )
 
 // RecursionInput is a single inner proof together with the program it
-// satisfies. The verifier circuit produced by buildVerifierCore checks the
-// proof against the program.
+// satisfies and any verifier-supplied public inputs. The verifier circuit
+// produced by buildVerifierCore checks the proof against the program +
+// public inputs.
 type RecursionInput struct {
-	Program board.Program
-	Proof   proof.Proof
+	Program      board.Program
+	Proof        proof.Proof
+	PublicInputs public.Inputs
 }
 
 // AggregationInput pairs two inner proofs so that a single outer verifier

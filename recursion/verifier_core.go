@@ -26,11 +26,14 @@ import (
 	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/poly"
+	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/prover"
+	"github.com/consensys/loom/public"
 	"github.com/consensys/loom/recursion/extfield"
 	"github.com/consensys/loom/recursion/gadgets/airzeta"
 	"github.com/consensys/loom/trace"
 )
+
 
 // buildVerifierCore compiles a board.Program that verifies a single
 // inner Loom proof, along with a witness trace satisfying it.
@@ -97,7 +100,7 @@ func buildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 		m := input.Program.Modules[name]
 		data := moduleData{name: name, mod: m, leafVals: map[string]ext.E4{}}
 
-		if err := collectLeafValuesAtZeta(name, m, zeta, input.Proof, data.leafVals); err != nil {
+		if err := collectLeafValuesAtZeta(name, m, zeta, input.Proof, input.PublicInputs, data.leafVals); err != nil {
 			return board.Program{}, trace.Trace{}, err
 		}
 
@@ -239,6 +242,14 @@ func replayInnerFS(input RecursionInput) (ext.E4, map[string]ext.E4, error) {
 		return ext.E4{}, nil, err
 	}
 
+	// PublicInputs (if any) are bound into the initial challenge before
+	// any trace roots — matching newVerifierRuntime.
+	if len(input.PublicInputs) > 0 {
+		if err := fs.Bind(initialChallenge, input.PublicInputs.TranscriptElements()); err != nil {
+			return ext.E4{}, nil, err
+		}
+	}
+
 	// Per-round trace roots, then compute each round challenge.
 	challengeVals := make(map[string]ext.E4)
 	for r := 0; r < numRounds; r++ {
@@ -283,11 +294,23 @@ func sortedModuleNames(p board.Program) []string {
 
 // collectLeafValuesAtZeta walks the module's vanishing-relation DAG and
 // resolves every non-constant leaf's value at zeta into the leafVals
-// map. Committed / Rotated / Challenge leaves are read directly from
-// the inner proof; Lagrange leaves are computed natively. Returns an
-// error if a Public or Exposed leaf is encountered — those require
-// Stage 2+ wiring.
-func collectLeafValuesAtZeta(modName string, m board.CompiledModule, zeta ext.E4, prf interface{ ValueAtZetaExt(string) (ext.E4, bool) }, out map[string]ext.E4) error {
+// map.
+//
+//   - Committed / Rotated / Challenge: pulled directly from the inner
+//     proof's ValuesAtZeta.
+//   - Lagrange: computed natively via poly.LagrangeAtZetaExt.
+//   - PublicInput: reconstructed as a sparse Lagrange sum from the
+//     statement's PublicInputs entries.
+//   - Exposed: reconstructed as a sparse Lagrange sum from the
+//     proof's ExposedValues entries.
+func collectLeafValuesAtZeta(
+	modName string,
+	m board.CompiledModule,
+	zeta ext.E4,
+	prf proof.Proof,
+	publicInputs public.Inputs,
+	out map[string]ext.E4,
+) error {
 	for _, node := range m.VanishingRelation.Nodes {
 		if node.IsConst || node.Leaf == nil {
 			continue
@@ -311,14 +334,63 @@ func collectLeafValuesAtZeta(modName string, m board.CompiledModule, zeta ext.E4
 			}
 			out[key] = poly.LagrangeAtZetaExt(zeta, m.N, i)
 		case expr.PublicInputColumn:
-			return fmt.Errorf("recursion: PublicInputColumn leaves not yet supported (leaf %q in module %s)", key, modName)
+			pi, ok := publicInputs[node.Leaf.Name]
+			if !ok {
+				return fmt.Errorf("recursion: PublicInputColumn %q (module %s) missing from RecursionInput.PublicInputs", key, modName)
+			}
+			if pi.Module != modName {
+				return fmt.Errorf("recursion: PublicInputColumn %q claims module %q but is used from %q", key, pi.Module, modName)
+			}
+			out[key] = reconstructFromEntries(zeta, m.N, publicInputEntries(pi))
 		case expr.ExposedColumn:
-			return fmt.Errorf("recursion: ExposedColumn leaves not yet supported (leaf %q in module %s)", key, modName)
+			ev, ok := prf.ExposedValues[node.Leaf.Name]
+			if !ok {
+				return fmt.Errorf("recursion: ExposedColumn %q (module %s) missing from inner proof.ExposedValues", key, modName)
+			}
+			out[key] = reconstructFromEntries(zeta, m.N, exposedEntries(ev))
 		default:
 			return fmt.Errorf("recursion: unknown leaf type %d for %q", node.Leaf.Type, key)
 		}
 	}
 	return nil
+}
+
+// entryAtIdx pairs a Lagrange row index with its E4 value, abstracted
+// so PublicInput entries and Exposed entries share a single
+// reconstruction helper.
+type entryAtIdx struct {
+	Idx   int
+	Value ext.E4
+}
+
+// reconstructFromEntries computes sum_e L_{N, e.Idx}(zeta) * e.Value,
+// the Lagrange-interpolation form of a sparse column at zeta. Used to
+// resolve both PublicInputColumn and ExposedColumn leaves.
+func reconstructFromEntries(zeta ext.E4, N int, entries []entryAtIdx) ext.E4 {
+	var acc ext.E4
+	for _, e := range entries {
+		lag := poly.LagrangeAtZetaExt(zeta, N, e.Idx)
+		var term ext.E4
+		term.Mul(&lag, &e.Value)
+		acc.Add(&acc, &term)
+	}
+	return acc
+}
+
+func publicInputEntries(pi public.Input) []entryAtIdx {
+	out := make([]entryAtIdx, len(pi.Entries))
+	for i, e := range pi.Entries {
+		out[i] = entryAtIdx{Idx: e.Idx, Value: e.ExtValue()}
+	}
+	return out
+}
+
+func exposedEntries(ev proof.ExposedValue) []entryAtIdx {
+	out := make([]entryAtIdx, len(ev.Entries))
+	for i, e := range ev.Entries {
+		out[i] = entryAtIdx{Idx: e.Idx, Value: e.ExtValue()}
+	}
+	return out
 }
 
 // sanitizeName makes a leaf name safe for use as a column-name suffix:
