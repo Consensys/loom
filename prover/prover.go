@@ -630,91 +630,12 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 		expr.WithoutPublicColumns(),
 	)
 
-<<<<<<< HEAD
-	type task struct {
-		key       string
-		basePoly  poly.Polynomial    // exactly one of basePoly / extPoly is non-nil
-		extPoly   poly.ExtPolynomial // (single-element constant columns can take either rail)
-		D         *fft.Domain
-		evalPoint ext.E4
-	}
-
-=======
->>>>>>> feat/lagrange_eval
 	moduleNames := make([]string, 0, len(pr.program.Modules))
 	for name := range pr.program.Modules {
 		moduleNames = append(moduleNames, name)
 	}
 	sort.Strings(moduleNames)
 
-<<<<<<< HEAD
-	// Compute leaves up front so we can size the task slice without re-walking
-	// the DAG, and so the parallel section has nothing to allocate.
-	moduleLeaves := make([][]*expr.Leaf, len(moduleNames))
-	taskCap := 0
-	for i, moduleName := range moduleNames {
-		leaves := pr.program.Modules[moduleName].VanishingRelation.LeavesFull(config)
-		moduleLeaves[i] = leaves
-		taskCap += len(leaves)
-	}
-	tasks := make([]task, 0, taskCap)
-	for i, moduleName := range moduleNames {
-		module := pr.program.Modules[moduleName]
-		leaves := moduleLeaves[i]
-
-		// trace polynomials
-		for _, leaf := range leaves {
-			evalPoint := pr.zeta
-			if leaf.Type == expr.RotatedColumn {
-				shift := ((leaf.Shift % module.N) + module.N) % module.N
-				var omegaPow koalabear.Element
-				omegaPow.Exp(module.D.Generator, big.NewInt(int64(shift)))
-				evalPoint.MulByElement(&evalPoint, &omegaPow)
-			}
-
-			if p, ok := pr.t.Ext[leaf.Name]; ok {
-				tasks = append(tasks, task{key: leaf.String(), extPoly: p, D: module.D, evalPoint: evalPoint})
-				continue
-			}
-			p, ok := pr.t.Base[leaf.Name]
-			if !ok {
-				return fmt.Errorf("ComputeEvaluationsAtZeta: column %q not found in trace", leaf.Name)
-			}
-			tasks = append(tasks, task{key: leaf.String(), basePoly: p, D: module.D, evalPoint: evalPoint})
-		}
-
-		// air chunks
-		for i := 0; ; i++ {
-			chunkName := constants.QuotientChunkName(moduleName, i)
-			if chunk, ok := pr.airTrace.Base[chunkName]; ok {
-				tasks = append(tasks, task{key: chunkName, basePoly: chunk, D: module.D, evalPoint: pr.zeta})
-				continue
-			}
-			if chunk, ok := pr.airTrace.Ext[chunkName]; ok {
-				tasks = append(tasks, task{key: chunkName, extPoly: chunk, D: module.D, evalPoint: pr.zeta})
-				continue
-			}
-			break
-		}
-	}
-
-	values := make([]ext.E4, len(tasks))
-	// Inner FFTs run serial: the per-column fan-out already saturates the CPUs.
-	fftOpt := fft.WithNbTasks(1)
-	parallel.Execute(len(tasks), func(start, end int) {
-		for i := start; i < end; i++ {
-			t := tasks[i]
-			if t.extPoly != nil {
-				values[i] = poly.ExtEvaluateAtExt(t.extPoly, t.D, t.evalPoint, fftOpt)
-			} else {
-				values[i] = poly.EvaluateAtExt(t.basePoly, t.D, t.evalPoint, fftOpt)
-			}
-		}
-	})
-
-	for i, t := range tasks {
-		pr.Proof.SetValueAtZetaExt(t.key, values[i])
-=======
 	lagrangesByN := make(map[int][]ext.E4)
 	for _, moduleName := range moduleNames {
 		N := pr.program.Modules[moduleName].N
@@ -821,7 +742,6 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 	})
 	for i, task := range tasks {
 		pr.Proof.SetValueAtZetaExt(task.key, values[i])
->>>>>>> feat/lagrange_eval
 	}
 
 	return nil
