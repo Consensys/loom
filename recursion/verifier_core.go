@@ -1399,6 +1399,97 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 					}
 				}
 			}
+
+			// Stage 12 (multi-degree): per-column Merkle openings for the
+			// sample witnesses Stage 13 just allocated. Same pattern as
+			// the single-size Stage 12 — group bare names + chunks by
+			// innerLayout.{ColSlot,AIRChunkSlot}[name].TreeIdx, build a
+			// flexible leafhash (potentially multi-block) per (tree,
+			// query) in airverify, and push a treeMerkleSetup entry so
+			// the post-AddModule wiring builds the per-tree merkle
+			// module + bindings.
+			treeEntries := map[int][]colEntry{}
+			for _, n := range bareList {
+				slot := innerLayout.ColSlot[n]
+				treeEntries[slot.TreeIdx] = append(treeEntries[slot.TreeIdx], colEntry{name: n, polyIdx: slot.PolyIdx, field: slot.Field})
+			}
+			for _, n := range chunkList {
+				slot := innerLayout.AIRChunkSlot[n]
+				treeEntries[slot.TreeIdx] = append(treeEntries[slot.TreeIdx], colEntry{name: n, polyIdx: slot.PolyIdx, field: slot.Field, isChunk: true})
+			}
+			treeIDs := make([]int, 0, len(treeEntries))
+			for t := range treeEntries {
+				treeIDs = append(treeIDs, t)
+			}
+			sort.Ints(treeIDs)
+			for _, t := range treeIDs {
+				sort.SliceStable(treeEntries[t], func(a, b int) bool {
+					af := treeEntries[t][a].field == field.Base
+					bf := treeEntries[t][b].field == field.Base
+					if af != bf {
+						return af
+					}
+					return treeEntries[t][a].polyIdx < treeEntries[t][b].polyIdx
+				})
+			}
+
+			sampleColNameMD := func(prefixRole string, qi int, name string, limb int) string {
+				return fmt.Sprintf("airverify.deep_md_%s_%d_%s_%d", prefixRole, qi, sanitizeName(name), limb)
+			}
+			for _, t := range treeIDs {
+				entries := treeEntries[t]
+				for qi := range queries {
+					var basePCols, baseQCols []string
+					var extPCols, extQCols [][extfield.Limbs]string
+					for _, e := range entries {
+						pRole, qRole := "sP", "sQ"
+						if e.isChunk {
+							pRole, qRole = "csP", "csQ"
+						}
+						if e.field == field.Base {
+							basePCols = append(basePCols, sampleColNameMD(pRole, qi, e.name, 0))
+							baseQCols = append(baseQCols, sampleColNameMD(qRole, qi, e.name, 0))
+						} else {
+							var pc, qc [extfield.Limbs]string
+							for i := 0; i < extfield.Limbs; i++ {
+								pc[i] = sampleColNameMD(pRole, qi, e.name, i)
+								qc[i] = sampleColNameMD(qRole, qi, e.name, i)
+							}
+							extPCols = append(extPCols, pc)
+							extQCols = append(extQCols, qc)
+						}
+					}
+					lhPrefix := fmt.Sprintf("airverify.lh_md_t%d_q%d", t, qi)
+					lhCN := leafhash.RegisterFlexibleLeafHash(&verifierMod, lhPrefix, basePCols, baseQCols, extPCols, extQCols)
+
+					leaf := nativeLeafFor(entries, input.Proof.PointSamplings[qi][t])
+					spongeStates := leafhash.FlexibleLeafSpongeStates(leaf)
+					blockInputs := make([][24]koalabear.Element, lhCN.NumBlocks)
+					for b := range blockInputs {
+						blockInputs[b] = spongeStates[b]
+					}
+					pendingLeafSponges = append(pendingLeafSponges, pendingLeafSpongeFill{cn: lhCN, input: blockInputs})
+
+					root := input.Proof.Commitments[t]
+					path := input.Proof.PointSamplings[qi][t].Proof
+					depth := len(path.Siblings)
+					if depth == 0 {
+						return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: empty column-tree path tree %d query %d", t, qi)
+					}
+					if depth > verifierMod.N {
+						return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: column-tree path depth %d exceeds airverify N=%d", depth, verifierMod.N)
+					}
+					treeMerkles = append(treeMerkles, treeMerkleSetup{
+						treeIdx:    t,
+						queryIdx:   qi,
+						digestCols: lhCN.Digest,
+						leafDigest: nativeLeafDigestFor(entries, input.Proof.PointSamplings[qi][t]),
+						siblings:   path.Siblings,
+						leafIdx:    path.LeafIdx,
+						root:       root,
+					})
+				}
+			}
 		}
 	}
 
