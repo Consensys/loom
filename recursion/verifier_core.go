@@ -408,6 +408,17 @@ func computeChallengeChain(input RecursionInput) ([]challengeStep, error) {
 	if err := fs.NewChallenge(constants.DEEP_ALPHA); err != nil {
 		return nil, err
 	}
+	// Stage 6: extend transcript registration through FRI's first fold
+	// challenge when the inner proof carries FRI data. Loom's fri.Prove
+	// registers this challenge after the prover-side FS setup; we mirror
+	// the same registration order so our chain's previous_digest links
+	// are correct.
+	hasFRI := len(input.Proof.DeepQuotientCommitment) > 0
+	if hasFRI {
+		if err := fs.NewChallenge(friFoldName(0)); err != nil {
+			return nil, err
+		}
+	}
 
 	// Build the per-challenge binding sequences in the order the inner
 	// verifier accumulates them.
@@ -488,13 +499,25 @@ func computeChallengeChain(input RecursionInput) ([]challengeStep, error) {
 		}
 	}
 
+	// fri_fold_0 binds the level-0 DEEP-quotient commitment root.
+	if hasFRI {
+		root := input.Proof.DeepQuotientCommitment[0]
+		bindings[friFoldName(0)] = append(bindings[friFoldName(0)], root[:]...)
+		if err := fs.Bind(friFoldName(0), root[:]); err != nil {
+			return nil, err
+		}
+	}
+
 	// Compute each challenge in order, recording the sequence absorbed.
-	challengeNames := make([]string, 0, numRounds+2)
+	challengeNames := make([]string, 0, numRounds+3)
 	for r := 0; r < numRounds; r++ {
 		challengeNames = append(challengeNames, constants.CanonicalChallengeName(r))
 	}
 	challengeNames = append(challengeNames, constants.FINAL_EVALUATION_POINT)
 	challengeNames = append(challengeNames, constants.DEEP_ALPHA)
+	if hasFRI {
+		challengeNames = append(challengeNames, friFoldName(0))
+	}
 
 	steps := make([]challengeStep, 0, len(challengeNames))
 	for i, name := range challengeNames {
@@ -570,6 +593,13 @@ func sumOf(seq []koalabear.Element, hb commitment.HashBackend) hash.Digest {
 	h.WriteElements(seq...)
 	return h.Sum()
 }
+
+// friFoldName / friLevelGammaName / friQueryName duplicate fri's
+// unexported challenge-name helpers. If the upstream format ever
+// changes these must change too — there's no exported helper to call.
+func friFoldName(j int) string       { return fmt.Sprintf("fri_fold_%d", j) }
+func friLevelGammaName(l int) string { return fmt.Sprintf("fri_level_%d_gamma", l) }
+func friQueryName(k int) string      { return fmt.Sprintf("fri_query_%d", k) }
 
 // extToElements flattens an E4 into the 4-element order Loom's FS uses
 // when binding extension values: (B0.A0, B0.A1, B1.A0, B1.A1). Mirrors

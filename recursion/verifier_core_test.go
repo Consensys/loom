@@ -289,6 +289,45 @@ func TestBuildVerifierCoreWithPublicInputs(t *testing.T) {
 	_ = one
 }
 
+// TestBuildVerifierCoreNonSkipFRI confirms buildVerifierCore extends
+// the FS chain through fri_fold_0 when the inner proof carries real
+// FRI data (DeepQuotientCommitment non-empty). The recursive verifier
+// still only checks the AIR relation in-circuit; FRI verification
+// itself is the next stage. But the chain machinery is exercised.
+func TestBuildVerifierCoreNonSkipFRI(t *testing.T) {
+	innerProgram, innerTrace := makeEqualityInner(t, 4)
+
+	innerProof, err := prover.Prove(innerTrace, setup.ProvingKey{}, nil, innerProgram)
+	if err != nil {
+		t.Fatalf("inner prove (with FRI): %v", err)
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, innerProgram, innerProof); err != nil {
+		t.Fatalf("inner verify (with FRI): %v", err)
+	}
+
+	// Sanity: the inner proof must actually carry FRI data, otherwise
+	// the chain extension is a no-op and the test isn't testing anything.
+	if len(innerProof.DeepQuotientCommitment) == 0 {
+		t.Fatal("expected inner proof to carry FRI DEEP-quotient commitments")
+	}
+
+	outerProgram, outerTrace, err := buildVerifierCore(
+		RecursionInput{Program: innerProgram, Proof: innerProof},
+		DefaultConfig(),
+	)
+	if err != nil {
+		t.Fatalf("buildVerifierCore: %v", err)
+	}
+
+	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
+	if err != nil {
+		t.Fatalf("outer prove: %v", err)
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, outerProgram, outerProof, verifier.SkipFRI()); err != nil {
+		t.Fatalf("outer verify: %v", err)
+	}
+}
+
 // TestBuildVerifierCoreRejectsAtZetaTamperingViaDeepAlpha is an
 // additional negative test specific to the Stage-5 witness binding:
 // once DEEP_ALPHA's bindings reference the same airverify witness
