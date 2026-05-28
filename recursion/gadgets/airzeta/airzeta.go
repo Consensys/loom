@@ -156,6 +156,30 @@ func RegisterAIRCheckAtRow(
 	}
 }
 
+// RegisterAIRCheckAtRowWithZetaPow is identical to RegisterAIRCheckAtRow
+// but accepts a pre-materialized zeta^N expression. This is the
+// preferred entry point for recursion verifiers, where zeta^N should
+// be computed once via a witness-column chain
+// (see MaterializeZetaPowChain) rather than inlined as a degree-N
+// polynomial — the latter blows up the constraint tree exponentially
+// once N exceeds 8 or so.
+//
+// The qZeta = sum chunks[i] * (zeta^N)^i reconstruction still chains
+// powers of zetaPowN inline, which is fine as long as len(chunks)
+// stays small (typical Loom programs have 1–3 quotient chunks).
+func RegisterAIRCheckAtRowWithZetaPow(
+	mod *board.Module,
+	d *dag.DAG,
+	leafValues map[string]extfield.E4Expr,
+	zetaPowN extfield.E4Expr,
+	chunks []extfield.E4Expr,
+	rowIdx int,
+) {
+	for _, rel := range buildAIRRelationsWithZetaPow(d, leafValues, zetaPowN, chunks) {
+		mod.AssertZeroAt(rel, rowIdx)
+	}
+}
+
 // buildAIRRelations is the shared expression-building core used by
 // RegisterAIRCheck and RegisterAIRCheckAtRow. Returns the 4 per-limb
 // constraint expressions for V(zeta) - (zeta^N - 1) * Q(zeta).
@@ -166,8 +190,18 @@ func buildAIRRelations(
 	zeta extfield.E4Expr,
 	chunks []extfield.E4Expr,
 ) [extfield.Limbs]expr.Expr {
-	v := EvalDAG(d, leafValues)
 	zetaPowN := PowExt(zeta, N)
+	return buildAIRRelationsWithZetaPow(d, leafValues, zetaPowN, chunks)
+}
+
+// buildAIRRelationsWithZetaPow is the zetaPowN-supplied variant.
+func buildAIRRelationsWithZetaPow(
+	d *dag.DAG,
+	leafValues map[string]extfield.E4Expr,
+	zetaPowN extfield.E4Expr,
+	chunks []extfield.E4Expr,
+) [extfield.Limbs]expr.Expr {
+	v := EvalDAG(d, leafValues)
 	one := extfield.One()
 	zetaPowNMinusOne := zetaPowN.Sub(one)
 

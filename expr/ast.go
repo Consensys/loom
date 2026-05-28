@@ -255,9 +255,11 @@ func (l *Leaf) Add(e Expr) Expr { return &Add{l, e} }
 func (l *Leaf) Sub(e Expr) Expr { return &Sub{l, e} }
 func (l *Leaf) Mul(e Expr) Expr { return &Mul{l, e} }
 func (l *Leaf) Pow(n uint32) Expr {
-	if n > 2 {
-		return squareAndMultiply(l, n)
-	}
+	// Leaves are atomic — pruneSearch (the in-place rewriter that the
+	// squareAndMultiply Clone-cascade was guarding against) explicitly
+	// skips Leaf nodes (see ast.go: pruneSearch case *Leaf). So we can
+	// safely return a unary Pow{leaf, n} regardless of n and avoid the
+	// O(n^2) Mul-tree expansion that bites large expr.Fold sums.
 	return &Pow{l, n}
 }
 

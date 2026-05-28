@@ -273,15 +273,52 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 		expr.Col(chCN.Digest[1]), expr.Col(chCN.Digest[3]),
 	)
 
-	// Register the AIR-at-zeta check per inner module using the
-	// pre-allocated witness references.
+	// Materialize a witness-column chain of zeta^(2^i) so per-module
+	// zeta^N can be referenced as cheap expr.Col rather than inlined as
+	// a degree-N polynomial in the four zeta limbs. Without this the
+	// constraint tree blows up exponentially in N (each E4 squaring
+	// roughly squares the per-limb expression size; by i=4 we hit
+	// billions of nodes).
+	//
+	// chain[0] = zeta (the sparse witness from the __zeta sponge).
+	// chain[i] (i>0) = 4 fresh witness columns, constrained at
+	// chCN.DigestRow to equal chain[i-1].Square(). Off-row values are
+	// free (the AIR check is row-gated too), so the constraint stays
+	// sparse and degree-2.
+	maxModN := 1
+	for _, data := range mods {
+		if data.mod.N > maxModN {
+			maxModN = data.mod.N
+		}
+	}
+	maxZetaLog2 := log2int(maxModN)
+	zetaPowChain := make([]extfield.E4Expr, maxZetaLog2+1)
+	zetaPowChain[0] = zetaExpr
+
+	zetaPowNative := make([]ext.E4, maxZetaLog2+1)
+	zetaPowNative[0] = zeta
+	for i := 1; i <= maxZetaLog2; i++ {
+		zetaPowNative[i].Square(&zetaPowNative[i-1])
+
+		prefix := fmt.Sprintf("airverify.zetaPow_%d", 1<<i)
+		curExpr := addE4(prefix, zetaPowNative[i])
+
+		prevSquared := zetaPowChain[i-1].Square()
+		for _, rel := range curExpr.EqualityConstraints(prevSquared) {
+			verifierMod.AssertZeroAt(rel, chCN.DigestRow)
+		}
+		zetaPowChain[i] = curExpr
+	}
+
+	// Register the AIR-at-zeta check per inner module, using the
+	// pre-materialized zeta^N where N = 2^logN for the module.
 	for mi, data := range mods {
-		airzeta.RegisterAIRCheckAtRow(
+		logN := log2int(data.mod.N)
+		airzeta.RegisterAIRCheckAtRowWithZetaPow(
 			&verifierMod,
 			data.mod.VanishingRelation,
-			data.mod.N,
 			witnesses[mi].leafExprs,
-			zetaExpr,
+			zetaPowChain[logN],
 			witnesses[mi].chunkExprs,
 			chCN.DigestRow,
 		)

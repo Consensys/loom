@@ -14,6 +14,7 @@
 package recursion
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -25,41 +26,63 @@ import (
 	"github.com/consensys/loom/verifier"
 )
 
-// makeInnerForBench builds a Fibonacci-like inner board.Builder and the
-// matching base-field witness columns. The Builder is returned uncompiled
-// so the "build inner" benchmark measures board.Compile by itself.
-func makeInnerForBench(n int) (board.Builder, map[string][]koalabear.Element) {
-	builder := board.NewBuilder()
-	mod := board.NewModule("inner")
-	mod.N = n
-	// A_{i+1} = B_i, B_{i+1} = A_i + B_i, C_i = A_i + B_i, at all rows
-	// except the last.
-	mod.AssertZeroExceptAt(expr.Rot("A", 1).Sub(expr.Col("B")), n-1)
-	mod.AssertZeroExceptAt(expr.Rot("B", 1).Sub(expr.Col("A").Add(expr.Col("B"))), n-1)
-	mod.AssertZero(expr.Col("C").Sub(expr.Col("A").Add(expr.Col("B"))))
-	builder.AddModule(mod)
+// innerSpec describes the inner-proof workload: one Fibonacci-like module
+// per entry, sized as specified. With multiple distinct sizes the FRI
+// verifier exercises multi-level folding (level intro per distinct size).
+type innerSpec struct {
+	label    string
+	sizes    []int
+	skipFRI  bool
+}
 
-	a := make([]koalabear.Element, n)
-	b := make([]koalabear.Element, n)
-	c := make([]koalabear.Element, n)
-	a[0].SetZero()
-	b[0].SetOne()
-	for i := 0; i < n; i++ {
-		c[i].Add(&a[i], &b[i])
-		if i+1 < n {
-			a[i+1].Set(&b[i])
-			b[i+1].Set(&c[i])
+// allInnerSpecs are the benchmark workloads. Add an entry here to
+// extend coverage; every Benchmark* function iterates this list.
+var allInnerSpecs = []innerSpec{
+	{label: "Small", sizes: []int{4}, skipFRI: true},
+	{label: "Large", sizes: []int{64, 32, 16, 8}, skipFRI: false},
+}
+
+// buildInner constructs the inner builder + base-field trace columns for
+// the given spec. Each module "fib_<N>" computes Fibonacci of size N with
+// its own A/B/C columns.
+func buildInner(spec innerSpec) (board.Builder, map[string][]koalabear.Element) {
+	builder := board.NewBuilder()
+	cols := make(map[string][]koalabear.Element)
+	for _, n := range spec.sizes {
+		modName := fmt.Sprintf("fib_%d", n)
+		aName := modName + ".A"
+		bName := modName + ".B"
+		cName := modName + ".C"
+
+		mod := board.NewModule(modName)
+		mod.N = n
+		mod.AssertZeroExceptAt(expr.Rot(aName, 1).Sub(expr.Col(bName)), n-1)
+		mod.AssertZeroExceptAt(expr.Rot(bName, 1).Sub(expr.Col(aName).Add(expr.Col(bName))), n-1)
+		mod.AssertZero(expr.Col(cName).Sub(expr.Col(aName).Add(expr.Col(bName))))
+		builder.AddModule(mod)
+
+		a := make([]koalabear.Element, n)
+		b := make([]koalabear.Element, n)
+		c := make([]koalabear.Element, n)
+		a[0].SetZero()
+		b[0].SetOne()
+		for i := 0; i < n; i++ {
+			c[i].Add(&a[i], &b[i])
+			if i+1 < n {
+				a[i+1].Set(&b[i])
+				b[i+1].Set(&c[i])
+			}
 		}
+		cols[aName] = a
+		cols[bName] = b
+		cols[cName] = c
 	}
-	cols := map[string][]koalabear.Element{"A": a, "B": b, "C": c}
 	return builder, cols
 }
 
-// compileInner is a helper used by every benchmark in this file to
-// obtain a fresh inner program. Errors are converted to b.Fatal.
-func compileInner(b *testing.B, n int) (board.Program, trace.Trace) {
+func compileInner(b *testing.B, spec innerSpec) (board.Program, trace.Trace) {
 	b.Helper()
-	builder, cols := makeInnerForBench(n)
+	builder, cols := buildInner(spec)
 	program, err := board.Compile(&builder)
 	if err != nil {
 		b.Fatalf("inner Compile: %v", err)
@@ -71,104 +94,129 @@ func compileInner(b *testing.B, n int) (board.Program, trace.Trace) {
 	return program, tr
 }
 
-const benchInnerN = 4
+func innerProveOpts(spec innerSpec) []prover.Option {
+	if spec.skipFRI {
+		return []prover.Option{prover.SkipFRI()}
+	}
+	return nil
+}
 
-// BenchmarkInnerBuild measures the cost of compiling the inner
-// (subject) program — board.Compile applied to a fresh Builder.
+func innerVerifyOpts(spec innerSpec) []verifier.Option {
+	if spec.skipFRI {
+		return []verifier.Option{verifier.SkipFRI()}
+	}
+	return nil
+}
+
+// BenchmarkInnerBuild measures board.Compile on the inner program.
 func BenchmarkInnerBuild(b *testing.B) {
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		builder, _ := makeInnerForBench(benchInnerN)
-		if _, err := board.Compile(&builder); err != nil {
-			b.Fatalf("Compile: %v", err)
-		}
+	for _, spec := range allInnerSpecs {
+		b.Run(spec.label, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				builder, _ := buildInner(spec)
+				if _, err := board.Compile(&builder); err != nil {
+					b.Fatalf("Compile: %v", err)
+				}
+			}
+		})
 	}
 }
 
-// BenchmarkInnerProve measures the cost of producing a native Loom
-// proof for the inner program. SkipFRI matches the cheapest path and
-// keeps the focus on the AIR/quotient machinery; flip it off when
-// FRI cost matters.
+// BenchmarkInnerProve measures prover.Prove on the inner program.
 func BenchmarkInnerProve(b *testing.B) {
-	program, tr := compileInner(b, benchInnerN)
-	b.ResetTimer()
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		if _, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, prover.SkipFRI()); err != nil {
-			b.Fatalf("inner prove: %v", err)
-		}
+	for _, spec := range allInnerSpecs {
+		b.Run(spec.label, func(b *testing.B) {
+			program, tr := compileInner(b, spec)
+			opts := innerProveOpts(spec)
+			b.ResetTimer()
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if _, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, opts...); err != nil {
+					b.Fatalf("inner prove: %v", err)
+				}
+			}
+		})
 	}
 }
 
-// BenchmarkRecursionBuild measures the cost of compiling the outer
-// verifier program from an inner (program, proof) pair — this is
-// BuildVerifierCore + its internal board.Compile.
+// BenchmarkRecursionBuild measures BuildVerifierCore on each workload.
 func BenchmarkRecursionBuild(b *testing.B) {
-	program, tr := compileInner(b, benchInnerN)
-	innerProof, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, prover.SkipFRI())
-	if err != nil {
-		b.Fatalf("inner prove: %v", err)
-	}
-	input := RecursionInput{Program: program, Proof: innerProof}
-	cfg := DefaultConfig()
-	b.ResetTimer()
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		if _, _, err := BuildVerifierCore(input, cfg); err != nil {
-			b.Fatalf("BuildVerifierCore: %v", err)
-		}
+	for _, spec := range allInnerSpecs {
+		b.Run(spec.label, func(b *testing.B) {
+			program, tr := compileInner(b, spec)
+			innerProof, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, innerProveOpts(spec)...)
+			if err != nil {
+				b.Fatalf("inner prove: %v", err)
+			}
+			input := RecursionInput{Program: program, Proof: innerProof}
+			cfg := DefaultConfig()
+			b.ResetTimer()
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if _, _, err := BuildVerifierCore(input, cfg); err != nil {
+					b.Fatalf("BuildVerifierCore: %v", err)
+				}
+			}
+		})
 	}
 }
 
-// BenchmarkRecursionProve measures the cost of generating the outer
-// proof — prover.Prove on the recursion program built by
-// BuildVerifierCore.
+// BenchmarkRecursionProve measures prover.Prove on the outer program.
 func BenchmarkRecursionProve(b *testing.B) {
-	program, tr := compileInner(b, benchInnerN)
-	innerProof, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, prover.SkipFRI())
-	if err != nil {
-		b.Fatalf("inner prove: %v", err)
-	}
-	outerProgram, outerTrace, err := BuildVerifierCore(
-		RecursionInput{Program: program, Proof: innerProof},
-		DefaultConfig(),
-	)
-	if err != nil {
-		b.Fatalf("BuildVerifierCore: %v", err)
-	}
-	b.ResetTimer()
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		if _, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI()); err != nil {
-			b.Fatalf("outer prove: %v", err)
-		}
+	for _, spec := range allInnerSpecs {
+		b.Run(spec.label, func(b *testing.B) {
+			program, tr := compileInner(b, spec)
+			innerProof, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, innerProveOpts(spec)...)
+			if err != nil {
+				b.Fatalf("inner prove: %v", err)
+			}
+			outerProgram, outerTrace, err := BuildVerifierCore(
+				RecursionInput{Program: program, Proof: innerProof},
+				DefaultConfig(),
+			)
+			if err != nil {
+				b.Fatalf("BuildVerifierCore: %v", err)
+			}
+			b.ResetTimer()
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if _, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI()); err != nil {
+					b.Fatalf("outer prove: %v", err)
+				}
+			}
+		})
 	}
 }
 
-// BenchmarkRecursionVerify measures the cost of verifying the outer
-// proof.
+// BenchmarkRecursionVerify measures verifier.Verify on the outer proof.
 func BenchmarkRecursionVerify(b *testing.B) {
-	program, tr := compileInner(b, benchInnerN)
-	innerProof, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, prover.SkipFRI())
-	if err != nil {
-		b.Fatalf("inner prove: %v", err)
-	}
-	outerProgram, outerTrace, err := BuildVerifierCore(
-		RecursionInput{Program: program, Proof: innerProof},
-		DefaultConfig(),
-	)
-	if err != nil {
-		b.Fatalf("BuildVerifierCore: %v", err)
-	}
-	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
-	if err != nil {
-		b.Fatalf("outer prove: %v", err)
-	}
-	b.ResetTimer()
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		if err := verifier.Verify(nil, setup.VerificationKey{}, outerProgram, outerProof, verifier.SkipFRI()); err != nil {
-			b.Fatalf("outer verify: %v", err)
-		}
+	for _, spec := range allInnerSpecs {
+		b.Run(spec.label, func(b *testing.B) {
+			program, tr := compileInner(b, spec)
+			innerProof, err := prover.Prove(tr, setup.ProvingKey{}, nil, program, innerProveOpts(spec)...)
+			if err != nil {
+				b.Fatalf("inner prove: %v", err)
+			}
+			_ = innerVerifyOpts // referenced for symmetry; outer always SkipFRI
+			outerProgram, outerTrace, err := BuildVerifierCore(
+				RecursionInput{Program: program, Proof: innerProof},
+				DefaultConfig(),
+			)
+			if err != nil {
+				b.Fatalf("BuildVerifierCore: %v", err)
+			}
+			outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
+			if err != nil {
+				b.Fatalf("outer prove: %v", err)
+			}
+			b.ResetTimer()
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if err := verifier.Verify(nil, setup.VerificationKey{}, outerProgram, outerProof, verifier.SkipFRI()); err != nil {
+					b.Fatalf("outer verify: %v", err)
+				}
+			}
+		})
 	}
 }
