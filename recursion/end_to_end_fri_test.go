@@ -127,20 +127,22 @@ func makeLayerMerkleTree(t *testing.T, layer []ext.E4) (*internalmerkle.Tree, []
 // TestEndToEndFRIVerifierWithMerkleBinding integrates friround + frichain
 // + merkle + idxselect in one verifier program to check an entire
 // single-query FRI traversal: fold equations, cross-round chaining,
-// final-poly match, AND per-layer Merkle path verification of the
-// (LeafP, LeafQ) openings against committed roots.
+// final-poly match, per-layer Merkle path verification of the
+// (LeafP, LeafQ) openings against committed roots, AND a cross-module
+// binding via exposed values that links friround's row-0 (P, Q) to the
+// matching merkle module's row-0 (LeafP, LeafQ).
 //
-// Setup: N = 16, D = 4, numRounds = 2, NumQueries = 2 (avoids padding
-// issues with alpha-pinning).
-//
-// Caveat: this test trusts the trace generator to populate friround's P/Q
-// and merkle's LeafP/LeafQ with consistent values across modules. A
-// future commit will add a cross-module lookup/permutation argument that
-// makes the connection enforceable.
+// Setup: N = 16, D = 4, numRounds = 2, NumQueries = 4 (chosen so all
+// modules share the same N: fri_verify = 4, layer-0 merkle = 4
+// (depth 3 padded to 4), layer-1 merkle = 4 (depth 2 padded to 4)).
+// Same N is required because Loom's exposed values reconstruct their
+// value at zeta using each consuming module's N — sharing only works
+// when all consumers agree.
 func TestEndToEndFRIVerifierWithMerkleBinding(t *testing.T) {
 	const N = 16
 	const numRounds = 2
-	queries := []int{5, 2}
+	queries := []int{5, 2, 3, 6}
+	const universalN = 4 // shared by fri_verify and every merkle layer
 
 	initialLayer := make([]ext.E4, N)
 	for i := range initialLayer {
@@ -197,11 +199,33 @@ func TestEndToEndFRIVerifierWithMerkleBinding(t *testing.T) {
 
 	builder.AddModule(friMod)
 
-	// (2) Per-layer Merkle modules — one per FRI round. Each module's N
-	// must match the path depth at that layer.
+	// (2) Cross-module binding: expose friround[j]'s query-0 (P, Q) so
+	// the matching merkle module's row-0 (LeafP, LeafQ) can be
+	// constrained against them. Without this binding the trace generator
+	// is trusted to fill the two modules consistently; with it, a
+	// malicious prover that diverges between friround and merkle is
+	// caught either inside friround (its own AssertEqualAt against the
+	// exposed value), or inside merkle (its AssertEqualAt against the
+	// same exposed value).
+	for j := 0; j < numRounds; j++ {
+		for i := 0; i < extfield.Limbs; i++ {
+			builder.AddExposeIthValueStep("fri_verify", expr.Col(friGroups[j].P[i]), exposeName("P", j, i), 0)
+			builder.AddExposeIthValueStep("fri_verify", expr.Col(friGroups[j].Q[i]), exposeName("Q", j, i), 0)
+		}
+	}
+
+	// (3) Per-layer Merkle modules — one per FRI round. All modules use
+	// the same N (universalN) so the cross-module exposed values
+	// reconstruct identically at zeta.
 	merkleCNs := make([]merkle.ColumnNames, numRounds)
 	for j := 0; j < numRounds; j++ {
-		merkleCNs[j] = merkle.BuildModule(&builder, merkleModName(j), len(proofs[j][0].Siblings))
+		merkleCNs[j] = merkle.BuildModule(&builder, merkleModName(j), universalN)
+
+		merkleMod := builder.Modules[merkleModName(j)]
+		for i := 0; i < extfield.Limbs; i++ {
+			merkleMod.AssertEqualAt(expr.Col(merkleCNs[j].LeafP[i]), expr.Exposed(exposeName("P", j, i)), 0)
+			merkleMod.AssertEqualAt(expr.Col(merkleCNs[j].LeafQ[i]), expr.Exposed(exposeName("Q", j, i)), 0)
+		}
 	}
 
 	// ── Fill the trace ───────────────────────────────────────────────
@@ -233,9 +257,9 @@ func TestEndToEndFRIVerifierWithMerkleBinding(t *testing.T) {
 		tr.SetBase(k, v)
 	}
 
-	// Per-layer Merkle trace — one path per layer for query[0] (the
-	// demonstration covers a single query's complete opening flow; the
-	// other query's Merkle path would simply duplicate the structure).
+	// Per-layer Merkle trace — one path per layer for query[0]. We pass
+	// universalN as the capacity so the trace generator pads short paths
+	// (layer 1, real depth 2) up to N=4.
 	for j := 0; j < numRounds; j++ {
 		Nj := N >> uint(j)
 		base := queries[0] % (Nj / 2)
@@ -245,7 +269,7 @@ func TestEndToEndFRIVerifierWithMerkleBinding(t *testing.T) {
 			LeafIdx:  base,
 			Siblings: proofs[j][base].Siblings,
 		}
-		for k, v := range merkle.GenerateTrace(merkleCNs[j], len(path.Siblings), path) {
+		for k, v := range merkle.GenerateTrace(merkleCNs[j], universalN, path) {
 			tr.SetBase(k, v)
 		}
 	}
@@ -274,4 +298,134 @@ func TestEndToEndFRIVerifierWithMerkleBinding(t *testing.T) {
 }
 
 func friRoundPrefix(j int) string { return "r_" + string('0'+rune(j)) }
-func merkleModName(j int)  string { return "merkle_layer_" + string('0'+rune(j)) }
+func merkleModName(j int) string  { return "merkle_layer_" + string('0'+rune(j)) }
+
+// exposeName forms the exposed-value identifier shared between friround
+// (row-0 P/Q at layer j) and merkle layer j (row-0 LeafP/LeafQ).
+func exposeName(which string, layer, limb int) string {
+	return "fri_layer_" + string('0'+rune(layer)) + "_q0_" + which + "_" + string('0'+rune(limb))
+}
+
+// TestEndToEndFRIVerifierRejectsCrossModuleMismatch confirms the cross-
+// module binding is sound: tampering with merkle's LeafP[0] at row 0
+// breaks the AssertEqualAt constraint against the exposed value (which
+// the prover step seeded from friround's row-0 P_0).
+func TestEndToEndFRIVerifierRejectsCrossModuleMismatch(t *testing.T) {
+	const N = 16
+	const numRounds = 2
+	queries := []int{5, 2, 3, 6}
+	const universalN = 4
+
+	initialLayer := make([]ext.E4, N)
+	for i := range initialLayer {
+		initialLayer[i] = randExt(t)
+	}
+	alphas := []ext.E4{randExt(t), randExt(t)}
+
+	layers := [][]ext.E4{initialLayer}
+	domains := []*fft.Domain{fft.NewDomain(uint64(N))}
+	for j := 0; j < numRounds; j++ {
+		nextLayer := foldLayer(layers[j], alphas[j], domains[j])
+		layers = append(layers, nextLayer)
+		domains = append(domains, fft.NewDomain(uint64(len(nextLayer))))
+	}
+	finalPoly := layers[numRounds]
+
+	omegasInv := []koalabear.Element{domains[0].GeneratorInv, domains[1].GeneratorInv}
+	kBits := []int{log2(N / 2), log2(N / 4)}
+
+	trees := make([]*internalmerkle.Tree, numRounds)
+	pairs := make([][]commitment.PairExt, numRounds)
+	proofs := make([][]internalmerkle.Proof, numRounds)
+	for j := 0; j < numRounds; j++ {
+		trees[j], proofs[j], pairs[j] = makeLayerMerkleTree(t, layers[j])
+	}
+	_ = trees
+
+	builder := board.NewBuilder()
+
+	friMod := board.NewModule("fri_verify")
+	friMod.N = universalN
+	friGroups := make([]friround.ColumnNames, numRounds)
+	for j := 0; j < numRounds; j++ {
+		friGroups[j] = friround.Register(&friMod, friRoundPrefix(j), omegasInv[j], kBits[j])
+	}
+	for j := 0; j+1 < numRounds; j++ {
+		frichain.Link(&friMod, friGroups[j], friGroups[j+1])
+	}
+	lastGroup := friGroups[numRounds-1]
+	selCN := idxselect.Register(&friMod, "final.sel", finalPoly, lastGroup.Bits)
+	for i := 0; i < extfield.Limbs; i++ {
+		rel := expr.Col(lastGroup.Expected[i]).Sub(expr.Col(selCN.Out[i]))
+		friMod.AssertZero(rel)
+	}
+	builder.AddModule(friMod)
+
+	for j := 0; j < numRounds; j++ {
+		for i := 0; i < extfield.Limbs; i++ {
+			builder.AddExposeIthValueStep("fri_verify", expr.Col(friGroups[j].P[i]), exposeName("P", j, i), 0)
+			builder.AddExposeIthValueStep("fri_verify", expr.Col(friGroups[j].Q[i]), exposeName("Q", j, i), 0)
+		}
+	}
+
+	merkleCNs := make([]merkle.ColumnNames, numRounds)
+	for j := 0; j < numRounds; j++ {
+		merkleCNs[j] = merkle.BuildModule(&builder, merkleModName(j), universalN)
+
+		merkleMod := builder.Modules[merkleModName(j)]
+		for i := 0; i < extfield.Limbs; i++ {
+			merkleMod.AssertEqualAt(expr.Col(merkleCNs[j].LeafP[i]), expr.Exposed(exposeName("P", j, i)), 0)
+			merkleMod.AssertEqualAt(expr.Col(merkleCNs[j].LeafQ[i]), expr.Exposed(exposeName("Q", j, i)), 0)
+		}
+	}
+
+	tr := trace.New()
+	for j := 0; j < numRounds; j++ {
+		Nj := N >> uint(j)
+		roundQueries := make([]friround.Query, len(queries))
+		for qi, s := range queries {
+			base := s % (Nj / 2)
+			roundQueries[qi] = friround.Query{
+				P:     layers[j][base],
+				Q:     layers[j][base+Nj/2],
+				Alpha: alphas[j],
+				Base:  uint64(base),
+			}
+		}
+		for k, v := range friround.GenerateTrace(friGroups[j], universalN, roundQueries) {
+			tr.SetBase(k, v)
+		}
+	}
+	idxs := make([]uint64, len(queries))
+	for qi, s := range queries {
+		idxs[qi] = uint64(s % len(finalPoly))
+	}
+	for k, v := range idxselect.GenerateTrace(selCN, universalN, finalPoly, idxs) {
+		tr.SetBase(k, v)
+	}
+	for j := 0; j < numRounds; j++ {
+		Nj := N >> uint(j)
+		base := queries[0] % (Nj / 2)
+		path := merkle.Path{
+			LeafP:    pairs[j][base][0],
+			LeafQ:    pairs[j][base][1],
+			LeafIdx:  base,
+			Siblings: proofs[j][base].Siblings,
+		}
+		for k, v := range merkle.GenerateTrace(merkleCNs[j], universalN, path) {
+			tr.SetBase(k, v)
+		}
+	}
+
+	// Tamper merkle layer 0's LeafP[0] at row 0. friround's P_0 at row 0
+	// is still honest (= the original opening), so the exposed value
+	// (seeded by the prover step from friround) is honest. The merkle
+	// gadget's AssertEqualAt(LeafP[0], Exposed(...), 0) now fails because
+	// the in-circuit LeafP[0] differs from the exposed value.
+	col := tr.Base[merkleCNs[0].LeafP[0]]
+	var one koalabear.Element
+	one.SetOne()
+	col[0].Add(&col[0], &one)
+
+	testutil.ExpectProveOrVerifyFailure(t, &builder, tr)
+}
