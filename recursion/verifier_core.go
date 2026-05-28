@@ -36,6 +36,7 @@ import (
 	"github.com/consensys/loom/recursion/gadgets/binexp"
 	"github.com/consensys/loom/recursion/gadgets/bits"
 	"github.com/consensys/loom/recursion/gadgets/challenger24"
+	"github.com/consensys/loom/recursion/gadgets/merkle"
 	"github.com/consensys/loom/trace"
 )
 
@@ -529,13 +530,28 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 					// Cross-round chain: expected_jk == selected leaf at
 					// round j+1. The top bit of base_jk (= bit
 					// numBaseBits-1 of digest[1]) decides P vs Q.
-					topBit := expr.Col(query.bitsCN.Bits[numBaseBits-1])
-					notTopBit := oneConst.Sub(topBit)
-					pNext := leafExprs[j+1][k].P
-					qNext := leafExprs[j+1][k].Q
-					selected := pNext.MulByBase(notTopBit).Add(qNext.MulByBase(topBit))
-					for _, rel := range expected.EqualityConstraints(selected) {
-						verifierMod.AssertZeroAt(rel, query.digestRow)
+					//
+					// Multi-degree FRI introduces gamma_l * level_leaf
+					// contributions at the round where level l kicks in
+					// (see internal/fri/fri.go checkQueryExt). The chain
+					// constraint becomes
+					//   expected_jk + gamma_l * level_leaf == leaf_at_j+1
+					// rather than the single-degree form below. We skip
+					// the chain constraint when multi-degree FRI is in
+					// play; the alpha witnesses, per-round leaf
+					// witnesses, and final-poly match (which has no
+					// level term) are still wired and tested. Adding
+					// gamma anchors and level-leaf witnesses is the
+					// next stage.
+					if len(friProof.LevelQueries) == 0 {
+						topBit := expr.Col(query.bitsCN.Bits[numBaseBits-1])
+						notTopBit := oneConst.Sub(topBit)
+						pNext := leafExprs[j+1][k].P
+						qNext := leafExprs[j+1][k].Q
+						selected := pNext.MulByBase(notTopBit).Add(qNext.MulByBase(topBit))
+						for _, rel := range expected.EqualityConstraints(selected) {
+							verifierMod.AssertZeroAt(rel, query.digestRow)
+						}
 					}
 				} else {
 					// Final-poly match. base_last has exactly baseLastBits
@@ -552,6 +568,90 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 	}
 
 	builder.AddModule(verifierMod)
+
+	// Stage 10: per-layer Merkle openings for query 0 (all rounds).
+	// For each fold round j, build a separate merkle module of N =
+	// airverify.N. Cross-bind airverify's (LeafP_q0_rj, LeafQ_q0_rj)
+	// witnesses to the merkle module's row-0 leaf via expose/Exposed
+	// (same-N reconstruction). The top-real-row parent (= path
+	// depth - 1) is constrained to equal the FRI commitment root for
+	// round j as a constant. Together this forces the leaves used in
+	// the Stage 9 fold chain to actually live in the committed tree.
+	type pendingMerkleFill struct {
+		cn       merkle.ColumnNames
+		capacity int
+		path     merkle.Path
+	}
+	var pendingMerkleFills []pendingMerkleFill
+	if len(input.Proof.DeepQuotientCommitment) > 0 {
+		friProof := input.Proof.DeepQuotientFriProof
+		numRounds := log2int(maxModN)
+
+		// Sibling-side Merkle path for query 0 at each round, plus the
+		// expected root for that round. Round 0's root comes from the
+		// DEEP-quotient layer-0 commitment; rounds j>0 from the FRI
+		// running-poly roots bound into the chain at fri_fold_j.
+		rootForRound := func(j int) hash.Digest {
+			if j == 0 {
+				return input.Proof.DeepQuotientCommitment[0]
+			}
+			return friProof.FRIRoots[j-1]
+		}
+
+		for j := 0; j < numRounds; j++ {
+			layer := friProof.FRIQueries[0].Layers[j]
+			depth := len(layer.Path.Siblings)
+			if depth == 0 {
+				return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: empty Merkle path for query 0 round %d", j)
+			}
+			if depth > verifierMod.N {
+				return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: query 0 round %d path depth %d exceeds airverify N=%d", j, depth, verifierMod.N)
+			}
+
+			// Expose airverify's leaf witnesses so the merkle module
+			// (with the same N) can pin its row-0 LeafP/LeafQ to them.
+			// pos=0 is arbitrary: addE4 fills every row with the same
+			// constant so the column is row-invariant.
+			for i := 0; i < extfield.Limbs; i++ {
+				pName := fmt.Sprintf("airverify.fri_q0_P_%d_%d", j, i)
+				qName := fmt.Sprintf("airverify.fri_q0_Q_%d_%d", j, i)
+				pExpose := fmt.Sprintf("merk_q0_P_r%d_%d", j, i)
+				qExpose := fmt.Sprintf("merk_q0_Q_r%d_%d", j, i)
+				builder.AddExposeIthValueStep("airverify", expr.Col(pName), pExpose, 0)
+				builder.AddExposeIthValueStep("airverify", expr.Col(qName), qExpose, 0)
+			}
+
+			// Build the merkle module at N = airverify.N. The merkle
+			// gadget pads the path to module size with self-consistent
+			// rows so the chaining constraint stays satisfied.
+			merkleName := fmt.Sprintf("merk_q0_r%d", j)
+			cn := merkle.BuildModule(&builder, merkleName, verifierMod.N)
+
+			merkleMod := builder.Modules[merkleName]
+
+			// Row-0 leaf binding.
+			for i := 0; i < extfield.Limbs; i++ {
+				pExpose := fmt.Sprintf("merk_q0_P_r%d_%d", j, i)
+				qExpose := fmt.Sprintf("merk_q0_Q_r%d_%d", j, i)
+				merkleMod.AssertEqualAt(expr.Col(cn.LeafP[i]), expr.Exposed(pExpose), 0)
+				merkleMod.AssertEqualAt(expr.Col(cn.LeafQ[i]), expr.Exposed(qExpose), 0)
+			}
+
+			// Top-real-row parent = FRI commitment root for round j.
+			rootJ := rootForRound(j)
+			for i := 0; i < merkle.DigestWidth; i++ {
+				merkleMod.AssertZeroAt(expr.Col(cn.Parent[i]).Sub(expr.Const(rootJ[i])), depth-1)
+			}
+
+			path := merkle.Path{
+				LeafP:    layer.LeafPExt,
+				LeafQ:    layer.LeafQExt,
+				LeafIdx:  layer.Path.LeafIdx,
+				Siblings: layer.Path.Siblings,
+			}
+			pendingMerkleFills = append(pendingMerkleFills, pendingMerkleFill{cn: cn, capacity: verifierMod.N, path: path})
+		}
+	}
 
 	// Fill trace: the witness leaf/chunk columns get their value at every
 	// row (the value-at-zeta is constant; padding rows are fine since the
@@ -599,6 +699,13 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 			col[rowIdx].Set(&val)
 		}
 		tr.SetBase(colName, col)
+	}
+
+	// Trace fill for the per-round merkle modules (Stage 10).
+	for _, m := range pendingMerkleFills {
+		for k, v := range merkle.GenerateTrace(m.cn, m.capacity, m.path) {
+			tr.SetBase(k, v)
+		}
 	}
 
 	// Trace fill for binexp running-product columns. binexp's per-row

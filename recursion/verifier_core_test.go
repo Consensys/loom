@@ -501,6 +501,46 @@ func TestBuildVerifierCoreRejectsBadFRILeafMidRound(t *testing.T) {
 	}
 }
 
+// TestBuildVerifierCoreRejectsBadMerkleSibling tampers a sibling in
+// the FRI Merkle path for query 0 round 0. The fold-chain checks
+// (Stages 8 and 9) do NOT consume sibling digests at all, so only the
+// per-layer Merkle verification can catch this — confirming Stage 10
+// is doing real work, not piggybacking on earlier soundness layers.
+func TestBuildVerifierCoreRejectsBadMerkleSibling(t *testing.T) {
+	innerProgram, innerTrace := makeFibonacciInner(t, 4)
+	innerProof, err := prover.Prove(innerTrace, setup.ProvingKey{}, nil, innerProgram)
+	if err != nil {
+		t.Fatalf("inner prove: %v", err)
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, innerProgram, innerProof); err != nil {
+		t.Fatalf("inner verify: %v", err)
+	}
+
+	siblings := innerProof.DeepQuotientFriProof.FRIQueries[0].Layers[0].Path.Siblings
+	if len(siblings) == 0 {
+		t.Fatal("expected non-empty Merkle path at query 0 round 0")
+	}
+	// Flip one byte of the first sibling. The fold chain doesn't read
+	// siblings; only the in-circuit Merkle path verification does.
+	siblings[0][0].SetUint64(siblings[0][0].Uint64() ^ 1)
+
+	outerProgram, outerTrace, err := BuildVerifierCore(
+		RecursionInput{Program: innerProgram, Proof: innerProof},
+		DefaultConfig(),
+	)
+	if err != nil {
+		t.Fatalf("BuildVerifierCore: %v", err)
+	}
+
+	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
+	if err != nil {
+		return
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, outerProgram, outerProof, verifier.SkipFRI()); err == nil {
+		t.Fatalf("outer verify accepted tampered Merkle sibling")
+	}
+}
+
 // TestBuildVerifierCoreRejectsBadInnerProof confirms a tampered inner
 // proof (with one ValueAtZeta corrupted) cannot be wrapped into a
 // satisfiable outer program — the AIR check would not hold.
