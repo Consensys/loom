@@ -541,6 +541,52 @@ func TestBuildVerifierCoreRejectsBadMerkleSibling(t *testing.T) {
 	}
 }
 
+// TestBuildVerifierCoreRejectsBadColumnSample tampers a raw column
+// sample in PointSamplings (the values that flow into the in-circuit
+// DEEP bridge as sampleP/sampleQ witnesses). The FRI-level Merkle
+// verification (Stage 10) doesn't touch PointSamplings, and the
+// fold-chain checks (Stages 8/9) don't reference these samples at
+// all — only the DEEP-quotient bridge (Stage 11) cross-checks them
+// against the AIR-at-zeta evaluations and the FRI level-0 leaves.
+func TestBuildVerifierCoreRejectsBadColumnSample(t *testing.T) {
+	innerProgram, innerTrace := makeFibonacciInner(t, 4)
+	innerProof, err := prover.Prove(innerTrace, setup.ProvingKey{}, nil, innerProgram)
+	if err != nil {
+		t.Fatalf("inner prove: %v", err)
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, innerProgram, innerProof); err != nil {
+		t.Fatalf("inner verify: %v", err)
+	}
+
+	// Tamper RawLeafBase at query 0: bump the first base limb of the
+	// first column's P-side pair. This makes one sampleP witness in the
+	// in-circuit bridge disagree with the (untampered) FRI level-0
+	// leaf, so DQ_P != LeafPExt and the outer verifier must reject.
+	wp := &innerProof.PointSamplings[0][0]
+	if len(wp.RawLeafBase) == 0 {
+		t.Fatal("expected RawLeafBase to have entries for query 0 tree 0")
+	}
+	var one koalabear.Element
+	one.SetOne()
+	wp.RawLeafBase[0][0].Add(&wp.RawLeafBase[0][0], &one)
+
+	outerProgram, outerTrace, err := BuildVerifierCore(
+		RecursionInput{Program: innerProgram, Proof: innerProof},
+		DefaultConfig(),
+	)
+	if err != nil {
+		t.Fatalf("BuildVerifierCore: %v", err)
+	}
+
+	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
+	if err != nil {
+		return
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, outerProgram, outerProof, verifier.SkipFRI()); err == nil {
+		t.Fatalf("outer verify accepted tampered column sample")
+	}
+}
+
 // TestBuildVerifierCoreRejectsBadInnerProof confirms a tampered inner
 // proof (with one ValueAtZeta corrupted) cannot be wrapped into a
 // satisfiable outer program — the AIR check would not hold.

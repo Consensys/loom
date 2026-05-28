@@ -15,6 +15,7 @@ package recursion
 
 import (
 	"fmt"
+	"math/big"
 	"sort"
 	"strings"
 
@@ -560,6 +561,367 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 					b1 := expr.Col(query.bitsCN.Bits[1])
 					finalPolyAtBase := e4Select4(finalPolyArr, b0, b1)
 					for _, rel := range expected.EqualityConstraints(finalPolyAtBase) {
+						verifierMod.AssertZeroAt(rel, query.digestRow)
+					}
+				}
+			}
+		}
+
+		// Stage 11: DEEP-quotient bridge (single-size only).
+		//
+		// For each FRI query q, the verifier reconstructs DQ(omega^sL) and
+		// DQ(-omega^sL) from the AIR-at-zeta values, alpha (DEEP_ALPHA), and
+		// the COLUMN samples at the query position, then equates these to
+		// the FRI level-0 layer's (LeafPExt, LeafQExt) — which are already
+		// Stage-9 witnesses and Stage-10 Merkle-bound to the level-0 root
+		// (for query 0).
+		//
+		// Per dqLayout shift group j (single-size = sizes[0]):
+		//   z_s     = zeta * omega^shift_j
+		//   v_s     = sum_k evalAtZ_k * alpha^k
+		//   C_X    = sum_k sampleP_k * alpha^k
+		//   C_negX = sum_k sampleQ_k * alpha^k
+		//   DQ_P  += (v_s - C_X)    * inv(z_s - X)
+		//   DQ_Q  += (v_s - C_negX) * inv(z_s + X)
+		// (AIR-chunks contribute one more group with shift=0.)
+		//
+		// X = omega_N_fri^sL where sL = digest[1] mod (N_fri/2). Computed
+		// via the same binexp gadget Stage 9 uses for xInv, but with the
+		// FRI domain generator as the base.
+		//
+		// Soundness gaps still open: COLUMN samples (sampleP/Q witnesses)
+		// are taken on trust until per-column Merkle openings are wired up.
+		// Multi-degree FRI (level intros) needs gamma anchors + per-level
+		// DEEP quotients — gated off here as len(LevelQueries) > 0.
+		if len(friProof.LevelQueries) == 0 {
+			dqLayout := prover.BuildDeepQuotientLayout(input.Program)
+			if len(dqLayout.Sizes) == 1 {
+				size := dqLayout.Sizes[0]
+				if size != maxModN {
+					return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: stage 11 expected dqLayout.Sizes[0]=%d to equal maxModN=%d", size, maxModN)
+				}
+				nFRIsize := constants.RATE * size
+				halfDomain := nFRIsize / 2
+				sLBits := log2int(halfDomain)
+				if sLBits <= 0 {
+					return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: stage 11 halfDomain=%d gives sLBits=%d", halfDomain, sLBits)
+				}
+
+				// Anchor zeta as a constant-fill witness column. The
+				// existing zetaExpr references the __zeta chain sponge
+				// digest column, which only holds the correct value at
+				// chCN.DigestRow; the bridge needs zeta accessible at
+				// the query row. Same anchor pattern as alpha_j.
+				zetaConst := addE4("airverify.zeta_const", zeta)
+				for _, rel := range zetaConst.EqualityConstraints(zetaExpr) {
+					verifierMod.AssertZeroAt(rel, chCN.DigestRow)
+				}
+
+				// Anchor DEEP_ALPHA. The chain produces it as a sponge digest
+				// limb; mirror the zeta / alpha_j anchoring pattern.
+				deepAlphaIdx := -1
+				for i, step := range chain {
+					if step.Name == constants.DEEP_ALPHA {
+						deepAlphaIdx = i
+						break
+					}
+				}
+				if deepAlphaIdx < 0 {
+					return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: DEEP_ALPHA missing from chain")
+				}
+				deepAlphaCN := chSpongeCNs[deepAlphaIdx]
+				deepAlphaDigestExpr := extfield.FromLimbs(
+					expr.Col(deepAlphaCN.Digest[0]), expr.Col(deepAlphaCN.Digest[2]),
+					expr.Col(deepAlphaCN.Digest[1]), expr.Col(deepAlphaCN.Digest[3]),
+				)
+				deepAlphaNative := hashDigestToE4(chain[deepAlphaIdx].NativeDigest)
+				deepAlphaExpr := addE4("airverify.deep_alpha", deepAlphaNative)
+				for _, rel := range deepAlphaExpr.EqualityConstraints(deepAlphaDigestExpr) {
+					verifierMod.AssertZeroAt(rel, deepAlphaCN.DigestRow)
+				}
+
+				// Total alpha-power positions across all shift groups + AIR
+				// chunks. Materialize alpha^0..alpha^{K-1} as constant-fill
+				// witness columns, recurrence-anchored at row 0.
+				totalCols := 0
+				for j := range dqLayout.Shifts[0] {
+					totalCols += len(dqLayout.Names[0][j])
+				}
+				totalCols += len(dqLayout.AIRChunks[0])
+				if totalCols == 0 {
+					return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: dqLayout empty for size %d", size)
+				}
+				alphaPowChain := make([]extfield.E4Expr, totalCols)
+				alphaPowNative := make([]ext.E4, totalCols)
+				alphaPowNative[0].SetOne()
+				alphaPowChain[0] = extfield.One()
+				for k := 1; k < totalCols; k++ {
+					alphaPowNative[k].Mul(&alphaPowNative[k-1], &deepAlphaNative)
+					curr := addE4(fmt.Sprintf("airverify.deep_alphaPow_%d", k), alphaPowNative[k])
+					prevTimesAlpha := alphaPowChain[k-1].Mul(deepAlphaExpr)
+					for _, rel := range curr.EqualityConstraints(prevTimesAlpha) {
+						verifierMod.AssertZeroAt(rel, 0)
+					}
+					alphaPowChain[k] = curr
+				}
+
+				// Per-bare-column samples (P, Q) per query: trusted witnesses
+				// until column-side Merkle wiring lands. Use input.Proof's
+				// PointSamplings and layout.ColSlot to lift the right
+				// raw-leaf pair for each (bare name, query). Same for AIR
+				// chunks.
+				bareNames := map[string]bool{}
+				for _, namesJ := range dqLayout.Names[0] {
+					for _, n := range namesJ {
+						bareNames[n] = true
+					}
+				}
+				bareList := make([]string, 0, len(bareNames))
+				for n := range bareNames {
+					bareList = append(bareList, n)
+				}
+				sort.Strings(bareList)
+
+				sampleP := map[string][]extfield.E4Expr{}
+				sampleQ := map[string][]extfield.E4Expr{}
+				for _, n := range bareList {
+					sampleP[n] = make([]extfield.E4Expr, len(queries))
+					sampleQ[n] = make([]extfield.E4Expr, len(queries))
+				}
+				chunkSampleP := map[string][]extfield.E4Expr{}
+				chunkSampleQ := map[string][]extfield.E4Expr{}
+				for _, n := range dqLayout.AIRChunks[0] {
+					chunkSampleP[n] = make([]extfield.E4Expr, len(queries))
+					chunkSampleQ[n] = make([]extfield.E4Expr, len(queries))
+				}
+
+				innerLayout := prover.BuildLayout(input.Program, 0)
+				sampleE4 := func(slot prover.Slot, q int) (ext.E4, ext.E4, error) {
+					if slot.TreeIdx >= len(input.Proof.PointSamplings[q]) {
+						return ext.E4{}, ext.E4{}, fmt.Errorf("recursion: tree %d out of range for query %d", slot.TreeIdx, q)
+					}
+					wp := input.Proof.PointSamplings[q][slot.TreeIdx]
+					if slot.Field == field.Ext {
+						if slot.PolyIdx >= len(wp.RawLeafExt) {
+							return ext.E4{}, ext.E4{}, fmt.Errorf("recursion: ext raw leaf %d out of range", slot.PolyIdx)
+						}
+						return wp.RawLeafExt[slot.PolyIdx][0], wp.RawLeafExt[slot.PolyIdx][1], nil
+					}
+					if slot.PolyIdx >= len(wp.RawLeafBase) {
+						return ext.E4{}, ext.E4{}, fmt.Errorf("recursion: base raw leaf %d out of range", slot.PolyIdx)
+					}
+					var p, qE ext.E4
+					p.B0.A0.Set(&wp.RawLeafBase[slot.PolyIdx][0])
+					qE.B0.A0.Set(&wp.RawLeafBase[slot.PolyIdx][1])
+					return p, qE, nil
+				}
+
+				for qi := range queries {
+					for _, n := range bareList {
+						slot, ok := innerLayout.ColSlot[n]
+						if !ok {
+							return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: column %q missing from layout.ColSlot", n)
+						}
+						pNative, qNative, err := sampleE4(slot, qi)
+						if err != nil {
+							return board.Program{}, trace.Trace{}, err
+						}
+						sampleP[n][qi] = addE4(fmt.Sprintf("airverify.deep_sP_%d_%s", qi, sanitizeName(n)), pNative)
+						sampleQ[n][qi] = addE4(fmt.Sprintf("airverify.deep_sQ_%d_%s", qi, sanitizeName(n)), qNative)
+					}
+					for _, n := range dqLayout.AIRChunks[0] {
+						slot, ok := innerLayout.AIRChunkSlot[n]
+						if !ok {
+							return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: chunk %q missing from layout.AIRChunkSlot", n)
+						}
+						pNative, qNative, err := sampleE4(slot, qi)
+						if err != nil {
+							return board.Program{}, trace.Trace{}, err
+						}
+						chunkSampleP[n][qi] = addE4(fmt.Sprintf("airverify.deep_csP_%d_%s", qi, sanitizeName(n)), pNative)
+						chunkSampleQ[n][qi] = addE4(fmt.Sprintf("airverify.deep_csQ_%d_%s", qi, sanitizeName(n)), qNative)
+					}
+				}
+
+				// Per-query X via binexp on the lowest sLBits of digest[1].
+				friDomainGen, err := koalabear.Generator(uint64(nFRIsize))
+				if err != nil {
+					return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: FRI domain generator: %w", err)
+				}
+				// Inner-domain generator at size, used for omegaShift constants.
+				omegaSize, err := koalabear.Generator(uint64(size))
+				if err != nil {
+					return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: omega_size: %w", err)
+				}
+				omegaShiftE4 := make([]ext.E4, len(dqLayout.Shifts[0]))
+				omegaShiftExpr := make([]extfield.E4Expr, len(dqLayout.Shifts[0]))
+				for j, shift := range dqLayout.Shifts[0] {
+					var w koalabear.Element
+					w.Exp(omegaSize, big.NewInt(int64(shift)))
+					omegaShiftE4[j].B0.A0.Set(&w)
+					omegaShiftExpr[j] = extfield.Const(omegaShiftE4[j])
+				}
+
+				// Unified leaf-by-key lookup for evalAtZ. Multiple inner
+				// modules at the same size pool their leaf witnesses by
+				// leaf.String().
+				leafByKey := map[string]extfield.E4Expr{}
+				chunkByName := map[string]extfield.E4Expr{}
+				for mi, data := range mods {
+					if data.mod.N != size {
+						continue
+					}
+					for key, e := range witnesses[mi].leafExprs {
+						leafByKey[key] = e
+					}
+					for ci, ce := range witnesses[mi].chunkExprs {
+						chunkName := constants.QuotientChunkName(data.name, ci)
+						chunkByName[chunkName] = ce
+					}
+				}
+
+				for qi, query := range queries {
+					// X = friDomainGen^sL, sL = lowest sLBits of digest[1].
+					sLBitsCN := bits.ColumnNames{
+						ModuleName: query.bitsCN.ModuleName,
+						Value:      query.bitsCN.Value,
+						Bits:       query.bitsCN.Bits[:sLBits],
+						NumBits:    sLBits,
+					}
+					xPrefix := fmt.Sprintf("airverify.deep_q%d_X", qi)
+					xCN := binexp.Register(&verifierMod, xPrefix, friDomainGen, sLBitsCN)
+					xBase := expr.Col(xCN.Steps[sLBits-1])
+					xExpr := extfield.FromBase(xBase)
+					negXExpr := extfield.Zero().Sub(xExpr)
+
+					bitsAtRow := make([]bool, sLBits)
+					for bi := 0; bi < sLBits; bi++ {
+						bitsAtRow[bi] = (query.digestNat>>uint(bi))&1 == 1
+					}
+					pendingBinexps = append(pendingBinexps, pendingBinexp{cn: xCN, rowIdx: query.digestRow, bitsAtRow: bitsAtRow})
+
+					// Accumulate DQ_P, DQ_Q across shift groups + AIR chunks.
+					dqP := extfield.Zero()
+					dqQ := extfield.Zero()
+					alphaIdx := 0
+
+					// Loop over shift groups.
+					for j, shift := range dqLayout.Shifts[0] {
+						_ = shift
+						zsExpr := zetaConst.Mul(omegaShiftExpr[j])
+						names := dqLayout.Names[0][j]
+						keys := dqLayout.Keys[0][j]
+
+						vs := extfield.Zero()
+						cX := extfield.Zero()
+						cNegX := extfield.Zero()
+						for k, key := range keys {
+							evalAtZ, ok := leafByKey[key]
+							if !ok {
+								return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: leaf key %q missing", key)
+							}
+							a := alphaPowChain[alphaIdx]
+							alphaIdx++
+							vs = vs.Add(evalAtZ.Mul(a))
+							cX = cX.Add(sampleP[names[k]][qi].Mul(a))
+							cNegX = cNegX.Add(sampleQ[names[k]][qi].Mul(a))
+						}
+
+						denomX := zsExpr.Sub(xExpr)
+						denomNegX := zsExpr.Sub(negXExpr) // = zs + X
+
+						// Native denom values for trace-fill of inverses.
+						var zsNat ext.E4
+						zsNat.MulByElement(&zeta, &omegaShiftE4[j].B0.A0)
+						var xNat ext.E4
+						xNat.B0.A0.Exp(friDomainGen, big.NewInt(int64(query.digestNat%uint64(halfDomain))))
+						var negXNat ext.E4
+						negXNat.B0.A0.Neg(&xNat.B0.A0)
+						var dXNat ext.E4
+						dXNat.Sub(&zsNat, &xNat)
+						var dNegXNat ext.E4
+						dNegXNat.Sub(&zsNat, &negXNat)
+						var invDXNat ext.E4
+						invDXNat.Inverse(&dXNat)
+						var invDNegXNat ext.E4
+						invDNegXNat.Inverse(&dNegXNat)
+
+						invDXExpr := addE4(fmt.Sprintf("airverify.deep_q%d_g%d_invX", qi, j), invDXNat)
+						invDNegXExpr := addE4(fmt.Sprintf("airverify.deep_q%d_g%d_invNegX", qi, j), invDNegXNat)
+
+						// Constrain inv * denom = 1 (E4 equality, 4 limbs).
+						oneE4 := extfield.One()
+						prodX := invDXExpr.Mul(denomX)
+						for _, rel := range prodX.EqualityConstraints(oneE4) {
+							verifierMod.AssertZeroAt(rel, query.digestRow)
+						}
+						prodNegX := invDNegXExpr.Mul(denomNegX)
+						for _, rel := range prodNegX.EqualityConstraints(oneE4) {
+							verifierMod.AssertZeroAt(rel, query.digestRow)
+						}
+
+						dqP = dqP.Add(vs.Sub(cX).Mul(invDXExpr))
+						dqQ = dqQ.Add(vs.Sub(cNegX).Mul(invDNegXExpr))
+					}
+
+					// AIR-chunks group: shift = 0, omegaShift = 1, so zs = zeta.
+					if len(dqLayout.AIRChunks[0]) > 0 {
+						zsExpr := zetaConst
+
+						vs := extfield.Zero()
+						cX := extfield.Zero()
+						cNegX := extfield.Zero()
+						for _, chunkName := range dqLayout.AIRChunks[0] {
+							chunkExpr, ok := chunkByName[chunkName]
+							if !ok {
+								return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: chunk %q missing", chunkName)
+							}
+							a := alphaPowChain[alphaIdx]
+							alphaIdx++
+							vs = vs.Add(chunkExpr.Mul(a))
+							cX = cX.Add(chunkSampleP[chunkName][qi].Mul(a))
+							cNegX = cNegX.Add(chunkSampleQ[chunkName][qi].Mul(a))
+						}
+
+						denomX := zsExpr.Sub(xExpr)
+						denomNegX := zsExpr.Sub(negXExpr)
+
+						var xNat ext.E4
+						xNat.B0.A0.Exp(friDomainGen, big.NewInt(int64(query.digestNat%uint64(halfDomain))))
+						var negXNat ext.E4
+						negXNat.B0.A0.Neg(&xNat.B0.A0)
+						var dXNat ext.E4
+						dXNat.Sub(&zeta, &xNat)
+						var dNegXNat ext.E4
+						dNegXNat.Sub(&zeta, &negXNat)
+						var invDXNat, invDNegXNat ext.E4
+						invDXNat.Inverse(&dXNat)
+						invDNegXNat.Inverse(&dNegXNat)
+
+						invDXExpr := addE4(fmt.Sprintf("airverify.deep_q%d_chunks_invX", qi), invDXNat)
+						invDNegXExpr := addE4(fmt.Sprintf("airverify.deep_q%d_chunks_invNegX", qi), invDNegXNat)
+
+						oneE4 := extfield.One()
+						prodX := invDXExpr.Mul(denomX)
+						for _, rel := range prodX.EqualityConstraints(oneE4) {
+							verifierMod.AssertZeroAt(rel, query.digestRow)
+						}
+						prodNegX := invDNegXExpr.Mul(denomNegX)
+						for _, rel := range prodNegX.EqualityConstraints(oneE4) {
+							verifierMod.AssertZeroAt(rel, query.digestRow)
+						}
+
+						dqP = dqP.Add(vs.Sub(cX).Mul(invDXExpr))
+						dqQ = dqQ.Add(vs.Sub(cNegX).Mul(invDNegXExpr))
+					}
+
+					// Equate DQ_P, DQ_Q to the FRI level-0 query layer leaves
+					// (already trusted/Merkle-bound via Stages 9/10).
+					leafFRI := leafExprs[0][qi]
+					for _, rel := range dqP.EqualityConstraints(leafFRI.P) {
+						verifierMod.AssertZeroAt(rel, query.digestRow)
+					}
+					for _, rel := range dqQ.EqualityConstraints(leafFRI.Q) {
 						verifierMod.AssertZeroAt(rel, query.digestRow)
 					}
 				}
