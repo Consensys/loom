@@ -16,6 +16,7 @@ package commitment
 import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
+	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/parallel"
@@ -180,11 +181,24 @@ func (Poseidon2LeafHasher) BatchSize() int {
 }
 
 func (Poseidon2NodeHasher) HashNode(left, right hash.Digest) hash.Digest {
-	h := hash.NewPoseidon2MDHasher()
-	h.WriteElements(hash.NewElement(nodeDomainTag))
-	h.WriteElements(left[:]...)
-	h.WriteElements(right[:]...)
-	return h.Sum()
+	return hash.Poseidon2NodeCompress(nodeDomainTag, left, right)
+}
+
+// BatchSize is the lane width of the SIMD-batched Poseidon2 permutation.
+func (Poseidon2NodeHasher) BatchSize() int { return hash.Poseidon2SpongeBatchSize }
+
+// HashNodes compresses BatchSize() (left, right) pairs in one batched
+// permutation. dst, left, right must all have length BatchSize().
+func (Poseidon2NodeHasher) HashNodes(dst, left, right []hash.Digest) {
+	const n = hash.Poseidon2SpongeBatchSize
+	if len(dst) != n || len(left) != n || len(right) != n {
+		panic("Poseidon2NodeHasher.HashNodes: input slices must have length BatchSize()")
+	}
+	var l, r [n]hash.Digest
+	copy(l[:], left)
+	copy(r[:], right)
+	out := hash.Poseidon2NodeCompressBatch16(nodeDomainTag, &l, &r)
+	copy(dst, out[:])
 }
 
 // Commit commits to base and extension polynomials in one Merkle tree. Inputs
@@ -203,12 +217,17 @@ func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolyn
 	}
 
 	// 1- encode every polynomial on its rail. Each Encode is independent
-	//    (disjoint input/output slices, shared read-only domain).
+	//    (disjoint input/output slices, shared read-only domain). Each outer
+	//    worker calls 2 FFTs in Encode; cap the FFT's internal parallelism so
+	//    outer × inner ≤ NumCPU.
+	fftOuter := max(len(basePolys), len(extPolys))
+	fftOpt := fft.WithNbTasks(parallel.NbTasksPerJob(fftOuter))
+
 	encodedBase := make([]poly.Polynomial, len(basePolys))
 	parallel.Execute(len(basePolys), func(start, end int) {
 		for i := start; i < end; i++ {
 			pol := basePolys[i]
-			encodedBase[i] = rs.Encoder.Encode(pol, domainCache.Get(uint64(len(pol))))
+			encodedBase[i] = rs.Encoder.Encode(pol, domainCache.Get(uint64(len(pol))), fftOpt)
 		}
 	})
 
@@ -216,7 +235,7 @@ func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolyn
 	parallel.Execute(len(extPolys), func(start, end int) {
 		for i := start; i < end; i++ {
 			pol := extPolys[i]
-			encodedExt[i] = rs.Encoder.EncodeExt(pol, domainCache.Get(uint64(len(pol))))
+			encodedExt[i] = rs.Encoder.EncodeExt(pol, domainCache.Get(uint64(len(pol))), fftOpt)
 		}
 	})
 

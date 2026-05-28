@@ -82,7 +82,9 @@ func MulExt(P1, P2 ExtPolynomial) (ExtPolynomial, error) {
 // form over d, at the extension-field point zeta. Base coefficients are lifted
 // during Horner evaluation.
 // EvaluateAtExt assumes len(p) is a power of two; behaviour is undefined otherwise.
-func EvaluateAtExt(p Polynomial, d *fft.Domain, zeta ext.E4) ext.E4 {
+// Optional fftOpts are forwarded to the internal FFT (e.g. fft.WithNbTasks(1)
+// when EvaluateAtExt is itself called from inside a parallel.Execute loop).
+func EvaluateAtExt(p Polynomial, d *fft.Domain, zeta ext.E4, fftOpts ...fft.Option) ext.E4 {
 	n := len(p)
 	if n == 1 {
 		return liftBaseToExt(p[0])
@@ -90,7 +92,7 @@ func EvaluateAtExt(p Polynomial, d *fft.Domain, zeta ext.E4) ext.E4 {
 	_p := getBuf(n)
 	copy(_p, p)
 	nn := uint64(64 - bits.TrailingZeros64(uint64(n)))
-	d.FFTInverse(_p, fft.DIF)
+	d.FFTInverse(_p, fft.DIF, fftOpts...)
 
 	var res ext.E4
 	for i := n - 1; i >= 0; i-- {
@@ -106,7 +108,7 @@ func EvaluateAtExt(p Polynomial, d *fft.Domain, zeta ext.E4) ext.E4 {
 
 // ExtEvaluateAtExt evaluates an extension-field polynomial p, stored in
 // Lagrange normal form over d, at the extension-field point zeta.
-func ExtEvaluateAtExt(p ExtPolynomial, d *fft.Domain, zeta ext.E4) ext.E4 {
+func ExtEvaluateAtExt(p ExtPolynomial, d *fft.Domain, zeta ext.E4, fftOpts ...fft.Option) ext.E4 {
 	n := len(p)
 	if n == 1 {
 		return p[0]
@@ -114,7 +116,7 @@ func ExtEvaluateAtExt(p ExtPolynomial, d *fft.Domain, zeta ext.E4) ext.E4 {
 	_p := getExtBuf(n)
 	copy(_p, p)
 	nn := uint64(64 - bits.TrailingZeros64(uint64(n)))
-	d.FFTInverseExt(_p, fft.DIF)
+	d.FFTInverseExt(_p, fft.DIF, fftOpts...)
 
 	var res ext.E4
 	for i := n - 1; i >= 0; i-- {

@@ -435,7 +435,10 @@ func (pr *proverRuntime) ExecuteSteps() error {
 // alias non-overlapping windows of the quotient backing array (no per-chunk
 // copy); after this returns the caller owns the chunks and the original
 // quotient is unreachable.
-func computeExtAIRQuotientChunks(piBase map[string]poly.Polynomial, piExt map[string]poly.ExtPolynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache) ([]poly.ExtPolynomial, error) {
+// fftNbTasks caps the inner parallelism of the per-chunk FFTs so that, when
+// this function is itself invoked inside a parallel.Execute over modules,
+// outer × inner goroutines stays bounded.
+func computeExtAIRQuotientChunks(piBase map[string]poly.Polynomial, piExt map[string]poly.ExtPolynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache, fftNbTasks int) ([]poly.ExtPolynomial, error) {
 	quotient, err := poly.ComputeQuotientMixed(piBase, piExt, *vrel, N, poly.WithDomainCache(cache))
 	if err != nil {
 		return nil, err
@@ -444,10 +447,11 @@ func computeExtAIRQuotientChunks(piBase map[string]poly.Polynomial, piExt map[st
 	// Normal so chunking can sub-slice the backing array.
 	poly.CosetExtLagrangeNormalToCanonicalWithCache(quotient, cache)
 
+	fftOpt := fft.WithNbTasks(fftNbTasks)
 	chunks := make([]poly.ExtPolynomial, len(quotient)/N)
 	for i := range chunks {
 		chunk := quotient[i*N : (i+1)*N : (i+1)*N]
-		D.FFTExt(chunk, fft.DIF)
+		D.FFTExt(chunk, fft.DIF, fftOpt)
 		utils.BitReverse(chunk)
 		chunks[i] = chunk
 	}
@@ -455,17 +459,18 @@ func computeExtAIRQuotientChunks(piBase map[string]poly.Polynomial, piExt map[st
 }
 
 // computeBaseAIRQuotientChunks is the base-field counterpart of computeExtAIRQuotientChunks.
-func computeBaseAIRQuotientChunks(piBase map[string]poly.Polynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache) ([]poly.Polynomial, error) {
+func computeBaseAIRQuotientChunks(piBase map[string]poly.Polynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache, fftNbTasks int) ([]poly.Polynomial, error) {
 	quotient, err := poly.ComputeQuotient(piBase, *vrel, N, poly.WithDomainCache(cache))
 	if err != nil {
 		return nil, err
 	}
 	poly.CosetLagrangeNormalToCanonicalWithCache(quotient, cache)
 
+	fftOpt := fft.WithNbTasks(fftNbTasks)
 	chunks := make([]poly.Polynomial, len(quotient)/N)
 	for i := range chunks {
 		chunk := quotient[i*N : (i+1)*N : (i+1)*N]
-		D.FFT(chunk, fft.DIF)
+		D.FFT(chunk, fft.DIF, fftOpt)
 		utils.BitReverse(chunk)
 		chunks[i] = chunk
 	}
@@ -490,6 +495,9 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 		errMu    sync.Mutex
 		firstErr error
 	)
+	// Per-chunk FFTs inside each module run with their internal parallelism
+	// capped so the outer module fan-out doesn't multiply with the FFT's own.
+	fftNbTasks := parallel.NbTasksPerJob(len(moduleNames))
 	parallel.Execute(len(moduleNames), func(start, end int) {
 		for idx := start; idx < end; idx++ {
 			moduleName := moduleNames[idx]
@@ -507,9 +515,9 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 				err        error
 			)
 			if module.VanishingRelation.Root.Field == field.Ext {
-				extChunks, err = computeExtAIRQuotientChunks(pr.t.Base, pr.t.Ext, vrel, N, module.D, &pr.domainCache)
+				extChunks, err = computeExtAIRQuotientChunks(pr.t.Base, pr.t.Ext, vrel, N, module.D, &pr.domainCache, fftNbTasks)
 			} else {
-				baseChunks, err = computeBaseAIRQuotientChunks(pr.t.Base, vrel, N, module.D, &pr.domainCache)
+				baseChunks, err = computeBaseAIRQuotientChunks(pr.t.Base, vrel, N, module.D, &pr.domainCache, fftNbTasks)
 			}
 			if err != nil {
 				errMu.Lock()
@@ -608,6 +616,12 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 
 // ComputeEvaluationsAtZeta computes the evaluations at zeta of every polynomial
 // appearing in every vanishing relation of every module.
+//
+// Each per-column evaluation is an independent FFTInverse + Horner pass, so we
+// gather every (poly, evaluation point) pair across all modules into a single
+// task list and fan it out across goroutines. Each inner FFT is capped to 1
+// goroutine (fft.WithNbTasks(1)) since the column-level fan-out already
+// saturates the CPUs.
 func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 	config := expr.NewConfig(
 		expr.WithoutLagrangeColumns(),
@@ -616,9 +630,12 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 		expr.WithoutPublicColumns(),
 	)
 
-	type zetaEval struct {
-		key string
-		val ext.E4
+	type task struct {
+		key       string
+		basePoly  poly.Polynomial    // exactly one of basePoly / extPoly is non-nil
+		extPoly   poly.ExtPolynomial // (single-element constant columns can take either rail)
+		D         *fft.Domain
+		evalPoint ext.E4
 	}
 
 	moduleNames := make([]string, 0, len(pr.program.Modules))
@@ -627,70 +644,72 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 	}
 	sort.Strings(moduleNames)
 
-	results := make([][]zetaEval, len(moduleNames))
-	errs := make([]error, len(moduleNames))
-	parallel.Execute(len(moduleNames), func(start, end int) {
-		for idx := start; idx < end; idx++ {
+	// Compute leaves up front so we can size the task slice without re-walking
+	// the DAG, and so the parallel section has nothing to allocate.
+	moduleLeaves := make([][]*expr.Leaf, len(moduleNames))
+	taskCap := 0
+	for i, moduleName := range moduleNames {
+		leaves := pr.program.Modules[moduleName].VanishingRelation.LeavesFull(config)
+		moduleLeaves[i] = leaves
+		taskCap += len(leaves)
+	}
+	tasks := make([]task, 0, taskCap)
+	for i, moduleName := range moduleNames {
+		module := pr.program.Modules[moduleName]
+		leaves := moduleLeaves[i]
 
-			// trace polynomials
-			module := pr.program.Modules[moduleNames[idx]]
-			leaves := module.VanishingRelation.LeavesFull(config)
-			local := make([]zetaEval, 0, len(leaves))
-			for _, leaf := range leaves {
-				evalPoint := pr.zeta
-				if leaf.Type == expr.RotatedColumn {
-					shift := ((leaf.Shift % module.N) + module.N) % module.N
-					var omegaPow koalabear.Element
-					omegaPow.SetOne()
-					for k := 0; k < shift; k++ {
-						omegaPow.Mul(&omegaPow, &module.D.Generator)
-					}
-					evalPoint.MulByElement(&evalPoint, &omegaPow)
-				}
-
-				if p, ok := pr.t.Ext[leaf.Name]; ok {
-					val := poly.ExtEvaluateAtExt(p, module.D, evalPoint)
-					local = append(local, zetaEval{key: leaf.String(), val: val})
-					continue
-				}
-				p, ok := pr.t.Base[leaf.Name]
-				if !ok {
-					errs[idx] = fmt.Errorf("ComputeEvaluationsAtZeta: column %q not found in trace", leaf.Name)
-					return
-				}
-				val := poly.EvaluateAtExt(p, module.D, evalPoint)
-				local = append(local, zetaEval{key: leaf.String(), val: val})
-			}
-
-			// air chunks
+		// trace polynomials
+		for _, leaf := range leaves {
 			evalPoint := pr.zeta
-			for i := 0; ; i++ {
-				chunkName := constants.QuotientChunkName(moduleNames[idx], i)
-				if chunk, ok := pr.airTrace.Base[chunkName]; ok {
-					val := poly.EvaluateAtExt(chunk, module.D, evalPoint)
-					local = append(local, zetaEval{key: chunkName, val: val})
-					continue
-				}
-				if chunk, ok := pr.airTrace.Ext[chunkName]; ok {
-					val := poly.ExtEvaluateAtExt(chunk, module.D, evalPoint)
-					local = append(local, zetaEval{key: chunkName, val: val})
-					continue
-				}
-				break
+			if leaf.Type == expr.RotatedColumn {
+				shift := ((leaf.Shift % module.N) + module.N) % module.N
+				var omegaPow koalabear.Element
+				omegaPow.Exp(module.D.Generator, big.NewInt(int64(shift)))
+				evalPoint.MulByElement(&evalPoint, &omegaPow)
 			}
 
-			results[idx] = local
+			if p, ok := pr.t.Ext[leaf.Name]; ok {
+				tasks = append(tasks, task{key: leaf.String(), extPoly: p, D: module.D, evalPoint: evalPoint})
+				continue
+			}
+			p, ok := pr.t.Base[leaf.Name]
+			if !ok {
+				return fmt.Errorf("ComputeEvaluationsAtZeta: column %q not found in trace", leaf.Name)
+			}
+			tasks = append(tasks, task{key: leaf.String(), basePoly: p, D: module.D, evalPoint: evalPoint})
 		}
-	})
-	for _, err := range errs {
-		if err != nil {
-			return err
+
+		// air chunks
+		for i := 0; ; i++ {
+			chunkName := constants.QuotientChunkName(moduleName, i)
+			if chunk, ok := pr.airTrace.Base[chunkName]; ok {
+				tasks = append(tasks, task{key: chunkName, basePoly: chunk, D: module.D, evalPoint: pr.zeta})
+				continue
+			}
+			if chunk, ok := pr.airTrace.Ext[chunkName]; ok {
+				tasks = append(tasks, task{key: chunkName, extPoly: chunk, D: module.D, evalPoint: pr.zeta})
+				continue
+			}
+			break
 		}
 	}
-	for _, local := range results {
-		for _, ev := range local {
-			pr.Proof.SetValueAtZetaExt(ev.key, ev.val)
+
+	values := make([]ext.E4, len(tasks))
+	// Inner FFTs run serial: the per-column fan-out already saturates the CPUs.
+	fftOpt := fft.WithNbTasks(1)
+	parallel.Execute(len(tasks), func(start, end int) {
+		for i := start; i < end; i++ {
+			t := tasks[i]
+			if t.extPoly != nil {
+				values[i] = poly.ExtEvaluateAtExt(t.extPoly, t.D, t.evalPoint, fftOpt)
+			} else {
+				values[i] = poly.EvaluateAtExt(t.basePoly, t.D, t.evalPoint, fftOpt)
+			}
 		}
+	})
+
+	for i, t := range tasks {
+		pr.Proof.SetValueAtZetaExt(t.key, values[i])
 	}
 
 	return nil

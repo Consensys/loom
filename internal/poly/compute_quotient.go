@@ -27,8 +27,9 @@ import (
 	"github.com/consensys/loom/internal/parallel"
 )
 
-// quotientParallelThreshold is the smallest size (in koalabear ops) for
-// which fan-out across goroutines is worth the scheduler overhead.
+// quotientParallelThreshold is the smallest iteration count for which fan-out
+// across goroutines is worth the scheduler overhead. Below this, the work
+// runs serially in the calling goroutine.
 const quotientParallelThreshold = 1 << 12
 
 // QuotientConfig configures quotient computation.
@@ -140,12 +141,17 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int,
 		}
 	}
 
+	// Each outer worker calls one FFT at a time; cap the FFT's internal
+	// goroutines so outer × inner ≤ NumCPU.
+	fftNbTasks := parallel.NbTasksPerJob(len(piNonConst))
+	fftOpt := fft.WithNbTasks(fftNbTasks)
+
 	// at this stage, all polynomials in PiCopies are in Lagrange form. We write them in canonical basis, shifted by twiddles[i][0]
 	// to prepare the FFT on the cosets (twiddles[i][0] is <bigDomain.FrMultiplicativeGen^i>), used to avoid the zeroes on X^N-1).
 	parallel.Execute(len(piNonConst), func(start, end int) {
 		for k := start; k < end; k++ {
 			pCopy := piNonConst[k]
-			smallDomain.FFTInverse(pCopy, fft.DIF)
+			smallDomain.FFTInverse(pCopy, fft.DIF, fftOpt)
 			scaleByTwiddles(pCopy, twiddleFrMultiplicativeGen)
 		}
 	})
@@ -157,7 +163,7 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int,
 		// evaluated on the coset bigDomain.FrMultiplicativeGen*<bigDomain.Generator^i>
 		parallel.Execute(len(piNonConst), func(start, end int) {
 			for k := start; k < end; k++ {
-				smallDomain.FFT(piNonConst[k], fft.DIT)
+				smallDomain.FFT(piNonConst[k], fft.DIT, fftOpt)
 			}
 		})
 
@@ -172,7 +178,7 @@ func ComputeQuotient(Pi map[string]Polynomial, vanishingRelation dag.DAG, N int,
 		parallel.Execute(len(piNonConst), func(start, end int) {
 			for k := start; k < end; k++ {
 				pCopy := piNonConst[k]
-				smallDomain.FFTInverse(pCopy, fft.DIF)
+				smallDomain.FFTInverse(pCopy, fft.DIF, fftOpt)
 				scaleByTwiddles(pCopy, twiddleGeneratorBigDomain)
 			}
 		})
@@ -327,17 +333,24 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 		}
 	}
 
+	// Each FFT runs inside a parallel.Execute over polys; cap its inner
+	// parallelism so the two layers together don't exceed NumCPU. We size the
+	// budget on the larger rail to avoid starving when one rail is empty.
+	fftOuter := max(len(baseNonConst), len(extNonConst))
+	fftNbTasks := parallel.NbTasksPerJob(fftOuter)
+	fftOpt := fft.WithNbTasks(fftNbTasks)
+
 	parallel.Execute(len(baseNonConst), func(start, end int) {
 		for k := start; k < end; k++ {
 			pCopy := baseNonConst[k]
-			smallDomain.FFTInverse(pCopy, fft.DIF)
+			smallDomain.FFTInverse(pCopy, fft.DIF, fftOpt)
 			scaleBaseByTwiddles(pCopy, twiddleFrMultiplicativeGen)
 		}
 	})
 	parallel.Execute(len(extNonConst), func(start, end int) {
 		for k := start; k < end; k++ {
 			pCopy := extNonConst[k]
-			smallDomain.FFTInverseExt(pCopy, fft.DIF)
+			smallDomain.FFTInverseExt(pCopy, fft.DIF, fftOpt)
 			scaleExtByTwiddles(pCopy, twiddleFrMultiplicativeGen)
 		}
 	})
@@ -347,12 +360,12 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 	for i := range rho {
 		parallel.Execute(len(baseNonConst), func(start, end int) {
 			for k := start; k < end; k++ {
-				smallDomain.FFT(baseNonConst[k], fft.DIT)
+				smallDomain.FFT(baseNonConst[k], fft.DIT, fftOpt)
 			}
 		})
 		parallel.Execute(len(extNonConst), func(start, end int) {
 			for k := start; k < end; k++ {
-				smallDomain.FFTExt(extNonConst[k], fft.DIT)
+				smallDomain.FFTExt(extNonConst[k], fft.DIT, fftOpt)
 			}
 		})
 
@@ -364,14 +377,14 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 		parallel.Execute(len(baseNonConst), func(start, end int) {
 			for k := start; k < end; k++ {
 				pCopy := baseNonConst[k]
-				smallDomain.FFTInverse(pCopy, fft.DIF)
+				smallDomain.FFTInverse(pCopy, fft.DIF, fftOpt)
 				scaleBaseByTwiddles(pCopy, twiddleGeneratorBigDomain)
 			}
 		})
 		parallel.Execute(len(extNonConst), func(start, end int) {
 			for k := start; k < end; k++ {
 				pCopy := extNonConst[k]
-				smallDomain.FFTInverseExt(pCopy, fft.DIF)
+				smallDomain.FFTInverseExt(pCopy, fft.DIF, fftOpt)
 				scaleExtByTwiddles(pCopy, twiddleGeneratorBigDomain)
 			}
 		})
