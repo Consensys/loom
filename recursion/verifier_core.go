@@ -33,6 +33,7 @@ import (
 	"github.com/consensys/loom/public"
 	"github.com/consensys/loom/recursion/extfield"
 	"github.com/consensys/loom/recursion/gadgets/airzeta"
+	"github.com/consensys/loom/recursion/gadgets/binexp"
 	"github.com/consensys/loom/recursion/gadgets/bits"
 	"github.com/consensys/loom/recursion/gadgets/challenger24"
 	"github.com/consensys/loom/trace"
@@ -326,96 +327,139 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 		)
 	}
 
-	// Stage 8: per-query final-poly match check. For each query k, verify
-	// that the last fold's output equals finalPoly[s_k mod len(finalPoly)],
-	// where s_k is the query position extracted from fri_query_k's digest
-	// limb by an in-circuit bit decomposition. This is the FRI verifier's
-	// final-round check (internal/fri/fri.go checkQueryExt). Remaining FRI
-	// soundness (cross-round fold chain, Merkle openings, DEEP bridge)
-	// follows in subsequent stages.
+	// Stages 8–9: per-(round, query) FRI fold check.
+	//   - For each round j < numRounds-1: expected_jk == selected leaf at
+	//     round j+1 (P or Q, picked by the top bit of base_jk).
+	//   - For round j = numRounds-1: expected_jk == finalPoly[base_last_k].
+	// expected_jk is computed via the standard FRI fold equation
+	//   (P+Q)/2 + alpha_j * (P-Q) * invTwo * xInv
+	// where:
+	//   - alpha_j is the in-circuit fri_fold_j challenge (anchored to its
+	//     chain sponge digest at the sponge's digest row).
+	//   - xInv = omega_j^{-base_jk} computed via the binexp gadget over
+	//     the lowest log2(N_j/2) bits of fri_query_k's digest[1]
+	//     decomposition (s_k = digest[1] mod (N_fri/2)).
+	//   - base_last_k = lowest log2(len(finalPoly)) bits of s_k.
+	// The query position bits are produced once per query by
+	// bits.RegisterAt and shared across every round's binexp / mux.
+	// Stage-gated to fire only when the inner proof carries FRI data.
 	type sparseBitAlloc struct {
 		colName string
 		rowIdx  int
 		bit     bool
 	}
+	type pendingBinexp struct {
+		cn        binexp.ColumnNames
+		rowIdx    int
+		bitsAtRow []bool
+	}
 	var sparseBits []sparseBitAlloc
+	var pendingBinexps []pendingBinexp
 	if len(input.Proof.DeepQuotientCommitment) > 0 {
 		friProof := input.Proof.DeepQuotientFriProof
 		finalPolyExt := friProof.FinalPolyExt
 		if len(finalPolyExt) == 0 {
 			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: FRI present but FinalPolyExt empty")
 		}
-		// Domain-size sanity: the final layer has cardinality len(finalPoly),
-		// so the last-fold input domain has size 2*len(finalPoly).
 		nLastRound := 2 * len(finalPolyExt)
 		if nLastRound&(nLastRound-1) != 0 {
 			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: 2*len(finalPolyExt) = %d not power of two", nLastRound)
 		}
-		// base_last_k = s_k mod len(finalPolyExt). For Loom's typical
-		// configuration (final layer ≥ 2), this is at least one bit; we
-		// require ≥ 2 so the inline mux below has work to do.
 		baseLastBits := log2int(len(finalPolyExt))
 		if baseLastBits != 2 {
-			// Generalising to arbitrary baseLastBits is a future-work item;
-			// the inline mux is hardcoded for 2-bit indexing.
+			// The final-poly inline mux is hardcoded for 2 bits; generalising
+			// is straightforward (recursive tree reduction) but deferred.
 			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: stage 8 currently supports len(finalPoly)=4 only, got %d", len(finalPolyExt))
 		}
+		numRounds := log2int(maxModN)
+		if numRounds < 1 {
+			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: FRI present with maxModN=%d (numRounds=%d)", maxModN, numRounds)
+		}
+		// Full FRI evaluation domain size: N_fri = nLastRound * 2^{r-1}.
+		nFRI := nLastRound << (numRounds - 1)
 
-		// Locate last-fold and per-query sponge indices in the chain.
-		// friNumRounds = log2(maxN) by Loom's FRI parameter convention
-		// (D == maxN of any inner module, numRounds := log2(D)).
-		lastFoldName := friFoldName(log2int(maxModN) - 1)
-		lastFoldStepIdx := -1
+		// Locate every fri_fold_j and fri_query_k step in the chain.
+		foldStepIdx := make([]int, numRounds)
+		for j := range foldStepIdx {
+			foldStepIdx[j] = -1
+		}
 		var queryStepIdxs []int
 		for i, step := range chain {
-			if step.Name == lastFoldName {
-				lastFoldStepIdx = i
+			for j := 0; j < numRounds; j++ {
+				if step.Name == friFoldName(j) {
+					foldStepIdx[j] = i
+				}
 			}
 			if strings.HasPrefix(step.Name, "fri_query_") {
 				queryStepIdxs = append(queryStepIdxs, i)
 			}
 		}
-		if lastFoldStepIdx < 0 {
-			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: %s missing from chain", lastFoldName)
+		for j, idx := range foldStepIdx {
+			if idx < 0 {
+				return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: %s missing from chain", friFoldName(j))
+			}
 		}
 		if len(queryStepIdxs) == 0 {
 			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: no fri_query_k steps in chain")
 		}
 
-		// Anchor alpha_last to the chain digest of fri_fold_{r-1}: at the
-		// last-fold sponge's digest row, the witness column equals the
-		// digest in OutputToExt limb order. The same witness column then
-		// supplies a usable E4Expr at every other row.
-		lastFoldCN := chSpongeCNs[lastFoldStepIdx]
-		lastFoldDigestExpr := extfield.FromLimbs(
-			expr.Col(lastFoldCN.Digest[0]), expr.Col(lastFoldCN.Digest[2]),
-			expr.Col(lastFoldCN.Digest[1]), expr.Col(lastFoldCN.Digest[3]),
-		)
-		// alpha_last is the OutputToExt of the chain's last-fold digest.
-		// replayInnerFS doesn't compute past FINAL_EVALUATION_POINT, so
-		// we read it from the chain step's NativeDigest directly.
-		alphaLastNative := hashDigestToE4(chain[lastFoldStepIdx].NativeDigest)
-		alphaLastExpr := addE4("airverify.fri_alpha_last", alphaLastNative)
-		for _, rel := range alphaLastExpr.EqualityConstraints(lastFoldDigestExpr) {
-			verifierMod.AssertZeroAt(rel, lastFoldCN.DigestRow)
+		// Anchor every alpha_j to its sponge digest at the sponge's digest
+		// row (same pattern as the zeta^N witness chain). Off-row the
+		// witness columns hold the constant alpha_j, so later fold
+		// constraints can reference them anywhere.
+		alphaExprs := make([]extfield.E4Expr, numRounds)
+		for j := 0; j < numRounds; j++ {
+			foldCN := chSpongeCNs[foldStepIdx[j]]
+			foldDigestExpr := extfield.FromLimbs(
+				expr.Col(foldCN.Digest[0]), expr.Col(foldCN.Digest[2]),
+				expr.Col(foldCN.Digest[1]), expr.Col(foldCN.Digest[3]),
+			)
+			alphaNative := hashDigestToE4(chain[foldStepIdx[j]].NativeDigest)
+			alphaJExpr := addE4(fmt.Sprintf("airverify.fri_alpha_%d", j), alphaNative)
+			for _, rel := range alphaJExpr.EqualityConstraints(foldDigestExpr) {
+				verifierMod.AssertZeroAt(rel, foldCN.DigestRow)
+			}
+			alphaExprs[j] = alphaJExpr
 		}
 
-		// Build the constant xInv table {omega^{-i}} and the finalPoly
-		// table as 4-element ext.E4 slices.
-		omegaLast, err := koalabear.Generator(uint64(nLastRound))
-		if err != nil {
-			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: omega_last gen: %w", err)
+		// Per-query position bits (31-bit decomposition of digest[1]).
+		type queryData struct {
+			digestRow  int
+			bitsCN     bits.ColumnNames
+			digestNat  uint64
 		}
-		var omegaInv koalabear.Element
-		omegaInv.Inverse(&omegaLast)
-		xInvTable := make([]ext.E4, len(finalPolyExt))
-		var pow koalabear.Element
-		pow.SetOne()
-		for i := range xInvTable {
-			xInvTable[i].B0.A0.Set(&pow)
-			pow.Mul(&pow, &omegaInv)
+		queries := make([]queryData, len(queryStepIdxs))
+		for k, queryStepIdx := range queryStepIdxs {
+			querySpongeCN := chSpongeCNs[queryStepIdx]
+			queryDigestRow := querySpongeCN.DigestRow
+			bitsPrefix := fmt.Sprintf("airverify.fri_q%d_bits", k)
+			bitsCN := bits.RegisterAt(&verifierMod, bitsPrefix, querySpongeCN.Digest[1], 31, queryDigestRow)
+
+			digestVal := chain[queryStepIdx].NativeDigest[1].Uint64()
+			for bi := 0; bi < bitsCN.NumBits; bi++ {
+				bit := (digestVal>>uint(bi))&1 == 1
+				sparseBits = append(sparseBits, sparseBitAlloc{colName: bitsCN.Bits[bi], rowIdx: queryDigestRow, bit: bit})
+			}
+			queries[k] = queryData{digestRow: queryDigestRow, bitsCN: bitsCN, digestNat: digestVal}
 		}
 
+		// Per-(round, query) trusted P, Q witnesses. Each entry is the
+		// LeafPExt / LeafQExt for that round's layer of the query.
+		type leafPair struct {
+			P, Q extfield.E4Expr
+		}
+		leafExprs := make([][]leafPair, numRounds)
+		for j := 0; j < numRounds; j++ {
+			leafExprs[j] = make([]leafPair, len(queries))
+			for k := range queries {
+				layer := friProof.FRIQueries[k].Layers[j]
+				p := addE4(fmt.Sprintf("airverify.fri_q%d_P_%d", k, j), layer.LeafPExt)
+				q := addE4(fmt.Sprintf("airverify.fri_q%d_Q_%d", k, j), layer.LeafQExt)
+				leafExprs[j][k] = leafPair{P: p, Q: q}
+			}
+		}
+
+		// Common constants.
 		var invTwoBase koalabear.Element
 		var twoBase koalabear.Element
 		twoBase.SetUint64(2)
@@ -423,7 +467,7 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 		invTwoConst := expr.Const(invTwoBase)
 		oneConst := expr.Const(koalabear.One())
 
-		// 4-element E4 select indexed by (b0 + 2*b1) — bit values in {0, 1}.
+		// Inline 4-element E4 select indexed by (b0 + 2*b1).
 		e4Select4 := func(t [4]ext.E4, b0, b1 expr.Expr) extfield.E4Expr {
 			notB0 := oneConst.Sub(b0)
 			notB1 := oneConst.Sub(b1)
@@ -437,58 +481,72 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 				Add(extfield.Const(t[3]).MulByBase(s11))
 		}
 
-		// Common 4-element table populated from finalPolyExt and xInvTable.
 		var finalPolyArr [4]ext.E4
-		var xInvArr [4]ext.E4
 		for i := 0; i < 4; i++ {
 			finalPolyArr[i] = finalPolyExt[i]
-			xInvArr[i] = xInvTable[i]
 		}
 
-		for k, queryStepIdx := range queryStepIdxs {
-			querySpongeCN := chSpongeCNs[queryStepIdx]
-			queryDigestRow := querySpongeCN.DigestRow
-
-			// 31-bit decomposition of digest[1] at the digest row. We only
-			// use bits[0..1] downstream, but the full 31-bit sum constraint
-			// is what makes the decomposition sound (see bits.RegisterAt
-			// doc note on the 2^-7 Koalabear corner case).
-			bitsPrefix := fmt.Sprintf("airverify.fri_q%d_bits", k)
-			bitsCN := bits.RegisterAt(&verifierMod, bitsPrefix, querySpongeCN.Digest[1], 31, queryDigestRow)
-
-			// Native digest[1] for trace fill. Emit a sparseBits entry
-			// for EVERY bit column (even when the bit is 0) so the trace
-			// fill loop registers the column with a zero-padded vector;
-			// otherwise the prover errors out at columns referenced by
-			// constraints but missing from the trace.
-			digestVal := chain[queryStepIdx].NativeDigest[1].Uint64()
-			for bi := 0; bi < bitsCN.NumBits; bi++ {
-				bit := (digestVal>>uint(bi))&1 == 1
-				sparseBits = append(sparseBits, sparseBitAlloc{colName: bitsCN.Bits[bi], rowIdx: queryDigestRow, bit: bit})
+		for j := 0; j < numRounds; j++ {
+			Nj := nFRI >> j
+			omegaJ, err := koalabear.Generator(uint64(Nj))
+			if err != nil {
+				return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: omega round %d: %w", j, err)
 			}
+			var omegaJInv koalabear.Element
+			omegaJInv.Inverse(&omegaJ)
+			numBaseBits := log2int(Nj / 2)
 
-			// Per-query trusted witnesses: P, Q at the last fold round.
-			// These are taken on trust until Merkle openings land in a
-			// future stage.
-			lastLayer := friProof.FRIQueries[k].Layers[len(friProof.FRIQueries[k].Layers)-1]
-			pExpr := addE4(fmt.Sprintf("airverify.fri_q%d_P_last", k), lastLayer.LeafPExt)
-			qExpr := addE4(fmt.Sprintf("airverify.fri_q%d_Q_last", k), lastLayer.LeafQExt)
+			for k, query := range queries {
+				// xInv via binexp over the lowest numBaseBits of digest[1].
+				baseBitsCN := bits.ColumnNames{
+					ModuleName: query.bitsCN.ModuleName,
+					Value:      query.bitsCN.Value,
+					Bits:       query.bitsCN.Bits[:numBaseBits],
+					NumBits:    numBaseBits,
+				}
+				binexpPrefix := fmt.Sprintf("airverify.fri_q%d_xInv_%d", k, j)
+				binexpCN := binexp.Register(&verifierMod, binexpPrefix, omegaJInv, baseBitsCN)
+				xInvBase := expr.Col(binexpCN.Steps[numBaseBits-1])
+				xInvExpr := extfield.FromBase(xInvBase)
 
-			b0 := expr.Col(bitsCN.Bits[0])
-			b1 := expr.Col(bitsCN.Bits[1])
+				// Trace fill plan for the binexp step columns.
+				bitsAtRow := make([]bool, numBaseBits)
+				for bi := 0; bi < numBaseBits; bi++ {
+					bitsAtRow[bi] = (query.digestNat>>uint(bi))&1 == 1
+				}
+				pendingBinexps = append(pendingBinexps, pendingBinexp{cn: binexpCN, rowIdx: query.digestRow, bitsAtRow: bitsAtRow})
 
-			xInvExpr := e4Select4(xInvArr, b0, b1)
-			finalPolyAtBase := e4Select4(finalPolyArr, b0, b1)
+				P := leafExprs[j][k].P
+				Q := leafExprs[j][k].Q
 
-			// expected = (P+Q)/2 + alpha * (P-Q) * (1/2) * xInv.
-			sumHalf := pExpr.Add(qExpr).MulByBase(invTwoConst)
-			diff := pExpr.Sub(qExpr)
-			diffScaled := diff.MulByBase(invTwoConst)
-			folded := alphaLastExpr.Mul(diffScaled).Mul(xInvExpr)
-			expected := sumHalf.Add(folded)
+				sumHalf := P.Add(Q).MulByBase(invTwoConst)
+				diff := P.Sub(Q)
+				diffScaled := diff.MulByBase(invTwoConst)
+				folded := alphaExprs[j].Mul(diffScaled).Mul(xInvExpr)
+				expected := sumHalf.Add(folded)
 
-			for _, rel := range expected.EqualityConstraints(finalPolyAtBase) {
-				verifierMod.AssertZeroAt(rel, queryDigestRow)
+				if j < numRounds-1 {
+					// Cross-round chain: expected_jk == selected leaf at
+					// round j+1. The top bit of base_jk (= bit
+					// numBaseBits-1 of digest[1]) decides P vs Q.
+					topBit := expr.Col(query.bitsCN.Bits[numBaseBits-1])
+					notTopBit := oneConst.Sub(topBit)
+					pNext := leafExprs[j+1][k].P
+					qNext := leafExprs[j+1][k].Q
+					selected := pNext.MulByBase(notTopBit).Add(qNext.MulByBase(topBit))
+					for _, rel := range expected.EqualityConstraints(selected) {
+						verifierMod.AssertZeroAt(rel, query.digestRow)
+					}
+				} else {
+					// Final-poly match. base_last has exactly baseLastBits
+					// bits (= 2 with the current hardcoded mux).
+					b0 := expr.Col(query.bitsCN.Bits[0])
+					b1 := expr.Col(query.bitsCN.Bits[1])
+					finalPolyAtBase := e4Select4(finalPolyArr, b0, b1)
+					for _, rel := range expected.EqualityConstraints(finalPolyAtBase) {
+						verifierMod.AssertZeroAt(rel, query.digestRow)
+					}
+				}
 			}
 		}
 	}
@@ -541,6 +599,39 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 			col[rowIdx].Set(&val)
 		}
 		tr.SetBase(colName, col)
+	}
+
+	// Trace fill for binexp running-product columns. binexp's per-row
+	// constraint must hold at EVERY row: step_i = step_{i-1} * mult(b_i).
+	// At off-rows the bit decomposition is all-zero, so every step
+	// collapses to 1 = base^0. At rowIdx, the running product walks
+	// base^(2^0 b_0 + 2^1 b_1 + ... + 2^i b_i).
+	for _, p := range pendingBinexps {
+		k := p.cn.NumBits
+		powers := make([]koalabear.Element, k)
+		powers[0].Set(&p.cn.BaseConst)
+		for i := 1; i < k; i++ {
+			powers[i].Square(&powers[i-1])
+		}
+		stepCols := make([][]koalabear.Element, k)
+		for i := 0; i < k; i++ {
+			col := make([]koalabear.Element, verifierMod.N)
+			for r := range col {
+				col[r].SetOne()
+			}
+			stepCols[i] = col
+		}
+		var running koalabear.Element
+		running.SetOne()
+		for i := 0; i < k; i++ {
+			if i < len(p.bitsAtRow) && p.bitsAtRow[i] {
+				running.Mul(&running, &powers[i])
+			}
+			stepCols[i][p.rowIdx].Set(&running)
+		}
+		for i := 0; i < k; i++ {
+			tr.SetBase(p.cn.Steps[i], stepCols[i])
+		}
 	}
 
 	// Sanity check: locate the zeta step's digest and confirm it equals

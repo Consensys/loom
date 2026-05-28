@@ -460,6 +460,47 @@ func TestBuildVerifierCoreRejectsBadFRILeaf(t *testing.T) {
 	}
 }
 
+// TestBuildVerifierCoreRejectsBadFRILeafMidRound flips LeafPExt at an
+// intermediate fold round (round 0 for the Fibonacci(n=4) inner, where
+// numRounds == 2 — so round 0 is the only non-final round) and
+// expects the outer verifier to reject via the cross-round fold-chain
+// constraint.
+func TestBuildVerifierCoreRejectsBadFRILeafMidRound(t *testing.T) {
+	innerProgram, innerTrace := makeFibonacciInner(t, 4)
+	innerProof, err := prover.Prove(innerTrace, setup.ProvingKey{}, nil, innerProgram)
+	if err != nil {
+		t.Fatalf("inner prove: %v", err)
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, innerProgram, innerProof); err != nil {
+		t.Fatalf("inner verify: %v", err)
+	}
+
+	// Tamper LeafPExt at round 0 (the only non-final round here).
+	q0 := &innerProof.DeepQuotientFriProof.FRIQueries[0]
+	if len(q0.Layers) < 2 {
+		t.Fatalf("expected ≥ 2 fold rounds, got %d", len(q0.Layers))
+	}
+	var one koalabear.Element
+	one.SetOne()
+	q0.Layers[0].LeafPExt.B0.A0.Add(&q0.Layers[0].LeafPExt.B0.A0, &one)
+
+	outerProgram, outerTrace, err := BuildVerifierCore(
+		RecursionInput{Program: innerProgram, Proof: innerProof},
+		DefaultConfig(),
+	)
+	if err != nil {
+		t.Fatalf("BuildVerifierCore: %v", err)
+	}
+
+	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
+	if err != nil {
+		return
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, outerProgram, outerProof, verifier.SkipFRI()); err == nil {
+		t.Fatalf("outer verify accepted FRI leaf tampering at intermediate round")
+	}
+}
+
 // TestBuildVerifierCoreRejectsBadInnerProof confirms a tampered inner
 // proof (with one ValueAtZeta corrupted) cannot be wrapped into a
 // satisfiable outer program — the AIR check would not hold.
