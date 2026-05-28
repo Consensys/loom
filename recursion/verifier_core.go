@@ -16,6 +16,7 @@ package recursion
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
@@ -32,6 +33,7 @@ import (
 	"github.com/consensys/loom/public"
 	"github.com/consensys/loom/recursion/extfield"
 	"github.com/consensys/loom/recursion/gadgets/airzeta"
+	"github.com/consensys/loom/recursion/gadgets/bits"
 	"github.com/consensys/loom/recursion/gadgets/challenger24"
 	"github.com/consensys/loom/trace"
 )
@@ -324,6 +326,173 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 		)
 	}
 
+	// Stage 8: per-query final-poly match check. For each query k, verify
+	// that the last fold's output equals finalPoly[s_k mod len(finalPoly)],
+	// where s_k is the query position extracted from fri_query_k's digest
+	// limb by an in-circuit bit decomposition. This is the FRI verifier's
+	// final-round check (internal/fri/fri.go checkQueryExt). Remaining FRI
+	// soundness (cross-round fold chain, Merkle openings, DEEP bridge)
+	// follows in subsequent stages.
+	type sparseBitAlloc struct {
+		colName string
+		rowIdx  int
+		bit     bool
+	}
+	var sparseBits []sparseBitAlloc
+	if len(input.Proof.DeepQuotientCommitment) > 0 {
+		friProof := input.Proof.DeepQuotientFriProof
+		finalPolyExt := friProof.FinalPolyExt
+		if len(finalPolyExt) == 0 {
+			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: FRI present but FinalPolyExt empty")
+		}
+		// Domain-size sanity: the final layer has cardinality len(finalPoly),
+		// so the last-fold input domain has size 2*len(finalPoly).
+		nLastRound := 2 * len(finalPolyExt)
+		if nLastRound&(nLastRound-1) != 0 {
+			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: 2*len(finalPolyExt) = %d not power of two", nLastRound)
+		}
+		// base_last_k = s_k mod len(finalPolyExt). For Loom's typical
+		// configuration (final layer ≥ 2), this is at least one bit; we
+		// require ≥ 2 so the inline mux below has work to do.
+		baseLastBits := log2int(len(finalPolyExt))
+		if baseLastBits != 2 {
+			// Generalising to arbitrary baseLastBits is a future-work item;
+			// the inline mux is hardcoded for 2-bit indexing.
+			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: stage 8 currently supports len(finalPoly)=4 only, got %d", len(finalPolyExt))
+		}
+
+		// Locate last-fold and per-query sponge indices in the chain.
+		// friNumRounds = log2(maxN) by Loom's FRI parameter convention
+		// (D == maxN of any inner module, numRounds := log2(D)).
+		lastFoldName := friFoldName(log2int(maxModN) - 1)
+		lastFoldStepIdx := -1
+		var queryStepIdxs []int
+		for i, step := range chain {
+			if step.Name == lastFoldName {
+				lastFoldStepIdx = i
+			}
+			if strings.HasPrefix(step.Name, "fri_query_") {
+				queryStepIdxs = append(queryStepIdxs, i)
+			}
+		}
+		if lastFoldStepIdx < 0 {
+			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: %s missing from chain", lastFoldName)
+		}
+		if len(queryStepIdxs) == 0 {
+			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: no fri_query_k steps in chain")
+		}
+
+		// Anchor alpha_last to the chain digest of fri_fold_{r-1}: at the
+		// last-fold sponge's digest row, the witness column equals the
+		// digest in OutputToExt limb order. The same witness column then
+		// supplies a usable E4Expr at every other row.
+		lastFoldCN := chSpongeCNs[lastFoldStepIdx]
+		lastFoldDigestExpr := extfield.FromLimbs(
+			expr.Col(lastFoldCN.Digest[0]), expr.Col(lastFoldCN.Digest[2]),
+			expr.Col(lastFoldCN.Digest[1]), expr.Col(lastFoldCN.Digest[3]),
+		)
+		// alpha_last is the OutputToExt of the chain's last-fold digest.
+		// replayInnerFS doesn't compute past FINAL_EVALUATION_POINT, so
+		// we read it from the chain step's NativeDigest directly.
+		alphaLastNative := hashDigestToE4(chain[lastFoldStepIdx].NativeDigest)
+		alphaLastExpr := addE4("airverify.fri_alpha_last", alphaLastNative)
+		for _, rel := range alphaLastExpr.EqualityConstraints(lastFoldDigestExpr) {
+			verifierMod.AssertZeroAt(rel, lastFoldCN.DigestRow)
+		}
+
+		// Build the constant xInv table {omega^{-i}} and the finalPoly
+		// table as 4-element ext.E4 slices.
+		omegaLast, err := koalabear.Generator(uint64(nLastRound))
+		if err != nil {
+			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: omega_last gen: %w", err)
+		}
+		var omegaInv koalabear.Element
+		omegaInv.Inverse(&omegaLast)
+		xInvTable := make([]ext.E4, len(finalPolyExt))
+		var pow koalabear.Element
+		pow.SetOne()
+		for i := range xInvTable {
+			xInvTable[i].B0.A0.Set(&pow)
+			pow.Mul(&pow, &omegaInv)
+		}
+
+		var invTwoBase koalabear.Element
+		var twoBase koalabear.Element
+		twoBase.SetUint64(2)
+		invTwoBase.Inverse(&twoBase)
+		invTwoConst := expr.Const(invTwoBase)
+		oneConst := expr.Const(koalabear.One())
+
+		// 4-element E4 select indexed by (b0 + 2*b1) — bit values in {0, 1}.
+		e4Select4 := func(t [4]ext.E4, b0, b1 expr.Expr) extfield.E4Expr {
+			notB0 := oneConst.Sub(b0)
+			notB1 := oneConst.Sub(b1)
+			s00 := notB0.Mul(notB1)
+			s10 := b0.Mul(notB1)
+			s01 := notB0.Mul(b1)
+			s11 := b0.Mul(b1)
+			return extfield.Const(t[0]).MulByBase(s00).
+				Add(extfield.Const(t[1]).MulByBase(s10)).
+				Add(extfield.Const(t[2]).MulByBase(s01)).
+				Add(extfield.Const(t[3]).MulByBase(s11))
+		}
+
+		// Common 4-element table populated from finalPolyExt and xInvTable.
+		var finalPolyArr [4]ext.E4
+		var xInvArr [4]ext.E4
+		for i := 0; i < 4; i++ {
+			finalPolyArr[i] = finalPolyExt[i]
+			xInvArr[i] = xInvTable[i]
+		}
+
+		for k, queryStepIdx := range queryStepIdxs {
+			querySpongeCN := chSpongeCNs[queryStepIdx]
+			queryDigestRow := querySpongeCN.DigestRow
+
+			// 31-bit decomposition of digest[1] at the digest row. We only
+			// use bits[0..1] downstream, but the full 31-bit sum constraint
+			// is what makes the decomposition sound (see bits.RegisterAt
+			// doc note on the 2^-7 Koalabear corner case).
+			bitsPrefix := fmt.Sprintf("airverify.fri_q%d_bits", k)
+			bitsCN := bits.RegisterAt(&verifierMod, bitsPrefix, querySpongeCN.Digest[1], 31, queryDigestRow)
+
+			// Native digest[1] for trace fill. Emit a sparseBits entry
+			// for EVERY bit column (even when the bit is 0) so the trace
+			// fill loop registers the column with a zero-padded vector;
+			// otherwise the prover errors out at columns referenced by
+			// constraints but missing from the trace.
+			digestVal := chain[queryStepIdx].NativeDigest[1].Uint64()
+			for bi := 0; bi < bitsCN.NumBits; bi++ {
+				bit := (digestVal>>uint(bi))&1 == 1
+				sparseBits = append(sparseBits, sparseBitAlloc{colName: bitsCN.Bits[bi], rowIdx: queryDigestRow, bit: bit})
+			}
+
+			// Per-query trusted witnesses: P, Q at the last fold round.
+			// These are taken on trust until Merkle openings land in a
+			// future stage.
+			lastLayer := friProof.FRIQueries[k].Layers[len(friProof.FRIQueries[k].Layers)-1]
+			pExpr := addE4(fmt.Sprintf("airverify.fri_q%d_P_last", k), lastLayer.LeafPExt)
+			qExpr := addE4(fmt.Sprintf("airverify.fri_q%d_Q_last", k), lastLayer.LeafQExt)
+
+			b0 := expr.Col(bitsCN.Bits[0])
+			b1 := expr.Col(bitsCN.Bits[1])
+
+			xInvExpr := e4Select4(xInvArr, b0, b1)
+			finalPolyAtBase := e4Select4(finalPolyArr, b0, b1)
+
+			// expected = (P+Q)/2 + alpha * (P-Q) * (1/2) * xInv.
+			sumHalf := pExpr.Add(qExpr).MulByBase(invTwoConst)
+			diff := pExpr.Sub(qExpr)
+			diffScaled := diff.MulByBase(invTwoConst)
+			folded := alphaLastExpr.Mul(diffScaled).Mul(xInvExpr)
+			expected := sumHalf.Add(folded)
+
+			for _, rel := range expected.EqualityConstraints(finalPolyAtBase) {
+				verifierMod.AssertZeroAt(rel, queryDigestRow)
+			}
+		}
+	}
+
 	builder.AddModule(verifierMod)
 
 	// Fill trace: the witness leaf/chunk columns get their value at every
@@ -347,6 +516,31 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 		for k, v := range chCols {
 			tr.SetBase(k, v)
 		}
+	}
+
+	// Sparse trace fill for FRI bit-decomposition witnesses: only the
+	// gated row holds a real bit; every other row is zero. Multiple
+	// bits within the same column would coexist if the gadget ever
+	// shared columns, so we accumulate first and apply once at the end.
+	bitColCells := map[string]map[int]koalabear.Element{}
+	for _, a := range sparseBits {
+		m, ok := bitColCells[a.colName]
+		if !ok {
+			m = map[int]koalabear.Element{}
+			bitColCells[a.colName] = m
+		}
+		var ke koalabear.Element
+		if a.bit {
+			ke.SetOne()
+		}
+		m[a.rowIdx] = ke
+	}
+	for colName, cells := range bitColCells {
+		col := make([]koalabear.Element, verifierMod.N)
+		for rowIdx, val := range cells {
+			col[rowIdx].Set(&val)
+		}
+		tr.SetBase(colName, col)
 	}
 
 	// Sanity check: locate the zeta step's digest and confirm it equals

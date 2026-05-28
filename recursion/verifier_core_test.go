@@ -415,6 +415,51 @@ func TestBuildVerifierCoreRejectsAtZetaTamperingViaDeepAlpha(t *testing.T) {
 	}
 }
 
+// TestBuildVerifierCoreRejectsBadFRILeaf tampers the LeafPExt at the
+// last fold round for query 0 in the inner proof and expects the outer
+// proof to be rejected: the Stage 8 final-poly match constraint should
+// fail because the in-circuit fold result no longer agrees with
+// finalPoly[s_0 mod len(finalPoly)].
+func TestBuildVerifierCoreRejectsBadFRILeaf(t *testing.T) {
+	innerProgram, innerTrace := makeEqualityInner(t, 4)
+	innerProof, err := prover.Prove(innerTrace, setup.ProvingKey{}, nil, innerProgram)
+	if err != nil {
+		t.Fatalf("inner prove: %v", err)
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, innerProgram, innerProof); err != nil {
+		t.Fatalf("inner verify: %v", err)
+	}
+	if len(innerProof.DeepQuotientCommitment) == 0 {
+		t.Fatal("expected FRI data on inner proof")
+	}
+
+	// Tamper LeafPExt at the last fold round, query 0. Adding 1 to the
+	// B0.A0 limb breaks the fold equation but not the Merkle proof
+	// (which we don't check in-circuit yet) — the final-poly match is
+	// the only Stage 8 lever, and it should catch this.
+	q0 := &innerProof.DeepQuotientFriProof.FRIQueries[0]
+	lastIdx := len(q0.Layers) - 1
+	var one koalabear.Element
+	one.SetOne()
+	q0.Layers[lastIdx].LeafPExt.B0.A0.Add(&q0.Layers[lastIdx].LeafPExt.B0.A0, &one)
+
+	outerProgram, outerTrace, err := BuildVerifierCore(
+		RecursionInput{Program: innerProgram, Proof: innerProof},
+		DefaultConfig(),
+	)
+	if err != nil {
+		t.Fatalf("BuildVerifierCore: %v", err)
+	}
+
+	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
+	if err != nil {
+		return // prover rejection is also a successful detection
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, outerProgram, outerProof, verifier.SkipFRI()); err == nil {
+		t.Fatalf("outer verify accepted FRI leaf tampering at last round")
+	}
+}
+
 // TestBuildVerifierCoreRejectsBadInnerProof confirms a tampered inner
 // proof (with one ValueAtZeta corrupted) cannot be wrapped into a
 // satisfiable outer program — the AIR check would not hold.
