@@ -289,6 +289,57 @@ func TestBuildVerifierCoreWithPublicInputs(t *testing.T) {
 	_ = one
 }
 
+// TestBuildVerifierCoreRejectsAtZetaTamperingViaDeepAlpha is an
+// additional negative test specific to the Stage-5 witness binding:
+// once DEEP_ALPHA's bindings reference the same airverify witness
+// columns as the AIR check, tampering an at-zeta value affects BOTH
+// the AIR check AND the in-circuit alpha derivation. The constraint
+// system must reject the tampered proof.
+//
+// We tamper B's value at zeta — A and B are equal so the AIR
+// constraint (A - B = 0 evaluated at zeta) is sensitive to B too;
+// in Stage 4 only the AIR check caught the tampering. With Stage 5,
+// the DEEP_ALPHA sponge inputs also pick up the tampered B via the
+// witness column, so the in-circuit alpha differs from the native
+// chain reconstruction. The sanity check on the chain-zeta-step
+// digest still passes (zeta doesn't depend on B), so the failure
+// must come from the AIR check itself — confirming Stage 4 behavior
+// is preserved when DEEP_ALPHA bindings are promoted to witnesses.
+func TestBuildVerifierCoreRejectsAtZetaTamperingViaDeepAlpha(t *testing.T) {
+	innerProgram, innerTrace := makeEqualityInner(t, 4)
+	innerProof, err := prover.Prove(innerTrace, setup.ProvingKey{}, nil, innerProgram, prover.SkipFRI())
+	if err != nil {
+		t.Fatalf("inner prove: %v", err)
+	}
+
+	// Tamper B at zeta.
+	b, ok := innerProof.ValueAtZetaExt("B")
+	if !ok {
+		t.Fatal("B not in ValuesAtZeta")
+	}
+	var two koalabear.Element
+	two.SetUint64(2)
+	b.B0.A0.Add(&b.B0.A0, &two)
+	innerProof.SetValueAtZetaExt("B", b)
+
+	outerProgram, outerTrace, err := buildVerifierCore(
+		RecursionInput{Program: innerProgram, Proof: innerProof},
+		DefaultConfig(),
+	)
+	if err != nil {
+		t.Fatalf("buildVerifierCore: %v", err)
+	}
+
+	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
+	if err != nil {
+		// Prover rejection counts as a successful detection.
+		return
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, outerProgram, outerProof, verifier.SkipFRI()); err == nil {
+		t.Fatalf("outer verify accepted at-zeta tampering")
+	}
+}
+
 // TestBuildVerifierCoreRejectsBadInnerProof confirms a tampered inner
 // proof (with one ValueAtZeta corrupted) cannot be wrapped into a
 // satisfiable outer program — the AIR check would not hold.

@@ -146,62 +146,17 @@ func buildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 	verifierMod := board.NewModule("airverify")
 	verifierMod.N = n
 
-	// Register sponges in chain order. Each sponge gets its own prefix.
-	chSpongeCNs := make([]challenger24.ColumnNames, len(chain))
-	startRow := 0
-	for i, step := range chain {
-		inputs := make([]expr.Expr, len(step.NativeInputs))
-		for j, v := range step.NativeInputs {
-			inputs[j] = expr.Const(v)
-		}
-		// If this isn't the first challenge, override the previous-digest
-		// slots with Rot references to the previous sponge's digest
-		// columns. The Rot offset is -1 because the previous sponge's
-		// digest lives at module row (startRow - 1).
-		if !step.IsFirst {
-			prevCN := chSpongeCNs[i-1]
-			for d := 0; d < challenger24.DigestLen; d++ {
-				inputs[step.PrevDigestStart+d] = expr.Rot(prevCN.Digest[d], -1)
-			}
-		}
-		prefix := fmt.Sprintf("airverify.ch%d", i)
-		cn := challenger24.RegisterAt(&verifierMod, prefix, inputs, startRow)
-		chSpongeCNs[i] = cn
-		startRow += cn.NPermutations
-	}
-	// Locate the zeta sponge in the chain — it's the step named
-	// FINAL_EVALUATION_POINT (the AIR check uses its digest as zeta).
-	zetaSpongeIdx := -1
-	for i, step := range chain {
-		if step.Name == constants.FINAL_EVALUATION_POINT {
-			zetaSpongeIdx = i
-			break
-		}
-	}
-	if zetaSpongeIdx < 0 {
-		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: __zeta missing from chain")
-	}
-	chCN := chSpongeCNs[zetaSpongeIdx]
-
-	// zeta limbs are the first 4 digest limbs in OutputToExt order:
-	//   limb[0] = digest[0]   (B0.A0)
-	//   limb[1] = digest[2]   (B1.A0)
-	//   limb[2] = digest[1]   (B0.A1)
-	//   limb[3] = digest[3]   (B1.A1)
-	zetaCols := [extfield.Limbs]string{
-		chCN.Digest[0], chCN.Digest[2], chCN.Digest[1], chCN.Digest[3],
-	}
-	zetaExpr := extfield.FromLimbs(
-		expr.Col(zetaCols[0]), expr.Col(zetaCols[1]),
-		expr.Col(zetaCols[2]), expr.Col(zetaCols[3]),
-	)
-
-	// Per-module witness columns + AIR check registration.
+	// Pre-pass: allocate every airverify witness column (per-module leaf
+	// and chunk values) and build maps from inner-leaf/chunk keys to
+	// limb column names. We do this BEFORE registering sponges so
+	// DEEP_ALPHA can resolve its bindings to witness column refs.
 	type allocation struct {
 		colName string
 		value   koalabear.Element
 	}
 	var traceFill []allocation
+	keyToLeafCols := map[string][extfield.Limbs]string{}
+	keyToChunkCols := map[string][extfield.Limbs]string{}
 
 	addE4 := func(prefix string, v ext.E4) extfield.E4Expr {
 		limbs := extfield.FromE4(v)
@@ -216,8 +171,13 @@ func buildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 		)
 	}
 
-	for _, data := range mods {
-		// Allocate leaf-value E4 columns for this module's DAG.
+	type moduleWitnessRefs struct {
+		leafExprs  map[string]extfield.E4Expr
+		chunkExprs []extfield.E4Expr
+	}
+	witnesses := make([]moduleWitnessRefs, len(mods))
+
+	for mi, data := range mods {
 		leafExprs := make(map[string]extfield.E4Expr, len(data.leafVals))
 		leafKeys := make([]string, 0, len(data.leafVals))
 		for k := range data.leafVals {
@@ -225,24 +185,103 @@ func buildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 		}
 		sort.Strings(leafKeys)
 		for _, k := range leafKeys {
-			leafExprs[k] = addE4(fmt.Sprintf("airverify.%s.leaf_%s", data.name, sanitizeName(k)), data.leafVals[k])
+			prefix := fmt.Sprintf("airverify.%s.leaf_%s", data.name, sanitizeName(k))
+			leafExprs[k] = addE4(prefix, data.leafVals[k])
+			if _, exists := keyToLeafCols[k]; !exists {
+				keyToLeafCols[k] = [extfield.Limbs]string{
+					prefix + "_0", prefix + "_1", prefix + "_2", prefix + "_3",
+				}
+			}
 		}
 
-		// Allocate quotient-chunk E4 columns.
 		chunkExprs := make([]extfield.E4Expr, len(data.chunks))
 		for i, c := range data.chunks {
-			chunkExprs[i] = addE4(fmt.Sprintf("airverify.%s.chunk_%d", data.name, i), c)
+			chunkName := constants.QuotientChunkName(data.name, i)
+			prefix := fmt.Sprintf("airverify.%s.chunk_%d", data.name, i)
+			chunkExprs[i] = addE4(prefix, c)
+			if _, exists := keyToChunkCols[chunkName]; !exists {
+				keyToChunkCols[chunkName] = [extfield.Limbs]string{
+					prefix + "_0", prefix + "_1", prefix + "_2", prefix + "_3",
+				}
+			}
 		}
 
-		// AIR check fires at the digest row only — that's the single row
-		// where zeta-limb columns actually hold the FS-derived value.
+		witnesses[mi] = moduleWitnessRefs{leafExprs: leafExprs, chunkExprs: chunkExprs}
+	}
+
+	// Now register sponges in chain order. For DEEP_ALPHA, substitute
+	// the witness column references for its WitnessBindings positions.
+	chSpongeCNs := make([]challenger24.ColumnNames, len(chain))
+	startRow := 0
+	for i, step := range chain {
+		inputs := make([]expr.Expr, len(step.NativeInputs))
+		for j, v := range step.NativeInputs {
+			inputs[j] = expr.Const(v)
+		}
+		// Previous-digest Rot references for non-first challenges.
+		if !step.IsFirst {
+			prevCN := chSpongeCNs[i-1]
+			for d := 0; d < challenger24.DigestLen; d++ {
+				inputs[step.PrevDigestStart+d] = expr.Rot(prevCN.Digest[d], -1)
+			}
+		}
+		// Witness-column substitutions for DEEP_ALPHA-style bindings.
+		// extToElements order {B0.A0, B0.A1, B1.A0, B1.A1} maps to our
+		// extfield limb order via {0, 2, 1, 3}.
+		for _, b := range step.WitnessBindings {
+			var cols [extfield.Limbs]string
+			var ok bool
+			if b.IsChunk {
+				cols, ok = keyToChunkCols[b.Key]
+			} else {
+				cols, ok = keyToLeafCols[b.Key]
+			}
+			if !ok {
+				return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: WitnessBinding key %q (chunk=%v) has no witness column allocated", b.Key, b.IsChunk)
+			}
+			inputs[b.Start+0] = expr.Col(cols[0])
+			inputs[b.Start+1] = expr.Col(cols[2])
+			inputs[b.Start+2] = expr.Col(cols[1])
+			inputs[b.Start+3] = expr.Col(cols[3])
+		}
+
+		prefix := fmt.Sprintf("airverify.ch%d", i)
+		cn := challenger24.RegisterAt(&verifierMod, prefix, inputs, startRow)
+		chSpongeCNs[i] = cn
+		startRow += cn.NPermutations
+	}
+
+	// Locate zeta sponge for the AIR check.
+	zetaSpongeIdx := -1
+	for i, step := range chain {
+		if step.Name == constants.FINAL_EVALUATION_POINT {
+			zetaSpongeIdx = i
+			break
+		}
+	}
+	if zetaSpongeIdx < 0 {
+		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: __zeta missing from chain")
+	}
+	chCN := chSpongeCNs[zetaSpongeIdx]
+
+	// zeta limbs in OutputToExt order: limb[0]=digest[0] (B0.A0),
+	// limb[1]=digest[2] (B1.A0), limb[2]=digest[1] (B0.A1),
+	// limb[3]=digest[3] (B1.A1).
+	zetaExpr := extfield.FromLimbs(
+		expr.Col(chCN.Digest[0]), expr.Col(chCN.Digest[2]),
+		expr.Col(chCN.Digest[1]), expr.Col(chCN.Digest[3]),
+	)
+
+	// Register the AIR-at-zeta check per inner module using the
+	// pre-allocated witness references.
+	for mi, data := range mods {
 		airzeta.RegisterAIRCheckAtRow(
 			&verifierMod,
 			data.mod.VanishingRelation,
 			data.mod.N,
-			leafExprs,
+			witnesses[mi].leafExprs,
 			zetaExpr,
-			chunkExprs,
+			witnesses[mi].chunkExprs,
 			chCN.DigestRow,
 		)
 	}
@@ -301,14 +340,34 @@ func buildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 // PrevDigestStart is the position in NativeInputs where the previous
 // challenge's digest is absorbed (only meaningful when IsFirst is
 // false). PrevDigestStart + 8 must be <= Rate so the prev digest fits
-// in chunk_0 — that simplifies the in-circuit Rot wiring (currently
-// the only supported layout).
+// in chunk_0 — that simplifies the in-circuit Rot wiring.
+//
+// WitnessBindings (used by Stage 5+) identifies the slice of
+// NativeInputs that should be wired in-circuit to witness column
+// references rather than constants. Each entry describes one E4
+// binding (4 contiguous native elements in extToElements order
+// {B0.A0, B0.A1, B1.A0, B1.A1}).
 type challengeStep struct {
 	Name            string
 	NativeInputs    []koalabear.Element
 	NativeDigest    hash.Digest
 	IsFirst         bool
 	PrevDigestStart int
+	WitnessBindings []witnessBinding
+}
+
+// witnessBinding marks one E4 worth of NativeInputs that should be
+// resolved to expr.Col references into the airverify module's witness
+// columns instead of being baked in as constants.
+type witnessBinding struct {
+	// Position in NativeInputs where the 4 elements of this binding start
+	// (extToElements order: {B0.A0, B0.A1, B1.A0, B1.A1}).
+	Start int
+	// Key the binding refers to: a leaf.String() name when IsChunk is
+	// false (a committed column at zeta) or a chunk-column name when
+	// IsChunk is true (an AIR quotient chunk at zeta).
+	Key     string
+	IsChunk bool
 }
 
 // computeChallengeChain replays the inner proof's FS transcript to
@@ -392,7 +451,12 @@ func computeChallengeChain(input RecursionInput) ([]challengeStep, error) {
 	// DEEP_ALPHA bindings: every value-at-zeta entry the inner DEEP
 	// quotient batches (per BuildDeepQuotientLayout: per-size, per-shift
 	// committed-column at-zeta values + per-size AIR quotient chunks).
+	// Each (key, value) pair is also tracked as a witnessBinding so the
+	// in-circuit sponge can reference the airverify witness column
+	// rather than baking the value in as a constant.
 	dqLayout := prover.BuildDeepQuotientLayout(pg)
+	var deepBindings []witnessBinding
+	deepStart := 0 // running offset within bindings[constants.DEEP_ALPHA]
 	for i := range dqLayout.Sizes {
 		for _, keysAtShift := range dqLayout.Keys[i] {
 			for _, key := range keysAtShift {
@@ -405,6 +469,8 @@ func computeChallengeChain(input RecursionInput) ([]challengeStep, error) {
 				if err := fs.Bind(constants.DEEP_ALPHA, els); err != nil {
 					return nil, err
 				}
+				deepBindings = append(deepBindings, witnessBinding{Start: deepStart, Key: key, IsChunk: false})
+				deepStart += 4
 			}
 		}
 		for _, chunkName := range dqLayout.AIRChunks[i] {
@@ -417,6 +483,8 @@ func computeChallengeChain(input RecursionInput) ([]challengeStep, error) {
 			if err := fs.Bind(constants.DEEP_ALPHA, els); err != nil {
 				return nil, err
 			}
+			deepBindings = append(deepBindings, witnessBinding{Start: deepStart, Key: chunkName, IsChunk: true})
+			deepStart += 4
 		}
 	}
 
@@ -455,12 +523,29 @@ func computeChallengeChain(input RecursionInput) ([]challengeStep, error) {
 			return nil, fmt.Errorf("recursion: challenge %q has prev_digest spanning sponge chunks (name encoding %d elts, total before bindings %d); current wiring requires it to fit in chunk_0 (Rate=%d)", name, nameLen, prevDigestStart+8, challenger24.Rate)
 		}
 
+		// Attach witness-binding metadata for DEEP_ALPHA: shift the
+		// per-binding Start offsets to account for the seq prefix
+		// (name + prev_digest) inserted before the bindings.
+		var wbs []witnessBinding
+		if name == constants.DEEP_ALPHA && len(deepBindings) > 0 {
+			bindingsOffset := len(seq) - len(bindings[name])
+			wbs = make([]witnessBinding, len(deepBindings))
+			for j, b := range deepBindings {
+				wbs[j] = witnessBinding{
+					Start:   bindingsOffset + b.Start,
+					Key:     b.Key,
+					IsChunk: b.IsChunk,
+				}
+			}
+		}
+
 		steps = append(steps, challengeStep{
 			Name:            name,
 			NativeInputs:    seq,
 			NativeDigest:    digest,
 			IsFirst:         i == 0,
 			PrevDigestStart: prevDigestStart,
+			WitnessBindings: wbs,
 		})
 	}
 	return steps, nil
