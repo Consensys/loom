@@ -61,6 +61,48 @@ func NextPowerOfTwo(n int) int {
 	return n + 1
 }
 
+// LagrangesAtZeta computes [L_0(zeta), L_1(zeta), ..., L_n-1(zeta)] (n = power of two)
+func LagrangesAtZeta(zeta ext.E4, n int) []ext.E4 {
+	res := make([]ext.E4, n)
+	if n == 0 {
+		return res
+	}
+
+	omega, err := koalabear.Generator(uint64(n))
+	if err != nil {
+		panic(err)
+	}
+
+	denominators := make([]ext.E4, n)
+	var omegaI koalabear.Element
+	omegaI.SetOne()
+	for i := 0; i < n; i++ {
+		var omegaIExt ext.E4
+		omegaIExt.Lift(&omegaI)
+		denominators[i].Sub(&zeta, &omegaIExt)
+		omegaI.Mul(&omegaI, &omega)
+	}
+	invDenominators := ext.BatchInvertE4(denominators)
+
+	var zetaN, one, common ext.E4
+	zetaN.Exp(zeta, big.NewInt(int64(n)))
+	one.SetOne()
+	common.Sub(&zetaN, &one)
+
+	var nElt, nInv koalabear.Element
+	nElt.SetUint64(uint64(n))
+	nInv.Inverse(&nElt)
+	common.MulByElement(&common, &nInv)
+
+	omegaI.SetOne()
+	for i := 0; i < n; i++ {
+		res[i].MulByElement(&common, &omegaI)
+		res[i].Mul(&res[i], &invDenominators[i])
+		omegaI.Mul(&omegaI, &omega)
+	}
+	return res
+}
+
 func LagrangeAtZeta(zeta koalabear.Element, N, i int) koalabear.Element {
 	var zetan, omegai, one, Nk koalabear.Element
 	Nk.SetUint64(uint64(N))

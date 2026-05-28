@@ -630,6 +630,7 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 		expr.WithoutPublicColumns(),
 	)
 
+<<<<<<< HEAD
 	type task struct {
 		key       string
 		basePoly  poly.Polynomial    // exactly one of basePoly / extPoly is non-nil
@@ -638,12 +639,15 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 		evalPoint ext.E4
 	}
 
+=======
+>>>>>>> feat/lagrange_eval
 	moduleNames := make([]string, 0, len(pr.program.Modules))
 	for name := range pr.program.Modules {
 		moduleNames = append(moduleNames, name)
 	}
 	sort.Strings(moduleNames)
 
+<<<<<<< HEAD
 	// Compute leaves up front so we can size the task slice without re-walking
 	// the DAG, and so the parallel section has nothing to allocate.
 	moduleLeaves := make([][]*expr.Leaf, len(moduleNames))
@@ -710,6 +714,114 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 
 	for i, t := range tasks {
 		pr.Proof.SetValueAtZetaExt(t.key, values[i])
+=======
+	lagrangesByN := make(map[int][]ext.E4)
+	for _, moduleName := range moduleNames {
+		N := pr.program.Modules[moduleName].N
+		if _, ok := lagrangesByN[N]; !ok {
+			lagrangesByN[N] = poly.LagrangesAtZeta(pr.zeta, N)
+		}
+	}
+
+	type evalTask struct {
+		key       string
+		field     field.Kind
+		shift     int
+		lagranges []ext.E4
+		base      poly.Polynomial
+		ext       poly.ExtPolynomial
+	}
+
+	tasks := make([]evalTask, 0)
+	addBaseTask := func(key string, p poly.Polynomial, moduleN, shift int) error {
+		if len(p) != 1 && len(p) != moduleN {
+			return fmt.Errorf("ComputeEvaluationsAtZeta: base polynomial %q has size %d, module has size %d", key, len(p), moduleN)
+		}
+		tasks = append(tasks, evalTask{
+			key:       key,
+			field:     field.Base,
+			shift:     shift,
+			lagranges: lagrangesByN[moduleN],
+			base:      p,
+		})
+		return nil
+	}
+	addExtTask := func(key string, p poly.ExtPolynomial, moduleN, shift int) error {
+		if len(p) != 1 && len(p) != moduleN {
+			return fmt.Errorf("ComputeEvaluationsAtZeta: extension polynomial %q has size %d, module has size %d", key, len(p), moduleN)
+		}
+		tasks = append(tasks, evalTask{
+			key:       key,
+			field:     field.Ext,
+			shift:     shift,
+			lagranges: lagrangesByN[moduleN],
+			ext:       p,
+		})
+		return nil
+	}
+
+	for _, moduleName := range moduleNames {
+		module := pr.program.Modules[moduleName]
+		for _, leaf := range module.VanishingRelation.LeavesFull(config) {
+			shift := 0
+			if leaf.Type == expr.RotatedColumn {
+				shift = ((leaf.Shift % module.N) + module.N) % module.N
+			}
+			if p, ok := pr.t.Ext[leaf.Name]; ok {
+				if err := addExtTask(leaf.String(), p, module.N, shift); err != nil {
+					return err
+				}
+				continue
+			}
+			p, ok := pr.t.Base[leaf.Name]
+			if !ok {
+				return fmt.Errorf("ComputeEvaluationsAtZeta: column %q not found in trace", leaf.Name)
+			}
+			if err := addBaseTask(leaf.String(), p, module.N, shift); err != nil {
+				return err
+			}
+		}
+
+		for i := 0; ; i++ {
+			chunkName := constants.QuotientChunkName(moduleName, i)
+			if chunk, ok := pr.airTrace.Base[chunkName]; ok {
+				if err := addBaseTask(chunkName, chunk, module.N, 0); err != nil {
+					return err
+				}
+				continue
+			}
+			if chunk, ok := pr.airTrace.Ext[chunkName]; ok {
+				if err := addExtTask(chunkName, chunk, module.N, 0); err != nil {
+					return err
+				}
+				continue
+			}
+			break
+		}
+	}
+
+	values := make([]ext.E4, len(tasks))
+	parallel.Execute(len(tasks), func(start, end int) {
+		for i := start; i < end; i++ {
+			task := tasks[i]
+			if task.field == field.Ext {
+				if len(task.ext) == 1 {
+					values[i].Set(&task.ext[0])
+				} else {
+					values[i] = poly.ExtEvaluateLagrangeAtExt(task.ext, task.lagranges, task.shift)
+				}
+				continue
+			}
+			if len(task.base) == 1 {
+				values[i] = liftBaseToExt(task.base[0])
+			} else {
+				values[i] = poly.EvaluateLagrangeAtExt(task.base, task.lagranges, task.shift)
+			}
+		}
+	})
+	for i, task := range tasks {
+		pr.Proof.SetValueAtZetaExt(task.key, values[i])
+>>>>>>> feat/lagrange_eval
 	}
 
 	return nil
