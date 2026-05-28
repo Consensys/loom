@@ -1,0 +1,228 @@
+// Copyright Consensys Software Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+// the License. You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+package airzeta_test
+
+import (
+	"math/big"
+	"testing"
+
+	"github.com/consensys/gnark-crypto/field/koalabear"
+	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
+	"github.com/consensys/loom/board"
+	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/dag"
+	"github.com/consensys/loom/recursion/extfield"
+	"github.com/consensys/loom/recursion/gadgets/airzeta"
+	"github.com/consensys/loom/recursion/internal/testutil"
+	"github.com/consensys/loom/trace"
+)
+
+func randExt(t *testing.T) ext.E4 {
+	t.Helper()
+	var v ext.E4
+	if _, err := v.B0.A0.SetRandom(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.B0.A1.SetRandom(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.B1.A0.SetRandom(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.B1.A1.SetRandom(); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+// runDAGTest builds a 4-row module with leaf-value columns wired to the
+// gadget output, then proves+verifies that the gadget's E4Expr evaluates
+// to the same value the native dag.EvalExt does. The proof passes only
+// if the in-circuit walk matches the native walk on every limb.
+func runDAGTest(t *testing.T, name string, relation expr.Expr, vals map[string]ext.E4) {
+	t.Helper()
+
+	d := dag.ExprToDAG(relation)
+
+	// Native expected value at zeta.
+	want := d.EvalExt(vals)
+
+	mod := board.NewModule(name)
+	mod.N = 4
+
+	// For each leaf, allocate 4 base columns holding its E4 value and
+	// build an extfield.E4Expr referencing those columns. Also allocate
+	// 4 base columns for the expected output and assert equality.
+	leafValues := make(map[string]extfield.E4Expr, len(vals))
+	cols := make(map[string][]koalabear.Element)
+	allocCol := func(col string, v koalabear.Element) {
+		c := make([]koalabear.Element, mod.N)
+		for i := range c {
+			c[i].Set(&v)
+		}
+		cols[col] = c
+	}
+	for leafName, val := range vals {
+		limbs := extfield.FromE4(val)
+		var leafCols [extfield.Limbs]string
+		for i := 0; i < extfield.Limbs; i++ {
+			c := name + "." + leafName + "_" + string('0'+rune(i))
+			leafCols[i] = c
+			allocCol(c, limbs[i])
+		}
+		leafValues[leafName] = extfield.FromLimbs(
+			expr.Col(leafCols[0]), expr.Col(leafCols[1]),
+			expr.Col(leafCols[2]), expr.Col(leafCols[3]),
+		)
+	}
+
+	gadgetExpr := airzeta.EvalDAG(d, leafValues)
+
+	wantLimbs := extfield.FromE4(want)
+	for i := 0; i < extfield.Limbs; i++ {
+		c := name + ".want_" + string('0'+rune(i))
+		allocCol(c, wantLimbs[i])
+		mod.AssertZero(gadgetExpr.Limb[i].Sub(expr.Col(c)))
+	}
+
+	builder := board.NewBuilder()
+	builder.AddModule(mod)
+
+	tr := trace.New()
+	for k, v := range cols {
+		tr.SetBase(k, v)
+	}
+	testutil.ProveAndVerify(t, &builder, tr)
+}
+
+// TestEvalDAGLeafIdentity covers the simplest DAG: a single leaf.
+func TestEvalDAGLeafIdentity(t *testing.T) {
+	rel := expr.Col("A")
+	vals := map[string]ext.E4{"A": randExt(t)}
+	runDAGTest(t, "leaf", rel, vals)
+}
+
+// TestEvalDAGAddSubMul covers Add/Sub/Mul combinations.
+func TestEvalDAGAddSubMul(t *testing.T) {
+	// (A + B) * (C - A)
+	rel := expr.Col("A").Add(expr.Col("B")).Mul(expr.Col("C").Sub(expr.Col("A")))
+	vals := map[string]ext.E4{
+		"A": randExt(t),
+		"B": randExt(t),
+		"C": randExt(t),
+	}
+	runDAGTest(t, "addsubmul", rel, vals)
+}
+
+// TestEvalDAGPow exercises the Pow node (square-and-multiply).
+func TestEvalDAGPow(t *testing.T) {
+	rel := expr.Col("X").Pow(5).Sub(expr.Col("Y"))
+	vals := map[string]ext.E4{
+		"X": randExt(t),
+		"Y": randExt(t),
+	}
+	// Compute the native expected; XX is X^5, so we set Y = X^5 + perturbation
+	// — but for this test we just want gadget == native, regardless of vals.
+	runDAGTest(t, "pow", rel, vals)
+}
+
+// TestEvalDAGFibonacciStyle uses a Fibonacci-like constraint to exercise
+// a realistic DAG shape with constants.
+func TestEvalDAGFibonacciStyle(t *testing.T) {
+	// C - A - B (the standard Fibonacci recurrence relation per row)
+	rel := expr.Col("C").Sub(expr.Col("A")).Sub(expr.Col("B"))
+	vals := map[string]ext.E4{
+		"A": randExt(t),
+		"B": randExt(t),
+		"C": randExt(t),
+	}
+	runDAGTest(t, "fibo", rel, vals)
+}
+
+// TestEvalDAGConstants covers DAG paths through constants.
+func TestEvalDAGConstants(t *testing.T) {
+	var seven koalabear.Element
+	seven.SetUint64(7)
+	rel := expr.Col("X").Mul(expr.Const(seven)).Add(expr.Col("Y"))
+	vals := map[string]ext.E4{
+		"X": randExt(t),
+		"Y": randExt(t),
+	}
+	runDAGTest(t, "consts", rel, vals)
+}
+
+// TestPowExtMatchesNative cross-checks PowExt for several small exponents.
+// Larger exponents (e.g. 64+) work but are slow under the current
+// expression-blowup; if production needs zeta^N for N ~ 1024, PowExt
+// will need to materialize intermediate witness columns.
+func TestPowExtMatchesNative(t *testing.T) {
+	for _, n := range []int{0, 1, 2, 3, 5, 8, 13, 16} {
+		base := randExt(t)
+		var want ext.E4
+		want.SetOne()
+		var baseCopy ext.E4
+		baseCopy.Set(&base)
+		// Square-and-multiply on the native side.
+		expN := n
+		for expN > 0 {
+			if expN&1 == 1 {
+				want.Mul(&want, &baseCopy)
+			}
+			baseCopy.Mul(&baseCopy, &baseCopy)
+			expN >>= 1
+		}
+		_ = big.NewInt // satisfies import expectations if I later need it
+
+		mod := board.NewModule("powext")
+		mod.N = 4
+
+		baseLimbs := extfield.FromE4(base)
+		var baseCols [extfield.Limbs]string
+		cols := make(map[string][]koalabear.Element)
+		for i := 0; i < extfield.Limbs; i++ {
+			baseCols[i] = "powext.base_" + string('0'+rune(i))
+			c := make([]koalabear.Element, mod.N)
+			for r := range c {
+				c[r].Set(&baseLimbs[i])
+			}
+			cols[baseCols[i]] = c
+		}
+		baseExpr := extfield.FromLimbs(
+			expr.Col(baseCols[0]), expr.Col(baseCols[1]),
+			expr.Col(baseCols[2]), expr.Col(baseCols[3]),
+		)
+
+		gadgetExpr := airzeta.PowExt(baseExpr, n)
+
+		wantLimbs := extfield.FromE4(want)
+		for i := 0; i < extfield.Limbs; i++ {
+			c := "powext.want_" + string('0'+rune(i))
+			col := make([]koalabear.Element, mod.N)
+			for r := range col {
+				col[r].Set(&wantLimbs[i])
+			}
+			cols[c] = col
+			mod.AssertZero(gadgetExpr.Limb[i].Sub(expr.Col(c)))
+		}
+
+		builder := board.NewBuilder()
+		builder.AddModule(mod)
+
+		tr := trace.New()
+		for k, v := range cols {
+			tr.SetBase(k, v)
+		}
+		testutil.ProveAndVerify(t, &builder, tr)
+	}
+}
