@@ -2,7 +2,7 @@ module github.com/consensys/loom
 
 go 1.25.7
 
-require github.com/consensys/gnark-crypto v0.20.1
+require github.com/consensys/gnark-crypto v0.20.2-0.20260521181528-f8db9b5b907d
 
 require (
 	github.com/bits-and-blooms/bitset v1.24.4 // indirect
@@ -20,7 +20,7 @@ require (
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
-	golang.org/x/tools v0.42.0 // indirect
+	golang.org/x/tools v0.43.0 // indirect
 )

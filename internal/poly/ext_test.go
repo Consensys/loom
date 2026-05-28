@@ -25,24 +25,30 @@ import (
 	"github.com/consensys/loom/internal/dag"
 )
 
-func e4FromU64(a0, a1, b0, b1 uint64) ext.E4 {
-	var z ext.E4
+func e6FromU64(a0, a1, b0, b1 uint64, b2 ...uint64) ext.E6 {
+	var z ext.E6
 	z.B0.A0.SetUint64(a0)
 	z.B0.A1.SetUint64(a1)
 	z.B1.A0.SetUint64(b0)
 	z.B1.A1.SetUint64(b1)
+	if len(b2) > 0 {
+		z.B2.A0.SetUint64(b2[0])
+	}
+	if len(b2) > 1 {
+		z.B2.A1.SetUint64(b2[1])
+	}
 	return z
 }
 
-func liftE4(v koalabear.Element) ext.E4 {
-	var z ext.E4
-	z.Lift(&v)
+func liftE6(v koalabear.Element) ext.E6 {
+	var z ext.E6
+	z.B0.A0.Set(&v)
 	return z
 }
 
-func canonicalEvalExt(coeffs []ext.E4, z ext.E4) ext.E4 {
+func canonicalEvalExt(coeffs []ext.E6, z ext.E6) ext.E6 {
 	if len(coeffs) == 0 {
-		return ext.E4{}
+		return ext.E6{}
 	}
 	y := coeffs[len(coeffs)-1]
 	for i := len(coeffs) - 2; i >= 0; i-- {
@@ -52,13 +58,13 @@ func canonicalEvalExt(coeffs []ext.E4, z ext.E4) ext.E4 {
 	return y
 }
 
-func canonicalEvalBaseAtExt(coeffs []koalabear.Element, z ext.E4) ext.E4 {
+func canonicalEvalBaseAtExt(coeffs []koalabear.Element, z ext.E6) ext.E6 {
 	if len(coeffs) == 0 {
-		return ext.E4{}
+		return ext.E6{}
 	}
-	y := liftE4(coeffs[len(coeffs)-1])
+	y := liftE6(coeffs[len(coeffs)-1])
 	for i := len(coeffs) - 2; i >= 0; i-- {
-		coeff := liftE4(coeffs[i])
+		coeff := liftE6(coeffs[i])
 		y.Mul(&y, &z)
 		y.Add(&y, &coeff)
 	}
@@ -69,19 +75,19 @@ func extCanonicalToLagrangeNormal(coeffs ExtPolynomial) ExtPolynomial {
 	p := make(ExtPolynomial, len(coeffs))
 	copy(p, coeffs)
 	d := fft.NewDomain(uint64(len(p)))
-	d.FFTExt(p, fft.DIF)
+	d.FFTExt6(p, fft.DIF)
 	fft.BitReverse(p)
 	return p
 }
 
 func TestExtPointwiseArithmetic(t *testing.T) {
 	p1 := ExtPolynomial{
-		e4FromU64(1, 2, 3, 4),
-		e4FromU64(5, 6, 7, 8),
+		e6FromU64(1, 2, 3, 4),
+		e6FromU64(5, 6, 7, 8),
 	}
 	p2 := ExtPolynomial{
-		e4FromU64(9, 10, 11, 12),
-		e4FromU64(13, 14, 15, 16),
+		e6FromU64(9, 10, 11, 12),
+		e6FromU64(13, 14, 15, 16),
 	}
 
 	sum, err := AddExt(p1, p2)
@@ -98,7 +104,7 @@ func TestExtPointwiseArithmetic(t *testing.T) {
 	}
 
 	for i := range p1 {
-		var want ext.E4
+		var want ext.E6
 		want.Add(&p1[i], &p2[i])
 		if !sum[i].Equal(&want) {
 			t.Fatalf("AddExt[%d] = %s, want %s", i, sum[i].String(), want.String())
@@ -121,7 +127,7 @@ func TestExtPointwiseArithmetic(t *testing.T) {
 func TestEvaluateAtExt(t *testing.T) {
 	p := makeLagrangePoly(3, 5, 7, 11)
 	d := fft.NewDomain(uint64(len(p)))
-	zeta := e4FromU64(2, 3, 5, 7)
+	zeta := e6FromU64(2, 3, 5, 7)
 
 	got := EvaluateAtExt(p, d, zeta)
 
@@ -136,7 +142,7 @@ func TestEvaluateAtExt(t *testing.T) {
 
 func TestEvaluateLagrangeAtExt(t *testing.T) {
 	const domainSize = 32
-	zeta := e4FromU64(3, 5, 7, 11)
+	zeta := e6FromU64(3, 5, 7, 11)
 	lagrangeZetaCache := LagrangesAtZeta(zeta, domainSize)
 	d := fft.NewDomain(domainSize)
 	w := d.Generator
@@ -171,14 +177,14 @@ func TestEvaluateLagrangeAtExt(t *testing.T) {
 
 func TestExtEvaluateAtExt(t *testing.T) {
 	coeffs := ExtPolynomial{
-		e4FromU64(1, 2, 3, 4),
-		e4FromU64(5, 6, 7, 8),
-		e4FromU64(9, 10, 11, 12),
-		e4FromU64(13, 14, 15, 16),
+		e6FromU64(1, 2, 3, 4),
+		e6FromU64(5, 6, 7, 8),
+		e6FromU64(9, 10, 11, 12),
+		e6FromU64(13, 14, 15, 16),
 	}
 	p := extCanonicalToLagrangeNormal(coeffs)
 	d := fft.NewDomain(uint64(len(p)))
-	zeta := e4FromU64(2, 3, 5, 7)
+	zeta := e6FromU64(2, 3, 5, 7)
 
 	got := ExtEvaluateAtExt(p, d, zeta)
 	want := canonicalEvalExt(coeffs, zeta)
@@ -189,14 +195,14 @@ func TestExtEvaluateAtExt(t *testing.T) {
 
 func TestDeepQuotientExt(t *testing.T) {
 	coeffs := ExtPolynomial{
-		e4FromU64(1, 2, 3, 4),
-		e4FromU64(5, 6, 7, 8),
-		e4FromU64(9, 10, 11, 12),
-		e4FromU64(13, 14, 15, 16),
+		e6FromU64(1, 2, 3, 4),
+		e6FromU64(5, 6, 7, 8),
+		e6FromU64(9, 10, 11, 12),
+		e6FromU64(13, 14, 15, 16),
 	}
 	p := extCanonicalToLagrangeNormal(coeffs)
 	d := fft.NewDomain(uint64(len(p)))
-	zeta := e4FromU64(2, 3, 5, 7)
+	zeta := e6FromU64(2, 3, 5, 7)
 	v := ExtEvaluateAtExt(p, d, zeta)
 
 	q := DeepQuotientExt(p, v, zeta, d)
@@ -205,8 +211,8 @@ func TestDeepQuotientExt(t *testing.T) {
 	var omegaJ koalabear.Element
 	omegaJ.SetOne()
 	for j := range p {
-		omegaJExt := liftE4(omegaJ)
-		var den, lhs ext.E4
+		omegaJExt := liftE6(omegaJ)
+		var den, lhs ext.E6
 		den.Sub(&zeta, &omegaJExt)
 		lhs.Mul(&q[j], &den)
 		lhs.Add(&lhs, &p[j])
@@ -221,10 +227,10 @@ func TestComputeQuotientMixed(t *testing.T) {
 	const size = 4
 
 	f := makeLagrangePoly(2, 4, 6, 8)
-	eta := e4FromU64(3, 1, 4, 1)
+	eta := e6FromU64(3, 1, 4, 1)
 	h := make(ExtPolynomial, size)
 	for i := range size {
-		h[i] = liftE4(f[i])
+		h[i] = liftE6(f[i])
 		if i%2 == 1 {
 			h[i].Add(&h[i], &eta)
 		}
@@ -244,9 +250,9 @@ func TestComputeQuotientMixed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	x := e4FromU64(5, 7, 11, 13)
+	x := e6FromU64(5, 7, 11, 13)
 	domain := fft.NewDomain(size)
-	valuesAtX := map[string]ext.E4{
+	valuesAtX := map[string]ext.E6{
 		"f":   EvaluateAtExt(f, domain, x),
 		"h":   ExtEvaluateAtExt(h, domain, x),
 		"eta": eta,
@@ -258,7 +264,7 @@ func TestComputeQuotientMixed(t *testing.T) {
 	CosetExtLagrangeToLagrangeNormal(qCopy)
 	qAtX := ExtEvaluateAtExt(qCopy, fft.NewDomain(uint64(len(qCopy))), x)
 
-	var xN, one, xNMinusOne, rhs ext.E4
+	var xN, one, xNMinusOne, rhs ext.E6
 	one.SetOne()
 	xN.Exp(x, big.NewInt(size))
 	xNMinusOne.Sub(&xN, &one)

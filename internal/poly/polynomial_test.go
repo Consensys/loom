@@ -100,7 +100,7 @@ func TestLagrangeAtZeta(t *testing.T) {
 
 func TestLagrangesAtZetaExt(t *testing.T) {
 	n := 16
-	zeta := e4FromU64(3, 5, 7, 11)
+	zeta := e6FromU64(3, 5, 7, 11)
 
 	computed := LagrangesAtZeta(zeta, n)
 	if len(computed) != n {

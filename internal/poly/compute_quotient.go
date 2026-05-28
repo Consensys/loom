@@ -248,7 +248,7 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 	baseNameToIdx := make(map[string]int)
 	extNameToIdx := make(map[string]int)
 	baseCopies := make(map[string][]koalabear.Element)
-	extCopies := make(map[string][]ext.E4)
+	extCopies := make(map[string][]ext.E6)
 	for _, n := range vanishingRelation.Nodes {
 		if n.Kind != dag.KindLeaf || n.Leaf.Type == expr.ConstantColumn {
 			continue
@@ -264,7 +264,7 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 					return nil, fmt.Errorf("ComputeQuotientMixed: extension column %q has length %d, want %d or 1", l.Name, len(src), N)
 				}
 				extNameToIdx[l.Name] = len(extNameToIdx)
-				cp := make([]ext.E4, len(src))
+				cp := make([]ext.E6, len(src))
 				copy(cp, src)
 				extCopies[l.Name] = cp
 			}
@@ -292,7 +292,7 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 	for name, idx := range baseNameToIdx {
 		_PiBase[idx] = baseCopies[name]
 	}
-	_PiExt := make([][]ext.E4, len(extNameToIdx))
+	_PiExt := make([][]ext.E6, len(extNameToIdx))
 	for name, idx := range extNameToIdx {
 		_PiExt[idx] = extCopies[name]
 	}
@@ -303,7 +303,7 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 			baseNonConst = append(baseNonConst, poly)
 		}
 	}
-	extNonConst := make([][]ext.E4, 0, len(extCopies))
+	extNonConst := make([][]ext.E6, 0, len(extCopies))
 	for _, poly := range extCopies {
 		if len(poly) > 1 {
 			extNonConst = append(extNonConst, poly)
@@ -327,7 +327,7 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 			a[i].Mul(&a[i], &b[i])
 		}
 	}
-	scaleExtByTwiddles := func(a []ext.E4, b []koalabear.Element) {
+	scaleExtByTwiddles := func(a []ext.E6, b []koalabear.Element) {
 		for i := 0; i < N; i++ {
 			a[i].MulByElement(&a[i], &b[i])
 		}
@@ -350,12 +350,12 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 	parallel.Execute(len(extNonConst), func(start, end int) {
 		for k := start; k < end; k++ {
 			pCopy := extNonConst[k]
-			smallDomain.FFTInverseExt(pCopy, fft.DIF, fftOpt)
+			smallDomain.FFTInverseExt6(pCopy, fft.DIF, fftOpt)
 			scaleExtByTwiddles(pCopy, twiddleFrMultiplicativeGen)
 		}
 	})
 
-	vals := make([]ext.E4, N)
+	vals := make([]ext.E6, N)
 	var evalWorkspace dag.EvalWorkspace
 	for i := range rho {
 		parallel.Execute(len(baseNonConst), func(start, end int) {
@@ -365,7 +365,7 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 		})
 		parallel.Execute(len(extNonConst), func(start, end int) {
 			for k := start; k < end; k++ {
-				smallDomain.FFTExt(extNonConst[k], fft.DIT, fftOpt)
+				smallDomain.FFTExt6(extNonConst[k], fft.DIT, fftOpt)
 			}
 		})
 
@@ -384,7 +384,7 @@ func ComputeQuotientMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPoly
 		parallel.Execute(len(extNonConst), func(start, end int) {
 			for k := start; k < end; k++ {
 				pCopy := extNonConst[k]
-				smallDomain.FFTInverseExt(pCopy, fft.DIF, fftOpt)
+				smallDomain.FFTInverseExt6(pCopy, fft.DIF, fftOpt)
 				scaleExtByTwiddles(pCopy, twiddleGeneratorBigDomain)
 			}
 		})
@@ -468,7 +468,7 @@ func CosetExtLagrangeToLagrangeNormal(p ExtPolynomial) {
 // the FFT domain.
 func CosetExtLagrangeToLagrangeNormalWithCache(p ExtPolynomial, cache *DomainCache) {
 	CosetExtLagrangeNormalToCanonicalWithCache(p, cache)
-	cache.Get(uint64(len(p))).FFTExt(p, fft.DIF)
+	cache.Get(uint64(len(p))).FFTExt6(p, fft.DIF)
 	utils.BitReverse(p)
 }
 
@@ -477,7 +477,7 @@ func CosetExtLagrangeToLagrangeNormalWithCache(p ExtPolynomial, cache *DomainCac
 func CosetExtLagrangeNormalToCanonicalWithCache(p ExtPolynomial, cache *DomainCache) {
 	d := cache.Get(uint64(len(p)))
 
-	d.FFTInverseExt(p, fft.DIF)
+	d.FFTInverseExt6(p, fft.DIF)
 	utils.BitReverse(p)
 
 	invFrGen := d.FrMultiplicativeGen

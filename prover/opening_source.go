@@ -97,7 +97,7 @@ func evalBaseOnRoot(p poly.Polynomial, rootIndex int, fullDomain *fft.Domain, do
 	return poly.EvaluateLagrangeWithWeights(p, weights)
 }
 
-func evalExtOnRoot(p poly.ExtPolynomial, rootIndex int, fullDomain *fft.Domain, domainCache *poly.DomainCache, weightCache map[weightKey][]koalabear.Element) ext.E4 {
+func evalExtOnRoot(p poly.ExtPolynomial, rootIndex int, fullDomain *fft.Domain, domainCache *poly.DomainCache, weightCache map[weightKey][]koalabear.Element) ext.E6 {
 	weights := weightsForRoot(len(p), rootIndex, fullDomain, domainCache, weightCache)
 	return poly.ExtEvaluateLagrangeWithWeights(p, weights)
 }

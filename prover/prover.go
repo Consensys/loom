@@ -106,8 +106,8 @@ type proverRuntime struct {
 	airTrace       trace.Trace
 	publicInputs   public.Inputs
 	program        board.Program
-	zeta           ext.E4 // point of evaluation to check the AIR relation with SZ
-	alpha          ext.E4 // folding challenge for N-grouped polynomials, used to build the DEEP quotient
+	zeta           ext.E6 // point of evaluation to check the AIR relation with SZ
+	alpha          ext.E6 // folding challenge for N-grouped polynomials, used to build the DEEP quotient
 	mu             *sync.Mutex
 	setup          setup.ProvingKey
 	queryPositions []int
@@ -227,10 +227,10 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 				return res, err
 			}
 		} else {
-			col := make([]ext.E4, m.N)
+			col := make([]ext.E6, m.N)
 			for _, e := range pi.Entries {
 				if e.Field == field.Base {
-					col[e.Idx].Lift(&e.Value)
+					col[e.Idx] = hash.LiftBaseToExt(e.Value)
 				} else {
 					col[e.Idx].Set(&e.ValueExt)
 				}
@@ -285,16 +285,14 @@ func (pr *proverRuntime) initSetupOpeningSources() error {
 	return nil
 }
 
-func liftBaseToExt(v koalabear.Element) ext.E4 {
-	var res ext.E4
-	res.Lift(&v)
-	return res
+func liftBaseToExt(v koalabear.Element) ext.E6 {
+	return hash.LiftBaseToExt(v)
 }
 
 func liftPolynomialToExt(p poly.Polynomial) poly.ExtPolynomial {
 	res := make(poly.ExtPolynomial, len(p))
 	for i := range p {
-		res[i].Lift(&p[i])
+		res[i] = hash.LiftBaseToExt(p[i])
 	}
 	return res
 }
@@ -398,7 +396,7 @@ func (pr *proverRuntime) ExecuteSteps() error {
 					return err
 				}
 
-				var challengeVal ext.E4
+				var challengeVal ext.E6
 				if pr.config.EmulateFS {
 					challengeVal.MustSetRandom()
 					if _, err := pr.fs.ComputeChallenge(challengeName); err != nil {
@@ -413,7 +411,7 @@ func (pr *proverRuntime) ExecuteSteps() error {
 				}
 
 				pr.mu.Lock()
-				pr.t.SetExt(challengeName, []ext.E4{challengeVal})
+				pr.t.SetExt(challengeName, []ext.E6{challengeVal})
 				pr.mu.Unlock()
 
 				roundIdx++
@@ -451,7 +449,7 @@ func computeExtAIRQuotientChunks(piBase map[string]poly.Polynomial, piExt map[st
 	chunks := make([]poly.ExtPolynomial, len(quotient)/N)
 	for i := range chunks {
 		chunk := quotient[i*N : (i+1)*N : (i+1)*N]
-		D.FFTExt(chunk, fft.DIF, fftOpt)
+		D.FFTExt6(chunk, fft.DIF, fftOpt)
 		utils.BitReverse(chunk)
 		chunks[i] = chunk
 	}
@@ -636,7 +634,7 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 	}
 	sort.Strings(moduleNames)
 
-	lagrangesByN := make(map[int][]ext.E4)
+	lagrangesByN := make(map[int][]ext.E6)
 	for _, moduleName := range moduleNames {
 		N := pr.program.Modules[moduleName].N
 		if _, ok := lagrangesByN[N]; !ok {
@@ -648,7 +646,7 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 		key       string
 		field     field.Kind
 		shift     int
-		lagranges []ext.E4
+		lagranges []ext.E6
 		base      poly.Polynomial
 		ext       poly.ExtPolynomial
 	}
@@ -721,7 +719,7 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 		}
 	}
 
-	values := make([]ext.E4, len(tasks))
+	values := make([]ext.E6, len(tasks))
 	parallel.Execute(len(tasks), func(start, end int) {
 		for i := start; i < end; i++ {
 			task := tasks[i]
@@ -756,17 +754,17 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 // scales slices below, so the per-row loop has no cross-column data dependency
 // and can be chunked across goroutines.
 type deepQuotientBundle struct {
-	zs ext.E4 // shifted evaluation point
-	vs ext.E4 // alpha-weighted sum of evaluations at zs
+	zs ext.E6 // shifted evaluation point
+	vs ext.E6 // alpha-weighted sum of evaluations at zs
 
 	// constContrib is the contribution from constant (len-1) columns, summed
 	// in advance so the per-row loop only iterates real-width columns.
-	constContrib ext.E4
+	constContrib ext.E6
 
 	extCols    []poly.ExtPolynomial
-	extScales  []ext.E4
+	extScales  []ext.E6
 	baseCols   []poly.Polynomial
-	baseScales []ext.E4
+	baseScales []ext.E6
 }
 
 func (pr *proverRuntime) ComputeDeepQuotient() error {
@@ -788,7 +786,7 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 	for i, N := range sizes {
 		deepQuotient := make(poly.ExtPolynomial, N)
 
-		var alphaAcc ext.E4
+		var alphaAcc ext.E6
 		alphaAcc.SetOne()
 
 		domainN := domainBySize[N]
@@ -878,26 +876,26 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 // keys[k] looks up the value at zeta in pr.Proof (for AIR chunks the two
 // coincide).
 func (pr *proverRuntime) buildDeepQuotientBundle(
-	zs ext.E4,
+	zs ext.E6,
 	names, keys []string,
 	traceBase map[string]poly.Polynomial,
 	traceExt map[string]poly.ExtPolynomial,
-	alphaStart ext.E4,
-) (deepQuotientBundle, ext.E4, error) {
+	alphaStart ext.E6,
+) (deepQuotientBundle, ext.E6, error) {
 	b := deepQuotientBundle{zs: zs}
 	scale := alphaStart
 	for k, name := range names {
 		evalAtZ, ok := pr.Proof.ValueAtZetaExt(keys[k])
 		if !ok {
-			return deepQuotientBundle{}, ext.E4{}, fmt.Errorf("ComputeDeepQuotient: %q not found in ValuesAtZeta", keys[k])
+			return deepQuotientBundle{}, ext.E6{}, fmt.Errorf("ComputeDeepQuotient: %q not found in ValuesAtZeta", keys[k])
 		}
 		colExt, hasExt := traceExt[name]
 		colBase, hasBase := traceBase[name]
 		if !hasExt && !hasBase {
-			return deepQuotientBundle{}, ext.E4{}, fmt.Errorf("ComputeDeepQuotient: column %q not found in trace", name)
+			return deepQuotientBundle{}, ext.E6{}, fmt.Errorf("ComputeDeepQuotient: column %q not found in trace", name)
 		}
 
-		var term ext.E4
+		var term ext.E6
 		term.Mul(&evalAtZ, &scale)
 		b.vs.Add(&b.vs, &term)
 
@@ -923,7 +921,7 @@ func (pr *proverRuntime) buildDeepQuotientBundle(
 
 // accumulateDeepQuotient adds every bundle's DEEP-quotient contribution into
 // deepQuotient using a single row-chunked parallel pass: each chunk computes
-// (z_s - omega^x)^-1 in batch (BatchInvertE4), then sweeps every bundle to
+// (z_s - omega^x)^-1 in batch (BatchInvertE6), then sweeps every bundle to
 // fold its (vs - sum_k scale_k * col_k[x]) numerator and add to deepQuotient[x].
 // One pass amortises C_s materialisation away — only a row-sized denominator
 // buffer per chunk is allocated.
@@ -937,7 +935,7 @@ func accumulateDeepQuotient(deepQuotient poly.ExtPolynomial, bundles []deepQuoti
 		chunkLen := end - start
 
 		// Compute denominators (z_s - omega^x) for every bundle, batch invert.
-		denoms := make([]ext.E4, chunkLen*len(bundles))
+		denoms := make([]ext.E6, chunkLen*len(bundles))
 		var omegaX koalabear.Element
 		if start == 0 {
 			omegaX.SetOne()
@@ -945,14 +943,13 @@ func accumulateDeepQuotient(deepQuotient poly.ExtPolynomial, bundles []deepQuoti
 			omegaX.Exp(domain.Generator, big.NewInt(int64(start)))
 		}
 		for x := 0; x < chunkLen; x++ {
-			var omegaExt ext.E4
-			omegaExt.Lift(&omegaX)
+			omegaExt := hash.LiftBaseToExt(omegaX)
 			for b := range bundles {
 				denoms[b*chunkLen+x].Sub(&bundles[b].zs, &omegaExt)
 			}
 			omegaX.Mul(&omegaX, &domain.Generator)
 		}
-		invs := ext.BatchInvertE4(denoms)
+		invs := ext.BatchInvertE6(denoms)
 
 		// Sweep bundles into deepQuotient row by row.
 		for b := range bundles {
@@ -961,16 +958,16 @@ func accumulateDeepQuotient(deepQuotient poly.ExtPolynomial, bundles []deepQuoti
 			for x := start; x < end; x++ {
 				Cx := bun.constContrib
 				for k, col := range bun.extCols {
-					var term ext.E4
+					var term ext.E6
 					term.Mul(&bun.extScales[k], &col[x])
 					Cx.Add(&Cx, &term)
 				}
 				for k, col := range bun.baseCols {
-					var term ext.E4
+					var term ext.E6
 					term.MulByElement(&bun.baseScales[k], &col[x])
 					Cx.Add(&Cx, &term)
 				}
-				var num, dqx ext.E4
+				var num, dqx ext.E6
 				num.Sub(&bun.vs, &Cx)
 				dqx.Mul(&num, &invRow[x-start])
 				deepQuotient[x].Add(&deepQuotient[x], &dqx)

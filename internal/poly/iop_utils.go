@@ -22,6 +22,7 @@ import (
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/dag"
+	fieldhash "github.com/consensys/loom/internal/hash"
 )
 
 // BuildPointwiseEvaluation evaluates E point-wise over Pi and returns the N results as a
@@ -36,7 +37,7 @@ func BuildPointwiseEvaluation(Pi map[string]Polynomial, E expr.Expr, mu *sync.Mu
 }
 
 // BuildPointwiseEvaluationMixed evaluates E point-wise over mixed base and
-// extension columns and returns E4 values. Base columns stay on the base rail
+// extension columns and returns E6 values. Base columns stay on the base rail
 // while the DAG evaluator lifts them at extension-valued parents.
 func BuildPointwiseEvaluationMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPolynomial, columnFields map[string]field.Kind, E expr.Expr, mu *sync.Mutex) (ExtPolynomial, error) {
 	N, err := inferNMixed(PiBase, PiExt, E)
@@ -372,7 +373,7 @@ func BuildLogupMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPolynomia
 	if err := evalPointWiseMixedInto(PiBase, PiExt, columnFields, E, N, mu, D); err != nil {
 		return nil, err
 	}
-	D = ext.BatchInvertE4(D)
+	D = ext.BatchInvertE6(D)
 
 	Mp := make(ExtPolynomial, N)
 	if err := evalPointWiseMixedInto(PiBase, PiExt, columnFields, M, N, mu, Mp); err != nil {
@@ -449,7 +450,7 @@ func BuildGrandProductMixed(PiBase map[string]Polynomial, PiExt map[string]ExtPo
 // evalPointWiseMixedInto evaluates E over mixed rails and writes N extension
 // values into dst. Leaf.Idx is assigned rail-locally by bare column name, so
 // rotated and unrotated references share the same source polynomial.
-func evalPointWiseMixedInto(PiBase map[string]Polynomial, PiExt map[string]ExtPolynomial, columnFields map[string]field.Kind, E expr.Expr, N int, mu *sync.Mutex, dst []ext.E4) error {
+func evalPointWiseMixedInto(PiBase map[string]Polynomial, PiExt map[string]ExtPolynomial, columnFields map[string]field.Kind, E expr.Expr, N int, mu *sync.Mutex, dst []ext.E6) error {
 	if len(dst) != N {
 		return fmt.Errorf("evalPointWiseMixedInto: dst length %d, want %d", len(dst), N)
 	}
@@ -461,7 +462,7 @@ func evalPointWiseMixedInto(PiBase map[string]Polynomial, PiExt map[string]ExtPo
 			return err
 		}
 		for i := 0; i < N; i++ {
-			dst[i].Lift(&tmp[i])
+			dst[i] = fieldhash.LiftBaseToExt(tmp[i])
 		}
 		return nil
 	}
@@ -541,7 +542,7 @@ func evalPointWiseMixedInto(PiBase map[string]Polynomial, PiExt map[string]ExtPo
 func liftPolynomialToExt(p Polynomial) ExtPolynomial {
 	res := make(ExtPolynomial, len(p))
 	for i := range p {
-		res[i].Lift(&p[i])
+		res[i] = fieldhash.LiftBaseToExt(p[i])
 	}
 	return res
 }
@@ -552,7 +553,7 @@ func divPointwiseExt(P1, P2 ExtPolynomial, N int) (ExtPolynomial, error) {
 			return nil, fmt.Errorf("division by zero")
 		}
 	}
-	res := ext.BatchInvertE4(P2)
+	res := ext.BatchInvertE6(P2)
 	for i := 0; i < N; i++ {
 		res[i].Mul(&P1[i], &res[i])
 	}

@@ -54,18 +54,24 @@ func checkFlatDAGEval(t *testing.T, expr expr.Expr, vals map[string]koalabear.El
 	}
 }
 
-func e4FromU64(a0, a1, b0, b1 uint64) ext.E4 {
-	var z ext.E4
+func e6FromU64(a0, a1, b0, b1 uint64, b2 ...uint64) ext.E6 {
+	var z ext.E6
 	z.B0.A0.SetUint64(a0)
 	z.B0.A1.SetUint64(a1)
 	z.B1.A0.SetUint64(b0)
 	z.B1.A1.SetUint64(b1)
+	if len(b2) > 0 {
+		z.B2.A0.SetUint64(b2[0])
+	}
+	if len(b2) > 1 {
+		z.B2.A1.SetUint64(b2[1])
+	}
 	return z
 }
 
-func liftE4(v koalabear.Element) ext.E4 {
-	var z ext.E4
-	z.Lift(&v)
+func liftE6(v koalabear.Element) ext.E6 {
+	var z ext.E6
+	z.B0.A0.Set(&v)
 	return z
 }
 
@@ -354,7 +360,7 @@ func TestDAGEvalMixedBaseOnly(t *testing.T) {
 	ex := expr.Col("x").Mul(expr.Col("y")).Add(expr.Col("x").Pow(2))
 
 	got := ExprToDAG(ex).EvalMixed(vals, nil)
-	want := liftE4(ex.Evaluate(vals))
+	want := liftE6(ex.Evaluate(vals))
 	if !got.Equal(&want) {
 		t.Fatalf("EvalMixed = %s, want %s", got.String(), want.String())
 	}
@@ -364,17 +370,17 @@ func TestDAGEvalMixedWithExtensionChallenge(t *testing.T) {
 	var x, two koalabear.Element
 	x.SetUint64(7)
 	two.SetUint64(2)
-	gamma := e4FromU64(3, 4, 5, 6)
+	gamma := e6FromU64(3, 4, 5, 6)
 
 	ex := expr.Col("x").Mul(expr.Challenge("gamma")).Add(expr.Const(two))
 	got := ExprToDAG(ex).EvalMixed(
 		map[string]koalabear.Element{"x": x},
-		map[string]ext.E4{"gamma": gamma},
+		map[string]ext.E6{"gamma": gamma},
 	)
 
-	xExt := liftE4(x)
-	twoExt := liftE4(two)
-	var want ext.E4
+	xExt := liftE6(x)
+	twoExt := liftE6(two)
+	var want ext.E6
 	want.Mul(&xExt, &gamma)
 	want.Add(&want, &twoExt)
 
@@ -384,7 +390,7 @@ func TestDAGEvalMixedWithExtensionChallenge(t *testing.T) {
 }
 
 func TestDAGEvalMixedWithColumnFieldRegistry(t *testing.T) {
-	logup := e4FromU64(9, 1, 2, 3)
+	logup := e6FromU64(9, 1, 2, 3)
 	var x koalabear.Element
 	x.SetUint64(4)
 
@@ -392,11 +398,11 @@ func TestDAGEvalMixedWithColumnFieldRegistry(t *testing.T) {
 	d := ExprToDAGWithColumnFields(ex, map[string]field.Kind{"logup": field.Ext})
 	got := d.EvalMixed(
 		map[string]koalabear.Element{"x": x},
-		map[string]ext.E4{"logup": logup},
+		map[string]ext.E6{"logup": logup},
 	)
 
-	xExt := liftE4(x)
-	var want ext.E4
+	xExt := liftE6(x)
+	var want ext.E6
 	want.Add(&logup, &xExt)
 	if !got.Equal(&want) {
 		t.Fatalf("EvalMixed = %s, want %s", got.String(), want.String())
@@ -411,7 +417,7 @@ func TestDAGEvalMixedExtLeafBaseFallback(t *testing.T) {
 		map[string]koalabear.Element{"gamma": gamma},
 		nil,
 	)
-	want := liftE4(gamma)
+	want := liftE6(gamma)
 	if !got.Equal(&want) {
 		t.Fatalf("EvalMixed = %s, want %s", got.String(), want.String())
 	}
@@ -431,8 +437,8 @@ func TestDAGEvalWithCacheVarsMixed(t *testing.T) {
 	var x, two koalabear.Element
 	x.SetUint64(7)
 	two.SetUint64(2)
-	gamma := e4FromU64(3, 4, 5, 6)
-	logup := e4FromU64(9, 1, 2, 3)
+	gamma := e6FromU64(3, 4, 5, 6)
+	logup := e6FromU64(9, 1, 2, 3)
 
 	ex := expr.Col("x").
 		Mul(expr.Challenge("gamma")).
@@ -441,7 +447,7 @@ func TestDAGEvalWithCacheVarsMixed(t *testing.T) {
 	d := ExprToDAG(ex)
 
 	baseVars := make([]koalabear.Element, len(d.VarIndex))
-	extVars := make([]ext.E4, len(d.VarIndex))
+	extVars := make([]ext.E6, len(d.VarIndex))
 	baseVars[d.VarIndex["x"]] = x
 	extVars[d.VarIndex["gamma"]] = gamma
 	extVars[d.VarIndex["logup"]] = logup
@@ -450,12 +456,12 @@ func TestDAGEvalWithCacheVarsMixed(t *testing.T) {
 		baseVars,
 		extVars,
 		make([]koalabear.Element, len(d.Nodes)),
-		make([]ext.E4, len(d.Nodes)),
+		make([]ext.E6, len(d.Nodes)),
 	)
 
-	xExt := liftE4(x)
-	twoExt := liftE4(two)
-	var want ext.E4
+	xExt := liftE6(x)
+	twoExt := liftE6(two)
+	var want ext.E6
 	want.Mul(&xExt, &gamma)
 	want.Add(&want, &logup)
 	want.Sub(&want, &twoExt)
@@ -469,12 +475,12 @@ func TestDAGEvalOnAllEntriesMixed(t *testing.T) {
 	const N = 4
 
 	x := u64Poly(1, 2, 3, 4)
-	gamma := e4FromU64(3, 4, 5, 6)
-	logup := []ext.E4{
-		e4FromU64(10, 1, 0, 0),
-		e4FromU64(11, 2, 1, 0),
-		e4FromU64(12, 3, 0, 1),
-		e4FromU64(13, 4, 2, 1),
+	gamma := e6FromU64(3, 4, 5, 6)
+	logup := []ext.E6{
+		e6FromU64(10, 1, 0, 0),
+		e6FromU64(11, 2, 1, 0),
+		e6FromU64(12, 3, 0, 1),
+		e6FromU64(13, 4, 2, 1),
 	}
 	var two koalabear.Element
 	two.SetUint64(2)
@@ -506,23 +512,23 @@ func TestDAGEvalOnAllEntriesMixed(t *testing.T) {
 
 	got := d.EvalOnAllEntriesMixed(
 		[][]koalabear.Element{x},
-		[][]ext.E4{{gamma}, logup},
+		[][]ext.E6{{gamma}, logup},
 		N,
 	)
 	var ws EvalWorkspace
-	gotInto := make([]ext.E4, N)
+	gotInto := make([]ext.E6, N)
 	d.EvalOnAllEntriesMixedInto(
 		gotInto,
 		[][]koalabear.Element{x},
-		[][]ext.E4{{gamma}, logup},
+		[][]ext.E6{{gamma}, logup},
 		N,
 		&ws,
 	)
 
-	twoExt := liftE4(two)
+	twoExt := liftE6(two)
 	for j := range N {
-		xRot := liftE4(x[(j+1)%N])
-		var want, term, square ext.E4
+		xRot := liftE6(x[(j+1)%N])
+		var want, term, square ext.E6
 		term.Mul(&xRot, &gamma)
 		square.Mul(&logup[j], &logup[j])
 		want.Add(&term, &square)
@@ -536,16 +542,16 @@ func TestDAGEvalOnAllEntriesMixed(t *testing.T) {
 		}
 	}
 
-	logup[0] = e4FromU64(21, 1, 2, 3)
+	logup[0] = e6FromU64(21, 1, 2, 3)
 	d.EvalOnAllEntriesMixedInto(
 		gotInto,
 		[][]koalabear.Element{x},
-		[][]ext.E4{{gamma}, logup},
+		[][]ext.E6{{gamma}, logup},
 		N,
 		&ws,
 	)
-	xRot := liftE4(x[1])
-	var want, term, square ext.E4
+	xRot := liftE6(x[1])
+	var want, term, square ext.E6
 	term.Mul(&xRot, &gamma)
 	square.Mul(&logup[0], &logup[0])
 	want.Add(&term, &square)

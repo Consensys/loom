@@ -65,8 +65,8 @@ type verifierRunTime struct {
 	friParams    fri.Params
 	publicInputs public.Inputs
 	program      board.Program
-	zeta         ext.E4 // point of evaluation to check the AIR relation with SZ
-	alpha        ext.E4 // folding challenge for N-grouped polynomials, used to build the DEEP quotient
+	zeta         ext.E6 // point of evaluation to check the AIR relation with SZ
+	alpha        ext.E6 // folding challenge for N-grouped polynomials, used to build the DEEP quotient
 	setup        setup.VerificationKey
 	fs           *fiatshamir.Transcript
 	dqLayout     prover.DEEPquotientLayout
@@ -165,10 +165,8 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 	return res, nil
 }
 
-func liftBaseToExt(v koalabear.Element) ext.E4 {
-	var res ext.E4
-	res.Lift(&v)
-	return res
+func liftBaseToExt(v koalabear.Element) ext.E6 {
+	return hash.LiftBaseToExt(v)
 }
 
 func (vr *verifierRunTime) deriveChallenges() error {
@@ -227,7 +225,7 @@ func (vr *verifierRunTime) computeExposedColumns() error {
 			if !ok {
 				return fmt.Errorf("computeExposedColumns: %s not found in proof.ExposedValues", leaf)
 			}
-			var lag ext.E4
+			var lag ext.E6
 			for _, pe := range pi.Entries {
 				tmp := poly.LagrangeAtZetaExt(vr.zeta, m.N, pe.Idx)
 				value := pe.ExtValue()
@@ -271,7 +269,7 @@ func (vr *verifierRunTime) computePublicColumns() error {
 			if pi.Module != m.Name {
 				return fmt.Errorf("computePublicColumns: %s belongs to module %q, used from module %q", leaf, pi.Module, m.Name)
 			}
-			var val ext.E4
+			var val ext.E6
 			for _, pe := range pi.Entries {
 				if pe.Idx < 0 || pe.Idx >= m.N {
 					return fmt.Errorf("computePublicColumns: %s entry index %d out of bounds for module %q of size %d", leaf, pe.Idx, m.Name, m.N)
@@ -289,7 +287,7 @@ func (vr *verifierRunTime) computePublicColumns() error {
 
 func (vr *verifierRunTime) checkLogupBus() error {
 	for _, bus := range vr.program.LogupBus {
-		var cumNegative, cumPositive ext.E4
+		var cumNegative, cumPositive ext.E6
 		for _, pos := range bus.Positive {
 			if len(vr.proof.ExposedValues[pos].Entries) > 1 {
 				return fmt.Errorf("an extracted value from a logup column should have exactly one entry")
@@ -319,10 +317,10 @@ func (vr *verifierRunTime) checkAIRRelations() error {
 	valuesAtZeta := vr.proof.ExtValuesAtZeta()
 
 	for moduleName, m := range vr.program.Modules {
-		var qZeta ext.E4
-		var zetaPowIN ext.E4
+		var qZeta ext.E6
+		var zetaPowIN ext.E6
 		zetaPowIN.SetOne()
-		var zetaN ext.E4
+		var zetaN ext.E6
 		zetaN.Exp(vr.zeta, big.NewInt(int64(m.N)))
 		for i := 0; ; i++ {
 			chunkName := constants.QuotientChunkName(moduleName, i)
@@ -330,7 +328,7 @@ func (vr *verifierRunTime) checkAIRRelations() error {
 			if !ok {
 				break
 			}
-			var term ext.E4
+			var term ext.E6
 			term.Mul(&zetaPowIN, &chunkVal)
 			qZeta.Add(&qZeta, &term)
 			zetaPowIN.Mul(&zetaPowIN, &zetaN)
@@ -338,7 +336,7 @@ func (vr *verifierRunTime) checkAIRRelations() error {
 
 		vZeta := m.VanishingRelation.EvalExt(valuesAtZeta)
 
-		var one, zetaNMinusOne, rhs ext.E4
+		var one, zetaNMinusOne, rhs ext.E6
 		one.SetOne()
 		zetaNMinusOne.Sub(&zetaN, &one)
 		rhs.Mul(&zetaNMinusOne, &qZeta)
@@ -423,22 +421,22 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 		}
 	}
 
-	samplePair := func(slot prover.Slot, q int) (ext.E4, ext.E4, error) {
+	samplePair := func(slot prover.Slot, q int) (ext.E6, ext.E6, error) {
 		if slot.TreeIdx >= len(vr.proof.PointSamplings[q]) {
-			return ext.E4{}, ext.E4{}, fmt.Errorf("checkFRIBridge: tree index %d out of range", slot.TreeIdx)
+			return ext.E6{}, ext.E6{}, fmt.Errorf("checkFRIBridge: tree index %d out of range", slot.TreeIdx)
 		}
 		wp := vr.proof.PointSamplings[q][slot.TreeIdx]
 		if slot.Field == field.Ext {
 			rawIdx := slot.PolyIdx
 			if rawIdx >= len(wp.RawLeafExt) {
-				return ext.E4{}, ext.E4{}, fmt.Errorf("checkFRIBridge: ext raw leaf index %d out of range for slot %+v (have %d)", rawIdx, slot, len(wp.RawLeafExt))
+				return ext.E6{}, ext.E6{}, fmt.Errorf("checkFRIBridge: ext raw leaf index %d out of range for slot %+v (have %d)", rawIdx, slot, len(wp.RawLeafExt))
 			}
 			return wp.RawLeafExt[rawIdx][0], wp.RawLeafExt[rawIdx][1], nil
 		}
 
 		rawIdx := slot.PolyIdx
 		if rawIdx >= len(wp.RawLeafBase) {
-			return ext.E4{}, ext.E4{}, fmt.Errorf("checkFRIBridge: base raw leaf index %d out of range for slot %+v (have %d)", rawIdx, slot, len(wp.RawLeafBase))
+			return ext.E6{}, ext.E6{}, fmt.Errorf("checkFRIBridge: base raw leaf index %d out of range for slot %+v (have %d)", rawIdx, slot, len(wp.RawLeafBase))
 		}
 		return liftBaseToExt(wp.RawLeafBase[rawIdx][0]), liftBaseToExt(wp.RawLeafBase[rawIdx][1]), nil
 	}
@@ -463,8 +461,8 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 
 			domN := domainBySize[N]
 
-			var DQ_P, DQ_Q ext.E4
-			var alphaAcc ext.E4
+			var DQ_P, DQ_Q ext.E6
+			var alphaAcc ext.E6
 			alphaAcc.SetOne()
 
 			for j, shift := range dqLayout.Shifts[i] {
@@ -473,7 +471,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 				z_s := vr.zeta
 				z_s.MulByElement(&z_s, &omegaShift)
 
-				var v_s, C_at_X, C_at_negX ext.E4
+				var v_s, C_at_X, C_at_negX ext.E6
 				names := dqLayout.Names[i][j]
 				keys := dqLayout.Keys[i][j]
 				for k := range names {
@@ -490,7 +488,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 						return err
 					}
 
-					var term ext.E4
+					var term ext.E6
 					term.Mul(&evalAtZ, &alphaAcc)
 					v_s.Add(&v_s, &term)
 					term.Mul(&leafP, &alphaAcc)
@@ -501,7 +499,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 					alphaAcc.Mul(&alphaAcc, &vr.alpha)
 				}
 
-				var num, denom ext.E4
+				var num, denom ext.E6
 				num.Sub(&v_s, &C_at_X)
 				denom.Sub(&z_s, &X)
 				denom.Inverse(&denom)
@@ -516,7 +514,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 			}
 
 			if len(dqLayout.AIRChunks[i]) > 0 {
-				var v_air, C_at_X, C_at_negX ext.E4
+				var v_air, C_at_X, C_at_negX ext.E6
 				for _, chunkName := range dqLayout.AIRChunks[i] {
 					evalAtZ, ok := vr.proof.ValueAtZetaExt(chunkName)
 					if !ok {
@@ -531,7 +529,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 						return err
 					}
 
-					var term ext.E4
+					var term ext.E6
 					term.Mul(&evalAtZ, &alphaAcc)
 					v_air.Add(&v_air, &term)
 					term.Mul(&leafP, &alphaAcc)
@@ -542,7 +540,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 					alphaAcc.Mul(&alphaAcc, &vr.alpha)
 				}
 
-				var num, denom ext.E4
+				var num, denom ext.E6
 				num.Sub(&v_air, &C_at_X)
 				denom.Sub(&vr.zeta, &X)
 				denom.Inverse(&denom)
@@ -556,7 +554,7 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 				DQ_Q.Add(&DQ_Q, &num)
 			}
 
-			var actualP, actualQ ext.E4
+			var actualP, actualQ ext.E6
 			if i == 0 {
 				layer := vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0]
 				if layer.Field != field.Ext {

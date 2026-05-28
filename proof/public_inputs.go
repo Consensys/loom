@@ -17,33 +17,32 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/field"
+	fieldhash "github.com/consensys/loom/internal/hash"
 )
 
 type ExposedEntry struct {
 	Idx      int
 	Field    field.Kind
 	Value    koalabear.Element
-	ValueExt extensions.E4
+	ValueExt extensions.E6
 }
 
 func (e *ExposedEntry) SetBase(v koalabear.Element) {
 	e.Field = field.Base
 	e.Value.Set(&v)
-	e.ValueExt.Lift(&v)
+	e.ValueExt = fieldhash.LiftBaseToExt(v)
 }
 
-func (e *ExposedEntry) SetExt(v extensions.E4) {
+func (e *ExposedEntry) SetExt(v extensions.E6) {
 	e.Field = field.Ext
 	e.ValueExt.Set(&v)
 }
 
-func (e ExposedEntry) ExtValue() extensions.E4 {
+func (e ExposedEntry) ExtValue() extensions.E6 {
 	if e.Field == field.Ext {
 		return e.ValueExt
 	}
-	var v extensions.E4
-	v.Lift(&e.Value)
-	return v
+	return fieldhash.LiftBaseToExt(e.Value)
 }
 
 type ExposedValue struct {

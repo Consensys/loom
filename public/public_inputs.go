@@ -20,7 +20,7 @@ type Entry struct {
 	Idx      int
 	Field    field.Kind
 	Value    koalabear.Element
-	ValueExt extensions.E4
+	ValueExt extensions.E6
 }
 
 type Inputs map[string]Input
@@ -28,21 +28,19 @@ type Inputs map[string]Input
 func (e *Entry) SetBase(v koalabear.Element) {
 	e.Field = field.Base
 	e.Value.Set(&v)
-	e.ValueExt.Lift(&v)
+	e.ValueExt = fieldhash.LiftBaseToExt(v)
 }
 
-func (e *Entry) SetExt(v extensions.E4) {
+func (e *Entry) SetExt(v extensions.E6) {
 	e.Field = field.Ext
 	e.ValueExt.Set(&v)
 }
 
-func (e Entry) ExtValue() extensions.E4 {
+func (e Entry) ExtValue() extensions.E6 {
 	if e.Field == field.Ext {
 		return e.ValueExt
 	}
-	var v extensions.E4
-	v.Lift(&e.Value)
-	return v
+	return fieldhash.LiftBaseToExt(e.Value)
 }
 
 // TranscriptElements returns a deterministic field-element encoding of the
@@ -84,7 +82,7 @@ func (inputs Inputs) TranscriptElements() []koalabear.Element {
 
 func appendEntryValueElements(dst []koalabear.Element, entry Entry) []koalabear.Element {
 	if entry.Field == field.Ext {
-		return append(dst, entry.ValueExt.B0.A0, entry.ValueExt.B0.A1, entry.ValueExt.B1.A0, entry.ValueExt.B1.A1)
+		return fieldhash.AppendExtElements(dst, entry.ValueExt)
 	}
 	return append(dst, entry.Value)
 }
@@ -102,7 +100,7 @@ func compareEntryValues(a, b Entry) int {
 
 func entryValueElements(entry Entry) []koalabear.Element {
 	if entry.Field == field.Ext {
-		return []koalabear.Element{entry.ValueExt.B0.A0, entry.ValueExt.B0.A1, entry.ValueExt.B1.A0, entry.ValueExt.B1.A1}
+		return fieldhash.ExtToElements(entry.ValueExt)
 	}
 	return []koalabear.Element{entry.Value}
 }
