@@ -140,6 +140,55 @@ func BuildModule(builder *board.Builder, name string, capacity int) ColumnNames 
 	return cn
 }
 
+// BuildModuleNoLeafHash is a Merkle-step module that omits the internal
+// leaf-hash binding. The Current[i] columns at row 0 are left
+// unconstrained by this gadget — the caller is responsible for binding
+// them to whatever leaf digest the surrounding circuit produced (e.g.
+// via cross-module expose against an in-airverify multi-pair leafhash).
+//
+// All other constraints (bit binary, selector, parent = node_hash, and
+// chain via Rot) match BuildModule.
+func BuildModuleNoLeafHash(builder *board.Builder, name string, capacity int) ColumnNames {
+	if capacity <= 0 {
+		panic("merkle.BuildModuleNoLeafHash: capacity must be positive")
+	}
+	n := nextPow2(capacity)
+
+	mod := board.NewModule(name)
+	mod.N = n
+	cn := makeColumnNames(name)
+
+	bit := expr.Col(cn.Bit)
+	one := expr.Const(koalabear.One())
+	mod.AssertZero(bit.Mul(one.Sub(bit)))
+
+	for i := 0; i < DigestWidth; i++ {
+		cur := expr.Col(cn.Current[i])
+		sib := expr.Col(cn.Sibling[i])
+		lhs := expr.Col(cn.Left[i])
+		rhs := cur.Add(bit.Mul(sib.Sub(cur)))
+		mod.AssertZero(lhs.Sub(rhs))
+
+		rlhs := expr.Col(cn.Right[i])
+		rrhs := sib.Add(bit.Mul(cur.Sub(sib)))
+		mod.AssertZero(rlhs.Sub(rrhs))
+	}
+
+	for i := 0; i < DigestWidth; i++ {
+		cur := expr.Col(cn.Current[i])
+		prevParent := expr.Rot(cn.Parent[i], -1)
+		mod.AssertZeroExceptAt(cur.Sub(prevParent), 0)
+	}
+
+	cn.NodeHash = nodehash.Register(&mod, name+".nh", cn.Left, cn.Right)
+	for i := 0; i < DigestWidth; i++ {
+		mod.AssertZero(expr.Col(cn.Parent[i]).Sub(expr.Col(cn.NodeHash.Digest[i])))
+	}
+
+	builder.AddModule(mod)
+	return cn
+}
+
 func nextPow2(n int) int {
 	if n <= 1 {
 		return 1

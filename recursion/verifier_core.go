@@ -37,7 +37,9 @@ import (
 	"github.com/consensys/loom/recursion/gadgets/binexp"
 	"github.com/consensys/loom/recursion/gadgets/bits"
 	"github.com/consensys/loom/recursion/gadgets/challenger24"
+	"github.com/consensys/loom/recursion/gadgets/leafhash"
 	"github.com/consensys/loom/recursion/gadgets/merkle"
+	"github.com/consensys/loom/recursion/gadgets/poseidon2sponge"
 	"github.com/consensys/loom/trace"
 )
 
@@ -357,6 +359,26 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 	}
 	var sparseBits []sparseBitAlloc
 	var pendingBinexps []pendingBinexp
+
+	// Stage 12 plumbing: registered leafhash sponge inputs (trace
+	// fill) and per-(tree, query) Merkle setups deferred until after
+	// builder.AddModule(verifierMod).
+	type pendingLeafSpongeFill struct {
+		cn    leafhash.ColumnNames
+		input [24]koalabear.Element
+	}
+	type treeMerkleSetup struct {
+		treeIdx    int
+		queryIdx   int
+		digestCols [leafhash.DigestLen]string
+		leafDigest hash.Digest
+		siblings   []hash.Digest
+		leafIdx    int
+		root       hash.Digest
+	}
+	var pendingLeafSponges []pendingLeafSpongeFill
+	var treeMerkles []treeMerkleSetup
+
 	if len(input.Proof.DeepQuotientCommitment) > 0 {
 		friProof := input.Proof.DeepQuotientFriProof
 		finalPolyExt := friProof.FinalPolyExt
@@ -925,6 +947,130 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 						verifierMod.AssertZeroAt(rel, query.digestRow)
 					}
 				}
+
+				// Stage 12: per-column Merkle openings. Bind each sampleP/Q
+				// witness to the committed Merkle tree for its column.
+				// Build a multi-pair leafhash in airverify per (tree,
+				// query) — emitting an 8-limb digest. The post-AddModule
+				// section wires a separate merkle module (no internal
+				// leafhash) per (tree, query) with Current[0] cross-bound
+				// to the airverify digest via Exposed values, and
+				// Parent[depth-1] bound to the tree's committed root.
+				//
+				// Sample columns are sorted by PolyIdx within each tree.
+				// Native HashLeaf processes base pairs first (in PolyIdx
+				// order) then ext pairs — our flexible leafhash matches
+				// that layout via two parallel slices.
+				treeEntries := map[int][]colEntry{}
+				for _, n := range bareList {
+					slot := innerLayout.ColSlot[n]
+					treeEntries[slot.TreeIdx] = append(treeEntries[slot.TreeIdx], colEntry{name: n, polyIdx: slot.PolyIdx, field: slot.Field})
+				}
+				for _, n := range dqLayout.AIRChunks[0] {
+					slot := innerLayout.AIRChunkSlot[n]
+					treeEntries[slot.TreeIdx] = append(treeEntries[slot.TreeIdx], colEntry{name: n, polyIdx: slot.PolyIdx, field: slot.Field, isChunk: true})
+				}
+				treeIDs := make([]int, 0, len(treeEntries))
+				for t := range treeEntries {
+					treeIDs = append(treeIDs, t)
+				}
+				sort.Ints(treeIDs)
+				for _, t := range treeIDs {
+					// Sort by PolyIdx so the leafhash input matches the
+					// native tree leaf layout.
+					sort.Slice(treeEntries[t], func(a, b int) bool {
+						return treeEntries[t][a].polyIdx < treeEntries[t][b].polyIdx
+					})
+					// Within a tree, base pairs come before ext pairs in
+					// HashLeaf order. PolyIdx already separates the two
+					// because Loom groups base columns first when assigning
+					// polyIdx; we reassert by partitioning here.
+					entries := treeEntries[t]
+					sort.SliceStable(entries, func(a, b int) bool {
+						af := entries[a].field == field.Base
+						bf := entries[b].field == field.Base
+						if af != bf {
+							return af
+						}
+						return entries[a].polyIdx < entries[b].polyIdx
+					})
+				}
+
+				sampleColName := func(prefixRole string, qi int, name string, limb int) string {
+					return fmt.Sprintf("airverify.deep_%s_%d_%s_%d", prefixRole, qi, sanitizeName(name), limb)
+				}
+
+				for _, t := range treeIDs {
+					entries := treeEntries[t]
+					// Skip trees whose leaf-hash input doesn't fit in one
+					// sponge rate (16 base elements for Poseidon2's
+					// width-24 / rate-16 overwrite mode). Multi-block
+					// absorption is required for larger inputs (e.g.
+					// AIR-quotient trees with >= 2 ext chunks) and the
+					// gadget does not yet implement it. The DEEP
+					// bridge (Stage 11) plus FRI Merkle (Stage 10)
+					// still constrain those samples indirectly via the
+					// bridge equation; per-column Merkle for these
+					// trees is follow-up work.
+					const spongeRate = 16
+					nbBase, nbExt := 0, 0
+					for _, e := range entries {
+						if e.field == field.Base {
+							nbBase++
+						} else {
+							nbExt++
+						}
+					}
+					if 3+2*nbBase+8*nbExt > spongeRate {
+						continue
+					}
+					for qi := range queries {
+						// Build base / ext column-name slices.
+						var basePCols, baseQCols []string
+						var extPCols, extQCols [][extfield.Limbs]string
+						for _, e := range entries {
+							pRole, qRole := "sP", "sQ"
+							if e.isChunk {
+								pRole, qRole = "csP", "csQ"
+							}
+							if e.field == field.Base {
+								basePCols = append(basePCols, sampleColName(pRole, qi, e.name, 0))
+								baseQCols = append(baseQCols, sampleColName(qRole, qi, e.name, 0))
+							} else {
+								var pc, qc [extfield.Limbs]string
+								for i := 0; i < extfield.Limbs; i++ {
+									pc[i] = sampleColName(pRole, qi, e.name, i)
+									qc[i] = sampleColName(qRole, qi, e.name, i)
+								}
+								extPCols = append(extPCols, pc)
+								extQCols = append(extQCols, qc)
+							}
+						}
+						lhPrefix := fmt.Sprintf("airverify.lh_t%d_q%d", t, qi)
+						lhCN := leafhash.RegisterFlexibleLeafHash(&verifierMod, lhPrefix, basePCols, baseQCols, extPCols, extQCols)
+
+						// Native leaf digest, expected root, path.
+						leaves := []leafhash.FlexibleLeaf{nativeLeafFor(entries, input.Proof.PointSamplings[qi][t])}
+						spongeInputs := leafhash.BuildFlexibleSpongeInputs(leaves)
+						pendingLeafSponges = append(pendingLeafSponges, pendingLeafSpongeFill{cn: lhCN, input: spongeInputs[0]})
+
+						root := input.Proof.Commitments[t]
+						path := input.Proof.PointSamplings[qi][t].Proof
+						depth := len(path.Siblings)
+						if depth == 0 {
+							return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: empty column-tree Merkle path for tree %d query %d", t, qi)
+						}
+						treeMerkles = append(treeMerkles, treeMerkleSetup{
+							treeIdx:    t,
+							queryIdx:   qi,
+							digestCols: lhCN.Digest,
+							leafDigest: nativeLeafDigestFor(entries, input.Proof.PointSamplings[qi][t]),
+							siblings:   path.Siblings,
+							leafIdx:    path.LeafIdx,
+							root:       root,
+						})
+					}
+				}
 			}
 		}
 	}
@@ -1015,6 +1161,50 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 		}
 	}
 
+	// Stage 12 (post-AddModule): wire the per-column Merkle modules
+	// using the digests emitted by Stage 12's in-airverify leafhashes.
+	type pendingMerkleFillDigest struct {
+		cn       merkle.ColumnNames
+		capacity int
+		path     merkle.PathWithDigest
+	}
+	var pendingMerkleFillsDigest []pendingMerkleFillDigest
+	for _, ts := range treeMerkles {
+		// Expose the 8 leaf-digest limbs from airverify so the merkle
+		// module (same N) can reconstruct them at zeta.
+		exposeNames := make([]string, leafhash.DigestLen)
+		for i := 0; i < leafhash.DigestLen; i++ {
+			exposeNames[i] = fmt.Sprintf("merk_lh_t%d_q%d_%d", ts.treeIdx, ts.queryIdx, i)
+			builder.AddExposeIthValueStep("airverify", expr.Col(ts.digestCols[i]), exposeNames[i], 0)
+		}
+
+		merkleName := fmt.Sprintf("merk_col_t%d_q%d", ts.treeIdx, ts.queryIdx)
+		cn := merkle.BuildModuleNoLeafHash(&builder, merkleName, verifierMod.N)
+		merkleMod := builder.Modules[merkleName]
+		// Row-0 leaf = exposed leafhash digest.
+		for i := 0; i < merkle.DigestWidth; i++ {
+			merkleMod.AssertEqualAt(expr.Col(cn.Current[i]), expr.Exposed(exposeNames[i]), 0)
+		}
+		// Top-real-row parent = tree's committed root.
+		depth := len(ts.siblings)
+		if depth > verifierMod.N {
+			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: column-tree path depth %d exceeds airverify N=%d", depth, verifierMod.N)
+		}
+		for i := 0; i < merkle.DigestWidth; i++ {
+			merkleMod.AssertZeroAt(expr.Col(cn.Parent[i]).Sub(expr.Const(ts.root[i])), depth-1)
+		}
+
+		pendingMerkleFillsDigest = append(pendingMerkleFillsDigest, pendingMerkleFillDigest{
+			cn:       cn,
+			capacity: verifierMod.N,
+			path: merkle.PathWithDigest{
+				LeafDigest: ts.leafDigest,
+				LeafIdx:    ts.leafIdx,
+				Siblings:   ts.siblings,
+			},
+		})
+	}
+
 	// Fill trace: the witness leaf/chunk columns get their value at every
 	// row (the value-at-zeta is constant; padding rows are fine since the
 	// AIR check is row-gated). Then layer in the challenger24 sponge
@@ -1066,6 +1256,24 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 	// Trace fill for the per-round merkle modules (Stage 10).
 	for _, m := range pendingMerkleFills {
 		for k, v := range merkle.GenerateTrace(m.cn, m.capacity, m.path) {
+			tr.SetBase(k, v)
+		}
+	}
+
+	// Trace fill for Stage 12: leafhash sponges (in airverify) and the
+	// per-(tree, query) merkle modules.
+	for _, p := range pendingLeafSponges {
+		inputs := make([][24]koalabear.Element, verifierMod.N)
+		for r := range inputs {
+			inputs[r] = p.input
+		}
+		cols, _ := poseidon2sponge.GenerateTrace(p.cn.Sponge, verifierMod.N, inputs)
+		for k, v := range cols {
+			tr.SetBase(k, v)
+		}
+	}
+	for _, m := range pendingMerkleFillsDigest {
+		for k, v := range merkle.GenerateTraceWithDigest(m.cn, m.capacity, m.path) {
 			tr.SetBase(k, v)
 		}
 	}
@@ -1767,6 +1975,47 @@ func exposedEntries(ev proof.ExposedValue) []entryAtIdx {
 		out[i] = entryAtIdx{Idx: e.Idx, Value: e.ExtValue()}
 	}
 	return out
+}
+
+// colEntry describes one column or AIR-chunk participating in a
+// commitment tree's leaf for the per-column Merkle openings.
+type colEntry struct {
+	name    string
+	polyIdx int
+	field   field.Kind
+	isChunk bool
+}
+
+// nativeLeafFor assembles a leafhash.FlexibleLeaf matching the
+// (sorted) sample entries of a single commitment tree, reading raw
+// values from a Loom PointSampling.
+func nativeLeafFor(entries []colEntry, wp commitment.WMerkleProof) leafhash.FlexibleLeaf {
+	var leaf leafhash.FlexibleLeaf
+	for _, e := range entries {
+		if e.field == field.Base {
+			leaf.BasePairsP = append(leaf.BasePairsP, wp.RawLeafBase[e.polyIdx][0])
+			leaf.BasePairsQ = append(leaf.BasePairsQ, wp.RawLeafBase[e.polyIdx][1])
+		} else {
+			leaf.ExtPairsP = append(leaf.ExtPairsP, extfield.FromE4(wp.RawLeafExt[e.polyIdx][0]))
+			leaf.ExtPairsQ = append(leaf.ExtPairsQ, extfield.FromE4(wp.RawLeafExt[e.polyIdx][1]))
+		}
+	}
+	return leaf
+}
+
+// nativeLeafDigestFor mirrors commitment.Poseidon2LeafHasher.HashLeaf
+// for the entry layout.
+func nativeLeafDigestFor(entries []colEntry, wp commitment.WMerkleProof) hash.Digest {
+	var basePairs []commitment.PairBase
+	var extPairs []commitment.PairExt
+	for _, e := range entries {
+		if e.field == field.Base {
+			basePairs = append(basePairs, wp.RawLeafBase[e.polyIdx])
+		} else {
+			extPairs = append(extPairs, wp.RawLeafExt[e.polyIdx])
+		}
+	}
+	return commitment.Poseidon2LeafHasher{}.HashLeaf(basePairs, extPairs)
 }
 
 // sanitizeName makes a leaf name safe for use as a column-name suffix:

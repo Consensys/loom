@@ -25,6 +25,121 @@ import (
 	"github.com/consensys/loom/recursion/gadgets/poseidon2sponge"
 )
 
+// PathWithDigest is the input for BuildModuleNoLeafHash's trace
+// generator. The caller supplies the leaf DIGEST directly (rather than
+// the leaf P/Q pair), because the no-leafhash variant lets an external
+// gadget — typically a multi-pair leafhash in airverify — compute the
+// digest, with the merkle module's Current[0] cross-bound to it.
+type PathWithDigest struct {
+	LeafDigest hash.Digest
+	LeafIdx    int
+	Siblings   []hash.Digest
+}
+
+// GenerateTraceWithDigest fills the columns of a Merkle-step module
+// built via BuildModuleNoLeafHash. It does NOT touch LeafP / LeafQ or
+// the leafhash sub-columns (they don't exist in that module). The
+// row-0 Current is filled directly from path.LeafDigest.
+func GenerateTraceWithDigest(cn ColumnNames, capacity int, path PathWithDigest) map[string][]koalabear.Element {
+	n := capacity
+	if n <= 0 {
+		panic("merkle.GenerateTraceWithDigest: capacity must be positive")
+	}
+	{
+		r := 1
+		for r < n {
+			r <<= 1
+		}
+		n = r
+	}
+	if len(path.Siblings) > n {
+		panic("merkle.GenerateTraceWithDigest: path longer than module rows")
+	}
+
+	cols := make(map[string][]koalabear.Element, 1+5*DigestWidth)
+	alloc := func(name string) []koalabear.Element {
+		c := make([]koalabear.Element, n)
+		cols[name] = c
+		return c
+	}
+
+	cur := [DigestWidth][]koalabear.Element{}
+	sib := [DigestWidth][]koalabear.Element{}
+	left := [DigestWidth][]koalabear.Element{}
+	right := [DigestWidth][]koalabear.Element{}
+	parent := [DigestWidth][]koalabear.Element{}
+	for i := 0; i < DigestWidth; i++ {
+		cur[i] = alloc(cn.Current[i])
+		sib[i] = alloc(cn.Sibling[i])
+		left[i] = alloc(cn.Left[i])
+		right[i] = alloc(cn.Right[i])
+		parent[i] = alloc(cn.Parent[i])
+	}
+	bitCol := alloc(cn.Bit)
+
+	hasher := commitment.Poseidon2NodeHasher{}
+
+	current := path.LeafDigest
+	idx := path.LeafIdx
+
+	nodes := make([]nodehash.Node, n)
+	for row := 0; row < n; row++ {
+		var sibling hash.Digest
+		var bit uint64
+		if row < len(path.Siblings) {
+			sibling = path.Siblings[row]
+			bit = uint64(idx & 1)
+		} else {
+			sibling = current
+			bit = 0
+		}
+		var l, r hash.Digest
+		if bit == 0 {
+			l, r = current, sibling
+		} else {
+			l, r = sibling, current
+		}
+		nextParent := hasher.HashNode(l, r)
+
+		for i := 0; i < DigestWidth; i++ {
+			cur[i][row].Set(&current[i])
+			sib[i][row].Set(&sibling[i])
+			left[i][row].Set(&l[i])
+			right[i][row].Set(&r[i])
+			parent[i][row].Set(&nextParent[i])
+		}
+		bitCol[row].SetUint64(bit)
+
+		var nh nodehash.Node
+		for i := 0; i < DigestWidth; i++ {
+			nh.Left[i].Set(&l[i])
+			nh.Right[i].Set(&r[i])
+		}
+		nodes[row] = nh
+
+		current = nextParent
+		idx >>= 1
+	}
+
+	c1Inputs, c2Inputs := nodehash.BuildCompressInputs(nodes)
+	c1Cols, _ := poseidon2.GenerateTrace(cn.NodeHash.Compress, n, c1Inputs)
+	for k, v := range c1Cols {
+		cols[k] = v
+	}
+	c2Cols, _ := poseidon2.GenerateTrace(cn.NodeHash.Tail, n, c2Inputs)
+	for k, v := range c2Cols {
+		cols[k] = v
+	}
+	for i := 0; i < nodehash.DigestLen; i++ {
+		col := alloc(cn.NodeHash.Digest[i])
+		for row := 0; row < n; row++ {
+			col[row].Set(&parent[i][row])
+		}
+	}
+
+	return cols
+}
+
 // Path captures the inputs for one ext-rail Merkle-path verification.
 //
 // The leaf is supplied as an opening pair (LeafP, LeafQ); the gadget

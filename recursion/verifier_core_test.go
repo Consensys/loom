@@ -587,6 +587,45 @@ func TestBuildVerifierCoreRejectsBadColumnSample(t *testing.T) {
 	}
 }
 
+// TestBuildVerifierCoreRejectsBadColumnTreeSibling tampers a sibling
+// digest in the COLUMN-tree Merkle path (PointSamplings[0][0].Proof).
+// Stages 8/9 don't reference these siblings. Stage 10's Merkle is
+// over the FRI level commitments, a different tree. Stage 11's DEEP
+// bridge consumes column samples but doesn't see siblings. Only
+// Stage 12's per-column Merkle path verification catches this kind
+// of tampering.
+func TestBuildVerifierCoreRejectsBadColumnTreeSibling(t *testing.T) {
+	innerProgram, innerTrace := makeFibonacciInner(t, 4)
+	innerProof, err := prover.Prove(innerTrace, setup.ProvingKey{}, nil, innerProgram)
+	if err != nil {
+		t.Fatalf("inner prove: %v", err)
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, innerProgram, innerProof); err != nil {
+		t.Fatalf("inner verify: %v", err)
+	}
+
+	wp := &innerProof.PointSamplings[0][0]
+	if len(wp.Proof.Siblings) == 0 {
+		t.Fatal("expected non-empty column-tree Merkle path")
+	}
+	wp.Proof.Siblings[0][0].SetUint64(wp.Proof.Siblings[0][0].Uint64() ^ 1)
+
+	outerProgram, outerTrace, err := BuildVerifierCore(
+		RecursionInput{Program: innerProgram, Proof: innerProof},
+		DefaultConfig(),
+	)
+	if err != nil {
+		t.Fatalf("BuildVerifierCore: %v", err)
+	}
+	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
+	if err != nil {
+		return
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, outerProgram, outerProof, verifier.SkipFRI()); err == nil {
+		t.Fatalf("outer verify accepted tampered column-tree Merkle sibling")
+	}
+}
+
 // TestBuildVerifierCoreRejectsBadInnerProof confirms a tampered inner
 // proof (with one ValueAtZeta corrupted) cannot be wrapped into a
 // satisfiable outer program — the AIR check would not hold.

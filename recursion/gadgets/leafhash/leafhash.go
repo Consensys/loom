@@ -118,6 +118,124 @@ func RegisterExtLeafHash(mod *board.Module, prefix string, leafPCols, leafQCols 
 	return cn
 }
 
+// RegisterFlexibleLeafHash registers a Poseidon2-width-24 sponge that
+// hashes one Merkle leaf consisting of nbBase base-rail pairs and
+// nbExt ext-rail pairs. Matches commitment.Poseidon2LeafHasher.HashLeaf
+// for inputs that fit in a SINGLE width-24 absorption — i.e. when
+//
+//	3 + 2*nbBase + 8*nbExt <= 24
+//
+// Layout:
+//
+//	state[0]          = LEAF_TAG
+//	state[1]          = nbBase
+//	state[2]          = nbExt
+//	state[3+2i]       = basePair[i].P                       (i in 0..nbBase)
+//	state[3+2i+1]     = basePair[i].Q
+//	state[3+2*nbBase + 8j + k] = extPair[j] in sponge order (j in 0..nbExt, k in 0..7)
+//	state[tail ..]    = 0
+//
+// Ext limbs are emitted in {B0.A0, B0.A1, B1.A0, B1.A1} order (the
+// native WriteExt order) — caller supplies the extfield-order column
+// names; the wiring permutes to sponge order via SpongeLimbOrder.
+func RegisterFlexibleLeafHash(
+	mod *board.Module,
+	prefix string,
+	basePCols, baseQCols []string,
+	extPCols, extQCols [][extfield.Limbs]string,
+) ColumnNames {
+	if len(basePCols) != len(baseQCols) {
+		panic("leafhash.RegisterFlexibleLeafHash: base P/Q length mismatch")
+	}
+	if len(extPCols) != len(extQCols) {
+		panic("leafhash.RegisterFlexibleLeafHash: ext P/Q length mismatch")
+	}
+	nbBase := len(basePCols)
+	nbExt := len(extPCols)
+	used := 3 + 2*nbBase + 8*nbExt
+	if used > poseidon2sponge.Width {
+		panic("leafhash.RegisterFlexibleLeafHash: single-absorption only")
+	}
+
+	spongeCN := poseidon2sponge.Register(mod, prefix+".sponge")
+
+	var tagElem, zeroElem, nbBaseElem, nbExtElem koalabear.Element
+	tagElem.SetUint64(LeafDomainTag)
+	nbBaseElem.SetUint64(uint64(nbBase))
+	nbExtElem.SetUint64(uint64(nbExt))
+	tag := expr.Const(tagElem)
+	zero := expr.Const(zeroElem)
+	nbBaseE := expr.Const(nbBaseElem)
+	nbExtE := expr.Const(nbExtElem)
+
+	mod.AssertZero(expr.Col(spongeCN.In[0]).Sub(tag))
+	mod.AssertZero(expr.Col(spongeCN.In[1]).Sub(nbBaseE))
+	mod.AssertZero(expr.Col(spongeCN.In[2]).Sub(nbExtE))
+
+	pos := 3
+	for i := 0; i < nbBase; i++ {
+		mod.AssertZero(expr.Col(spongeCN.In[pos]).Sub(expr.Col(basePCols[i])))
+		mod.AssertZero(expr.Col(spongeCN.In[pos+1]).Sub(expr.Col(baseQCols[i])))
+		pos += 2
+	}
+	for j := 0; j < nbExt; j++ {
+		for k := 0; k < extfield.Limbs; k++ {
+			limbIdx := SpongeLimbOrder[k]
+			mod.AssertZero(expr.Col(spongeCN.In[pos+k]).Sub(expr.Col(extPCols[j][limbIdx])))
+			mod.AssertZero(expr.Col(spongeCN.In[pos+extfield.Limbs+k]).Sub(expr.Col(extQCols[j][limbIdx])))
+		}
+		pos += 2 * extfield.Limbs
+	}
+	for i := pos; i < poseidon2sponge.Width; i++ {
+		mod.AssertZero(expr.Col(spongeCN.In[i]).Sub(zero))
+	}
+
+	cn := ColumnNames{Prefix: prefix, Sponge: spongeCN}
+	for i := 0; i < DigestLen; i++ {
+		cn.Digest[i] = spongeCN.Post[poseidon2sponge.NbRounds-1][i]
+	}
+	return cn
+}
+
+// FlexibleLeaf is one mixed leaf-hash input matching
+// RegisterFlexibleLeafHash. BasePairsP/Q are base elements; ExtPairsP/Q
+// hold ext.E4 in extfield limb order.
+type FlexibleLeaf struct {
+	BasePairsP []koalabear.Element
+	BasePairsQ []koalabear.Element
+	ExtPairsP  [][extfield.Limbs]koalabear.Element
+	ExtPairsQ  [][extfield.Limbs]koalabear.Element
+}
+
+// BuildFlexibleSpongeInputs returns the 24-element input state per row.
+func BuildFlexibleSpongeInputs(leaves []FlexibleLeaf) [][poseidon2sponge.Width]koalabear.Element {
+	out := make([][poseidon2sponge.Width]koalabear.Element, len(leaves))
+	for row, leaf := range leaves {
+		nbBase := len(leaf.BasePairsP)
+		nbExt := len(leaf.ExtPairsP)
+		var s [poseidon2sponge.Width]koalabear.Element
+		s[0].SetUint64(LeafDomainTag)
+		s[1].SetUint64(uint64(nbBase))
+		s[2].SetUint64(uint64(nbExt))
+		pos := 3
+		for i := 0; i < nbBase; i++ {
+			s[pos].Set(&leaf.BasePairsP[i])
+			s[pos+1].Set(&leaf.BasePairsQ[i])
+			pos += 2
+		}
+		for j := 0; j < nbExt; j++ {
+			for k := 0; k < extfield.Limbs; k++ {
+				limbIdx := SpongeLimbOrder[k]
+				s[pos+k].Set(&leaf.ExtPairsP[j][limbIdx])
+				s[pos+extfield.Limbs+k].Set(&leaf.ExtPairsQ[j][limbIdx])
+			}
+			pos += 2 * extfield.Limbs
+		}
+		out[row] = s
+	}
+	return out
+}
+
 // ExtLeaf is one ext-rail leaf-hash input. Limb order matches extfield.
 type ExtLeaf struct {
 	P [extfield.Limbs]koalabear.Element
