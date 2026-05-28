@@ -328,6 +328,42 @@ func TestBuildVerifierCoreNonSkipFRI(t *testing.T) {
 	}
 }
 
+// TestBuildVerifierCoreNonSkipFRIFibonacci is the Fibonacci variant of
+// TestBuildVerifierCoreNonSkipFRI: the chain machinery is exercised
+// with both real FRI data AND the Lagrange-leaf rotation pattern of
+// AssertZeroExceptAt. Confirms the chain reconstruction holds across
+// the more typical Loom program shape.
+func TestBuildVerifierCoreNonSkipFRIFibonacci(t *testing.T) {
+	innerProgram, innerTrace := makeFibonacciInner(t, 4)
+
+	innerProof, err := prover.Prove(innerTrace, setup.ProvingKey{}, nil, innerProgram)
+	if err != nil {
+		t.Fatalf("inner prove (with FRI): %v", err)
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, innerProgram, innerProof); err != nil {
+		t.Fatalf("inner verify (with FRI): %v", err)
+	}
+	if len(innerProof.DeepQuotientCommitment) == 0 {
+		t.Fatal("expected inner proof to carry FRI DEEP-quotient commitments")
+	}
+
+	outerProgram, outerTrace, err := buildVerifierCore(
+		RecursionInput{Program: innerProgram, Proof: innerProof},
+		DefaultConfig(),
+	)
+	if err != nil {
+		t.Fatalf("buildVerifierCore: %v", err)
+	}
+
+	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
+	if err != nil {
+		t.Fatalf("outer prove: %v", err)
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, outerProgram, outerProof, verifier.SkipFRI()); err != nil {
+		t.Fatalf("outer verify: %v", err)
+	}
+}
+
 // TestBuildVerifierCoreRejectsAtZetaTamperingViaDeepAlpha is an
 // additional negative test specific to the Stage-5 witness binding:
 // once DEEP_ALPHA's bindings reference the same airverify witness
