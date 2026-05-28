@@ -864,6 +864,43 @@ func TestBuildVerifierCoreRejectsBadMultiDegreeMidRoundLeaf(t *testing.T) {
 	}
 }
 
+// TestBuildVerifierCoreRejectsBadQuery1MerkleSibling tampers a
+// sibling in the FRI running-poly Merkle path for QUERY 1 at round 0.
+// Before Stage 10 was extended to queries 1-3, only query 0's path
+// was verified — query 1's siblings could be lied about freely. This
+// test exercises the extension.
+func TestBuildVerifierCoreRejectsBadQuery1MerkleSibling(t *testing.T) {
+	innerProgram, innerTrace := makeFibonacciInner(t, 4)
+	innerProof, err := prover.Prove(innerTrace, setup.ProvingKey{}, nil, innerProgram)
+	if err != nil {
+		t.Fatalf("inner prove: %v", err)
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, innerProgram, innerProof); err != nil {
+		t.Fatalf("inner verify: %v", err)
+	}
+
+	siblings := innerProof.DeepQuotientFriProof.FRIQueries[1].Layers[0].Path.Siblings
+	if len(siblings) == 0 {
+		t.Fatal("expected non-empty Merkle path at query 1 round 0")
+	}
+	siblings[0][0].SetUint64(siblings[0][0].Uint64() ^ 1)
+
+	outerProgram, outerTrace, err := BuildVerifierCore(
+		RecursionInput{Program: innerProgram, Proof: innerProof},
+		DefaultConfig(),
+	)
+	if err != nil {
+		t.Fatalf("BuildVerifierCore: %v", err)
+	}
+	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
+	if err != nil {
+		return
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, outerProgram, outerProof, verifier.SkipFRI()); err == nil {
+		t.Fatalf("outer verify accepted tampered query 1 Merkle sibling")
+	}
+}
+
 // TestBuildVerifierCoreRejectsBadAIRChunkSample tampers a RawLeafExt
 // entry for the AIR-quotient tree (tree 1 in the Fibonacci(n=4) setup).
 // Tree 1 has 2 ext chunks (= 19 sponge input elements), exercising the

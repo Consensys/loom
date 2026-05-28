@@ -1601,14 +1601,15 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 
 	builder.AddModule(verifierMod)
 
-	// Stage 10: per-layer Merkle openings for query 0 (all rounds).
-	// For each fold round j, build a separate merkle module of N =
-	// airverify.N. Cross-bind airverify's (LeafP_q0_rj, LeafQ_q0_rj)
-	// witnesses to the merkle module's row-0 leaf via expose/Exposed
-	// (same-N reconstruction). The top-real-row parent (= path
-	// depth - 1) is constrained to equal the FRI commitment root for
-	// round j as a constant. Together this forces the leaves used in
-	// the Stage 9 fold chain to actually live in the committed tree.
+	// Stage 10: per-layer Merkle openings for every query (all rounds).
+	// For each (query k, fold round j), build a separate merkle module
+	// of N = airverify.N. Cross-bind airverify's (LeafP_qk_rj,
+	// LeafQ_qk_rj) witnesses to the merkle module's row-0 leaf via
+	// expose / Exposed (same-N reconstruction). The top-real-row
+	// parent (= path depth - 1) is constrained to equal the FRI
+	// commitment root for round j as a constant. Together this forces
+	// the leaves used in the Stage 9 fold chain to actually live in
+	// the committed tree for every query, not just query 0.
 	type pendingMerkleFill struct {
 		cn       merkle.ColumnNames
 		capacity int
@@ -1619,8 +1620,8 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 		friProof := input.Proof.DeepQuotientFriProof
 		numRounds := log2int(maxModN)
 
-		// Sibling-side Merkle path for query 0 at each round, plus the
-		// expected root for that round. Round 0's root comes from the
+		// Sibling-side Merkle path for each round, plus the expected
+		// root for that round. Round 0's root comes from the
 		// DEEP-quotient layer-0 commitment; rounds j>0 from the FRI
 		// running-poly roots bound into the chain at fri_fold_j.
 		rootForRound := func(j int) hash.Digest {
@@ -1630,58 +1631,60 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 			return friProof.FRIRoots[j-1]
 		}
 
-		for j := 0; j < numRounds; j++ {
-			layer := friProof.FRIQueries[0].Layers[j]
-			depth := len(layer.Path.Siblings)
-			if depth == 0 {
-				return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: empty Merkle path for query 0 round %d", j)
-			}
-			if depth > verifierMod.N {
-				return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: query 0 round %d path depth %d exceeds airverify N=%d", j, depth, verifierMod.N)
-			}
+		for k := 0; k < constants.NUM_QUERIES; k++ {
+			for j := 0; j < numRounds; j++ {
+				layer := friProof.FRIQueries[k].Layers[j]
+				depth := len(layer.Path.Siblings)
+				if depth == 0 {
+					return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: empty Merkle path for query %d round %d", k, j)
+				}
+				if depth > verifierMod.N {
+					return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: query %d round %d path depth %d exceeds airverify N=%d", k, j, depth, verifierMod.N)
+				}
 
-			// Expose airverify's leaf witnesses so the merkle module
-			// (with the same N) can pin its row-0 LeafP/LeafQ to them.
-			// pos=0 is arbitrary: addE4 fills every row with the same
-			// constant so the column is row-invariant.
-			for i := 0; i < extfield.Limbs; i++ {
-				pName := fmt.Sprintf("airverify.fri_q0_P_%d_%d", j, i)
-				qName := fmt.Sprintf("airverify.fri_q0_Q_%d_%d", j, i)
-				pExpose := fmt.Sprintf("merk_q0_P_r%d_%d", j, i)
-				qExpose := fmt.Sprintf("merk_q0_Q_r%d_%d", j, i)
-				builder.AddExposeIthValueStep("airverify", expr.Col(pName), pExpose, 0)
-				builder.AddExposeIthValueStep("airverify", expr.Col(qName), qExpose, 0)
+				// Expose airverify's leaf witnesses so the merkle module
+				// (with the same N) can pin its row-0 LeafP/LeafQ to them.
+				// pos=0 is arbitrary: addE4 fills every row with the same
+				// constant so the column is row-invariant.
+				for i := 0; i < extfield.Limbs; i++ {
+					pName := fmt.Sprintf("airverify.fri_q%d_P_%d_%d", k, j, i)
+					qName := fmt.Sprintf("airverify.fri_q%d_Q_%d_%d", k, j, i)
+					pExpose := fmt.Sprintf("merk_q%d_P_r%d_%d", k, j, i)
+					qExpose := fmt.Sprintf("merk_q%d_Q_r%d_%d", k, j, i)
+					builder.AddExposeIthValueStep("airverify", expr.Col(pName), pExpose, 0)
+					builder.AddExposeIthValueStep("airverify", expr.Col(qName), qExpose, 0)
+				}
+
+				// Build the merkle module at N = airverify.N. The merkle
+				// gadget pads the path to module size with self-consistent
+				// rows so the chaining constraint stays satisfied.
+				merkleName := fmt.Sprintf("merk_q%d_r%d", k, j)
+				cn := merkle.BuildModule(&builder, merkleName, verifierMod.N)
+
+				merkleMod := builder.Modules[merkleName]
+
+				// Row-0 leaf binding.
+				for i := 0; i < extfield.Limbs; i++ {
+					pExpose := fmt.Sprintf("merk_q%d_P_r%d_%d", k, j, i)
+					qExpose := fmt.Sprintf("merk_q%d_Q_r%d_%d", k, j, i)
+					merkleMod.AssertEqualAt(expr.Col(cn.LeafP[i]), expr.Exposed(pExpose), 0)
+					merkleMod.AssertEqualAt(expr.Col(cn.LeafQ[i]), expr.Exposed(qExpose), 0)
+				}
+
+				// Top-real-row parent = FRI commitment root for round j.
+				rootJ := rootForRound(j)
+				for i := 0; i < merkle.DigestWidth; i++ {
+					merkleMod.AssertZeroAt(expr.Col(cn.Parent[i]).Sub(expr.Const(rootJ[i])), depth-1)
+				}
+
+				path := merkle.Path{
+					LeafP:    layer.LeafPExt,
+					LeafQ:    layer.LeafQExt,
+					LeafIdx:  layer.Path.LeafIdx,
+					Siblings: layer.Path.Siblings,
+				}
+				pendingMerkleFills = append(pendingMerkleFills, pendingMerkleFill{cn: cn, capacity: verifierMod.N, path: path})
 			}
-
-			// Build the merkle module at N = airverify.N. The merkle
-			// gadget pads the path to module size with self-consistent
-			// rows so the chaining constraint stays satisfied.
-			merkleName := fmt.Sprintf("merk_q0_r%d", j)
-			cn := merkle.BuildModule(&builder, merkleName, verifierMod.N)
-
-			merkleMod := builder.Modules[merkleName]
-
-			// Row-0 leaf binding.
-			for i := 0; i < extfield.Limbs; i++ {
-				pExpose := fmt.Sprintf("merk_q0_P_r%d_%d", j, i)
-				qExpose := fmt.Sprintf("merk_q0_Q_r%d_%d", j, i)
-				merkleMod.AssertEqualAt(expr.Col(cn.LeafP[i]), expr.Exposed(pExpose), 0)
-				merkleMod.AssertEqualAt(expr.Col(cn.LeafQ[i]), expr.Exposed(qExpose), 0)
-			}
-
-			// Top-real-row parent = FRI commitment root for round j.
-			rootJ := rootForRound(j)
-			for i := 0; i < merkle.DigestWidth; i++ {
-				merkleMod.AssertZeroAt(expr.Col(cn.Parent[i]).Sub(expr.Const(rootJ[i])), depth-1)
-			}
-
-			path := merkle.Path{
-				LeafP:    layer.LeafPExt,
-				LeafQ:    layer.LeafQExt,
-				LeafIdx:  layer.Path.LeafIdx,
-				Siblings: layer.Path.Siblings,
-			}
-			pendingMerkleFills = append(pendingMerkleFills, pendingMerkleFill{cn: cn, capacity: verifierMod.N, path: path})
 		}
 	}
 
