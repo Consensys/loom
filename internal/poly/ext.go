@@ -78,6 +78,30 @@ func MulExt(P1, P2 ExtPolynomial) (ExtPolynomial, error) {
 	return res, nil
 }
 
+// EvaluateLagrangeAtExt lagrangeZeta = [L_0(zeta), L_1(zeta), ..., L_n-1(zeta)] (n = power of two),
+// p polynomial in lagrange form, of size n
+func EvaluateLagrangeAtExt(p Polynomial, lagrangeZetaCache []ext.E4, shift int) ext.E4 {
+	n := len(lagrangeZetaCache)
+	var tmp, res ext.E4
+	for i := 0; i < len(p); i++ {
+		tmp.Set(&lagrangeZetaCache[(n+i-shift)%n]).MulByElement(&tmp, &p[i])
+		res.Add(&res, &tmp)
+	}
+	return res
+}
+
+// ExtEvaluateLagrangeAtExt lagrangeZeta = [L_0(zeta), L_1(zeta), ..., L_n-1(zeta)] (n = power of two),
+// p polynomial in lagrange form, of size n
+func ExtEvaluateLagrangeAtExt(p ExtPolynomial, lagrangeZetaCache []ext.E4, shift int) ext.E4 {
+	n := len(lagrangeZetaCache)
+	var tmp, res ext.E4
+	for i := 0; i < len(p); i++ {
+		tmp.Set(&lagrangeZetaCache[(n+i-shift)%n]).Mul(&tmp, &p[i])
+		res.Add(&res, &tmp)
+	}
+	return res
+}
+
 // EvaluateAtExt evaluates a base-field polynomial p, stored in Lagrange normal
 // form over d, at the extension-field point zeta. Base coefficients are lifted
 // during Horner evaluation.

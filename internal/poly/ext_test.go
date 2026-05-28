@@ -14,6 +14,7 @@
 package poly
 
 import (
+	"fmt"
 	"math/big"
 	"testing"
 
@@ -131,6 +132,41 @@ func TestEvaluateAtExt(t *testing.T) {
 	if !got.Equal(&want) {
 		t.Fatalf("EvaluateAtExt = %s, want %s", got.String(), want.String())
 	}
+}
+
+func TestEvaluateLagrangeAtExt(t *testing.T) {
+	const domainSize = 32
+	zeta := e4FromU64(3, 5, 7, 11)
+	lagrangeZetaCache := LagrangesAtZeta(zeta, domainSize)
+	d := fft.NewDomain(domainSize)
+	w := d.Generator
+
+	t.Run(fmt.Sprintf("size_%d_no_shift", domainSize), func(t *testing.T) {
+		p := make(Polynomial, domainSize)
+		for i := 0; i < domainSize; i++ {
+			p[i].SetUint64(uint64(3*i + 5))
+		}
+
+		got := EvaluateLagrangeAtExt(p, lagrangeZetaCache, 0)
+		want := EvaluateAtExt(p, d, zeta)
+		if !got.Equal(&want) {
+			t.Fatalf("EvaluateLagrangeAtExt = %s, want %s", got.String(), want.String())
+		}
+	})
+
+	t.Run(fmt.Sprintf("size_%d_with_shift", domainSize), func(t *testing.T) {
+		p := make(Polynomial, domainSize)
+		for i := 0; i < domainSize; i++ {
+			p[i].SetUint64(uint64(3*i + 5))
+		}
+		zetaShifted := zeta.MulByElement(&zeta, &w)
+		got := EvaluateLagrangeAtExt(p, lagrangeZetaCache, 1)
+		want := EvaluateAtExt(p, d, *zetaShifted)
+		if !got.Equal(&want) {
+			t.Fatalf("EvaluateLagrangeAtExt = %s, want %s", got.String(), want.String())
+		}
+	})
+
 }
 
 func TestExtEvaluateAtExt(t *testing.T) {
