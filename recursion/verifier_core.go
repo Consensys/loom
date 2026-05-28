@@ -1623,6 +1623,72 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 		})
 	}
 
+	// Stage 14: per-level Merkle openings.
+	//
+	// Stage 13's multi-degree DEEP bridge pins each LevelQueries[i-1][q]
+	// leaf (i > 0) to the value DQ_i computes, but those leaves are
+	// otherwise free witnesses. This stage binds them to the level-i
+	// commitment root (DeepQuotientCommitment[i]) via a per-(level,
+	// query) Merkle path verification — same single-ext-pair leafhash
+	// pattern as Stage 10 (FRI running-poly per-layer Merkle), just
+	// targeting the level commitments instead.
+	if len(input.Proof.DeepQuotientCommitment) > 1 && len(input.Proof.DeepQuotientFriProof.LevelQueries) > 0 {
+		friProof := input.Proof.DeepQuotientFriProof
+		numLevels := len(input.Proof.DeepQuotientCommitment)
+		// For each i in 1..numLevels-1: LevelQueries[i-1][q] gives the
+		// level-i leaf at query position q. The root is
+		// DeepQuotientCommitment[i], the same digest the chain extension
+		// bound into fri_level_l_gamma's sponge inputs.
+		for li := 1; li < numLevels; li++ {
+			levelRoot := input.Proof.DeepQuotientCommitment[li]
+			for qi := 0; qi < constants.NUM_QUERIES; qi++ {
+				lq := friProof.LevelQueries[li-1][qi]
+				depth := len(lq.Path.Siblings)
+				if depth == 0 {
+					return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: empty Merkle path for level %d query %d", li, qi)
+				}
+				if depth > verifierMod.N {
+					return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: level %d query %d path depth %d exceeds airverify N=%d", li, qi, depth, verifierMod.N)
+				}
+
+				// Expose airverify's level-leaf witnesses
+				// (allocated by Stage 13 as `airverify.deep_md_levelP/Q_{li}_{qi}_{limb}`).
+				for i := 0; i < extfield.Limbs; i++ {
+					pName := fmt.Sprintf("airverify.deep_md_levelP_%d_%d_%d", li, qi, i)
+					qName := fmt.Sprintf("airverify.deep_md_levelQ_%d_%d_%d", li, qi, i)
+					pExpose := fmt.Sprintf("merk_lvl_l%d_q%d_P_%d", li, qi, i)
+					qExpose := fmt.Sprintf("merk_lvl_l%d_q%d_Q_%d", li, qi, i)
+					builder.AddExposeIthValueStep("airverify", expr.Col(pName), pExpose, 0)
+					builder.AddExposeIthValueStep("airverify", expr.Col(qName), qExpose, 0)
+				}
+
+				merkleName := fmt.Sprintf("merk_lvl_l%d_q%d", li, qi)
+				cn := merkle.BuildModule(&builder, merkleName, verifierMod.N)
+				merkleMod := builder.Modules[merkleName]
+				for i := 0; i < extfield.Limbs; i++ {
+					pExpose := fmt.Sprintf("merk_lvl_l%d_q%d_P_%d", li, qi, i)
+					qExpose := fmt.Sprintf("merk_lvl_l%d_q%d_Q_%d", li, qi, i)
+					merkleMod.AssertEqualAt(expr.Col(cn.LeafP[i]), expr.Exposed(pExpose), 0)
+					merkleMod.AssertEqualAt(expr.Col(cn.LeafQ[i]), expr.Exposed(qExpose), 0)
+				}
+				for i := 0; i < merkle.DigestWidth; i++ {
+					merkleMod.AssertZeroAt(expr.Col(cn.Parent[i]).Sub(expr.Const(levelRoot[i])), depth-1)
+				}
+
+				pendingMerkleFills = append(pendingMerkleFills, pendingMerkleFill{
+					cn:       cn,
+					capacity: verifierMod.N,
+					path: merkle.Path{
+						LeafP:    lq.LeafPExt,
+						LeafQ:    lq.LeafQExt,
+						LeafIdx:  lq.Path.LeafIdx,
+						Siblings: lq.Path.Siblings,
+					},
+				})
+			}
+		}
+	}
+
 	// Fill trace: the witness leaf/chunk columns get their value at every
 	// row (the value-at-zeta is constant; padding rows are fine since the
 	// AIR check is row-gated). Then layer in the challenger24 sponge

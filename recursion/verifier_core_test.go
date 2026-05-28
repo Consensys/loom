@@ -782,6 +782,45 @@ func TestBuildVerifierCoreRejectsBadMultiDegreeColumnSibling(t *testing.T) {
 	}
 }
 
+// TestBuildVerifierCoreRejectsBadLevelMerkleSibling flips a sibling in
+// the level-1 Merkle path. Stage 13's bridge equation reads the
+// LeafP/Q values but not the path siblings; Stage 14 is the only
+// constraint that consumes them.
+func TestBuildVerifierCoreRejectsBadLevelMerkleSibling(t *testing.T) {
+	innerProgram, innerTrace := makeMultiSizeFibInner(t)
+	innerProof, err := prover.Prove(innerTrace, setup.ProvingKey{}, nil, innerProgram)
+	if err != nil {
+		t.Fatalf("inner prove: %v", err)
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, innerProgram, innerProof); err != nil {
+		t.Fatalf("inner verify: %v", err)
+	}
+	if len(innerProof.DeepQuotientFriProof.LevelQueries) == 0 {
+		t.Fatal("expected multi-degree FRI")
+	}
+
+	sib := innerProof.DeepQuotientFriProof.LevelQueries[0][0].Path.Siblings
+	if len(sib) == 0 {
+		t.Fatal("expected non-empty level Merkle path")
+	}
+	sib[0][0].SetUint64(sib[0][0].Uint64() ^ 1)
+
+	outerProgram, outerTrace, err := BuildVerifierCore(
+		RecursionInput{Program: innerProgram, Proof: innerProof},
+		DefaultConfig(),
+	)
+	if err != nil {
+		t.Fatalf("BuildVerifierCore: %v", err)
+	}
+	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
+	if err != nil {
+		return
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, outerProgram, outerProof, verifier.SkipFRI()); err == nil {
+		t.Fatalf("outer verify accepted tampered level Merkle sibling")
+	}
+}
+
 // TestBuildVerifierCoreRejectsBadAIRChunkSample tampers a RawLeafExt
 // entry for the AIR-quotient tree (tree 1 in the Fibonacci(n=4) setup).
 // Tree 1 has 2 ext chunks (= 19 sponge input elements), exercising the
