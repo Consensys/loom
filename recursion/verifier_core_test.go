@@ -626,6 +626,49 @@ func TestBuildVerifierCoreRejectsBadColumnTreeSibling(t *testing.T) {
 	}
 }
 
+// TestBuildVerifierCoreRejectsBadAIRChunkSample tampers a RawLeafExt
+// entry for the AIR-quotient tree (tree 1 in the Fibonacci(n=4) setup).
+// Tree 1 has 2 ext chunks (= 19 sponge input elements), exercising the
+// multi-block leafhash absorption added in this stage; before it
+// landed, tree-1 samples were trusted and a corruption like this
+// could slip past the verifier.
+func TestBuildVerifierCoreRejectsBadAIRChunkSample(t *testing.T) {
+	innerProgram, innerTrace := makeFibonacciInner(t, 4)
+	innerProof, err := prover.Prove(innerTrace, setup.ProvingKey{}, nil, innerProgram)
+	if err != nil {
+		t.Fatalf("inner prove: %v", err)
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, innerProgram, innerProof); err != nil {
+		t.Fatalf("inner verify: %v", err)
+	}
+
+	if len(innerProof.PointSamplings[0]) < 2 {
+		t.Fatal("expected at least 2 commitment trees")
+	}
+	wp := &innerProof.PointSamplings[0][1]
+	if len(wp.RawLeafExt) == 0 {
+		t.Fatal("expected RawLeafExt entries on the AIR-quotient tree")
+	}
+	var one koalabear.Element
+	one.SetOne()
+	wp.RawLeafExt[0][0].B0.A0.Add(&wp.RawLeafExt[0][0].B0.A0, &one)
+
+	outerProgram, outerTrace, err := BuildVerifierCore(
+		RecursionInput{Program: innerProgram, Proof: innerProof},
+		DefaultConfig(),
+	)
+	if err != nil {
+		t.Fatalf("BuildVerifierCore: %v", err)
+	}
+	outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
+	if err != nil {
+		return
+	}
+	if err := verifier.Verify(nil, setup.VerificationKey{}, outerProgram, outerProof, verifier.SkipFRI()); err == nil {
+		t.Fatalf("outer verify accepted tampered AIR-chunk sample")
+	}
+}
+
 // TestBuildVerifierCoreRejectsBadInnerProof confirms a tampered inner
 // proof (with one ValueAtZeta corrupted) cannot be wrapped into a
 // satisfiable outer program — the AIR check would not hold.

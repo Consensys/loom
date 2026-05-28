@@ -14,6 +14,7 @@
 package leafhash_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -119,6 +120,86 @@ func buildOneLeafHashModule(t *testing.T, name string, n int, leaves []leafhash.
 // TestLeafHashGadgetSingle proves one ext-rail leaf hash and confirms the
 // gadget's digest columns match the native commitment.Poseidon2LeafHasher
 // digest.
+// TestFlexibleLeafHashMultiBlock exercises a leaf whose total input
+// length (3 header + 2 ext pairs = 19 elements) exceeds one sponge
+// rate (16) — forcing two-block absorption.
+func TestFlexibleLeafHashMultiBlock(t *testing.T) {
+	ext1P, ext1Q := randExt(t), randExt(t)
+	ext2P, ext2Q := randExt(t), randExt(t)
+	leaf := leafhash.FlexibleLeaf{
+		ExtPairsP: [][extfield.Limbs]koalabear.Element{extfield.FromE4(ext1P), extfield.FromE4(ext2P)},
+		ExtPairsQ: [][extfield.Limbs]koalabear.Element{extfield.FromE4(ext1Q), extfield.FromE4(ext2Q)},
+	}
+
+	if leafhash.NumBlocksForFlexible(0, 2) != 2 {
+		t.Fatalf("expected 2 blocks for (0 base, 2 ext)")
+	}
+
+	mod := board.NewModule("flexlh_multi")
+	mod.N = 2
+	var extPCols, extQCols [][extfield.Limbs]string
+	for j := 0; j < 2; j++ {
+		var pc, qc [extfield.Limbs]string
+		for i := 0; i < extfield.Limbs; i++ {
+			pc[i] = fmt.Sprintf("ext%d.P_%d", j, i)
+			qc[i] = fmt.Sprintf("ext%d.Q_%d", j, i)
+		}
+		extPCols = append(extPCols, pc)
+		extQCols = append(extQCols, qc)
+	}
+	cn := leafhash.RegisterFlexibleLeafHash(&mod, "flh", nil, nil, extPCols, extQCols)
+	if cn.NumBlocks != 2 {
+		t.Fatalf("expected 2 sponge blocks, got %d", cn.NumBlocks)
+	}
+
+	builder := board.NewBuilder()
+	builder.AddModule(mod)
+
+	tr := trace.New()
+	// Fill ext column witnesses (constant across rows).
+	for j := 0; j < 2; j++ {
+		var p, q [extfield.Limbs]koalabear.Element
+		if j == 0 {
+			p, q = extfield.FromE4(ext1P), extfield.FromE4(ext1Q)
+		} else {
+			p, q = extfield.FromE4(ext2P), extfield.FromE4(ext2Q)
+		}
+		for i := 0; i < extfield.Limbs; i++ {
+			pc := make([]koalabear.Element, mod.N)
+			qc := make([]koalabear.Element, mod.N)
+			for r := range pc {
+				pc[r].Set(&p[i])
+				qc[r].Set(&q[i])
+			}
+			tr.SetBase(extPCols[j][i], pc)
+			tr.SetBase(extQCols[j][i], qc)
+		}
+	}
+	// Fill per-block sponge sub-traces.
+	states := leafhash.FlexibleLeafSpongeStates(leaf)
+	for b, st := range states {
+		inputs := make([][24]koalabear.Element, mod.N)
+		for r := range inputs {
+			inputs[r] = st
+		}
+		cols, _ := poseidon2sponge.GenerateTrace(cn.Sponges[b], mod.N, inputs)
+		for k, v := range cols {
+			tr.SetBase(k, v)
+		}
+	}
+
+	testutil.ProveAndVerify(t, &builder, tr)
+
+	// Cross-check the gadget digest against the native HashLeaf output.
+	nativeDigest := commitment.Poseidon2LeafHasher{}.HashLeaf(nil, []commitment.PairExt{{ext1P, ext1Q}, {ext2P, ext2Q}})
+	for i := 0; i < leafhash.DigestLen; i++ {
+		got := tr.Base[cn.Digest[i]][0]
+		if !got.Equal(&nativeDigest[i]) {
+			t.Fatalf("digest[%d]: in-circuit %s, native %s", i, got.String(), nativeDigest[i].String())
+		}
+	}
+}
+
 func TestLeafHashGadgetSingle(t *testing.T) {
 	P := randExt(t)
 	Q := randExt(t)

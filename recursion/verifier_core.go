@@ -364,8 +364,8 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 	// fill) and per-(tree, query) Merkle setups deferred until after
 	// builder.AddModule(verifierMod).
 	type pendingLeafSpongeFill struct {
-		cn    leafhash.ColumnNames
-		input [24]koalabear.Element
+		cn    leafhash.FlexibleColumnNames
+		input [][24]koalabear.Element // per-block 24-element state for one leaf
 	}
 	type treeMerkleSetup struct {
 		treeIdx    int
@@ -1002,28 +1002,6 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 
 				for _, t := range treeIDs {
 					entries := treeEntries[t]
-					// Skip trees whose leaf-hash input doesn't fit in one
-					// sponge rate (16 base elements for Poseidon2's
-					// width-24 / rate-16 overwrite mode). Multi-block
-					// absorption is required for larger inputs (e.g.
-					// AIR-quotient trees with >= 2 ext chunks) and the
-					// gadget does not yet implement it. The DEEP
-					// bridge (Stage 11) plus FRI Merkle (Stage 10)
-					// still constrain those samples indirectly via the
-					// bridge equation; per-column Merkle for these
-					// trees is follow-up work.
-					const spongeRate = 16
-					nbBase, nbExt := 0, 0
-					for _, e := range entries {
-						if e.field == field.Base {
-							nbBase++
-						} else {
-							nbExt++
-						}
-					}
-					if 3+2*nbBase+8*nbExt > spongeRate {
-						continue
-					}
 					for qi := range queries {
 						// Build base / ext column-name slices.
 						var basePCols, baseQCols []string
@@ -1050,9 +1028,13 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 						lhCN := leafhash.RegisterFlexibleLeafHash(&verifierMod, lhPrefix, basePCols, baseQCols, extPCols, extQCols)
 
 						// Native leaf digest, expected root, path.
-						leaves := []leafhash.FlexibleLeaf{nativeLeafFor(entries, input.Proof.PointSamplings[qi][t])}
-						spongeInputs := leafhash.BuildFlexibleSpongeInputs(leaves)
-						pendingLeafSponges = append(pendingLeafSponges, pendingLeafSpongeFill{cn: lhCN, input: spongeInputs[0]})
+						leaf := nativeLeafFor(entries, input.Proof.PointSamplings[qi][t])
+						spongeStates := leafhash.FlexibleLeafSpongeStates(leaf)
+						blockInputs := make([][24]koalabear.Element, lhCN.NumBlocks)
+						for b := range blockInputs {
+							blockInputs[b] = spongeStates[b]
+						}
+						pendingLeafSponges = append(pendingLeafSponges, pendingLeafSpongeFill{cn: lhCN, input: blockInputs})
 
 						root := input.Proof.Commitments[t]
 						path := input.Proof.PointSamplings[qi][t].Proof
@@ -1263,13 +1245,15 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 	// Trace fill for Stage 12: leafhash sponges (in airverify) and the
 	// per-(tree, query) merkle modules.
 	for _, p := range pendingLeafSponges {
-		inputs := make([][24]koalabear.Element, verifierMod.N)
-		for r := range inputs {
-			inputs[r] = p.input
-		}
-		cols, _ := poseidon2sponge.GenerateTrace(p.cn.Sponge, verifierMod.N, inputs)
-		for k, v := range cols {
-			tr.SetBase(k, v)
+		for b := 0; b < p.cn.NumBlocks; b++ {
+			inputs := make([][24]koalabear.Element, verifierMod.N)
+			for r := range inputs {
+				inputs[r] = p.input[b]
+			}
+			cols, _ := poseidon2sponge.GenerateTrace(p.cn.Sponges[b], verifierMod.N, inputs)
+			for k, v := range cols {
+				tr.SetBase(k, v)
+			}
 		}
 	}
 	for _, m := range pendingMerkleFillsDigest {
