@@ -1233,6 +1233,118 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 				}
 			}
 
+			// Allocate level leaves up front (i > 0) so both Stage 15
+			// (cross-round chain with gamma intro term) and Stage 13
+			// (DEEP bridge) reference the same witness columns.
+			type lp struct{ P, Q extfield.E4Expr }
+			levelLeavesAll := make(map[int][]lp)
+			for li := 1; li < numSizes; li++ {
+				levelLeavesAll[li] = make([]lp, len(queries))
+				for qi := range queries {
+					lvq := friProof.LevelQueries[li-1][qi]
+					pE := addE4(fmt.Sprintf("airverify.deep_md_levelP_%d_%d", li, qi), lvq.LeafPExt)
+					qE := addE4(fmt.Sprintf("airverify.deep_md_levelQ_%d_%d", li, qi), lvq.LeafQExt)
+					levelLeavesAll[li][qi] = lp{P: pE, Q: qE}
+				}
+			}
+
+			// Stage 15: cross-round FRI fold chain with multi-degree
+			// level-intro gamma terms. Stage 9's per-(round, query)
+			// loop already builds the in-circuit fold value for every
+			// round; here we ADD a constraint
+			//
+			//   expected_jk + gamma_l * level_leaf_jk  ==  selected_jk
+			//
+			// at every non-final round j (the gamma term is dropped when
+			// no level intro hits round j+1). level_leaf_jk picks
+			// LevelQueries[l-1][k].LeafP/Q via the same top-bit selector
+			// the fold chain already uses for pNext / qNext. xInv is
+			// reused from Stage 9's binexp output (lives in
+			// `airverify.fri_q{k}_xInv_{j}.step_{numBaseBits}`).
+			//
+			// We map round j+1 -> level l via levelAtRound, derived from
+			// dqLayout.Sizes: a level l is introduced at the round where
+			// the running poly degree drops to sizes[l] = sizes[0] >> jl.
+			levelAtRound := map[int]int{}
+			for l := 1; l < numSizes; l++ {
+				ratio := dqLayout.Sizes[0] / dqLayout.Sizes[l]
+				jl := log2int(ratio)
+				if jl >= 1 && jl < log2int(maxModN) {
+					levelAtRound[jl] = l
+				}
+			}
+
+			// Anchor gammas as constant-fill witness columns linked to
+			// their fri_level_l_gamma chain digest at the digest row.
+			gammaExprs := map[int]extfield.E4Expr{}
+			for l := 1; l < numSizes; l++ {
+				gammaName := friLevelGammaName(l)
+				gammaIdx := -1
+				for i, step := range chain {
+					if step.Name == gammaName {
+						gammaIdx = i
+						break
+					}
+				}
+				if gammaIdx < 0 {
+					return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: %s missing from chain", gammaName)
+				}
+				gammaCN := chSpongeCNs[gammaIdx]
+				gammaDigestExpr := extfield.FromLimbs(
+					expr.Col(gammaCN.Digest[0]), expr.Col(gammaCN.Digest[2]),
+					expr.Col(gammaCN.Digest[1]), expr.Col(gammaCN.Digest[3]),
+				)
+				gammaNative := hashDigestToE4(chain[gammaIdx].NativeDigest)
+				gammaExpr := addE4(fmt.Sprintf("airverify.fri_gamma_%d", l), gammaNative)
+				for _, rel := range gammaExpr.EqualityConstraints(gammaDigestExpr) {
+					verifierMod.AssertZeroAt(rel, gammaCN.DigestRow)
+				}
+				gammaExprs[l] = gammaExpr
+			}
+
+			// Cross-round chain constraints.
+			var invTwoBase15 koalabear.Element
+			var twoBase15 koalabear.Element
+			twoBase15.SetUint64(2)
+			invTwoBase15.Inverse(&twoBase15)
+			invTwoConst15 := expr.Const(invTwoBase15)
+			oneConst15 := expr.Const(koalabear.One())
+			numRounds := log2int(maxModN)
+			for j := 0; j < numRounds-1; j++ {
+				Nj := (constants.RATE * dqLayout.Sizes[0]) >> j
+				numBaseBits := log2int(Nj / 2)
+				for k, query := range queries {
+					// Reuse the xInv that Stage 9 already binexp'd.
+					xInvColName := fmt.Sprintf("airverify.fri_q%d_xInv_%d.step_%d", k, j, numBaseBits)
+					xInvExpr := extfield.FromBase(expr.Col(xInvColName))
+
+					P := leafExprs[j][k].P
+					Q := leafExprs[j][k].Q
+					sumHalf := P.Add(Q).MulByBase(invTwoConst15)
+					diff := P.Sub(Q)
+					diffScaled := diff.MulByBase(invTwoConst15)
+					folded := alphaExprs[j].Mul(diffScaled).Mul(xInvExpr)
+					expected := sumHalf.Add(folded)
+
+					topBit := expr.Col(query.bitsCN.Bits[numBaseBits-1])
+					notTopBit := oneConst15.Sub(topBit)
+					pNext := leafExprs[j+1][k].P
+					qNext := leafExprs[j+1][k].Q
+
+					if l, ok := levelAtRound[j+1]; ok {
+						levelP := levelLeavesAll[l][k].P
+						levelQ := levelLeavesAll[l][k].Q
+						levelLeaf := levelP.MulByBase(notTopBit).Add(levelQ.MulByBase(topBit))
+						expected = expected.Add(gammaExprs[l].Mul(levelLeaf))
+					}
+
+					selected := pNext.MulByBase(notTopBit).Add(qNext.MulByBase(topBit))
+					for _, rel := range expected.EqualityConstraints(selected) {
+						verifierMod.AssertZeroAt(rel, query.digestRow)
+					}
+				}
+			}
+
 			// Per size, per query: compute DQ_P/Q and equate to level leaves.
 			for li := 0; li < numSizes; li++ {
 				size := dqLayout.Sizes[li]
@@ -1260,19 +1372,13 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 				}
 
 				// Level-leaf expressions per query.
-				type lp struct{ P, Q extfield.E4Expr }
 				levelLeaves := make([]lp, len(queries))
 				if li == 0 {
 					for qi := range queries {
 						levelLeaves[qi] = lp{P: leafExprs[0][qi].P, Q: leafExprs[0][qi].Q}
 					}
 				} else {
-					for qi := range queries {
-						lvq := friProof.LevelQueries[li-1][qi]
-						pE := addE4(fmt.Sprintf("airverify.deep_md_levelP_%d_%d", li, qi), lvq.LeafPExt)
-						qE := addE4(fmt.Sprintf("airverify.deep_md_levelQ_%d_%d", li, qi), lvq.LeafQExt)
-						levelLeaves[qi] = lp{P: pE, Q: qE}
-					}
+					copy(levelLeaves, levelLeavesAll[li])
 				}
 
 				for qi, query := range queries {
