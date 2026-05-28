@@ -169,8 +169,19 @@ func buildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 		chSpongeCNs[i] = cn
 		startRow += cn.NPermutations
 	}
-	// Final challenger (last in chain) produces zeta.
-	chCN := chSpongeCNs[len(chSpongeCNs)-1]
+	// Locate the zeta sponge in the chain — it's the step named
+	// FINAL_EVALUATION_POINT (the AIR check uses its digest as zeta).
+	zetaSpongeIdx := -1
+	for i, step := range chain {
+		if step.Name == constants.FINAL_EVALUATION_POINT {
+			zetaSpongeIdx = i
+			break
+		}
+	}
+	if zetaSpongeIdx < 0 {
+		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: __zeta missing from chain")
+	}
+	chCN := chSpongeCNs[zetaSpongeIdx]
 
 	// zeta limbs are the first 4 digest limbs in OutputToExt order:
 	//   limb[0] = digest[0]   (B0.A0)
@@ -261,11 +272,22 @@ func buildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 		}
 	}
 
-	// Sanity check: the final sponge's digest must equal the natively-
-	// derived zeta. If this fails, the FS replay / chain build has a bug.
-	expectedZeta := hashDigestToE4(chain[len(chain)-1].NativeDigest)
+	// Sanity check: locate the zeta step's digest and confirm it equals
+	// the natively-derived zeta (replayInnerFS). If this fails, the
+	// chain reconstruction has a bug.
+	zetaStepIdx := -1
+	for i, step := range chain {
+		if step.Name == constants.FINAL_EVALUATION_POINT {
+			zetaStepIdx = i
+			break
+		}
+	}
+	if zetaStepIdx < 0 {
+		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: __zeta step missing from chain")
+	}
+	expectedZeta := hashDigestToE4(chain[zetaStepIdx].NativeDigest)
 	if !expectedZeta.Equal(&zeta) {
-		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: chain digest != native zeta")
+		return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: chain zeta-step digest != native zeta")
 	}
 
 	pg, err := board.Compile(&builder)
@@ -324,6 +346,9 @@ func computeChallengeChain(input RecursionInput) ([]challengeStep, error) {
 	if err := fs.NewChallenge(constants.FINAL_EVALUATION_POINT); err != nil {
 		return nil, err
 	}
+	if err := fs.NewChallenge(constants.DEEP_ALPHA); err != nil {
+		return nil, err
+	}
 
 	// Build the per-challenge binding sequences in the order the inner
 	// verifier accumulates them.
@@ -364,12 +389,44 @@ func computeChallengeChain(input RecursionInput) ([]challengeStep, error) {
 		}
 	}
 
+	// DEEP_ALPHA bindings: every value-at-zeta entry the inner DEEP
+	// quotient batches (per BuildDeepQuotientLayout: per-size, per-shift
+	// committed-column at-zeta values + per-size AIR quotient chunks).
+	dqLayout := prover.BuildDeepQuotientLayout(pg)
+	for i := range dqLayout.Sizes {
+		for _, keysAtShift := range dqLayout.Keys[i] {
+			for _, key := range keysAtShift {
+				v, ok := input.Proof.ValueAtZetaExt(key)
+				if !ok {
+					return nil, fmt.Errorf("recursion: DEEP_ALPHA binding key %q not in inner proof.ValuesAtZeta", key)
+				}
+				els := extToElements(v)
+				bindings[constants.DEEP_ALPHA] = append(bindings[constants.DEEP_ALPHA], els...)
+				if err := fs.Bind(constants.DEEP_ALPHA, els); err != nil {
+					return nil, err
+				}
+			}
+		}
+		for _, chunkName := range dqLayout.AIRChunks[i] {
+			v, ok := input.Proof.ValueAtZetaExt(chunkName)
+			if !ok {
+				return nil, fmt.Errorf("recursion: DEEP_ALPHA chunk binding %q not in inner proof.ValuesAtZeta", chunkName)
+			}
+			els := extToElements(v)
+			bindings[constants.DEEP_ALPHA] = append(bindings[constants.DEEP_ALPHA], els...)
+			if err := fs.Bind(constants.DEEP_ALPHA, els); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	// Compute each challenge in order, recording the sequence absorbed.
-	challengeNames := make([]string, 0, numRounds+1)
+	challengeNames := make([]string, 0, numRounds+2)
 	for r := 0; r < numRounds; r++ {
 		challengeNames = append(challengeNames, constants.CanonicalChallengeName(r))
 	}
 	challengeNames = append(challengeNames, constants.FINAL_EVALUATION_POINT)
+	challengeNames = append(challengeNames, constants.DEEP_ALPHA)
 
 	steps := make([]challengeStep, 0, len(challengeNames))
 	for i, name := range challengeNames {
@@ -427,6 +484,13 @@ func sumOf(seq []koalabear.Element, hb commitment.HashBackend) hash.Digest {
 	h.Reset()
 	h.WriteElements(seq...)
 	return h.Sum()
+}
+
+// extToElements flattens an E4 into the 4-element order Loom's FS uses
+// when binding extension values: (B0.A0, B0.A1, B1.A0, B1.A1). Mirrors
+// the unexported prover.extToElements.
+func extToElements(v ext.E4) []koalabear.Element {
+	return []koalabear.Element{v.B0.A0, v.B0.A1, v.B1.A0, v.B1.A1}
 }
 
 // hashDigestToE4 mirrors hash.OutputToExt for an 8-element digest:
