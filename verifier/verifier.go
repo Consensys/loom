@@ -157,7 +157,7 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 		}
 	}
 
-	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, hashBackend.LeafHasher, hashBackend.NodeHasher, fri.LightMode())
+	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, hashBackend.LeafHasher, hashBackend.NodeHasher, fri.WoFullDomainAllocation())
 	if err != nil {
 		return res, err
 	}
