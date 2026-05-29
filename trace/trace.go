@@ -23,7 +23,7 @@ import (
 // RawTrace list of columns with the size N of each column
 // type RawTrace = map[string]*poly.Polynomial
 
-// ExtPolynomial is a column whose coefficients live in the Koalabear E4
+// ExtPolynomial is a column whose coefficients live in the Koalabear E6
 // extension field.
 type ExtPolynomial = poly.ExtPolynomial
 

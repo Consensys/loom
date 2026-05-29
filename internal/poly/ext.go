@@ -21,24 +21,25 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
+	fieldhash "github.com/consensys/loom/internal/hash"
 )
 
 // ExtPolynomial is a polynomial whose coefficients/evaluations live in the
-// Koalabear E4 extension field.
-type ExtPolynomial = []ext.E4
+// Koalabear E6 extension field.
+type ExtPolynomial = []ext.E6
 
 var extEvalBufPool sync.Pool
 
-func getExtBuf(n int) []ext.E4 {
+func getExtBuf(n int) []ext.E6 {
 	if v := extEvalBufPool.Get(); v != nil {
-		if b := v.([]ext.E4); cap(b) >= n {
+		if b := v.([]ext.E6); cap(b) >= n {
 			return b[:n]
 		}
 	}
-	return make([]ext.E4, n)
+	return make([]ext.E6, n)
 }
 
-func putExtBuf(b []ext.E4) {
+func putExtBuf(b []ext.E6) {
 	extEvalBufPool.Put(b[:cap(b)])
 }
 
@@ -78,11 +79,37 @@ func MulExt(P1, P2 ExtPolynomial) (ExtPolynomial, error) {
 	return res, nil
 }
 
+// EvaluateLagrangeAtExt lagrangeZeta = [L_0(zeta), L_1(zeta), ..., L_n-1(zeta)] (n = power of two),
+// p polynomial in lagrange form, of size n
+func EvaluateLagrangeAtExt(p Polynomial, lagrangeZetaCache []ext.E6, shift int) ext.E6 {
+	n := len(lagrangeZetaCache)
+	var tmp, res ext.E6
+	for i := 0; i < len(p); i++ {
+		tmp.Set(&lagrangeZetaCache[(n+i-shift)%n]).MulByElement(&tmp, &p[i])
+		res.Add(&res, &tmp)
+	}
+	return res
+}
+
+// ExtEvaluateLagrangeAtExt lagrangeZeta = [L_0(zeta), L_1(zeta), ..., L_n-1(zeta)] (n = power of two),
+// p polynomial in lagrange form, of size n
+func ExtEvaluateLagrangeAtExt(p ExtPolynomial, lagrangeZetaCache []ext.E6, shift int) ext.E6 {
+	n := len(lagrangeZetaCache)
+	var tmp, res ext.E6
+	for i := 0; i < len(p); i++ {
+		tmp.Set(&lagrangeZetaCache[(n+i-shift)%n]).Mul(&tmp, &p[i])
+		res.Add(&res, &tmp)
+	}
+	return res
+}
+
 // EvaluateAtExt evaluates a base-field polynomial p, stored in Lagrange normal
 // form over d, at the extension-field point zeta. Base coefficients are lifted
 // during Horner evaluation.
 // EvaluateAtExt assumes len(p) is a power of two; behaviour is undefined otherwise.
-func EvaluateAtExt(p Polynomial, d *fft.Domain, zeta ext.E4) ext.E4 {
+// Optional fftOpts are forwarded to the internal FFT (e.g. fft.WithNbTasks(1)
+// when EvaluateAtExt is itself called from inside a parallel.Execute loop).
+func EvaluateAtExt(p Polynomial, d *fft.Domain, zeta ext.E6, fftOpts ...fft.Option) ext.E6 {
 	n := len(p)
 	if n == 1 {
 		return liftBaseToExt(p[0])
@@ -90,9 +117,9 @@ func EvaluateAtExt(p Polynomial, d *fft.Domain, zeta ext.E4) ext.E4 {
 	_p := getBuf(n)
 	copy(_p, p)
 	nn := uint64(64 - bits.TrailingZeros64(uint64(n)))
-	d.FFTInverse(_p, fft.DIF)
+	d.FFTInverse(_p, fft.DIF, fftOpts...)
 
-	var res ext.E4
+	var res ext.E6
 	for i := n - 1; i >= 0; i-- {
 		iRev := bits.Reverse64(uint64(i)) >> nn
 		coeff := liftBaseToExt(_p[iRev])
@@ -106,7 +133,7 @@ func EvaluateAtExt(p Polynomial, d *fft.Domain, zeta ext.E4) ext.E4 {
 
 // ExtEvaluateAtExt evaluates an extension-field polynomial p, stored in
 // Lagrange normal form over d, at the extension-field point zeta.
-func ExtEvaluateAtExt(p ExtPolynomial, d *fft.Domain, zeta ext.E4) ext.E4 {
+func ExtEvaluateAtExt(p ExtPolynomial, d *fft.Domain, zeta ext.E6, fftOpts ...fft.Option) ext.E6 {
 	n := len(p)
 	if n == 1 {
 		return p[0]
@@ -114,9 +141,9 @@ func ExtEvaluateAtExt(p ExtPolynomial, d *fft.Domain, zeta ext.E4) ext.E4 {
 	_p := getExtBuf(n)
 	copy(_p, p)
 	nn := uint64(64 - bits.TrailingZeros64(uint64(n)))
-	d.FFTInverseExt(_p, fft.DIF)
+	d.FFTInverseExt6(_p, fft.DIF, fftOpts...)
 
-	var res ext.E4
+	var res ext.E6
 	for i := n - 1; i >= 0; i-- {
 		iRev := bits.Reverse64(uint64(i)) >> nn
 		coeff := _p[iRev]
@@ -129,15 +156,15 @@ func ExtEvaluateAtExt(p ExtPolynomial, d *fft.Domain, zeta ext.E4) ext.E4 {
 
 // DeepQuotientExt computes q(X) = (v - p(X)) / (z - X) for an extension-field
 // polynomial p in Lagrange normal form over d. The domain points remain
-// base-field roots of unity and are lifted into E4 for the denominator.
-func DeepQuotientExt(p ExtPolynomial, v, z ext.E4, d *fft.Domain) ExtPolynomial {
+// base-field roots of unity and are lifted into E6 for the denominator.
+func DeepQuotientExt(p ExtPolynomial, v, z ext.E6, d *fft.Domain) ExtPolynomial {
 	N := len(p)
 	q := make(ExtPolynomial, N)
 	var omegaJ koalabear.Element
 	omegaJ.SetOne()
 	omega := d.Generator
 	for j := 0; j < N; j++ {
-		var num, den ext.E4
+		var num, den ext.E6
 		omegaJExt := liftBaseToExt(omegaJ)
 		num.Sub(&v, &p[j])
 		den.Sub(&z, &omegaJExt)
@@ -148,8 +175,6 @@ func DeepQuotientExt(p ExtPolynomial, v, z ext.E4, d *fft.Domain) ExtPolynomial 
 	return q
 }
 
-func liftBaseToExt(v koalabear.Element) ext.E4 {
-	var res ext.E4
-	res.Lift(&v)
-	return res
+func liftBaseToExt(v koalabear.Element) ext.E6 {
+	return fieldhash.LiftBaseToExt(v)
 }

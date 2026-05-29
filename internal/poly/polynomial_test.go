@@ -98,6 +98,23 @@ func TestLagrangeAtZeta(t *testing.T) {
 
 }
 
+func TestLagrangesAtZetaExt(t *testing.T) {
+	n := 16
+	zeta := e6FromU64(3, 5, 7, 11)
+
+	computed := LagrangesAtZeta(zeta, n)
+	if len(computed) != n {
+		t.Fatalf("expected %d lagrange evaluations, got %d", n, len(computed))
+	}
+
+	for i := 0; i < n; i++ {
+		expected := LagrangeAtZetaExt(zeta, n, i)
+		if !expected.Equal(&computed[i]) {
+			t.Errorf("L_%d(zeta): expected %s, got %s", i, expected.String(), computed[i].String())
+		}
+	}
+}
+
 func TestEvalPointWise(t *testing.T) {
 
 	t.Run("NonHomogeneous_x0sq_plus_x1", func(t *testing.T) {

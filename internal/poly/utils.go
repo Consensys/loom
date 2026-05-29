@@ -19,11 +19,29 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
+	fieldhash "github.com/consensys/loom/internal/hash"
 )
 
 // isPowerOfTwo checks if n is a power of two
 func isPowerOfTwo(n int) bool {
 	return n > 0 && (n&(n-1)) == 0
+}
+
+// PowUint64 returns base^exp in koalabear via binary exponentiation.
+// Used to seed per-chunk accumulators when parallelizing loops that
+// otherwise carry a serial multiplicative dependency (a_{i+1} = a_i · g).
+func PowUint64(base koalabear.Element, exp uint64) koalabear.Element {
+	var res koalabear.Element
+	res.SetOne()
+	b := base
+	for exp != 0 {
+		if exp&1 == 1 {
+			res.Mul(&res, &b)
+		}
+		b.Mul(&b, &b)
+		exp >>= 1
+	}
+	return res
 }
 
 // NextPowerOfTwo returns the next power of two greater than or equal to n
@@ -44,6 +62,47 @@ func NextPowerOfTwo(n int) int {
 	return n + 1
 }
 
+// LagrangesAtZeta computes [L_0(zeta), L_1(zeta), ..., L_n-1(zeta)] (n = power of two)
+func LagrangesAtZeta(zeta ext.E6, n int) []ext.E6 {
+	res := make([]ext.E6, n)
+	if n == 0 {
+		return res
+	}
+
+	omega, err := koalabear.Generator(uint64(n))
+	if err != nil {
+		panic(err)
+	}
+
+	denominators := make([]ext.E6, n)
+	var omegaI koalabear.Element
+	omegaI.SetOne()
+	for i := 0; i < n; i++ {
+		omegaIExt := fieldhash.LiftBaseToExt(omegaI)
+		denominators[i].Sub(&zeta, &omegaIExt)
+		omegaI.Mul(&omegaI, &omega)
+	}
+	invDenominators := ext.BatchInvertE6(denominators)
+
+	var zetaN, one, common ext.E6
+	zetaN.Exp(zeta, big.NewInt(int64(n)))
+	one.SetOne()
+	common.Sub(&zetaN, &one)
+
+	var nElt, nInv koalabear.Element
+	nElt.SetUint64(uint64(n))
+	nInv.Inverse(&nElt)
+	common.MulByElement(&common, &nInv)
+
+	omegaI.SetOne()
+	for i := 0; i < n; i++ {
+		res[i].MulByElement(&common, &omegaI)
+		res[i].Mul(&res[i], &invDenominators[i])
+		omegaI.Mul(&omegaI, &omega)
+	}
+	return res
+}
+
 func LagrangeAtZeta(zeta koalabear.Element, N, i int) koalabear.Element {
 	var zetan, omegai, one, Nk koalabear.Element
 	Nk.SetUint64(uint64(N))
@@ -62,8 +121,8 @@ func LagrangeAtZeta(zeta koalabear.Element, N, i int) koalabear.Element {
 	return omegai
 }
 
-func LagrangeAtZetaExt(zeta ext.E4, N, i int) ext.E4 {
-	var zetaN, numerator, denominator, one ext.E4
+func LagrangeAtZetaExt(zeta ext.E6, N, i int) ext.E6 {
+	var zetaN, numerator, denominator, one ext.E6
 	zetaN.Exp(zeta, big.NewInt(int64(N)))
 	one.SetOne()
 	zetaN.Sub(&zetaN, &one)
@@ -75,8 +134,7 @@ func LagrangeAtZetaExt(zeta ext.E4, N, i int) ext.E4 {
 	omegaI.Exp(omegaI, big.NewInt(int64(i)))
 	numerator.MulByElement(&zetaN, &omegaI)
 
-	var omegaIExt ext.E4
-	omegaIExt.Lift(&omegaI)
+	omegaIExt := fieldhash.LiftBaseToExt(omegaI)
 	denominator.Sub(&zeta, &omegaIExt)
 
 	var Nk koalabear.Element
@@ -155,11 +213,16 @@ func EvaluateLagrangeWithWeights(p Polynomial, weights []koalabear.Element) koal
 
 // ExtEvaluateLagrangeWithWeights is the extension-field counterpart of
 // EvaluateLagrangeWithWeights. The Lagrange weights live in the base field.
-func ExtEvaluateLagrangeWithWeights(p ExtPolynomial, weights []koalabear.Element) ext.E4 {
+func ExtEvaluateLagrangeWithWeights(p ExtPolynomial, weights []koalabear.Element) ext.E6 {
 	if len(p) != len(weights) {
 		panic("ExtEvaluateLagrangeWithWeights: length mismatch")
 	}
-	return ext.Vector(p).InnerProductByElement(koalabear.Vector(weights))
+	var tmp, res ext.E6
+	for i := range p {
+		tmp.MulByElement(&p[i], &weights[i])
+		res.Add(&res, &tmp)
+	}
+	return res
 }
 
 // EvaluateOnExtendedDomainRoot evaluates p, given in Lagrange form over d, at
@@ -171,7 +234,7 @@ func EvaluateOnExtendedDomainRoot(p Polynomial, d *fft.Domain, bigD *fft.Domain,
 
 // ExtEvaluateOnExtendedDomainRoot is the extension-field counterpart of
 // EvaluateOnExtendedDomainRoot.
-func ExtEvaluateOnExtendedDomainRoot(p ExtPolynomial, d *fft.Domain, bigD *fft.Domain, rootIndex int) ext.E4 {
+func ExtEvaluateOnExtendedDomainRoot(p ExtPolynomial, d *fft.Domain, bigD *fft.Domain, rootIndex int) ext.E6 {
 	weights := LagrangeWeightsOnExtendedDomainRoot(d, bigD, rootIndex)
 	return ExtEvaluateLagrangeWithWeights(p, weights)
 }

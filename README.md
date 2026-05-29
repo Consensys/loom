@@ -6,7 +6,7 @@
 
 It lets you describe a computation as a set of polynomial constraints over a **trace** (a collection of named columns), compile it into a proof system, and produce a succinct proof that all constraints vanish on the evaluation domain.
 
-Fiat-Shamir challenges, including lookup/permutation challenges, canonical trace-round challenges, `__zeta`, `alpha_DEEP`, and FRI fold challenges, are sampled in the Koalabear E4 extension field. The `alpha_DEEP` challenge binds the claimed evaluations folded into the DEEP quotient. Base trace columns remain base-valued and are lifted only when evaluated at extension points. The resulting soundness error is approximately `N/2^124`.
+Fiat-Shamir challenges, including lookup/permutation challenges, canonical trace-round challenges, `__zeta`, `alpha_DEEP`, and FRI fold challenges, are sampled in the Koalabear E6 extension field. The `alpha_DEEP` challenge binds the claimed evaluations folded into the DEEP quotient. Base trace columns remain base-valued and are lifted only when evaluated at extension points. The resulting soundness error is approximately `N/2^186`.
 
 ## Core concepts
 

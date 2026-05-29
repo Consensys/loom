@@ -16,8 +16,6 @@ package prover
 import (
 	"fmt"
 
-	"github.com/consensys/gnark-crypto/field/koalabear"
-	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/internal/constants"
 	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/hash"
@@ -69,9 +67,5 @@ func bindValueAtZeta(fs *fiatshamir.Transcript, prf proof.Proof, key string) err
 	if !ok {
 		return fmt.Errorf("BindDeepEvaluationClaims: %q not found in ValuesAtZeta", key)
 	}
-	return fs.Bind(constants.DEEP_ALPHA, extToElements(v))
-}
-
-func extToElements(v ext.E4) []koalabear.Element {
-	return []koalabear.Element{v.B0.A0, v.B0.A1, v.B1.A0, v.B1.A1}
+	return fs.Bind(constants.DEEP_ALPHA, hash.ExtToElements(v))
 }

@@ -31,7 +31,7 @@ type Commitment struct {
 type Proof struct {
 	HashBackendID string
 
-	ValuesAtZeta  map[string]extensions.E4 // map string -> evaluation of the column whose String() is the key at zeta
+	ValuesAtZeta  map[string]extensions.E6 // map string -> evaluation of the column whose String() is the key at zeta
 	ExposedValues ExposedValues            // map column name -> values exposed to the verifier
 
 	// Commitments holds the Merkle roots of every WMerkleTree the prover
@@ -55,18 +55,16 @@ type Proof struct {
 
 func NewProof() Proof {
 	var res Proof
-	res.ValuesAtZeta = make(map[string]extensions.E4)
+	res.ValuesAtZeta = make(map[string]extensions.E6)
 	res.ExposedValues = make(map[string]ExposedValue)
 	return res
 }
 
 func (p *Proof) SetValueAtZetaBase(name string, v koalabear.Element) {
-	var ext extensions.E4
-	ext.Lift(&v)
-	p.ValuesAtZeta[name] = ext
+	p.ValuesAtZeta[name] = hash.LiftBaseToExt(v)
 }
 
-func (p *Proof) SetValueAtZetaExt(name string, v extensions.E4) {
+func (p *Proof) SetValueAtZetaExt(name string, v extensions.E6) {
 	p.ValuesAtZeta[name] = v
 }
 
@@ -75,13 +73,14 @@ func (p Proof) ValueAtZetaBase(name string) (koalabear.Element, bool, error) {
 	if !ok {
 		return koalabear.Element{}, false, nil
 	}
-	if !v.B0.A1.IsZero() || !v.B1.IsZero() {
+	base, ok := hash.BaseFromExt(v)
+	if !ok {
 		return koalabear.Element{}, true, fmt.Errorf("ValuesAtZeta[%q] is not a base-field value", name)
 	}
-	return v.B0.A0, true, nil
+	return base, true, nil
 }
 
-func (p Proof) ValueAtZetaExt(name string) (extensions.E4, bool) {
+func (p Proof) ValueAtZetaExt(name string) (extensions.E6, bool) {
 	v, ok := p.ValuesAtZeta[name]
 	return v, ok
 }
@@ -98,8 +97,8 @@ func (p Proof) BaseValuesAtZeta() (map[string]koalabear.Element, error) {
 	return values, nil
 }
 
-func (p Proof) ExtValuesAtZeta() map[string]extensions.E4 {
-	values := make(map[string]extensions.E4, len(p.ValuesAtZeta))
+func (p Proof) ExtValuesAtZeta() map[string]extensions.E6 {
+	values := make(map[string]extensions.E6, len(p.ValuesAtZeta))
 	for name, v := range p.ValuesAtZeta {
 		values[name] = v
 	}

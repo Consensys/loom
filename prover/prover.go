@@ -15,8 +15,10 @@ package prover
 
 import (
 	"fmt"
+	"math/big"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
@@ -41,9 +43,10 @@ import (
 )
 
 type Config struct {
-	EmulateFS   bool
-	SkipFRI     bool
-	HashBackend commitment.HashBackend
+	EmulateFS     bool
+	SkipFRI       bool
+	HashBackend   commitment.HashBackend
+	PhaseCallback func(name string, d time.Duration)
 }
 
 type Option func(c *Config) error
@@ -65,6 +68,17 @@ func SkipFRI() Option {
 func WithHashBackend(backend commitment.HashBackend) Option {
 	return func(c *Config) error {
 		c.HashBackend = backend
+		return nil
+	}
+}
+
+// WithPhaseCallback installs a callback that fires after each major prover
+// phase with the phase name and wall-clock duration. Phases reported (in
+// order): "execute-steps", "compute-air-quotients", "evaluations-at-zeta",
+// "deep-quotient+fri-commit", "fri-query-open".
+func WithPhaseCallback(cb func(name string, d time.Duration)) Option {
+	return func(c *Config) error {
+		c.PhaseCallback = cb
 		return nil
 	}
 }
@@ -92,8 +106,8 @@ type proverRuntime struct {
 	airTrace       trace.Trace
 	publicInputs   public.Inputs
 	program        board.Program
-	zeta           ext.E4 // point of evaluation to check the AIR relation with SZ
-	alpha          ext.E4 // folding challenge for N-grouped polynomials, used to build the DEEP quotient
+	zeta           ext.E6 // point of evaluation to check the AIR relation with SZ
+	alpha          ext.E6 // folding challenge for N-grouped polynomials, used to build the DEEP quotient
 	mu             *sync.Mutex
 	setup          setup.ProvingKey
 	queryPositions []int
@@ -213,10 +227,10 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 				return res, err
 			}
 		} else {
-			col := make([]ext.E4, m.N)
+			col := make([]ext.E6, m.N)
 			for _, e := range pi.Entries {
 				if e.Field == field.Base {
-					col[e.Idx].Lift(&e.Value)
+					col[e.Idx] = hash.LiftBaseToExt(e.Value)
 				} else {
 					col[e.Idx].Set(&e.ValueExt)
 				}
@@ -271,16 +285,14 @@ func (pr *proverRuntime) initSetupOpeningSources() error {
 	return nil
 }
 
-func liftBaseToExt(v koalabear.Element) ext.E4 {
-	var res ext.E4
-	res.Lift(&v)
-	return res
+func liftBaseToExt(v koalabear.Element) ext.E6 {
+	return hash.LiftBaseToExt(v)
 }
 
 func liftPolynomialToExt(p poly.Polynomial) poly.ExtPolynomial {
 	res := make(poly.ExtPolynomial, len(p))
 	for i := range p {
-		res[i].Lift(&p[i])
+		res[i] = hash.LiftBaseToExt(p[i])
 	}
 	return res
 }
@@ -384,7 +396,7 @@ func (pr *proverRuntime) ExecuteSteps() error {
 					return err
 				}
 
-				var challengeVal ext.E4
+				var challengeVal ext.E6
 				if pr.config.EmulateFS {
 					challengeVal.MustSetRandom()
 					if _, err := pr.fs.ComputeChallenge(challengeName); err != nil {
@@ -399,7 +411,7 @@ func (pr *proverRuntime) ExecuteSteps() error {
 				}
 
 				pr.mu.Lock()
-				pr.t.SetExt(challengeName, []ext.E4{challengeVal})
+				pr.t.SetExt(challengeName, []ext.E6{challengeVal})
 				pr.mu.Unlock()
 
 				roundIdx++
@@ -421,7 +433,10 @@ func (pr *proverRuntime) ExecuteSteps() error {
 // alias non-overlapping windows of the quotient backing array (no per-chunk
 // copy); after this returns the caller owns the chunks and the original
 // quotient is unreachable.
-func computeExtAIRQuotientChunks(piBase map[string]poly.Polynomial, piExt map[string]poly.ExtPolynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache) ([]poly.ExtPolynomial, error) {
+// fftNbTasks caps the inner parallelism of the per-chunk FFTs so that, when
+// this function is itself invoked inside a parallel.Execute over modules,
+// outer × inner goroutines stays bounded.
+func computeExtAIRQuotientChunks(piBase map[string]poly.Polynomial, piExt map[string]poly.ExtPolynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache, fftNbTasks int) ([]poly.ExtPolynomial, error) {
 	quotient, err := poly.ComputeQuotientMixed(piBase, piExt, *vrel, N, poly.WithDomainCache(cache))
 	if err != nil {
 		return nil, err
@@ -430,10 +445,11 @@ func computeExtAIRQuotientChunks(piBase map[string]poly.Polynomial, piExt map[st
 	// Normal so chunking can sub-slice the backing array.
 	poly.CosetExtLagrangeNormalToCanonicalWithCache(quotient, cache)
 
+	fftOpt := fft.WithNbTasks(fftNbTasks)
 	chunks := make([]poly.ExtPolynomial, len(quotient)/N)
 	for i := range chunks {
 		chunk := quotient[i*N : (i+1)*N : (i+1)*N]
-		D.FFTExt(chunk, fft.DIF)
+		D.FFTExt6(chunk, fft.DIF, fftOpt)
 		utils.BitReverse(chunk)
 		chunks[i] = chunk
 	}
@@ -441,17 +457,18 @@ func computeExtAIRQuotientChunks(piBase map[string]poly.Polynomial, piExt map[st
 }
 
 // computeBaseAIRQuotientChunks is the base-field counterpart of computeExtAIRQuotientChunks.
-func computeBaseAIRQuotientChunks(piBase map[string]poly.Polynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache) ([]poly.Polynomial, error) {
+func computeBaseAIRQuotientChunks(piBase map[string]poly.Polynomial, vrel *dag.DAG, N int, D *fft.Domain, cache *poly.DomainCache, fftNbTasks int) ([]poly.Polynomial, error) {
 	quotient, err := poly.ComputeQuotient(piBase, *vrel, N, poly.WithDomainCache(cache))
 	if err != nil {
 		return nil, err
 	}
 	poly.CosetLagrangeNormalToCanonicalWithCache(quotient, cache)
 
+	fftOpt := fft.WithNbTasks(fftNbTasks)
 	chunks := make([]poly.Polynomial, len(quotient)/N)
 	for i := range chunks {
 		chunk := quotient[i*N : (i+1)*N : (i+1)*N]
-		D.FFT(chunk, fft.DIF)
+		D.FFT(chunk, fft.DIF, fftOpt)
 		utils.BitReverse(chunk)
 		chunks[i] = chunk
 	}
@@ -476,6 +493,9 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 		errMu    sync.Mutex
 		firstErr error
 	)
+	// Per-chunk FFTs inside each module run with their internal parallelism
+	// capped so the outer module fan-out doesn't multiply with the FFT's own.
+	fftNbTasks := parallel.NbTasksPerJob(len(moduleNames))
 	parallel.Execute(len(moduleNames), func(start, end int) {
 		for idx := start; idx < end; idx++ {
 			moduleName := moduleNames[idx]
@@ -493,9 +513,9 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 				err        error
 			)
 			if module.VanishingRelation.Root.Field == field.Ext {
-				extChunks, err = computeExtAIRQuotientChunks(pr.t.Base, pr.t.Ext, vrel, N, module.D, &pr.domainCache)
+				extChunks, err = computeExtAIRQuotientChunks(pr.t.Base, pr.t.Ext, vrel, N, module.D, &pr.domainCache, fftNbTasks)
 			} else {
-				baseChunks, err = computeBaseAIRQuotientChunks(pr.t.Base, vrel, N, module.D, &pr.domainCache)
+				baseChunks, err = computeBaseAIRQuotientChunks(pr.t.Base, vrel, N, module.D, &pr.domainCache, fftNbTasks)
 			}
 			if err != nil {
 				errMu.Lock()
@@ -594,6 +614,12 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 
 // ComputeEvaluationsAtZeta computes the evaluations at zeta of every polynomial
 // appearing in every vanishing relation of every module.
+//
+// Each per-column evaluation is an independent FFTInverse + Horner pass, so we
+// gather every (poly, evaluation point) pair across all modules into a single
+// task list and fan it out across goroutines. Each inner FFT is capped to 1
+// goroutine (fft.WithNbTasks(1)) since the column-level fan-out already
+// saturates the CPUs.
 func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 	config := expr.NewConfig(
 		expr.WithoutLagrangeColumns(),
@@ -602,109 +628,143 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 		expr.WithoutPublicColumns(),
 	)
 
-	type zetaEval struct {
-		key string
-		val ext.E4
-	}
-
 	moduleNames := make([]string, 0, len(pr.program.Modules))
 	for name := range pr.program.Modules {
 		moduleNames = append(moduleNames, name)
 	}
 	sort.Strings(moduleNames)
 
-	results := make([][]zetaEval, len(moduleNames))
-	errs := make([]error, len(moduleNames))
-	parallel.Execute(len(moduleNames), func(start, end int) {
-		for idx := start; idx < end; idx++ {
-
-			// trace polynomials
-			module := pr.program.Modules[moduleNames[idx]]
-			leaves := module.VanishingRelation.LeavesFull(config)
-			local := make([]zetaEval, 0, len(leaves))
-			for _, leaf := range leaves {
-				evalPoint := pr.zeta
-				if leaf.Type == expr.RotatedColumn {
-					shift := ((leaf.Shift % module.N) + module.N) % module.N
-					var omegaPow koalabear.Element
-					omegaPow.SetOne()
-					for k := 0; k < shift; k++ {
-						omegaPow.Mul(&omegaPow, &module.D.Generator)
-					}
-					evalPoint.MulByElement(&evalPoint, &omegaPow)
-				}
-
-				if p, ok := pr.t.Ext[leaf.Name]; ok {
-					val := poly.ExtEvaluateAtExt(p, module.D, evalPoint)
-					local = append(local, zetaEval{key: leaf.String(), val: val})
-					continue
-				}
-				p, ok := pr.t.Base[leaf.Name]
-				if !ok {
-					errs[idx] = fmt.Errorf("ComputeEvaluationsAtZeta: column %q not found in trace", leaf.Name)
-					return
-				}
-				val := poly.EvaluateAtExt(p, module.D, evalPoint)
-				local = append(local, zetaEval{key: leaf.String(), val: val})
-			}
-
-			// air chunks
-			evalPoint := pr.zeta
-			for i := 0; ; i++ {
-				chunkName := constants.QuotientChunkName(moduleNames[idx], i)
-				if chunk, ok := pr.airTrace.Base[chunkName]; ok {
-					val := poly.EvaluateAtExt(chunk, module.D, evalPoint)
-					local = append(local, zetaEval{key: chunkName, val: val})
-					continue
-				}
-				if chunk, ok := pr.airTrace.Ext[chunkName]; ok {
-					val := poly.ExtEvaluateAtExt(chunk, module.D, evalPoint)
-					local = append(local, zetaEval{key: chunkName, val: val})
-					continue
-				}
-				break
-			}
-
-			results[idx] = local
-		}
-	})
-	for _, err := range errs {
-		if err != nil {
-			return err
+	lagrangesByN := make(map[int][]ext.E6)
+	for _, moduleName := range moduleNames {
+		N := pr.program.Modules[moduleName].N
+		if _, ok := lagrangesByN[N]; !ok {
+			lagrangesByN[N] = poly.LagrangesAtZeta(pr.zeta, N)
 		}
 	}
-	for _, local := range results {
-		for _, ev := range local {
-			pr.Proof.SetValueAtZetaExt(ev.key, ev.val)
+
+	type evalTask struct {
+		key       string
+		field     field.Kind
+		shift     int
+		lagranges []ext.E6
+		base      poly.Polynomial
+		ext       poly.ExtPolynomial
+	}
+
+	tasks := make([]evalTask, 0)
+	addBaseTask := func(key string, p poly.Polynomial, moduleN, shift int) error {
+		if len(p) != 1 && len(p) != moduleN {
+			return fmt.Errorf("ComputeEvaluationsAtZeta: base polynomial %q has size %d, module has size %d", key, len(p), moduleN)
 		}
+		tasks = append(tasks, evalTask{
+			key:       key,
+			field:     field.Base,
+			shift:     shift,
+			lagranges: lagrangesByN[moduleN],
+			base:      p,
+		})
+		return nil
+	}
+	addExtTask := func(key string, p poly.ExtPolynomial, moduleN, shift int) error {
+		if len(p) != 1 && len(p) != moduleN {
+			return fmt.Errorf("ComputeEvaluationsAtZeta: extension polynomial %q has size %d, module has size %d", key, len(p), moduleN)
+		}
+		tasks = append(tasks, evalTask{
+			key:       key,
+			field:     field.Ext,
+			shift:     shift,
+			lagranges: lagrangesByN[moduleN],
+			ext:       p,
+		})
+		return nil
+	}
+
+	for _, moduleName := range moduleNames {
+		module := pr.program.Modules[moduleName]
+		for _, leaf := range module.VanishingRelation.LeavesFull(config) {
+			shift := 0
+			if leaf.Type == expr.RotatedColumn {
+				shift = ((leaf.Shift % module.N) + module.N) % module.N
+			}
+			if p, ok := pr.t.Ext[leaf.Name]; ok {
+				if err := addExtTask(leaf.String(), p, module.N, shift); err != nil {
+					return err
+				}
+				continue
+			}
+			p, ok := pr.t.Base[leaf.Name]
+			if !ok {
+				return fmt.Errorf("ComputeEvaluationsAtZeta: column %q not found in trace", leaf.Name)
+			}
+			if err := addBaseTask(leaf.String(), p, module.N, shift); err != nil {
+				return err
+			}
+		}
+
+		for i := 0; ; i++ {
+			chunkName := constants.QuotientChunkName(moduleName, i)
+			if chunk, ok := pr.airTrace.Base[chunkName]; ok {
+				if err := addBaseTask(chunkName, chunk, module.N, 0); err != nil {
+					return err
+				}
+				continue
+			}
+			if chunk, ok := pr.airTrace.Ext[chunkName]; ok {
+				if err := addExtTask(chunkName, chunk, module.N, 0); err != nil {
+					return err
+				}
+				continue
+			}
+			break
+		}
+	}
+
+	values := make([]ext.E6, len(tasks))
+	parallel.Execute(len(tasks), func(start, end int) {
+		for i := start; i < end; i++ {
+			task := tasks[i]
+			if task.field == field.Ext {
+				if len(task.ext) == 1 {
+					values[i].Set(&task.ext[0])
+				} else {
+					values[i] = poly.ExtEvaluateLagrangeAtExt(task.ext, task.lagranges, task.shift)
+				}
+				continue
+			}
+			if len(task.base) == 1 {
+				values[i] = liftBaseToExt(task.base[0])
+			} else {
+				values[i] = poly.EvaluateLagrangeAtExt(task.base, task.lagranges, task.shift)
+			}
+		}
+	})
+	for i, task := range tasks {
+		pr.Proof.SetValueAtZetaExt(task.key, values[i])
 	}
 
 	return nil
 }
 
-func addScaledExtColumn(dst, col, scratch poly.ExtPolynomial, alpha *ext.E4) {
-	if len(col) == 1 {
-		var term ext.E4
-		term.Mul(&col[0], alpha)
-		for i := range dst {
-			dst[i].Add(&dst[i], &term)
-		}
-		return
-	}
-	ext.Vector(scratch).ScalarMul(ext.Vector(col), alpha)
-	ext.Vector(dst).Add(ext.Vector(dst), ext.Vector(scratch))
-}
+// deepQuotientBundle aggregates everything needed to add one DEEP-quotient
+// shift block's contribution to deepQuotient[*]:
+//
+//	deepQuotient[x] += (vs - sum_k(scales_k * cols_k[x])) / (zs - omega^x)
+//
+// The serial alpha-power chain in the original code is unrolled into the
+// scales slices below, so the per-row loop has no cross-column data dependency
+// and can be chunked across goroutines.
+type deepQuotientBundle struct {
+	zs ext.E6 // shifted evaluation point
+	vs ext.E6 // alpha-weighted sum of evaluations at zs
 
-func addScaledBaseColumn(dst poly.ExtPolynomial, col poly.Polynomial, alpha *ext.E4) {
-	if len(col) == 1 {
-		var term ext.E4
-		term.MulByElement(alpha, &col[0])
-		for i := range dst {
-			dst[i].Add(&dst[i], &term)
-		}
-		return
-	}
-	ext.Vector(dst).MulAccByElement(col, alpha)
+	// constContrib is the contribution from constant (len-1) columns, summed
+	// in advance so the per-row loop only iterates real-width columns.
+	constContrib ext.E6
+
+	extCols    []poly.ExtPolynomial
+	extScales  []ext.E6
+	baseCols   []poly.Polynomial
+	baseScales []ext.E6
 }
 
 func (pr *proverRuntime) ComputeDeepQuotient() error {
@@ -726,88 +786,59 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 	for i, N := range sizes {
 		deepQuotient := make(poly.ExtPolynomial, N)
 
-		var alphaAcc ext.E4
+		var alphaAcc ext.E6
 		alphaAcc.SetOne()
 
 		domainN := domainBySize[N]
-		scratch := make(poly.ExtPolynomial, N)
 
+		// ---- Phase 1: vanishing-relation columns, one bundle per shift ----
+		bundles := make([]deepQuotientBundle, 0, len(dqLayout.Shifts[i])+1)
 		for j, shift := range dqLayout.Shifts[i] {
 			var omegaShift koalabear.Element
-			omegaShift.SetOne()
-			for k := 0; k < shift; k++ {
-				omegaShift.Mul(&omegaShift, &domainN.Generator)
-			}
-			z_s := pr.zeta
-			z_s.MulByElement(&z_s, &omegaShift)
+			omegaShift.Exp(domainN.Generator, big.NewInt(int64(shift)))
+			zs := pr.zeta
+			zs.MulByElement(&zs, &omegaShift)
 
-			C_s := make(poly.ExtPolynomial, N)
-			var v_s ext.E4
-			names := dqLayout.Names[i][j]
-			keys := dqLayout.Keys[i][j]
-			for k := range names {
-				evalAtZ, ok := pr.Proof.ValueAtZetaExt(keys[k])
-				if !ok {
-					return fmt.Errorf("ComputeDeepQuotient: %q not found in ValuesAtZeta", keys[k])
-				}
-				colExt, hasExt := pr.t.Ext[names[k]]
-				colBase, hasBase := pr.t.Base[names[k]]
-				if !hasExt && !hasBase {
-					return fmt.Errorf("ComputeDeepQuotient: column %q not found in trace", names[k])
-				}
-				if hasExt {
-					addScaledExtColumn(C_s, colExt, scratch, &alphaAcc)
-				} else {
-					addScaledBaseColumn(C_s, colBase, &alphaAcc)
-				}
-				var term ext.E4
-				term.Mul(&evalAtZ, &alphaAcc)
-				v_s.Add(&v_s, &term)
-				alphaAcc.Mul(&alphaAcc, &pr.alpha)
+			b, nextAlpha, err := pr.buildDeepQuotientBundle(
+				zs,
+				dqLayout.Names[i][j],
+				dqLayout.Keys[i][j],
+				pr.t.Base, pr.t.Ext,
+				alphaAcc,
+			)
+			if err != nil {
+				return err
 			}
-
-			DQ_s := poly.DeepQuotientExt(C_s, v_s, z_s, domainN)
-			for x := 0; x < N; x++ {
-				deepQuotient[x].Add(&deepQuotient[x], &DQ_s[x])
-			}
+			bundles = append(bundles, b)
+			alphaAcc = nextAlpha
 		}
 
+		// ---- Phase 2: AIR chunks at z=zeta (no shift) ----
 		if len(dqLayout.AIRChunks[i]) > 0 {
-			C_s := make(poly.ExtPolynomial, N)
-			var v_s ext.E4
-			for _, chunkName := range dqLayout.AIRChunks[i] {
-				evalAtZ, ok := pr.Proof.ValueAtZetaExt(chunkName)
-				if !ok {
-					return fmt.Errorf("ComputeDeepQuotient: %q not found in ValuesAtZeta", chunkName)
-				}
-				chunkExt, hasExt := pr.airTrace.Ext[chunkName]
-				chunkBase, hasBase := pr.airTrace.Base[chunkName]
-				if !hasExt && !hasBase {
-					return fmt.Errorf("ComputeDeepQuotient: AIR chunk %q not found in trace", chunkName)
-				}
-				if hasExt {
-					addScaledExtColumn(C_s, chunkExt, scratch, &alphaAcc)
-				} else {
-					addScaledBaseColumn(C_s, chunkBase, &alphaAcc)
-				}
-				var term ext.E4
-				term.Mul(&evalAtZ, &alphaAcc)
-				v_s.Add(&v_s, &term)
-				alphaAcc.Mul(&alphaAcc, &pr.alpha)
+			b, nextAlpha, err := pr.buildDeepQuotientBundle(
+				pr.zeta,
+				dqLayout.AIRChunks[i],
+				dqLayout.AIRChunks[i], // keys == names for AIR chunks
+				pr.airTrace.Base, pr.airTrace.Ext,
+				alphaAcc,
+			)
+			if err != nil {
+				return err
 			}
-
-			DQ_air := poly.DeepQuotientExt(C_s, v_s, pr.zeta, domainN)
-			for x := 0; x < N; x++ {
-				deepQuotient[x].Add(&deepQuotient[x], &DQ_air[x])
-			}
+			bundles = append(bundles, b)
+			alphaAcc = nextAlpha
 		}
+
+		accumulateDeepQuotient(deepQuotient, bundles, domainN)
 
 		deepQuotients[N] = deepQuotient
 	}
 
+	// The DEEP quotients chunks are computed and grouped in decreasing size order, we can build the levels to call
+	// multi degree FRI
 	levels := make([]fri.Level, len(sizes))
 	for li, N := range sizes {
-		encoder := reedsolomon.NewEncoderWithDomainCache(uint64(constants.RATE)*uint64(N), &pr.domainCache)
+		encoder := reedsolomon.NewEncoder(uint64(constants.RATE)*uint64(N), reedsolomon.WithCache(&pr.domainCache))
 		encoded := encoder.EncodeExt(deepQuotients[N], domainBySize[N])
 
 		tree, err := pr.friParams.BuildLevelTreeExt(encoded)
@@ -834,6 +865,115 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 	}
 
 	return nil
+}
+
+// buildDeepQuotientBundle collects column data + per-column alpha scale factors
+// for one shift block and returns the bundle plus the next alpha accumulator.
+// Constant (len-1) columns are folded into bundle.constContrib so the per-row
+// loop only iterates real-width columns.
+//
+// names and keys are parallel: names[k] looks up the trace polynomial,
+// keys[k] looks up the value at zeta in pr.Proof (for AIR chunks the two
+// coincide).
+func (pr *proverRuntime) buildDeepQuotientBundle(
+	zs ext.E6,
+	names, keys []string,
+	traceBase map[string]poly.Polynomial,
+	traceExt map[string]poly.ExtPolynomial,
+	alphaStart ext.E6,
+) (deepQuotientBundle, ext.E6, error) {
+	b := deepQuotientBundle{zs: zs}
+	scale := alphaStart
+	for k, name := range names {
+		evalAtZ, ok := pr.Proof.ValueAtZetaExt(keys[k])
+		if !ok {
+			return deepQuotientBundle{}, ext.E6{}, fmt.Errorf("ComputeDeepQuotient: %q not found in ValuesAtZeta", keys[k])
+		}
+		colExt, hasExt := traceExt[name]
+		colBase, hasBase := traceBase[name]
+		if !hasExt && !hasBase {
+			return deepQuotientBundle{}, ext.E6{}, fmt.Errorf("ComputeDeepQuotient: column %q not found in trace", name)
+		}
+
+		var term ext.E6
+		term.Mul(&evalAtZ, &scale)
+		b.vs.Add(&b.vs, &term)
+
+		switch {
+		case hasExt && len(colExt) == 1:
+			term.Mul(&colExt[0], &scale)
+			b.constContrib.Add(&b.constContrib, &term)
+		case hasExt:
+			b.extCols = append(b.extCols, colExt)
+			b.extScales = append(b.extScales, scale)
+		case len(colBase) == 1:
+			term.MulByElement(&scale, &colBase[0])
+			b.constContrib.Add(&b.constContrib, &term)
+		default:
+			b.baseCols = append(b.baseCols, colBase)
+			b.baseScales = append(b.baseScales, scale)
+		}
+
+		scale.Mul(&scale, &pr.alpha)
+	}
+	return b, scale, nil
+}
+
+// accumulateDeepQuotient adds every bundle's DEEP-quotient contribution into
+// deepQuotient using a single row-chunked parallel pass: each chunk computes
+// (z_s - omega^x)^-1 in batch (BatchInvertE6), then sweeps every bundle to
+// fold its (vs - sum_k scale_k * col_k[x]) numerator and add to deepQuotient[x].
+// One pass amortises C_s materialisation away — only a row-sized denominator
+// buffer per chunk is allocated.
+func accumulateDeepQuotient(deepQuotient poly.ExtPolynomial, bundles []deepQuotientBundle, domain *fft.Domain) {
+	N := len(deepQuotient)
+	if N == 0 || len(bundles) == 0 {
+		return
+	}
+
+	parallel.Execute(N, func(start, end int) {
+		chunkLen := end - start
+
+		// Compute denominators (z_s - omega^x) for every bundle, batch invert.
+		denoms := make([]ext.E6, chunkLen*len(bundles))
+		var omegaX koalabear.Element
+		if start == 0 {
+			omegaX.SetOne()
+		} else {
+			omegaX.Exp(domain.Generator, big.NewInt(int64(start)))
+		}
+		for x := 0; x < chunkLen; x++ {
+			omegaExt := hash.LiftBaseToExt(omegaX)
+			for b := range bundles {
+				denoms[b*chunkLen+x].Sub(&bundles[b].zs, &omegaExt)
+			}
+			omegaX.Mul(&omegaX, &domain.Generator)
+		}
+		invs := ext.BatchInvertE6(denoms)
+
+		// Sweep bundles into deepQuotient row by row.
+		for b := range bundles {
+			bun := &bundles[b]
+			invRow := invs[b*chunkLen : (b+1)*chunkLen]
+			for x := start; x < end; x++ {
+				Cx := bun.constContrib
+				for k, col := range bun.extCols {
+					var term ext.E6
+					term.Mul(&bun.extScales[k], &col[x])
+					Cx.Add(&Cx, &term)
+				}
+				for k, col := range bun.baseCols {
+					var term ext.E6
+					term.MulByElement(&bun.baseScales[k], &col[x])
+					Cx.Add(&Cx, &term)
+				}
+				var num, dqx ext.E6
+				num.Sub(&bun.vs, &Cx)
+				dqx.Mul(&num, &invRow[x-start])
+				deepQuotient[x].Add(&deepQuotient[x], &dqx)
+			}
+		}
+	})
 }
 
 // openWMerkleAt opens a WMerkleTree at the leaf index corresponding to FRI
@@ -867,19 +1007,40 @@ func openWMerkleAt(tree commitment.WMerkleTree, source commitmentOpeningSource, 
 // commitments. Trees are walked in the canonical layout order
 // (setup → trace per round → AIR), and each tree is opened at
 // `s mod tree.NumLeaves()` (= s reduced mod RATE·N/2 for the tree's size N).
+//
+// The (query, tree) opens are fully independent — disjoint output slots,
+// read-only access to allTrees / openingSources / domainCache — so we
+// flatten them into one work list and fan it out.
 func (pr *proverRuntime) SampleEvaluations() error {
 	NQ := len(pr.queryPositions)
 	pr.Proof.PointSamplings = make([][]commitment.WMerkleProof, NQ)
-	for q, s := range pr.queryPositions {
-		samplings := make([]commitment.WMerkleProof, pr.layout.NumTrees)
-		for i, tree := range pr.allTrees {
-			wp, err := openWMerkleAt(tree, pr.openingSources[i], s, &pr.domainCache)
+	for q := range pr.Proof.PointSamplings {
+		pr.Proof.PointSamplings[q] = make([]commitment.WMerkleProof, pr.layout.NumTrees)
+	}
+
+	numTrees := pr.layout.NumTrees
+	total := NQ * numTrees
+	if total == 0 {
+		return nil
+	}
+
+	errs := make([]error, total)
+	parallel.Execute(total, func(start, end int) {
+		for t := start; t < end; t++ {
+			q := t / numTrees
+			i := t % numTrees
+			wp, err := openWMerkleAt(pr.allTrees[i], pr.openingSources[i], pr.queryPositions[q], &pr.domainCache)
 			if err != nil {
-				return fmt.Errorf("SampleEvaluations: tree %d query %d: %w", i, q, err)
+				errs[t] = fmt.Errorf("SampleEvaluations: tree %d query %d: %w", i, q, err)
+				return
 			}
-			samplings[i] = wp
+			pr.Proof.PointSamplings[q][i] = wp
 		}
-		pr.Proof.PointSamplings[q] = samplings
+	})
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -899,33 +1060,49 @@ func Prove(t trace.Trace, provingKey setup.ProvingKey, publicInputs public.Input
 		return proof.Proof{}, err
 	}
 
+	report := func(name string, d time.Duration) {
+		if config.PhaseCallback != nil {
+			config.PhaseCallback(name, d)
+		}
+	}
+
 	// run ExecuteSteps
+	t0 := time.Now()
 	if err := pr.ExecuteSteps(); err != nil {
 		return proof.Proof{}, err
 	}
+	report("execute-steps", time.Since(t0))
 
 	// run ComputeAIRQuotients
+	t0 = time.Now()
 	if err := pr.ComputeAIRQuotients(); err != nil {
 		return proof.Proof{}, err
 	}
+	report("compute-air-quotients", time.Since(t0))
 
 	// run ComputeEvaluationsAtZeta
+	t0 = time.Now()
 	if err := pr.ComputeEvaluationsAtZeta(); err != nil {
 		return proof.Proof{}, err
 	}
+	report("evaluations-at-zeta", time.Since(t0))
 
 	// ------ PCS related verification ------
 
 	if !config.SkipFRI {
 		// Compute DEEP quotient and FRI-prove that it is the evaluation of a polynomial of degree N
+		t0 = time.Now()
 		if err := pr.ComputeDeepQuotient(); err != nil {
 			return proof.Proof{}, err
 		}
+		report("deep-quotient+fri-commit", time.Since(t0))
 
 		// Brige FRI <-> polynomial commitments, using sample at queryPositions
+		t0 = time.Now()
 		if err := pr.SampleEvaluations(); err != nil {
 			return proof.Proof{}, err
 		}
+		report("fri-query-open", time.Since(t0))
 	}
 
 	return pr.Proof, nil

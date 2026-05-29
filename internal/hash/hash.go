@@ -12,6 +12,7 @@ const (
 	NB_FULL_ROUND      = 6
 	NB_PARTIAL_ROUNDS  = 21
 	DIGEST_NB_ELEMENTS = 8
+	ExtDegree          = 6
 )
 
 // 8 to land in a space big enough to be collision resistant
@@ -22,7 +23,7 @@ const StringChunkSize = 3
 type FieldHasher interface {
 	Reset()
 	WriteElements(...koalabear.Element)
-	WriteExt(...ext.E4)
+	WriteExt(...ext.E6)
 	Sum() Digest
 }
 
@@ -51,15 +52,43 @@ func StringToElements(domainTag uint64, s string) []koalabear.Element {
 	return res
 }
 
-func OutputToExt(out Digest) ext.E4 {
-	return ElementsToExt(out[0], out[1], out[2], out[3])
+func OutputToExt(out Digest) ext.E6 {
+	return ElementsToExt(out[0], out[1], out[2], out[3], out[4], out[5])
 }
 
-func ElementsToExt(a0, a1, b0, b1 koalabear.Element) ext.E4 {
-	var res ext.E4
+func ElementsToExt(a0, a1, b0, b1, c0, c1 koalabear.Element) ext.E6 {
+	var res ext.E6
 	res.B0.A0.Set(&a0)
 	res.B0.A1.Set(&a1)
 	res.B1.A0.Set(&b0)
 	res.B1.A1.Set(&b1)
+	res.B2.A0.Set(&c0)
+	res.B2.A1.Set(&c1)
 	return res
+}
+
+func LiftBaseToExt(v koalabear.Element) ext.E6 {
+	var res ext.E6
+	res.B0.A0.Set(&v)
+	return res
+}
+
+func IsBaseExt(v ext.E6) bool {
+	return v.B0.A1.IsZero() && v.B1.IsZero() && v.B2.IsZero()
+}
+
+func BaseFromExt(v ext.E6) (koalabear.Element, bool) {
+	return v.B0.A0, IsBaseExt(v)
+}
+
+func AppendExtElements(dst []koalabear.Element, v ext.E6) []koalabear.Element {
+	return append(dst,
+		v.B0.A0, v.B0.A1,
+		v.B1.A0, v.B1.A1,
+		v.B2.A0, v.B2.A1,
+	)
+}
+
+func ExtToElements(v ext.E6) []koalabear.Element {
+	return AppendExtElements(make([]koalabear.Element, 0, ExtDegree), v)
 }

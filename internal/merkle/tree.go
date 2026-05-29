@@ -15,9 +15,15 @@ package merkle
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/consensys/loom/internal/hash"
+	"github.com/consensys/loom/internal/parallel"
 )
+
+// parallelLevelThreshold is the smallest level width (in nodes) at which
+// fan-out beats serial bottom-up hashing.
+const parallelLevelThreshold = 64
 
 type LeafHash = hash.Digest
 type NodeHash = hash.Digest
@@ -25,6 +31,17 @@ type NodeHash = hash.Digest
 // NodeHasher combines two child digests into a parent digest.
 type NodeHasher interface {
 	HashNode(left, right hash.Digest) hash.Digest
+}
+
+// BatchNodeHasher is an optional fast path for hashers that can compress
+// BatchSize() (left, right) pairs in parallel (e.g. Poseidon2 via the
+// 16-lane batched permutation). Tree construction falls back to per-pair
+// HashNode for the tail (count < BatchSize()) and for hashers that don't
+// implement this interface.
+type BatchNodeHasher interface {
+	NodeHasher
+	BatchSize() int
+	HashNodes(dst, left, right []hash.Digest)
 }
 
 // Tree is a binary Merkle tree whose number of leaves is a power of two.
@@ -72,10 +89,7 @@ func (t *Tree) BuildIthLeaf(leaf hash.Digest, i int) error {
 
 // BuildNodes call this function after all the BuildIthLeaf have been called
 func (t *Tree) BuildNodes() error {
-	n := t.nLeaves
-	for i := n - 1; i >= 1; i-- {
-		t.nodes[i] = t.nodeHasher.HashNode(t.nodes[2*i], t.nodes[2*i+1])
-	}
+	t.buildInternalNodes()
 	return nil
 }
 
@@ -86,13 +100,86 @@ func (t *Tree) Build(leaves []hash.Digest) error {
 		return fmt.Errorf("merkle: got %d leaves, want %d", len(leaves), t.nLeaves)
 	}
 	n := t.nLeaves
-	for i, leaf := range leaves {
-		t.nodes[n+i] = leaf
-	}
-	for i := n - 1; i >= 1; i-- {
-		t.nodes[i] = t.nodeHasher.HashNode(t.nodes[2*i], t.nodes[2*i+1])
-	}
+	copy(t.nodes[n:], leaves)
+	t.buildInternalNodes()
 	return nil
+}
+
+// buildInternalNodes hashes internal nodes bottom-up, fanning out across
+// goroutines once a level is wide enough. Within a level all nodes are
+// independent; only the level-to-level walk is serial. When the node hasher
+// implements BatchNodeHasher, each level is processed in BatchSize() chunks
+// to amortise the SIMD-batched permutation; the tail (count < BatchSize) and
+// non-batched hashers fall back to HashNode.
+func (t *Tree) buildInternalNodes() {
+	batchHasher, hasBatch := t.nodeHasher.(BatchNodeHasher)
+	batchSize := 0
+	if hasBatch {
+		batchSize = batchHasher.BatchSize()
+		if batchSize <= 1 {
+			hasBatch = false
+		}
+	}
+
+	// Per-worker scratch slices for the batched path. Allocated once and
+	// reused across all levels (a worker takes a buffer for the duration of
+	// one level's ExecuteWithThreshold and returns it on completion). The
+	// slice header escapes through the BatchNodeHasher interface call, so a
+	// pool avoids the per-batch heap allocation Copilot flagged.
+	type batchScratch struct{ left, right, dst []hash.Digest }
+	var scratchPool sync.Pool
+	if hasBatch {
+		scratchPool.New = func() any {
+			return &batchScratch{
+				left:  make([]hash.Digest, batchSize),
+				right: make([]hash.Digest, batchSize),
+				dst:   make([]hash.Digest, batchSize),
+			}
+		}
+	}
+
+	// At each iteration 'start' is the index of the leftmost node on the
+	// current level and 'start' nodes live on the level (its width).
+	for start := t.nLeaves >> 1; start >= 1; start >>= 1 {
+		if !hasBatch || start < batchSize {
+			parallel.ExecuteWithThreshold(start, parallelLevelThreshold, func(lo, hi int) {
+				for i := start + lo; i < start+hi; i++ {
+					t.nodes[i] = t.nodeHasher.HashNode(t.nodes[2*i], t.nodes[2*i+1])
+				}
+			})
+			continue
+		}
+
+		// Batched fast path. Each goroutine works on a contiguous range of
+		// batches; the per-batch gather/scatter goes through pooled scratch
+		// buffers so there's no shared contention and no per-batch alloc.
+		nbBatches := start / batchSize
+		parallel.ExecuteWithThreshold(nbBatches, parallelLevelThreshold/batchSize+1, func(lo, hi int) {
+			s := scratchPool.Get().(*batchScratch)
+			defer scratchPool.Put(s)
+			for b := lo; b < hi; b++ {
+				base := start + b*batchSize
+				for k := 0; k < batchSize; k++ {
+					i := base + k
+					s.left[k] = t.nodes[2*i]
+					s.right[k] = t.nodes[2*i+1]
+				}
+				batchHasher.HashNodes(s.dst, s.left, s.right)
+				for k := 0; k < batchSize; k++ {
+					t.nodes[base+k] = s.dst[k]
+				}
+			}
+		})
+
+		// Tail: nodes beyond the last full batch.
+		tail := start - nbBatches*batchSize
+		if tail > 0 {
+			base := start + nbBatches*batchSize
+			for i := base; i < base+tail; i++ {
+				t.nodes[i] = t.nodeHasher.HashNode(t.nodes[2*i], t.nodes[2*i+1])
+			}
+		}
+	}
 }
 
 // Root returns the Merkle root digest. Build must be called first.

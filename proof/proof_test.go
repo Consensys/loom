@@ -38,7 +38,7 @@ func TestValueAtZetaBase(t *testing.T) {
 		t.Fatalf("got %s, want %s", got.String(), want.String())
 	}
 
-	var ext extensions.E4
+	var ext extensions.E6
 	ext.B0.A1.SetOne()
 	p.ValuesAtZeta["not_base"] = ext
 	if _, _, err := p.ValueAtZetaBase("not_base"); err == nil {

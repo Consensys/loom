@@ -39,8 +39,8 @@ func randomPoly(n int) []koalabear.Element {
 	return elems
 }
 
-func randomExtPoly(n int) []ext.E4 {
-	elems := make([]ext.E4, n)
+func randomExtPoly(n int) []ext.E6 {
+	elems := make([]ext.E6, n)
 	for i := range elems {
 		elems[i].MustSetRandom()
 	}
@@ -58,7 +58,7 @@ func buildLevelTree(t *testing.T, p fri.Params, layer []koalabear.Element) *merk
 	return tree
 }
 
-func buildLevelTreeExt(t *testing.T, p fri.Params, layer []ext.E4) *merkle.Tree {
+func buildLevelTreeExt(t *testing.T, p fri.Params, layer []ext.E6) *merkle.Tree {
 	t.Helper()
 	tree, err := p.BuildLevelTreeExt(layer)
 	if err != nil {
@@ -69,7 +69,12 @@ func buildLevelTreeExt(t *testing.T, p fri.Params, layer []ext.E4) *merkle.Tree 
 
 func testParams(t *testing.T, N, D, queries int) fri.Params {
 	t.Helper()
-	p, err := fri.NewParams(N, D, queries, commitment.DefaultLeafHasher, commitment.DefaultNodeHasher)
+	return testParamsWithOptions(t, N, D, queries)
+}
+
+func testParamsWithOptions(t *testing.T, N, D, queries int, opts ...fri.Option) fri.Params {
+	t.Helper()
+	p, err := fri.NewParams(N, D, queries, commitment.DefaultLeafHasher, commitment.DefaultNodeHasher, opts...)
 	if err != nil {
 		t.Fatalf("NewParams(%d,%d,%d): %v", N, D, queries, err)
 	}
@@ -185,6 +190,83 @@ func TestProveVerifyExtRailWithExtraLevel(t *testing.T) {
 	}
 }
 
+func TestProveVerifyWithGrinding(t *testing.T) {
+	const grindingBits = 6
+
+	p := testParamsWithOptions(t, 64, 4, 3, fri.WithGrinding(grindingBits))
+	evals, err := p.Encode(randomPoly(p.D))
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	tree := buildLevelTree(t, p, evals)
+
+	tsP := freshTS()
+	prf, _, err := fri.Prove(p, []fri.Level{{
+		D:     p.D,
+		Evals: fri.LevelEvals{Base: evals},
+		Tree:  tree,
+	}}, tsP)
+	if err != nil {
+		t.Fatalf("Prove: %v", err)
+	}
+	if got, want := len(prf.PoW), log2ForTest(p.D); got != want {
+		t.Fatalf("PoW entries = %d, want %d", got, want)
+	}
+
+	tsV := freshTS()
+	if err := fri.Verify(p, []hash.Digest{tree.Root()}, []int{p.D}, prf, tsV); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+
+	missingPoW := prf
+	missingPoW.PoW = nil
+	tsMissing := freshTS()
+	if err := fri.Verify(p, []hash.Digest{tree.Root()}, []int{p.D}, missingPoW, tsMissing); err == nil {
+		t.Fatalf("Verify accepted a proof missing FRI proof of work")
+	}
+
+	badPoW := prf
+	badPoW.PoW = copyPoW(prf.PoW)
+	for name, pow := range badPoW.PoW {
+		pow.NbBits = grindingBits + 1
+		badPoW.PoW[name] = pow
+		break
+	}
+	tsBad := freshTS()
+	if err := fri.Verify(p, []hash.Digest{tree.Root()}, []int{p.D}, badPoW, tsBad); err == nil {
+		t.Fatalf("Verify accepted a proof with mismatched FRI proof of work")
+	}
+}
+
+func TestProveVerifyExtRailWithGrinding(t *testing.T) {
+	const grindingBits = 6
+
+	p := testParamsWithOptions(t, 64, 4, 3, fri.WithGrinding(grindingBits))
+	evals, err := p.EncodeExt(randomExtPoly(p.D))
+	if err != nil {
+		t.Fatalf("EncodeExt: %v", err)
+	}
+	tree := buildLevelTreeExt(t, p, evals)
+
+	tsP := freshTS()
+	prf, _, err := fri.Prove(p, []fri.Level{{
+		D:     p.D,
+		Evals: fri.LevelEvals{Ext: evals},
+		Tree:  tree,
+	}}, tsP)
+	if err != nil {
+		t.Fatalf("Prove: %v", err)
+	}
+	if got, want := len(prf.PoW), log2ForTest(p.D); got != want {
+		t.Fatalf("PoW entries = %d, want %d", got, want)
+	}
+
+	tsV := freshTS()
+	if err := fri.Verify(p, []hash.Digest{tree.Root()}, []int{p.D}, prf, tsV); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+}
+
 // TestVerifyRejectsWrongRoot ensures Verify fails when root0 doesn't match the proof.
 func TestVerifyRejectsWrongRoot(t *testing.T) {
 	p := testParams(t, 64, 4, 4)
@@ -255,4 +337,21 @@ func TestVerifyRejectsFlippedExtLeaf(t *testing.T) {
 	if err := fri.Verify(p, []hash.Digest{tree.Root()}, []int{p.D}, prf, tsV); err == nil {
 		t.Fatal("Verify accepted a proof with a corrupted ext leaf")
 	}
+}
+
+func copyPoW(src map[string]fiatshamir.ProofOfWork) map[string]fiatshamir.ProofOfWork {
+	dst := make(map[string]fiatshamir.ProofOfWork, len(src))
+	for name, pow := range src {
+		dst[name] = pow
+	}
+	return dst
+}
+
+func log2ForTest(n int) int {
+	k := 0
+	for n > 1 {
+		n >>= 1
+		k++
+	}
+	return k
 }
