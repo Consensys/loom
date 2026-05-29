@@ -26,6 +26,13 @@ type Config struct {
 	// HashBackendID identifies the algebraic hash the inner proof was produced
 	// with. Only Poseidon2 is supported for recursion.
 	HashBackendID string
+
+	// ModulePrefix is prepended to every module / column name BuildVerifierCore
+	// emits. Use it when composing multiple verifier circuits into the same
+	// outer builder (e.g. BuildAggregationCore wires two inner proofs by
+	// instantiating BuildVerifierCore twice with distinct prefixes). The empty
+	// prefix is the default and matches the historical single-proof layout.
+	ModulePrefix string
 }
 
 // DefaultConfig returns a Config preset for Poseidon2 recursion, which is the
