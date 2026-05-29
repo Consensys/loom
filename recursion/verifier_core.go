@@ -390,10 +390,14 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: 2*len(finalPolyExt) = %d not power of two", nLastRound)
 		}
 		baseLastBits := log2int(len(finalPolyExt))
-		if baseLastBits != 2 {
-			// The final-poly inline mux is hardcoded for 2 bits; generalising
-			// is straightforward (recursive tree reduction) but deferred.
-			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: stage 8 currently supports len(finalPoly)=4 only, got %d", len(finalPolyExt))
+		if 1<<baseLastBits != len(finalPolyExt) {
+			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: len(finalPoly) = %d not a power of two", len(finalPolyExt))
+		}
+		if baseLastBits == 0 {
+			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: len(finalPoly) must be ≥ 2, got %d", len(finalPolyExt))
+		}
+		if baseLastBits > 31 {
+			return board.Program{}, trace.Trace{}, fmt.Errorf("recursion: len(finalPoly) too large (baseLastBits=%d)", baseLastBits)
 		}
 		numRounds := log2int(maxModN)
 		if numRounds < 1 {
@@ -491,23 +495,32 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 		invTwoConst := expr.Const(invTwoBase)
 		oneConst := expr.Const(koalabear.One())
 
-		// Inline 4-element E4 select indexed by (b0 + 2*b1).
-		e4Select4 := func(t [4]ext.E4, b0, b1 expr.Expr) extfield.E4Expr {
-			notB0 := oneConst.Sub(b0)
-			notB1 := oneConst.Sub(b1)
-			s00 := notB0.Mul(notB1)
-			s10 := b0.Mul(notB1)
-			s01 := notB0.Mul(b1)
-			s11 := b0.Mul(b1)
-			return extfield.Const(t[0]).MulByBase(s00).
-				Add(extfield.Const(t[1]).MulByBase(s10)).
-				Add(extfield.Const(t[2]).MulByBase(s01)).
-				Add(extfield.Const(t[3]).MulByBase(s11))
-		}
-
-		var finalPolyArr [4]ext.E4
-		for i := 0; i < 4; i++ {
-			finalPolyArr[i] = finalPolyExt[i]
+		// e4SelectTree returns the E4Expr table[sum 2^i * bits[i]] via
+		// tree reduction over k = len(bits) levels. table must have
+		// length 2^k. At each level l, pairs (lo, hi) collapse into
+		// lo + bits[l] * (hi - lo); after k levels a single E4Expr
+		// remains. Used for the FRI final-poly lookup at any
+		// power-of-two len(finalPoly).
+		e4SelectTree := func(table []ext.E4, bits []expr.Expr) extfield.E4Expr {
+			if len(table) != 1<<len(bits) {
+				panic(fmt.Sprintf("e4SelectTree: table size %d != 2^%d", len(table), len(bits)))
+			}
+			level := make([]extfield.E4Expr, len(table))
+			for i, t := range table {
+				level[i] = extfield.Const(t)
+			}
+			for l := 0; l < len(bits); l++ {
+				b := bits[l]
+				next := make([]extfield.E4Expr, len(level)/2)
+				for i := range next {
+					lo := level[2*i]
+					hi := level[2*i+1]
+					diff := hi.Sub(lo)
+					next[i] = lo.Add(diff.MulByBase(b))
+				}
+				level = next
+			}
+			return level[0]
 		}
 
 		for j := 0; j < numRounds; j++ {
@@ -578,10 +591,12 @@ func BuildVerifierCore(input RecursionInput, cfg Config) (board.Program, trace.T
 					}
 				} else {
 					// Final-poly match. base_last has exactly baseLastBits
-					// bits (= 2 with the current hardcoded mux).
-					b0 := expr.Col(query.bitsCN.Bits[0])
-					b1 := expr.Col(query.bitsCN.Bits[1])
-					finalPolyAtBase := e4Select4(finalPolyArr, b0, b1)
+					// bits of s; the table is len(finalPolyExt) = 2^baseLastBits.
+					baseBits := make([]expr.Expr, baseLastBits)
+					for i := 0; i < baseLastBits; i++ {
+						baseBits[i] = expr.Col(query.bitsCN.Bits[i])
+					}
+					finalPolyAtBase := e4SelectTree(finalPolyExt, baseBits)
 					for _, rel := range expected.EqualityConstraints(finalPolyAtBase) {
 						verifierMod.AssertZeroAt(rel, query.digestRow)
 					}
