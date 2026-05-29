@@ -124,7 +124,7 @@ func NewRSCommit(N uint64, rate uint64, leafHasher LeafHasher, nodehasher NodeHa
 // NewRSCommitWithDomainCache constructs an RSCommit using cache for the
 // Reed-Solomon encoder domain.
 func NewRSCommitWithDomainCache(N uint64, rate uint64, leafHasher LeafHasher, nodehasher NodeHasher, cache *poly.DomainCache) RSCommit {
-	rsEncoder := reedsolomon.NewEncoderWithDomainCache(rate*N, cache)
+	rsEncoder := reedsolomon.NewEncoder(rate*N, reedsolomon.WithCache(cache))
 	return RSCommit{
 		Encoder:    rsEncoder,
 		LeafHasher: leafHasher,

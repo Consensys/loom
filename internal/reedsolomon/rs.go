@@ -20,14 +20,24 @@ import (
 	"github.com/consensys/loom/internal/poly"
 )
 
-func NewEncoder(N uint64) Encoder {
-	return NewEncoderWithDomainCache(N, nil)
+type Config struct {
+	Cache *poly.DomainCache
 }
 
-// NewEncoderWithDomainCache constructs an encoder using cache for its FFT
-// domain.
-func NewEncoderWithDomainCache(N uint64, cache *poly.DomainCache) Encoder {
-	return Encoder{Domain: cache.Get(N)}
+type EncoderOption func(c *Config)
+
+func WithCache(cache *poly.DomainCache) EncoderOption {
+	return func(c *Config) {
+		c.Cache = cache
+	}
+}
+
+func NewEncoder(N uint64, opts ...EncoderOption) Encoder {
+	var config Config
+	for _, opt := range opts {
+		opt(&config)
+	}
+	return Encoder{Domain: config.Cache.Get(N)}
 }
 
 type Encoder struct {

@@ -838,7 +838,7 @@ func (pr *proverRuntime) ComputeDeepQuotient() error {
 	// multi degree FRI
 	levels := make([]fri.Level, len(sizes))
 	for li, N := range sizes {
-		encoder := reedsolomon.NewEncoderWithDomainCache(uint64(constants.RATE)*uint64(N), &pr.domainCache)
+		encoder := reedsolomon.NewEncoder(uint64(constants.RATE)*uint64(N), reedsolomon.WithCache(&pr.domainCache))
 		encoded := encoder.EncodeExt(deepQuotients[N], domainBySize[N])
 
 		tree, err := pr.friParams.BuildLevelTreeExt(encoded)
