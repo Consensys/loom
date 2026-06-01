@@ -47,6 +47,7 @@ type Config struct {
 	SkipFRI       bool
 	HashBackend   commitment.HashBackend
 	PhaseCallback func(name string, d time.Duration)
+	FriGrinding   int
 }
 
 type Option func(c *Config) error
@@ -54,6 +55,16 @@ type Option func(c *Config) error
 func EmulateFS() Option {
 	return func(c *Config) error {
 		c.EmulateFS = true
+		return nil
+	}
+}
+
+// WithFriGrinding adds nbBits of POW to FRI, to reduce the number of queries.
+// TODO the following has to be confirmed:
+// security goes from log_blowup * num_queries to log_blowup * num_queries + query_proof_of_work_bits
+func WithFriGrinding(nbBits int) Option {
+	return func(c *Config) error {
+		c.FriGrinding = nbBits
 		return nil
 	}
 }
@@ -168,7 +179,11 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 		}
 	}
 
-	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, hashBackend.LeafHasher, hashBackend.NodeHasher)
+	if config.FriGrinding > 0 {
+		res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, hashBackend.LeafHasher, hashBackend.NodeHasher, fri.WithGrinding(config.FriGrinding))
+	} else {
+		res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, hashBackend.LeafHasher, hashBackend.NodeHasher)
+	}
 	if err != nil {
 		return res, err
 	}

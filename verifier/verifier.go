@@ -41,6 +41,7 @@ import (
 type Config struct {
 	SkipFRI     bool
 	HashBackend commitment.HashBackend
+	FriGrinding int
 }
 
 type Option func(c *Config) error
@@ -55,6 +56,14 @@ func SkipFRI() Option {
 func WithHashBackend(backend commitment.HashBackend) Option {
 	return func(c *Config) error {
 		c.HashBackend = backend
+		return nil
+	}
+}
+
+// WithFriGrinding adds nbBits of POW to FRI, to reduce the number of queries.
+func WithFriGrinding(nbBits int) Option {
+	return func(c *Config) error {
+		c.FriGrinding = nbBits
 		return nil
 	}
 }
@@ -157,7 +166,11 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 		}
 	}
 
-	res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, hashBackend.LeafHasher, hashBackend.NodeHasher, fri.WoFullDomainAllocation())
+	if config.FriGrinding > 0 {
+		res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, hashBackend.LeafHasher, hashBackend.NodeHasher, fri.WoFullDomainAllocation(), fri.WithGrinding(config.FriGrinding))
+	} else {
+		res.friParams, err = fri.NewParams(int(constants.RATE)*maxN, maxN, constants.NUM_QUERIES, hashBackend.LeafHasher, hashBackend.NodeHasher, fri.WoFullDomainAllocation())
+	}
 	if err != nil {
 		return res, err
 	}

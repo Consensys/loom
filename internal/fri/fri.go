@@ -58,6 +58,7 @@ type Config struct {
 
 type Option func(c *Config) error
 
+// WoFullDomainAllocation useful for the verifier -> only the generator of the domain is needed, no need to pre-compute the twiddles.
 func WoFullDomainAllocation() Option {
 	return func(c *Config) error {
 		c.WoFullDomainAllocation = true
