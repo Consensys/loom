@@ -42,6 +42,7 @@ type Config struct {
 	SkipFRI     bool
 	HashBackend commitment.HashBackend
 	FriGrinding int
+	Fs          *fiatshamir.Transcript
 }
 
 type Option func(c *Config) error
@@ -49,6 +50,14 @@ type Option func(c *Config) error
 func SkipFRI() Option {
 	return func(c *Config) error {
 		c.SkipFRI = true
+		return nil
+	}
+}
+
+// WithTranscript provides a running transcript to the prover
+func WithTranscript(fs *fiatshamir.Transcript) Option {
+	return func(c *Config) error {
+		c.Fs = fs
 		return nil
 	}
 }
@@ -132,7 +141,11 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 		res.roots[res.layout.SetupEnd+i] = root
 	}
 
-	res.fs = fiatshamir.NewTranscript(hashBackend.NewTranscriptHasher())
+	if config.Fs != nil {
+		res.fs = config.Fs
+	} else {
+		res.fs = fiatshamir.NewTranscript(hashBackend.NewTranscriptHasher())
+	}
 	numRounds := len(program.FScolumnsDependencies)
 	for i := 0; i < numRounds; i++ {
 		res.fs.NewChallenge(constants.CanonicalChallengeName(i))

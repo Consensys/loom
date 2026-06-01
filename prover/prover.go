@@ -48,6 +48,7 @@ type Config struct {
 	HashBackend   commitment.HashBackend
 	PhaseCallback func(name string, d time.Duration)
 	FriGrinding   int
+	Fs            *fiatshamir.Transcript
 }
 
 type Option func(c *Config) error
@@ -55,6 +56,14 @@ type Option func(c *Config) error
 func EmulateFS() Option {
 	return func(c *Config) error {
 		c.EmulateFS = true
+		return nil
+	}
+}
+
+// WithTranscript provides a running transcript to the prover
+func WithTranscript(fs *fiatshamir.Transcript) Option {
+	return func(c *Config) error {
+		c.Fs = fs
 		return nil
 	}
 }
@@ -192,7 +201,11 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 
 	// initialize FS transcript and pre-register all challenges
 	// (challenge@loom_0..n-1, zeta, and alpha_DEEP)
-	res.fs = fiatshamir.NewTranscript(hashBackend.NewTranscriptHasher())
+	if config.Fs != nil {
+		res.fs = config.Fs
+	} else {
+		res.fs = fiatshamir.NewTranscript(hashBackend.NewTranscriptHasher())
+	}
 	numRounds := len(program.FScolumnsDependencies)
 	for i := 0; i < numRounds; i++ {
 		res.fs.NewChallenge(constants.CanonicalChallengeName(i))
