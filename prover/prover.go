@@ -43,7 +43,6 @@ import (
 )
 
 type Config struct {
-	EmulateFS     bool
 	SkipFRI       bool
 	HashBackend   commitment.HashBackend
 	PhaseCallback func(name string, d time.Duration)
@@ -52,13 +51,6 @@ type Config struct {
 }
 
 type Option func(c *Config) error
-
-func EmulateFS() Option {
-	return func(c *Config) error {
-		c.EmulateFS = true
-		return nil
-	}
-}
 
 // WithTranscript provides a running transcript to the prover
 func WithTranscript(fs *fiatshamir.Transcript) Option {
@@ -425,18 +417,11 @@ func (pr *proverRuntime) ExecuteSteps() error {
 				}
 
 				var challengeVal ext.E6
-				if pr.config.EmulateFS {
-					challengeVal.MustSetRandom()
-					if _, err := pr.fs.ComputeChallenge(challengeName); err != nil {
-						return fmt.Errorf("ExecuteSteps: compute emulated challenge %s: %w", challengeName, err)
-					}
-				} else {
-					challenge, err := pr.fs.ComputeChallenge(challengeName)
-					if err != nil {
-						return err
-					}
-					challengeVal = hash.OutputToExt(challenge)
+				challenge, err := pr.fs.ComputeChallenge(challengeName)
+				if err != nil {
+					return err
 				}
+				challengeVal = hash.OutputToExt(challenge)
 
 				pr.mu.Lock()
 				pr.t.SetExt(challengeName, []ext.E6{challengeVal})
@@ -624,18 +609,11 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 		}
 	}
 
-	if pr.config.EmulateFS {
-		pr.zeta.MustSetRandom()
-		if _, err := pr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT); err != nil {
-			return fmt.Errorf("ComputeAIRQuotients: compute emulated zeta: %w", err)
-		}
-	} else {
-		zeta, err := pr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
-		if err != nil {
-			return err
-		}
-		pr.zeta = hash.OutputToExt(zeta)
+	zeta, err := pr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
+	if err != nil {
+		return err
 	}
+	pr.zeta = hash.OutputToExt(zeta)
 
 	return nil
 }

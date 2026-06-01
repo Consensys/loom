@@ -47,13 +47,6 @@ func (pr *proverRuntime) deriveDeepAlpha(layout DEEPquotientLayout) error {
 	if err := BindDeepEvaluationClaims(pr.fs, pr.Proof, layout); err != nil {
 		return err
 	}
-	if pr.config.EmulateFS {
-		pr.alpha.MustSetRandom()
-		if _, err := pr.fs.ComputeChallenge(constants.DEEP_ALPHA); err != nil {
-			return fmt.Errorf("deriveDeepAlpha: compute emulated alpha: %w", err)
-		}
-		return nil
-	}
 	alpha, err := pr.fs.ComputeChallenge(constants.DEEP_ALPHA)
 	if err != nil {
 		return err
