@@ -30,9 +30,9 @@ import (
 // per entry, sized as specified. With multiple distinct sizes the FRI
 // verifier exercises multi-level folding (level intro per distinct size).
 type innerSpec struct {
-	label    string
-	sizes    []int
-	skipFRI  bool
+	label   string
+	sizes   []int
+	skipFRI bool
 }
 
 // allInnerSpecs are the benchmark workloads. Add an entry here to
@@ -181,7 +181,7 @@ func BenchmarkRecursionProve(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				if _, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI()); err != nil {
+				if _, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram /*, prover.SkipFRI()*/); err != nil {
 					b.Fatalf("outer prove: %v", err)
 				}
 			}

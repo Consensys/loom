@@ -38,9 +38,9 @@ import (
 	"github.com/consensys/loom/recursion/extfield"
 )
 
-// EvalDAG walks d in topological order and returns an E4Expr whose value
+// EvalDAG walks d in topological order and returns an E6Expr whose value
 // is dag.EvalExt(values). leafValues maps each non-constant leaf's
-// String() key (the same key dag.EvalExt uses) to the E4Expr representing
+// String() key (the same key dag.EvalExt uses) to the E6Expr representing
 // that leaf's value at zeta.
 //
 // Missing values panic — leaf coverage must be complete.
@@ -119,7 +119,7 @@ func PowExt(base extfield.E6Expr, n int) extfield.E6Expr {
 //
 // is the AIR quotient reconstructed from per-chunk evaluations at zeta.
 //
-// Four constraints are emitted on mod, one per E4 limb. The constraint
+// Four constraints are emitted on mod, one per E6 limb. The constraint
 // degree grows with N (zeta^N is inlined); for inner modules with
 // N <= 16 this is comfortably within Loom's degree budget. For larger
 // N a future variant should materialize the zeta-power chain as
@@ -224,4 +224,3 @@ func buildAIRRelationsWithZetaPow(
 	rhs := zetaPowNMinusOne.Mul(qZeta)
 	return v.EqualityConstraints(rhs)
 }
-

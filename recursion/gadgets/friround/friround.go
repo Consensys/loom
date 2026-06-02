@@ -30,11 +30,11 @@
 //
 // Column layout per row:
 //
-//   - P_0..3, Q_0..3, alpha_0..3                 // E4 limbs
+//   - P_0..5, Q_0..5, alpha_0..5                    // E6 limbs
 //   - base                                          // uint in [0, 2^kBits)
 //   - <bits-decomp>.bit_0..bit_{kBits-1}            // via bits.Register
 //   - <binexp>.step_1..step_{kBits}                 // via binexp.Register
-//   - expected_0..3                                 // E4 limbs
+//   - expected_0..5                                 // E6 limbs
 //
 // The xInv value used in the fold equation is the LAST step of the binexp
 // chain, so corruption of any intermediate step or bit propagates into the

@@ -19,7 +19,7 @@ import (
 	"github.com/consensys/loom/recursion/extfield"
 )
 
-// ExtFold is one E4-rail fold-step input record.
+// ExtFold is one E6-rail fold-step input record.
 type ExtFold struct {
 	P     ext.E6
 	Q     ext.E6
@@ -45,7 +45,7 @@ func (f ExtFold) Folded() ext.E6 {
 	return out
 }
 
-// GenerateExtTrace fills the witness columns for an E4-rail fold module. The
+// GenerateExtTrace fills the witness columns for an E6-rail fold module. The
 // number of folds may be less than capacity; padding rows store
 // P = Q = alpha = 0, xInv = 1, folded = 0 (which satisfies the constraint
 // trivially).

@@ -24,7 +24,7 @@
 //   - omega_j is the round-j domain generator (base field, constant per
 //     round);
 //   - base = s mod (N_j / 2), a per-query position;
-//   - alpha is the round-j fold challenge (Fiat-Shamir, lives in E4);
+//   - alpha is the round-j fold challenge (Fiat-Shamir, lives in E6);
 //   - 1/2 is a precomputed base-field constant.
 //
 // The gadget treats xInv = omega_j^{-base} as a witness column supplied by
@@ -34,8 +34,8 @@
 //
 // Two rails are supported via separate Build functions:
 //
-//   - BuildExtModule    (E4 P, Q, alpha; base xInv): the dominant case in
-//     Loom because FRI challenges live in E4.
+//   - BuildExtModule    (E6 P, Q, alpha; base xInv): the dominant case in
+//     Loom because FRI challenges live in E6.
 //   - BuildBaseModule   (base P, Q, alpha, xInv): used when all values live
 //     in the base field (rare in Loom but useful for unit tests).
 //
@@ -48,7 +48,7 @@ package frifold
 
 import "fmt"
 
-// Ext column names (E4-rail fold).
+// Ext column names (E6-rail fold).
 func ExtPColName(name string, limb int) string     { return fmt.Sprintf("%s.P_%d", name, limb) }
 func ExtQColName(name string, limb int) string     { return fmt.Sprintf("%s.Q_%d", name, limb) }
 func ExtAlphaColName(name string, limb int) string { return fmt.Sprintf("%s.alpha_%d", name, limb) }

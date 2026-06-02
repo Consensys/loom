@@ -18,15 +18,15 @@
 // registered in the same module, Link emits two families of constraints
 // applied row-wise (one row per query):
 //
-//  1. Chain (E4, per limb i in 0..3):
+//  1. Chain (E6, per limb i in 0..5):
 //
-//	   expected_j[i] = P_{j+1}[i] + top_bit_j * (Q_{j+1}[i] - P_{j+1}[i])
+//     expected_j[i] = P_{j+1}[i] + top_bit_j * (Q_{j+1}[i] - P_{j+1}[i])
 //
 //     where top_bit_j is the highest bit of base_j (cnPrev.Bits.Bits[k_j-1]).
 //
 //  2. Bit-inheritance (binary, per bit i in 0..k_{j+1}-1):
 //
-//	   bits_{j+1}[i] = bits_j[i]
+//     bits_{j+1}[i] = bits_j[i]
 //
 //     This enforces base_{j+1} = base_j without its top bit — i.e. the
 //     lower k_{j+1} bits of the original query position s carry through.
@@ -107,7 +107,7 @@ func Link(mod *board.Module, cnPrev, cnNext friround.ColumnNames) {
 // where leaf_l = selected(LeafP_l, LeafQ_l, top_bit_j) — i.e. the level
 // opening is picked on the same branch as the running fold.
 //
-// gamma is E4, leaf is E4, so gamma*leaf is a full E4 multiplication; the
+// gamma is E6, leaf is E6, so gamma*leaf is a full E6 multiplication; the
 // resulting constraint is degree 2 in witness columns.
 func LinkWithLevel(mod *board.Module, cnPrev, cnNext friround.ColumnNames, ld LevelData) {
 	checkRoundShapes(cnPrev, cnNext)

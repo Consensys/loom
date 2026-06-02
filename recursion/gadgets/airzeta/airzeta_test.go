@@ -47,7 +47,7 @@ func randExt(t *testing.T) ext.E6 {
 }
 
 // runDAGTest builds a 4-row module with leaf-value columns wired to the
-// gadget output, then proves+verifies that the gadget's E4Expr evaluates
+// gadget output, then proves+verifies that the gadget's E6Expr evaluates
 // to the same value the native dag.EvalExt does. The proof passes only
 // if the in-circuit walk matches the native walk on every limb.
 func runDAGTest(t *testing.T, name string, relation expr.Expr, vals map[string]ext.E6) {
@@ -61,9 +61,9 @@ func runDAGTest(t *testing.T, name string, relation expr.Expr, vals map[string]e
 	mod := board.NewModule(name)
 	mod.N = 4
 
-	// For each leaf, allocate 4 base columns holding its E4 value and
+	// For each leaf, allocate 6 base columns holding its E6 value and
 	// build an extfield.E6Expr referencing those columns. Also allocate
-	// 4 base columns for the expected output and assert equality.
+	// 6 base columns for the expected output and assert equality.
 	leafValues := make(map[string]extfield.E6Expr, len(vals))
 	cols := make(map[string][]koalabear.Element)
 	allocCol := func(col string, v koalabear.Element) {

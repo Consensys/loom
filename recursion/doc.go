@@ -29,7 +29,7 @@
 //   - gadgets/poseidon2  in-circuit Poseidon2 permutation (width-16 MD variant)
 //   - gadgets/merkle     Merkle-path verification on top of the Poseidon2 gadget
 //   - gadgets/challenger Fiat-Shamir sponge layered over the Poseidon2 gadget
-//   - extfield           E4 arithmetic helpers inlined as expr.Expr trees
+//   - extfield           E6 arithmetic helpers inlined as expr.Expr trees
 //
 // The BuildVerifierCore / buildAggregationCore wiring is intentionally left as
 // stubs returning an error; subsequent milestones will assemble these gadgets

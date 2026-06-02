@@ -26,7 +26,7 @@
 //
 //   - Init()                       new transcript
 //   - Absorb(values...)            absorb base-field elements (lazy permute)
-//   - Squeeze() / SqueezeExt()     extract a fresh base element / E4 element
+//   - Squeeze() / SqueezeExt()     extract a fresh base element / E6 element
 //
 // The gadget version of these operations works in expr.Expr space: it
 // accumulates per-permutation in/out column references in a Poseidon2 gadget

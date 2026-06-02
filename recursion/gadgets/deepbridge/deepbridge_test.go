@@ -44,7 +44,7 @@ func randExt(t *testing.T) ext.E6 {
 	return v
 }
 
-func makeE4ExprConst(t *testing.T, name string, v ext.E6, cols map[string][]koalabear.Element, n int) extfield.E6Expr {
+func makeE6ExprConst(t *testing.T, name string, v ext.E6, cols map[string][]koalabear.Element, n int) extfield.E6Expr {
 	t.Helper()
 	limbs := extfield.FromE6(v)
 	var names [extfield.Limbs]string
@@ -92,8 +92,8 @@ func TestDivExtPositive(t *testing.T) {
 	cols := make(map[string][]koalabear.Element)
 
 	pairs := []struct {
-		name        string
-		num, denom  ext.E6
+		name       string
+		num, denom ext.E6
 	}{
 		{"p0", randExt(t), randExt(t)},
 		{"p1", randExt(t), randExt(t)},
@@ -101,8 +101,8 @@ func TestDivExtPositive(t *testing.T) {
 	}
 
 	for _, p := range pairs {
-		numExpr := makeE4ExprConst(t, p.name+".num", p.num, cols, n)
-		denomExpr := makeE4ExprConst(t, p.name+".denom", p.denom, cols, n)
+		numExpr := makeE6ExprConst(t, p.name+".num", p.num, cols, n)
+		denomExpr := makeE6ExprConst(t, p.name+".denom", p.denom, cols, n)
 		_ = deepbridge.RegisterDivExt(&mod, p.name, numExpr, denomExpr)
 		fillDivWitness(p.name, p.num, p.denom, cols, n)
 	}
@@ -130,8 +130,8 @@ func TestDivExtRejectsWrongQuotient(t *testing.T) {
 
 	cols := make(map[string][]koalabear.Element)
 
-	numExpr := makeE4ExprConst(t, "num", num, cols, n)
-	denomExpr := makeE4ExprConst(t, "denom", denom, cols, n)
+	numExpr := makeE6ExprConst(t, "num", num, cols, n)
+	denomExpr := makeE6ExprConst(t, "denom", denom, cols, n)
 	_ = deepbridge.RegisterDivExt(&mod, "d", numExpr, denomExpr)
 	fillDivWitness("d", num, denom, cols, n)
 
@@ -152,7 +152,7 @@ func TestDivExtRejectsWrongQuotient(t *testing.T) {
 }
 
 // TestSummandMatchesNative builds one DEEP-quotient summand and an
-// explicit "expected" E4Expr; the equality constraint passes only when
+// explicit "expected" E6Expr; the equality constraint passes only when
 // the summand matches (v - C)/(z - X).
 func TestSummandMatchesNative(t *testing.T) {
 	const n = 4
@@ -175,11 +175,11 @@ func TestSummandMatchesNative(t *testing.T) {
 
 	cols := make(map[string][]koalabear.Element)
 
-	vExpr := makeE4ExprConst(t, "v", v, cols, n)
-	cExpr := makeE4ExprConst(t, "C", C, cols, n)
-	zExpr := makeE4ExprConst(t, "z", z, cols, n)
-	xExpr := makeE4ExprConst(t, "X", X, cols, n)
-	wantExpr := makeE4ExprConst(t, "want", expected, cols, n)
+	vExpr := makeE6ExprConst(t, "v", v, cols, n)
+	cExpr := makeE6ExprConst(t, "C", C, cols, n)
+	zExpr := makeE6ExprConst(t, "z", z, cols, n)
+	xExpr := makeE6ExprConst(t, "X", X, cols, n)
+	wantExpr := makeE6ExprConst(t, "want", expected, cols, n)
 
 	got := deepbridge.RegisterSummand(&mod, "s", vExpr, cExpr, zExpr, xExpr)
 	for _, rel := range got.EqualityConstraints(wantExpr) {
@@ -237,11 +237,11 @@ func TestSummandSum(t *testing.T) {
 
 	colsTr := make(map[string][]koalabear.Element)
 
-	vExpr := makeE4ExprConst(t, "V", V, colsTr, n)
-	cExpr := makeE4ExprConst(t, "Cx", Cx, colsTr, n)
-	zExpr := makeE4ExprConst(t, "z", z, colsTr, n)
-	xExpr := makeE4ExprConst(t, "X", X, colsTr, n)
-	wantExpr := makeE4ExprConst(t, "want", expected, colsTr, n)
+	vExpr := makeE6ExprConst(t, "V", V, colsTr, n)
+	cExpr := makeE6ExprConst(t, "Cx", Cx, colsTr, n)
+	zExpr := makeE6ExprConst(t, "z", z, colsTr, n)
+	xExpr := makeE6ExprConst(t, "X", X, colsTr, n)
+	wantExpr := makeE6ExprConst(t, "want", expected, colsTr, n)
 
 	got := deepbridge.RegisterSummand(&mod, "s", vExpr, cExpr, zExpr, xExpr)
 	for _, rel := range got.EqualityConstraints(wantExpr) {

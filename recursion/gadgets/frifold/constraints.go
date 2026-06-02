@@ -20,7 +20,7 @@ import (
 	"github.com/consensys/loom/recursion/extfield"
 )
 
-// ExtColumnNames describes every witness column the E4-rail trace generator
+// ExtColumnNames describes every witness column the E6-rail trace generator
 // must fill.
 type ExtColumnNames struct {
 	ModuleName string
@@ -72,7 +72,7 @@ func invTwo() koalabear.Element {
 	return r
 }
 
-// BuildExtModule registers an E4-rail fold module in the builder. capacity is
+// BuildExtModule registers an E6-rail fold module in the builder. capacity is
 // the number of fold steps stored; the module size is rounded up to the next
 // power of two.
 //
@@ -105,7 +105,7 @@ func BuildExtModule(builder *board.Builder, name string, capacity int) ExtColumn
 	sumHalf := P.Add(Q).MulByBase(invHalf)
 	// diff = P - Q (limb-wise)
 	diff := P.Sub(Q)
-	// alphaDiff = alpha * diff, in E4
+	// alphaDiff = alpha * diff, in E6
 	alphaDiff := alpha.Mul(diff)
 	// alphaDiffScaled = alphaDiff * invTwo * xInv (scalar multiplications)
 	alphaDiffScaled := alphaDiff.MulByBase(invHalf).MulByBase(xInv)

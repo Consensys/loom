@@ -28,10 +28,10 @@
 //
 // Per row, this gadget exposes:
 //
-//   - expected_0..3 / gamma_0..3 / leafP_0..3 / leafQ_0..3 / next_0..3 (E4)
+//   - expected_0..5 / gamma_0..5 / leafP_0..5 / leafQ_0..5 / next_0..5 (E6)
 //   - sel  (base column, 0 or 1)
 //
-// Constraints (E4 element-wise):
+// Constraints (E6 element-wise):
 //
 //   - sel*(1-sel) = 0
 //   - leaf[i]     = leafP[i] + sel * (leafQ[i] - leafP[i])
@@ -81,7 +81,7 @@ func makeColumnNames(name string) ColumnNames {
 	return cn
 }
 
-// BuildModule registers the E4-rail batching module in the builder. capacity
+// BuildModule registers the E6-rail batching module in the builder. capacity
 // is rounded up to the next power of two.
 func BuildModule(builder *board.Builder, name string, capacity int) ColumnNames {
 	if capacity <= 0 {

@@ -12,10 +12,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package idxselect implements an indexed-select multiplexer over a
-// constant E4 table of size 2^k.
+// constant E6 table of size 2^k.
 //
 // Given k binary witness columns b_0..b_{k-1} (least-significant bit first)
-// and a fixed table T[0..2^k-1] of E4 constants, the gadget computes
+// and a fixed table T[0..2^k-1] of E6 constants, the gadget computes
 //
 //	out = T[ sum 2^i * b_i ]
 //
@@ -45,8 +45,7 @@ import (
 	"github.com/consensys/loom/recursion/gadgets/bits"
 )
 
-
-// OutColName returns the name of the i-th E4 limb of the selector's output.
+// OutColName returns the name of the i-th E6 limb of the selector's output.
 func OutColName(prefix string, i int) string {
 	return fmt.Sprintf("%s.out_%d", prefix, i)
 }
@@ -71,7 +70,7 @@ func Register(mod *board.Module, prefix string, table []ext.E6, bitsCN bits.Colu
 		cn.Out[i] = OutColName(prefix, i)
 	}
 
-	// Tree-reduce, building a slice of E4Expr-typed entries that shrinks by
+	// Tree-reduce, building a slice of E6Expr-typed entries that shrinks by
 	// half at each level.
 	level := make([]extfield.E6Expr, len(table))
 	for i, t := range table {

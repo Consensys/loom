@@ -25,12 +25,12 @@
 //
 // This package provides two primitives:
 //
-//   - RegisterDivExt: in-circuit E4 division via a witness column and
+//   - RegisterDivExt: in-circuit E6 division via a witness column and
 //     the constraint result * denom == num. Used wherever the bridge
 //     needs to invert a denominator like (z_s - X).
 //
 //   - RegisterSummand: convenience wrapper that computes one DEEP
-//     summand (v - C) / (z - X) and returns the resulting E4Expr.
+//     summand (v - C) / (z - X) and returns the resulting E6Expr.
 //
 // Together these let a caller assemble the full DQ_P / DQ_Q sums by
 // iterating over shift groups and adding summands. Asserting equality
@@ -45,17 +45,17 @@ import (
 	"github.com/consensys/loom/recursion/extfield"
 )
 
-// DivColName is the i-th E4 limb of a division-result witness column.
+// DivColName is the i-th E6 limb of a division-result witness column.
 func DivColName(prefix string, i int) string {
 	return fmt.Sprintf("%s.div_%d", prefix, i)
 }
 
 // RegisterDivExt allocates four base-field witness columns under prefix
-// and constrains them to hold num/denom in E4. Returns an E4Expr
+// and constrains them to hold num/denom in E6. Returns an E6Expr
 // referencing the witness columns.
 //
 // The caller's trace generator must fill the witness columns with
-// native E4 division (num.Inverse(&denom).Mul(...)). If denom is
+// native E6 division (num.Inverse(&denom).Mul(...)). If denom is
 // identically zero on some row, no valid witness exists and the proof
 // will fail to verify; callers must ensure denom != 0 wherever the
 // constraint is meaningful.
@@ -77,9 +77,9 @@ func RegisterDivExt(mod *board.Module, prefix string, num, denom extfield.E6Expr
 //
 //	(v - C) / (z - X)
 //
-// inside mod under prefix. v, C, z, X are caller-supplied E4Expr
+// inside mod under prefix. v, C, z, X are caller-supplied E6Expr
 // inputs (typically pre-computed via alpha-batching across columns).
-// Returns an E4Expr referencing the underlying witness columns.
+// Returns an E6Expr referencing the underlying witness columns.
 func RegisterSummand(mod *board.Module, prefix string, v, C, z, X extfield.E6Expr) extfield.E6Expr {
 	num := v.Sub(C)
 	denom := z.Sub(X)

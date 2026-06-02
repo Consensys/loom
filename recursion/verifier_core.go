@@ -48,7 +48,6 @@ import (
 // changes that value, this constant must change too.
 const challengeIDDomainTag uint64 = 0x46534944 // "FSID"
 
-
 // BuildVerifierCore compiles a board.Program that verifies a single
 // inner Loom proof, along with a witness trace satisfying it.
 //
@@ -66,11 +65,11 @@ const challengeIDDomainTag uint64 = 0x46534944 // "FSID"
 // Outer-program layout:
 //
 //   - A single "verifier" module of size N=2 carrying every witness
-//     column: zeta (4 limbs), per-leaf E4 values (4 limbs each), and
-//     per-AIR-quotient-chunk E4 values (4 limbs each).
+//     column: zeta (4 limbs), per-leaf E6 values (6 limbs each), and
+//     per-AIR-quotient-chunk E6 values (6 limbs each).
 //   - Per inner module: one airzeta.RegisterAIRCheck call wires the
-//     per-module DAG + chunks + N into 4 equality constraints (one
-//     per E4 limb).
+//     per-module DAG + chunks + N into 6 equality constraints (one
+//     per E6 limb).
 //
 // Inner DAG leaves currently supported:
 //   - CommittedColumn / RotatedColumn / ChallengeColumn — pulled
@@ -116,7 +115,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 	// Stage 2+ will re-derive zeta in-circuit via the challenger gadget.
 	zeta, challengeVals, err := replayInnerFS(input)
 	if err != nil {
-		return trace.Trace{},fmt.Errorf("recursion: replay inner FS: %w", err)
+		return trace.Trace{}, fmt.Errorf("recursion: replay inner FS: %w", err)
 	}
 	// Mirror the prover's challenge populating so that any ChallengeColumn
 	// leaves resolve correctly.
@@ -140,7 +139,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 		data := moduleData{name: name, mod: m, leafVals: map[string]ext.E6{}}
 
 		if err := collectLeafValuesAtZeta(name, m, zeta, input.Proof, input.PublicInputs, data.leafVals); err != nil {
-			return trace.Trace{},err
+			return trace.Trace{}, err
 		}
 
 		// Collect AIR quotient chunks for this module.
@@ -162,7 +161,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 	// previous-challenge slot.
 	chain, err := computeChallengeChain(input)
 	if err != nil {
-		return trace.Trace{},fmt.Errorf("recursion: build challenge chain: %w", err)
+		return trace.Trace{}, fmt.Errorf("recursion: build challenge chain: %w", err)
 	}
 
 	// Total sponge rows across the chain.
@@ -274,7 +273,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 				cols, ok = keyToLeafCols[b.Key]
 			}
 			if !ok {
-				return trace.Trace{},fmt.Errorf("recursion: WitnessBinding key %q (chunk=%v) has no witness column allocated", b.Key, b.IsChunk)
+				return trace.Trace{}, fmt.Errorf("recursion: WitnessBinding key %q (chunk=%v) has no witness column allocated", b.Key, b.IsChunk)
 			}
 			for k := 0; k < extfield.Limbs; k++ {
 				inputs[b.Start+k] = expr.Col(cols[k])
@@ -296,7 +295,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 		}
 	}
 	if zetaSpongeIdx < 0 {
-		return trace.Trace{},fmt.Errorf("recursion: __zeta missing from chain")
+		return trace.Trace{}, fmt.Errorf("recursion: __zeta missing from chain")
 	}
 	chCN := chSpongeCNs[zetaSpongeIdx]
 
@@ -310,13 +309,13 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 
 	// Materialize a witness-column chain of zeta^(2^i) so per-module
 	// zeta^N can be referenced as cheap expr.Col rather than inlined as
-	// a degree-N polynomial in the four zeta limbs. Without this the
-	// constraint tree blows up exponentially in N (each E4 squaring
-	// roughly squares the per-limb expression size; by i=4 we hit
+	// a degree-N polynomial in the six zeta limbs. Without this the
+	// constraint tree blows up exponentially in N (each E6 squaring
+	// roughly squares the per-limb expression size; by i=6 we hit
 	// billions of nodes).
 	//
 	// chain[0] = zeta (the sparse witness from the __zeta sponge).
-	// chain[i] (i>0) = 4 fresh witness columns, constrained at
+	// chain[i] (i>0) = 6 fresh witness columns, constrained at
 	// chCN.DigestRow to equal chain[i-1].Square(). Off-row values are
 	// free (the AIR check is row-gated too), so the constraint stays
 	// sparse and degree-2.
@@ -411,25 +410,25 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 		friProof := input.Proof.DeepQuotientFriProof
 		finalPolyExt := friProof.FinalPolyExt
 		if len(finalPolyExt) == 0 {
-			return trace.Trace{},fmt.Errorf("recursion: FRI present but FinalPolyExt empty")
+			return trace.Trace{}, fmt.Errorf("recursion: FRI present but FinalPolyExt empty")
 		}
 		nLastRound := 2 * len(finalPolyExt)
 		if nLastRound&(nLastRound-1) != 0 {
-			return trace.Trace{},fmt.Errorf("recursion: 2*len(finalPolyExt) = %d not power of two", nLastRound)
+			return trace.Trace{}, fmt.Errorf("recursion: 2*len(finalPolyExt) = %d not power of two", nLastRound)
 		}
 		baseLastBits := log2int(len(finalPolyExt))
 		if 1<<baseLastBits != len(finalPolyExt) {
-			return trace.Trace{},fmt.Errorf("recursion: len(finalPoly) = %d not a power of two", len(finalPolyExt))
+			return trace.Trace{}, fmt.Errorf("recursion: len(finalPoly) = %d not a power of two", len(finalPolyExt))
 		}
 		if baseLastBits == 0 {
-			return trace.Trace{},fmt.Errorf("recursion: len(finalPoly) must be ≥ 2, got %d", len(finalPolyExt))
+			return trace.Trace{}, fmt.Errorf("recursion: len(finalPoly) must be ≥ 2, got %d", len(finalPolyExt))
 		}
 		if baseLastBits > 31 {
-			return trace.Trace{},fmt.Errorf("recursion: len(finalPoly) too large (baseLastBits=%d)", baseLastBits)
+			return trace.Trace{}, fmt.Errorf("recursion: len(finalPoly) too large (baseLastBits=%d)", baseLastBits)
 		}
 		numRounds := log2int(maxModN)
 		if numRounds < 1 {
-			return trace.Trace{},fmt.Errorf("recursion: FRI present with maxModN=%d (numRounds=%d)", maxModN, numRounds)
+			return trace.Trace{}, fmt.Errorf("recursion: FRI present with maxModN=%d (numRounds=%d)", maxModN, numRounds)
 		}
 		// Full FRI evaluation domain size: N_fri = nLastRound * 2^{r-1}.
 		nFRI := nLastRound << (numRounds - 1)
@@ -452,11 +451,11 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 		}
 		for j, idx := range foldStepIdx {
 			if idx < 0 {
-				return trace.Trace{},fmt.Errorf("recursion: %s missing from chain", friFoldName(j))
+				return trace.Trace{}, fmt.Errorf("recursion: %s missing from chain", friFoldName(j))
 			}
 		}
 		if len(queryStepIdxs) == 0 {
-			return trace.Trace{},fmt.Errorf("recursion: no fri_query_k steps in chain")
+			return trace.Trace{}, fmt.Errorf("recursion: no fri_query_k steps in chain")
 		}
 
 		// Anchor every alpha_j to its sponge digest at the sponge's digest
@@ -481,9 +480,9 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 
 		// Per-query position bits (31-bit decomposition of digest[1]).
 		type queryData struct {
-			digestRow  int
-			bitsCN     bits.ColumnNames
-			digestNat  uint64
+			digestRow int
+			bitsCN    bits.ColumnNames
+			digestNat uint64
 		}
 		queries := make([]queryData, len(queryStepIdxs))
 		for k, queryStepIdx := range queryStepIdxs {
@@ -524,15 +523,15 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 		invTwoConst := expr.Const(invTwoBase)
 		oneConst := expr.Const(koalabear.One())
 
-		// e4SelectTree returns the E4Expr table[sum 2^i * bits[i]] via
+		// e6SelectTree returns the E6Expr table[sum 2^i * bits[i]] via
 		// tree reduction over k = len(bits) levels. table must have
 		// length 2^k. At each level l, pairs (lo, hi) collapse into
-		// lo + bits[l] * (hi - lo); after k levels a single E4Expr
+		// lo + bits[l] * (hi - lo); after k levels a single E6Expr
 		// remains. Used for the FRI final-poly lookup at any
 		// power-of-two len(finalPoly).
-		e4SelectTree := func(table []ext.E6, bits []expr.Expr) extfield.E6Expr {
+		e6SelectTree := func(table []ext.E6, bits []expr.Expr) extfield.E6Expr {
 			if len(table) != 1<<len(bits) {
-				panic(fmt.Sprintf("e4SelectTree: table size %d != 2^%d", len(table), len(bits)))
+				panic(fmt.Sprintf("e6SelectTree: table size %d != 2^%d", len(table), len(bits)))
 			}
 			level := make([]extfield.E6Expr, len(table))
 			for i, t := range table {
@@ -556,7 +555,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 			Nj := nFRI >> j
 			omegaJ, err := koalabear.Generator(uint64(Nj))
 			if err != nil {
-				return trace.Trace{},fmt.Errorf("recursion: omega round %d: %w", j, err)
+				return trace.Trace{}, fmt.Errorf("recursion: omega round %d: %w", j, err)
 			}
 			var omegaJInv koalabear.Element
 			omegaJInv.Inverse(&omegaJ)
@@ -625,7 +624,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 					for i := 0; i < baseLastBits; i++ {
 						baseBits[i] = expr.Col(query.bitsCN.Bits[i])
 					}
-					finalPolyAtBase := e4SelectTree(finalPolyExt, baseBits)
+					finalPolyAtBase := e6SelectTree(finalPolyExt, baseBits)
 					for _, rel := range expected.EqualityConstraints(finalPolyAtBase) {
 						verifierMod.AssertZeroAt(rel, query.digestRow)
 					}
@@ -664,13 +663,13 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 			if len(dqLayout.Sizes) == 1 {
 				size := dqLayout.Sizes[0]
 				if size != maxModN {
-					return trace.Trace{},fmt.Errorf("recursion: stage 11 expected dqLayout.Sizes[0]=%d to equal maxModN=%d", size, maxModN)
+					return trace.Trace{}, fmt.Errorf("recursion: stage 11 expected dqLayout.Sizes[0]=%d to equal maxModN=%d", size, maxModN)
 				}
 				nFRIsize := constants.RATE * size
 				halfDomain := nFRIsize / 2
 				sLBits := log2int(halfDomain)
 				if sLBits <= 0 {
-					return trace.Trace{},fmt.Errorf("recursion: stage 11 halfDomain=%d gives sLBits=%d", halfDomain, sLBits)
+					return trace.Trace{}, fmt.Errorf("recursion: stage 11 halfDomain=%d gives sLBits=%d", halfDomain, sLBits)
 				}
 
 				// Anchor zeta as a constant-fill witness column. The
@@ -693,7 +692,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 					}
 				}
 				if deepAlphaIdx < 0 {
-					return trace.Trace{},fmt.Errorf("recursion: DEEP_ALPHA missing from chain")
+					return trace.Trace{}, fmt.Errorf("recursion: DEEP_ALPHA missing from chain")
 				}
 				deepAlphaCN := chSpongeCNs[deepAlphaIdx]
 				deepAlphaDigestExpr := extfield.FromLimbs(
@@ -716,7 +715,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 				}
 				totalCols += len(dqLayout.AIRChunks[0])
 				if totalCols == 0 {
-					return trace.Trace{},fmt.Errorf("recursion: dqLayout empty for size %d", size)
+					return trace.Trace{}, fmt.Errorf("recursion: dqLayout empty for size %d", size)
 				}
 				alphaPowChain := make([]extfield.E6Expr, totalCols)
 				alphaPowNative := make([]ext.E6, totalCols)
@@ -763,7 +762,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 				}
 
 				innerLayout := prover.BuildLayout(input.Program, 0)
-				sampleE4 := func(slot prover.Slot, q int) (ext.E6, ext.E6, error) {
+				sampleE6 := func(slot prover.Slot, q int) (ext.E6, ext.E6, error) {
 					if slot.TreeIdx >= len(input.Proof.PointSamplings[q]) {
 						return ext.E6{}, ext.E6{}, fmt.Errorf("recursion: tree %d out of range for query %d", slot.TreeIdx, q)
 					}
@@ -787,11 +786,11 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 					for _, n := range bareList {
 						slot, ok := innerLayout.ColSlot[n]
 						if !ok {
-							return trace.Trace{},fmt.Errorf("recursion: column %q missing from layout.ColSlot", n)
+							return trace.Trace{}, fmt.Errorf("recursion: column %q missing from layout.ColSlot", n)
 						}
-						pNative, qNative, err := sampleE4(slot, qi)
+						pNative, qNative, err := sampleE6(slot, qi)
 						if err != nil {
-							return trace.Trace{},err
+							return trace.Trace{}, err
 						}
 						sampleP[n][qi] = addE6(fmt.Sprintf(mp+"airverify.deep_sP_%d_%s", qi, sanitizeName(n)), pNative)
 						sampleQ[n][qi] = addE6(fmt.Sprintf(mp+"airverify.deep_sQ_%d_%s", qi, sanitizeName(n)), qNative)
@@ -799,11 +798,11 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 					for _, n := range dqLayout.AIRChunks[0] {
 						slot, ok := innerLayout.AIRChunkSlot[n]
 						if !ok {
-							return trace.Trace{},fmt.Errorf("recursion: chunk %q missing from layout.AIRChunkSlot", n)
+							return trace.Trace{}, fmt.Errorf("recursion: chunk %q missing from layout.AIRChunkSlot", n)
 						}
-						pNative, qNative, err := sampleE4(slot, qi)
+						pNative, qNative, err := sampleE6(slot, qi)
 						if err != nil {
-							return trace.Trace{},err
+							return trace.Trace{}, err
 						}
 						chunkSampleP[n][qi] = addE6(fmt.Sprintf(mp+"airverify.deep_csP_%d_%s", qi, sanitizeName(n)), pNative)
 						chunkSampleQ[n][qi] = addE6(fmt.Sprintf(mp+"airverify.deep_csQ_%d_%s", qi, sanitizeName(n)), qNative)
@@ -813,20 +812,20 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 				// Per-query X via binexp on the lowest sLBits of digest[1].
 				friDomainGen, err := koalabear.Generator(uint64(nFRIsize))
 				if err != nil {
-					return trace.Trace{},fmt.Errorf("recursion: FRI domain generator: %w", err)
+					return trace.Trace{}, fmt.Errorf("recursion: FRI domain generator: %w", err)
 				}
 				// Inner-domain generator at size, used for omegaShift constants.
 				omegaSize, err := koalabear.Generator(uint64(size))
 				if err != nil {
-					return trace.Trace{},fmt.Errorf("recursion: omega_size: %w", err)
+					return trace.Trace{}, fmt.Errorf("recursion: omega_size: %w", err)
 				}
-				omegaShiftE4 := make([]ext.E6, len(dqLayout.Shifts[0]))
+				omegaShiftE6 := make([]ext.E6, len(dqLayout.Shifts[0]))
 				omegaShiftExpr := make([]extfield.E6Expr, len(dqLayout.Shifts[0]))
 				for j, shift := range dqLayout.Shifts[0] {
 					var w koalabear.Element
 					w.Exp(omegaSize, big.NewInt(int64(shift)))
-					omegaShiftE4[j].B0.A0.Set(&w)
-					omegaShiftExpr[j] = extfield.Const(omegaShiftE4[j])
+					omegaShiftE6[j].B0.A0.Set(&w)
+					omegaShiftExpr[j] = extfield.Const(omegaShiftE6[j])
 				}
 
 				// Unified leaf-by-key lookup for evalAtZ. Multiple inner
@@ -885,7 +884,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 						for k, key := range keys {
 							evalAtZ, ok := leafByKey[key]
 							if !ok {
-								return trace.Trace{},fmt.Errorf("recursion: leaf key %q missing", key)
+								return trace.Trace{}, fmt.Errorf("recursion: leaf key %q missing", key)
 							}
 							a := alphaPowChain[alphaIdx]
 							alphaIdx++
@@ -899,7 +898,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 
 						// Native denom values for trace-fill of inverses.
 						var zsNat ext.E6
-						zsNat.MulByElement(&zeta, &omegaShiftE4[j].B0.A0)
+						zsNat.MulByElement(&zeta, &omegaShiftE6[j].B0.A0)
 						var xNat ext.E6
 						xNat.B0.A0.Exp(friDomainGen, big.NewInt(int64(query.digestNat%uint64(halfDomain))))
 						var negXNat ext.E6
@@ -916,14 +915,14 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 						invDXExpr := addE6(fmt.Sprintf(mp+"airverify.deep_q%d_g%d_invX", qi, j), invDXNat)
 						invDNegXExpr := addE6(fmt.Sprintf(mp+"airverify.deep_q%d_g%d_invNegX", qi, j), invDNegXNat)
 
-						// Constrain inv * denom = 1 (E4 equality, 4 limbs).
-						oneE4 := extfield.One()
+						// Constrain inv * denom = 1 (E6 equality, 6 limbs).
+						oneE6 := extfield.One()
 						prodX := invDXExpr.Mul(denomX)
-						for _, rel := range prodX.EqualityConstraints(oneE4) {
+						for _, rel := range prodX.EqualityConstraints(oneE6) {
 							verifierMod.AssertZeroAt(rel, query.digestRow)
 						}
 						prodNegX := invDNegXExpr.Mul(denomNegX)
-						for _, rel := range prodNegX.EqualityConstraints(oneE4) {
+						for _, rel := range prodNegX.EqualityConstraints(oneE6) {
 							verifierMod.AssertZeroAt(rel, query.digestRow)
 						}
 
@@ -941,7 +940,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 						for _, chunkName := range dqLayout.AIRChunks[0] {
 							chunkExpr, ok := chunkByName[chunkName]
 							if !ok {
-								return trace.Trace{},fmt.Errorf("recursion: chunk %q missing", chunkName)
+								return trace.Trace{}, fmt.Errorf("recursion: chunk %q missing", chunkName)
 							}
 							a := alphaPowChain[alphaIdx]
 							alphaIdx++
@@ -968,13 +967,13 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 						invDXExpr := addE6(fmt.Sprintf(mp+"airverify.deep_q%d_chunks_invX", qi), invDXNat)
 						invDNegXExpr := addE6(fmt.Sprintf(mp+"airverify.deep_q%d_chunks_invNegX", qi), invDNegXNat)
 
-						oneE4 := extfield.One()
+						oneE6 := extfield.One()
 						prodX := invDXExpr.Mul(denomX)
-						for _, rel := range prodX.EqualityConstraints(oneE4) {
+						for _, rel := range prodX.EqualityConstraints(oneE6) {
 							verifierMod.AssertZeroAt(rel, query.digestRow)
 						}
 						prodNegX := invDNegXExpr.Mul(denomNegX)
-						for _, rel := range prodNegX.EqualityConstraints(oneE4) {
+						for _, rel := range prodNegX.EqualityConstraints(oneE6) {
 							verifierMod.AssertZeroAt(rel, query.digestRow)
 						}
 
@@ -1085,7 +1084,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 						path := input.Proof.PointSamplings[qi][t].Proof
 						depth := len(path.Siblings)
 						if depth == 0 {
-							return trace.Trace{},fmt.Errorf("recursion: empty column-tree Merkle path for tree %d query %d", t, qi)
+							return trace.Trace{}, fmt.Errorf("recursion: empty column-tree Merkle path for tree %d query %d", t, qi)
 						}
 						treeMerkles = append(treeMerkles, treeMerkleSetup{
 							treeIdx:    t,
@@ -1123,10 +1122,10 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 			dqLayout := prover.BuildDeepQuotientLayout(input.Program)
 			numSizes := len(dqLayout.Sizes)
 			if numSizes < 2 {
-				return trace.Trace{},fmt.Errorf("recursion: stage 13 expected ≥2 sizes, got %d (single-size path should have handled this)", numSizes)
+				return trace.Trace{}, fmt.Errorf("recursion: stage 13 expected ≥2 sizes, got %d (single-size path should have handled this)", numSizes)
 			}
 			if numSizes-1 != len(friProof.LevelQueries) {
-				return trace.Trace{},fmt.Errorf("recursion: stage 13 size/LevelQueries mismatch: %d sizes, %d LevelQueries", numSizes, len(friProof.LevelQueries))
+				return trace.Trace{}, fmt.Errorf("recursion: stage 13 size/LevelQueries mismatch: %d sizes, %d LevelQueries", numSizes, len(friProof.LevelQueries))
 			}
 
 			// Anchor zeta_const + DEEP_ALPHA (same pattern as single-size).
@@ -1142,7 +1141,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 				}
 			}
 			if deepAlphaIdx < 0 {
-				return trace.Trace{},fmt.Errorf("recursion: DEEP_ALPHA missing from chain")
+				return trace.Trace{}, fmt.Errorf("recursion: DEEP_ALPHA missing from chain")
 			}
 			deepAlphaCN := chSpongeCNs[deepAlphaIdx]
 			deepAlphaDigestExpr := extfield.FromLimbs(
@@ -1222,7 +1221,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 			sort.Strings(chunkList)
 
 			innerLayout := prover.BuildLayout(input.Program, 0)
-			sampleE4 := func(slot prover.Slot, q int) (ext.E6, ext.E6, error) {
+			sampleE6 := func(slot prover.Slot, q int) (ext.E6, ext.E6, error) {
 				if slot.TreeIdx >= len(input.Proof.PointSamplings[q]) {
 					return ext.E6{}, ext.E6{}, fmt.Errorf("tree %d out of range for query %d", slot.TreeIdx, q)
 				}
@@ -1247,14 +1246,14 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 			for _, n := range bareList {
 				slot, ok := innerLayout.ColSlot[n]
 				if !ok {
-					return trace.Trace{},fmt.Errorf("recursion: column %q missing from layout.ColSlot", n)
+					return trace.Trace{}, fmt.Errorf("recursion: column %q missing from layout.ColSlot", n)
 				}
 				sampleP[n] = make([]extfield.E6Expr, len(queries))
 				sampleQ[n] = make([]extfield.E6Expr, len(queries))
 				for qi := range queries {
-					pNative, qNative, err := sampleE4(slot, qi)
+					pNative, qNative, err := sampleE6(slot, qi)
 					if err != nil {
-						return trace.Trace{},err
+						return trace.Trace{}, err
 					}
 					sampleP[n][qi] = addE6(fmt.Sprintf(mp+"airverify.deep_md_sP_%d_%s", qi, sanitizeName(n)), pNative)
 					sampleQ[n][qi] = addE6(fmt.Sprintf(mp+"airverify.deep_md_sQ_%d_%s", qi, sanitizeName(n)), qNative)
@@ -1265,14 +1264,14 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 			for _, n := range chunkList {
 				slot, ok := innerLayout.AIRChunkSlot[n]
 				if !ok {
-					return trace.Trace{},fmt.Errorf("recursion: chunk %q missing from layout.AIRChunkSlot", n)
+					return trace.Trace{}, fmt.Errorf("recursion: chunk %q missing from layout.AIRChunkSlot", n)
 				}
 				chunkSampleP[n] = make([]extfield.E6Expr, len(queries))
 				chunkSampleQ[n] = make([]extfield.E6Expr, len(queries))
 				for qi := range queries {
-					pNative, qNative, err := sampleE4(slot, qi)
+					pNative, qNative, err := sampleE6(slot, qi)
 					if err != nil {
-						return trace.Trace{},err
+						return trace.Trace{}, err
 					}
 					chunkSampleP[n][qi] = addE6(fmt.Sprintf(mp+"airverify.deep_md_csP_%d_%s", qi, sanitizeName(n)), pNative)
 					chunkSampleQ[n][qi] = addE6(fmt.Sprintf(mp+"airverify.deep_md_csQ_%d_%s", qi, sanitizeName(n)), qNative)
@@ -1333,7 +1332,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 					}
 				}
 				if gammaIdx < 0 {
-					return trace.Trace{},fmt.Errorf("recursion: %s missing from chain", gammaName)
+					return trace.Trace{}, fmt.Errorf("recursion: %s missing from chain", gammaName)
 				}
 				gammaCN := chSpongeCNs[gammaIdx]
 				gammaDigestExpr := extfield.FromLimbs(
@@ -1399,23 +1398,23 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 				halfDomain := nFRIsize / 2
 				sLBits := log2int(halfDomain)
 				if sLBits <= 0 {
-					return trace.Trace{},fmt.Errorf("recursion: stage 13 sLBits=%d for size %d", sLBits, size)
+					return trace.Trace{}, fmt.Errorf("recursion: stage 13 sLBits=%d for size %d", sLBits, size)
 				}
 				friDomainGen, err := koalabear.Generator(uint64(nFRIsize))
 				if err != nil {
-					return trace.Trace{},fmt.Errorf("recursion: stage 13 friDomainGen size %d: %w", size, err)
+					return trace.Trace{}, fmt.Errorf("recursion: stage 13 friDomainGen size %d: %w", size, err)
 				}
 				omegaSize, err := koalabear.Generator(uint64(size))
 				if err != nil {
-					return trace.Trace{},fmt.Errorf("recursion: stage 13 omegaSize %d: %w", size, err)
+					return trace.Trace{}, fmt.Errorf("recursion: stage 13 omegaSize %d: %w", size, err)
 				}
-				omegaShiftE4 := make([]ext.E6, len(dqLayout.Shifts[li]))
+				omegaShiftE6 := make([]ext.E6, len(dqLayout.Shifts[li]))
 				omegaShiftExpr := make([]extfield.E6Expr, len(dqLayout.Shifts[li]))
 				for j, shift := range dqLayout.Shifts[li] {
 					var w koalabear.Element
 					w.Exp(omegaSize, big.NewInt(int64(shift)))
-					omegaShiftE4[j].B0.A0.Set(&w)
-					omegaShiftExpr[j] = extfield.Const(omegaShiftE4[j])
+					omegaShiftE6[j].B0.A0.Set(&w)
+					omegaShiftExpr[j] = extfield.Const(omegaShiftE6[j])
 				}
 
 				// Level-leaf expressions per query.
@@ -1468,7 +1467,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 						for k, key := range keys {
 							evalAtZ, ok := leafByKey[key]
 							if !ok {
-								return trace.Trace{},fmt.Errorf("recursion: stage 13 missing leaf key %q", key)
+								return trace.Trace{}, fmt.Errorf("recursion: stage 13 missing leaf key %q", key)
 							}
 							a := alphaPowChain[alphaIdx]
 							alphaIdx++
@@ -1481,7 +1480,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 						denomNegX := zsExpr.Sub(negXExpr)
 
 						var zsNat ext.E6
-						zsNat.MulByElement(&zeta, &omegaShiftE4[j].B0.A0)
+						zsNat.MulByElement(&zeta, &omegaShiftE6[j].B0.A0)
 						var dXNat, dNegXNat ext.E6
 						dXNat.Sub(&zsNat, &xNat)
 						dNegXNat.Sub(&zsNat, &negXNat)
@@ -1491,11 +1490,11 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 						invDXExpr := addE6(fmt.Sprintf(mp+"airverify.deep_md_q%d_l%d_g%d_invX", qi, li, j), invDXNat)
 						invDNegXExpr := addE6(fmt.Sprintf(mp+"airverify.deep_md_q%d_l%d_g%d_invNegX", qi, li, j), invDNegXNat)
 
-						oneE4 := extfield.One()
-						for _, rel := range invDXExpr.Mul(denomX).EqualityConstraints(oneE4) {
+						oneE6 := extfield.One()
+						for _, rel := range invDXExpr.Mul(denomX).EqualityConstraints(oneE6) {
 							verifierMod.AssertZeroAt(rel, query.digestRow)
 						}
-						for _, rel := range invDNegXExpr.Mul(denomNegX).EqualityConstraints(oneE4) {
+						for _, rel := range invDNegXExpr.Mul(denomNegX).EqualityConstraints(oneE6) {
 							verifierMod.AssertZeroAt(rel, query.digestRow)
 						}
 
@@ -1511,7 +1510,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 						for _, chunkName := range dqLayout.AIRChunks[li] {
 							chunkExpr, ok := chunkByName[chunkName]
 							if !ok {
-								return trace.Trace{},fmt.Errorf("recursion: stage 13 missing chunk %q", chunkName)
+								return trace.Trace{}, fmt.Errorf("recursion: stage 13 missing chunk %q", chunkName)
 							}
 							a := alphaPowChain[alphaIdx]
 							alphaIdx++
@@ -1532,11 +1531,11 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 						invDXExpr := addE6(fmt.Sprintf(mp+"airverify.deep_md_q%d_l%d_chunks_invX", qi, li), invDXNat)
 						invDNegXExpr := addE6(fmt.Sprintf(mp+"airverify.deep_md_q%d_l%d_chunks_invNegX", qi, li), invDNegXNat)
 
-						oneE4 := extfield.One()
-						for _, rel := range invDXExpr.Mul(denomX).EqualityConstraints(oneE4) {
+						oneE6 := extfield.One()
+						for _, rel := range invDXExpr.Mul(denomX).EqualityConstraints(oneE6) {
 							verifierMod.AssertZeroAt(rel, query.digestRow)
 						}
-						for _, rel := range invDNegXExpr.Mul(denomNegX).EqualityConstraints(oneE4) {
+						for _, rel := range invDNegXExpr.Mul(denomNegX).EqualityConstraints(oneE6) {
 							verifierMod.AssertZeroAt(rel, query.digestRow)
 						}
 
@@ -1627,10 +1626,10 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 					path := input.Proof.PointSamplings[qi][t].Proof
 					depth := len(path.Siblings)
 					if depth == 0 {
-						return trace.Trace{},fmt.Errorf("recursion: empty column-tree path tree %d query %d", t, qi)
+						return trace.Trace{}, fmt.Errorf("recursion: empty column-tree path tree %d query %d", t, qi)
 					}
 					if depth > verifierMod.N {
-						return trace.Trace{},fmt.Errorf("recursion: column-tree path depth %d exceeds airverify N=%d", depth, verifierMod.N)
+						return trace.Trace{}, fmt.Errorf("recursion: column-tree path depth %d exceeds airverify N=%d", depth, verifierMod.N)
 					}
 					treeMerkles = append(treeMerkles, treeMerkleSetup{
 						treeIdx:    t,
@@ -1683,10 +1682,10 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 				layer := friProof.FRIQueries[k].Layers[j]
 				depth := len(layer.Path.Siblings)
 				if depth == 0 {
-					return trace.Trace{},fmt.Errorf("recursion: empty Merkle path for query %d round %d", k, j)
+					return trace.Trace{}, fmt.Errorf("recursion: empty Merkle path for query %d round %d", k, j)
 				}
 				if depth > verifierMod.N {
-					return trace.Trace{},fmt.Errorf("recursion: query %d round %d path depth %d exceeds airverify N=%d", k, j, depth, verifierMod.N)
+					return trace.Trace{}, fmt.Errorf("recursion: query %d round %d path depth %d exceeds airverify N=%d", k, j, depth, verifierMod.N)
 				}
 
 				// Expose airverify's leaf witnesses so the merkle module
@@ -1762,7 +1761,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 		// Top-real-row parent = tree's committed root.
 		depth := len(ts.siblings)
 		if depth > verifierMod.N {
-			return trace.Trace{},fmt.Errorf("recursion: column-tree path depth %d exceeds airverify N=%d", depth, verifierMod.N)
+			return trace.Trace{}, fmt.Errorf("recursion: column-tree path depth %d exceeds airverify N=%d", depth, verifierMod.N)
 		}
 		for i := 0; i < merkle.DigestWidth; i++ {
 			merkleMod.AssertZeroAt(expr.Col(cn.Parent[i]).Sub(expr.Const(ts.root[i])), depth-1)
@@ -1801,10 +1800,10 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 				lq := friProof.LevelQueries[li-1][qi]
 				depth := len(lq.Path.Siblings)
 				if depth == 0 {
-					return trace.Trace{},fmt.Errorf("recursion: empty Merkle path for level %d query %d", li, qi)
+					return trace.Trace{}, fmt.Errorf("recursion: empty Merkle path for level %d query %d", li, qi)
 				}
 				if depth > verifierMod.N {
-					return trace.Trace{},fmt.Errorf("recursion: level %d query %d path depth %d exceeds airverify N=%d", li, qi, depth, verifierMod.N)
+					return trace.Trace{}, fmt.Errorf("recursion: level %d query %d path depth %d exceeds airverify N=%d", li, qi, depth, verifierMod.N)
 				}
 
 				// Expose airverify's level-leaf witnesses
@@ -1964,11 +1963,11 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 		}
 	}
 	if zetaStepIdx < 0 {
-		return trace.Trace{},fmt.Errorf("recursion: __zeta step missing from chain")
+		return trace.Trace{}, fmt.Errorf("recursion: __zeta step missing from chain")
 	}
 	expectedZeta := hashDigestToE6(chain[zetaStepIdx].NativeDigest)
 	if !expectedZeta.Equal(&zeta) {
-		return trace.Trace{},fmt.Errorf("recursion: chain zeta-step digest != native zeta")
+		return trace.Trace{}, fmt.Errorf("recursion: chain zeta-step digest != native zeta")
 	}
 
 	return tr, nil
@@ -1982,9 +1981,9 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 //
 // WitnessBindings (used by Stage 5+) identifies the slice of
 // NativeInputs that should be wired in-circuit to witness column
-// references rather than constants. Each entry describes one E4
-// binding (4 contiguous native elements in extToElements order
-// {B0.A0, B0.A1, B1.A0, B1.A1}).
+// references rather than constants. Each entry describes one E6
+// binding (6 contiguous native elements in extToElements order
+// {B0.A0, B0.A1, B0.A2, B1.A0, B1.A1, B1.A2}).
 type challengeStep struct {
 	Name            string
 	NativeInputs    []koalabear.Element
@@ -1994,12 +1993,12 @@ type challengeStep struct {
 	WitnessBindings []witnessBinding
 }
 
-// witnessBinding marks one E4 worth of NativeInputs that should be
+// witnessBinding marks one E6 worth of NativeInputs that should be
 // resolved to expr.Col references into the airverify module's witness
 // columns instead of being baked in as constants.
 type witnessBinding struct {
-	// Position in NativeInputs where the 4 elements of this binding start
-	// (extToElements order: {B0.A0, B0.A1, B1.A0, B1.A1}).
+	// Position in NativeInputs where the 6 elements of this binding start
+	// (extToElements order: {B0.A0, B0.A1, B0.A2, B1.A0, B1.A1, B1.A2}).
 	Start int
 	// Key the binding refers to: a leaf.String() name when IsChunk is
 	// false (a committed column at zeta) or a chunk-column name when
@@ -2572,7 +2571,7 @@ func collectLeafValuesAtZeta(
 	return nil
 }
 
-// entryAtIdx pairs a Lagrange row index with its E4 value, abstracted
+// entryAtIdx pairs a Lagrange row index with its E6 value, abstracted
 // so PublicInput entries and Exposed entries share a single
 // reconstruction helper.
 type entryAtIdx struct {
