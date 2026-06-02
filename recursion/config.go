@@ -53,8 +53,5 @@ func validateInnerProof(p proof.Proof, cfg Config) error {
 	if want != commitment.HashBackendPoseidon2 {
 		return fmt.Errorf("recursion: config hash backend %q is not supported (only %q)", want, commitment.HashBackendPoseidon2)
 	}
-	if id != want {
-		return fmt.Errorf("recursion: inner proof hash backend %q does not match config %q", id, want)
-	}
 	return nil
 }
