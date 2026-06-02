@@ -101,8 +101,8 @@ func TestBatchGadgetRejectsNonBinarySelector(t *testing.T) {
 	term.Mul(&b.Gamma, &leaf)
 	next.Add(&b.Expected, &term)
 
-	nLimbs := [4]koalabear.Element{next.B0.A0, next.B1.A0, next.B0.A1, next.B1.A1}
-	for i := 0; i < 4; i++ {
+	nLimbs := [6]koalabear.Element{next.B0.A0, next.B0.A1, next.B1.A0, next.B1.A1, next.B2.A0, next.B2.A1}
+	for i := 0; i < 6; i++ {
 		cols[cn.Next[i]][0].Set(&nLimbs[i])
 	}
 
