@@ -24,9 +24,9 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-func randomExt(t *testing.T) ext.E4 {
+func randomExt(t *testing.T) ext.E6 {
 	t.Helper()
-	var v ext.E4
+	var v ext.E6
 	if _, err := v.B0.A0.SetRandom(); err != nil {
 		t.Fatal(err)
 	}
@@ -102,13 +102,13 @@ func TestBatchGadgetRejectsNonBinarySelector(t *testing.T) {
 	// isolate the binary-check constraint:
 	//   leaf = LeafP + 2*(LeafQ - LeafP) = 2*LeafQ - LeafP
 	//   next = Expected + gamma * (2*LeafQ - LeafP)
-	var leaf ext.E4
+	var leaf ext.E6
 	leaf.Sub(&b.LeafQ, &b.LeafP)
 	var two koalabear.Element
 	two.SetUint64(2)
 	leaf.MulByElement(&leaf, &two)
 	leaf.Add(&leaf, &b.LeafP) // = LeafP + 2*(LeafQ-LeafP) = 2*LeafQ - LeafP
-	var term, next ext.E4
+	var term, next ext.E6
 	term.Mul(&b.Gamma, &leaf)
 	next.Add(&b.Expected, &term)
 

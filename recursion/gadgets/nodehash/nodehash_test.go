@@ -21,7 +21,7 @@ import (
 	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/recursion/gadgets/nodehash"
-	"github.com/consensys/loom/recursion/gadgets/poseidon2"
+	"github.com/consensys/loom/recursion/gadgets/poseidon2sponge"
 	"github.com/consensys/loom/recursion/internal/testutil"
 	"github.com/consensys/loom/trace"
 )
@@ -72,21 +72,16 @@ func buildOneNodeHash(t *testing.T, name string, n int, nodes []nodehash.Node) (
 	builder := board.NewBuilder()
 	builder.AddModule(mod)
 
-	c1Inputs, c2Inputs := nodehash.BuildCompressInputs(nodes)
+	spongeInputs := nodehash.BuildSpongeInputs(nodes)
 	// Pad up to n by repeating the first node so all rows are valid.
-	for len(c1Inputs) < n {
-		c1Inputs = append(c1Inputs, c1Inputs[0])
-		c2Inputs = append(c2Inputs, c2Inputs[0])
+	for len(spongeInputs) < n {
+		spongeInputs = append(spongeInputs, spongeInputs[0])
 	}
 
 	tr := trace.New()
 
-	c1Cols, _ := poseidon2.GenerateTrace(cn.Compress, n, c1Inputs)
-	for k, v := range c1Cols {
-		tr.SetBase(k, v)
-	}
-	c2Cols, _ := poseidon2.GenerateTrace(cn.Tail, n, c2Inputs)
-	for k, v := range c2Cols {
+	spCols, _ := poseidon2sponge.GenerateTrace(cn.Sponge, n, spongeInputs)
+	for k, v := range spCols {
 		tr.SetBase(k, v)
 	}
 

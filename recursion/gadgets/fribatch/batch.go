@@ -99,11 +99,11 @@ func BuildModule(builder *board.Builder, name string, capacity int) ColumnNames 
 	// sel * (1 - sel) = 0
 	mod.AssertZero(sel.Mul(one.Sub(sel)))
 
-	expected := extfield.FromLimbs(expr.Col(cn.Expected[0]), expr.Col(cn.Expected[1]), expr.Col(cn.Expected[2]), expr.Col(cn.Expected[3]))
-	gamma := extfield.FromLimbs(expr.Col(cn.Gamma[0]), expr.Col(cn.Gamma[1]), expr.Col(cn.Gamma[2]), expr.Col(cn.Gamma[3]))
-	leafP := extfield.FromLimbs(expr.Col(cn.LeafP[0]), expr.Col(cn.LeafP[1]), expr.Col(cn.LeafP[2]), expr.Col(cn.LeafP[3]))
-	leafQ := extfield.FromLimbs(expr.Col(cn.LeafQ[0]), expr.Col(cn.LeafQ[1]), expr.Col(cn.LeafQ[2]), expr.Col(cn.LeafQ[3]))
-	next := extfield.FromLimbs(expr.Col(cn.Next[0]), expr.Col(cn.Next[1]), expr.Col(cn.Next[2]), expr.Col(cn.Next[3]))
+	expected := extfield.FromLimbs(expr.Col(cn.Expected[0]), expr.Col(cn.Expected[1]), expr.Col(cn.Expected[2]), expr.Col(cn.Expected[3]), expr.Col(cn.Expected[4]), expr.Col(cn.Expected[5]))
+	gamma := extfield.FromLimbs(expr.Col(cn.Gamma[0]), expr.Col(cn.Gamma[1]), expr.Col(cn.Gamma[2]), expr.Col(cn.Gamma[3]), expr.Col(cn.Gamma[4]), expr.Col(cn.Gamma[5]))
+	leafP := extfield.FromLimbs(expr.Col(cn.LeafP[0]), expr.Col(cn.LeafP[1]), expr.Col(cn.LeafP[2]), expr.Col(cn.LeafP[3]), expr.Col(cn.LeafP[4]), expr.Col(cn.LeafP[5]))
+	leafQ := extfield.FromLimbs(expr.Col(cn.LeafQ[0]), expr.Col(cn.LeafQ[1]), expr.Col(cn.LeafQ[2]), expr.Col(cn.LeafQ[3]), expr.Col(cn.LeafQ[4]), expr.Col(cn.LeafQ[5]))
+	next := extfield.FromLimbs(expr.Col(cn.Next[0]), expr.Col(cn.Next[1]), expr.Col(cn.Next[2]), expr.Col(cn.Next[3]), expr.Col(cn.Next[4]), expr.Col(cn.Next[5]))
 
 	// leaf[i] = leafP[i] + sel * (leafQ[i] - leafP[i])
 	leaf := leafP.Add(leafQ.Sub(leafP).MulByBase(sel))
@@ -121,22 +121,22 @@ func BuildModule(builder *board.Builder, name string, capacity int) ColumnNames 
 
 // Batch is one batching-step input record.
 type Batch struct {
-	Expected ext.E4
-	Gamma    ext.E4
-	LeafP    ext.E4
-	LeafQ    ext.E4
+	Expected ext.E6
+	Gamma    ext.E6
+	LeafP    ext.E6
+	LeafQ    ext.E6
 	Sel      uint64 // 0 or 1
 }
 
 // Next computes the expected output of this batching step natively.
-func (b Batch) Next() ext.E4 {
-	var leaf ext.E4
+func (b Batch) Next() ext.E6 {
+	var leaf ext.E6
 	if b.Sel == 0 {
 		leaf.Set(&b.LeafP)
 	} else {
 		leaf.Set(&b.LeafQ)
 	}
-	var term, out ext.E4
+	var term, out ext.E6
 	term.Mul(&b.Gamma, &leaf)
 	out.Add(&b.Expected, &term)
 	return out
@@ -170,12 +170,12 @@ func GenerateTrace(cn ColumnNames, capacity int, batches []Batch) map[string][]k
 	for row := 0; row < n; row++ {
 		if row < len(batches) {
 			b := batches[row]
-			eLimbs := extfield.FromE4(b.Expected)
-			gLimbs := extfield.FromE4(b.Gamma)
-			lpLimbs := extfield.FromE4(b.LeafP)
-			lqLimbs := extfield.FromE4(b.LeafQ)
+			eLimbs := extfield.FromE6(b.Expected)
+			gLimbs := extfield.FromE6(b.Gamma)
+			lpLimbs := extfield.FromE6(b.LeafP)
+			lqLimbs := extfield.FromE6(b.LeafQ)
 			next := b.Next()
-			nLimbs := extfield.FromE4(next)
+			nLimbs := extfield.FromE6(next)
 			for i := 0; i < extfield.Limbs; i++ {
 				eCols[i][row].Set(&eLimbs[i])
 				gCols[i][row].Set(&gLimbs[i])

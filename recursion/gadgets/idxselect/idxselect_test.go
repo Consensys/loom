@@ -26,9 +26,9 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-func randExt(t *testing.T) ext.E4 {
+func randExt(t *testing.T) ext.E6 {
 	t.Helper()
-	var v ext.E4
+	var v ext.E6
 	if _, err := v.B0.A0.SetRandom(); err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func nextPow2(n int) int {
 	return r
 }
 
-func buildIdxSelect(t *testing.T, name string, table []ext.E4, indices []uint64) (board.Builder, trace.Trace, idxselect.ColumnNames) {
+func buildIdxSelect(t *testing.T, name string, table []ext.E6, indices []uint64) (board.Builder, trace.Trace, idxselect.ColumnNames) {
 	t.Helper()
 	k := 0
 	for v := len(table); v > 1; v >>= 1 {
@@ -87,7 +87,7 @@ func buildIdxSelect(t *testing.T, name string, table []ext.E4, indices []uint64)
 // TestIdxSelectGadgetTable4 exercises a 4-entry table (k=2) with two
 // different indices.
 func TestIdxSelectGadgetTable4(t *testing.T) {
-	table := []ext.E4{randExt(t), randExt(t), randExt(t), randExt(t)}
+	table := []ext.E6{randExt(t), randExt(t), randExt(t), randExt(t)}
 	indices := []uint64{0, 1, 2, 3, 1, 3, 0, 2}
 
 	builder, tr, _ := buildIdxSelect(t, "sel4", table, indices)
@@ -97,7 +97,7 @@ func TestIdxSelectGadgetTable4(t *testing.T) {
 // TestIdxSelectGadgetTable16 exercises a 16-entry table (k=4) — larger
 // depth pushes the polynomial degree to 4.
 func TestIdxSelectGadgetTable16(t *testing.T) {
-	table := make([]ext.E4, 16)
+	table := make([]ext.E6, 16)
 	for i := range table {
 		table[i] = randExt(t)
 	}
@@ -110,13 +110,13 @@ func TestIdxSelectGadgetTable16(t *testing.T) {
 // TestIdxSelectMatchesNative cross-checks each row's selected output limb
 // against table[index] directly.
 func TestIdxSelectMatchesNative(t *testing.T) {
-	table := []ext.E4{randExt(t), randExt(t), randExt(t), randExt(t)}
+	table := []ext.E6{randExt(t), randExt(t), randExt(t), randExt(t)}
 	indices := []uint64{0, 1, 2, 3}
 
 	_, tr, cn := buildIdxSelect(t, "selmatch", table, indices)
 
 	for row, idx := range indices {
-		want := extfield.FromE4(table[idx])
+		want := extfield.FromE6(table[idx])
 		for i := 0; i < extfield.Limbs; i++ {
 			got := tr.Base[cn.Out[i]][row]
 			if !got.Equal(&want[i]) {
@@ -129,7 +129,7 @@ func TestIdxSelectMatchesNative(t *testing.T) {
 // TestIdxSelectRejectsCorruption flips the output and confirms the proof
 // breaks.
 func TestIdxSelectRejectsCorruption(t *testing.T) {
-	table := []ext.E4{randExt(t), randExt(t)}
+	table := []ext.E6{randExt(t), randExt(t)}
 	indices := []uint64{0}
 
 	builder, tr, cn := buildIdxSelect(t, "sel_corrupt", table, indices)

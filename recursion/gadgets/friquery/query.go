@@ -117,10 +117,10 @@ func BuildModule(builder *board.Builder, name string, capacity int) ColumnNames 
 	// (1) bit*(1-bit) = 0 at every row.
 	mod.AssertZero(bit.Mul(one.Sub(bit)))
 
-	P := extfield.FromLimbs(expr.Col(cn.P[0]), expr.Col(cn.P[1]), expr.Col(cn.P[2]), expr.Col(cn.P[3]))
-	Q := extfield.FromLimbs(expr.Col(cn.Q[0]), expr.Col(cn.Q[1]), expr.Col(cn.Q[2]), expr.Col(cn.Q[3]))
-	alpha := extfield.FromLimbs(expr.Col(cn.Alpha[0]), expr.Col(cn.Alpha[1]), expr.Col(cn.Alpha[2]), expr.Col(cn.Alpha[3]))
-	expected := extfield.FromLimbs(expr.Col(cn.Expected[0]), expr.Col(cn.Expected[1]), expr.Col(cn.Expected[2]), expr.Col(cn.Expected[3]))
+	P := extfield.FromLimbs(expr.Col(cn.P[0]), expr.Col(cn.P[1]), expr.Col(cn.P[2]), expr.Col(cn.P[3]), expr.Col(cn.P[4]), expr.Col(cn.P[5]))
+	Q := extfield.FromLimbs(expr.Col(cn.Q[0]), expr.Col(cn.Q[1]), expr.Col(cn.Q[2]), expr.Col(cn.Q[3]), expr.Col(cn.Q[4]), expr.Col(cn.Q[5]))
+	alpha := extfield.FromLimbs(expr.Col(cn.Alpha[0]), expr.Col(cn.Alpha[1]), expr.Col(cn.Alpha[2]), expr.Col(cn.Alpha[3]), expr.Col(cn.Alpha[4]), expr.Col(cn.Alpha[5]))
+	expected := extfield.FromLimbs(expr.Col(cn.Expected[0]), expr.Col(cn.Expected[1]), expr.Col(cn.Expected[2]), expr.Col(cn.Expected[3]), expr.Col(cn.Expected[4]), expr.Col(cn.Expected[5]))
 
 	// (2) Fold equation at every row.
 	sumHalf := P.Add(Q).MulByBase(invHalf)
@@ -151,17 +151,17 @@ func BuildModule(builder *board.Builder, name string, capacity int) ColumnNames 
 
 // Round captures the inputs for one fold round inside a query.
 type Round struct {
-	P     ext.E4
-	Q     ext.E4
-	Alpha ext.E4
+	P     ext.E6
+	Q     ext.E6
+	Alpha ext.E6
 	XInv  koalabear.Element
 	Bit   uint64 // 0 or 1; bit at row 0 may be set to 0
 }
 
 // Folded computes the per-row fold result natively.
-func (r Round) Folded() ext.E4 {
+func (r Round) Folded() ext.E6 {
 	half := invTwo()
-	var sum, diff, scaled, out ext.E4
+	var sum, diff, scaled, out ext.E6
 	sum.Add(&r.P, &r.Q)
 	sum.MulByElement(&sum, &half)
 	diff.Sub(&r.P, &r.Q)
@@ -210,11 +210,11 @@ func GenerateTrace(cn ColumnNames, capacity int, rounds []Round) map[string][]ko
 			continue // zeros (trivially valid)
 		}
 		r := rounds[row]
-		pLimbs := extfield.FromE4(r.P)
-		qLimbs := extfield.FromE4(r.Q)
-		aLimbs := extfield.FromE4(r.Alpha)
+		pLimbs := extfield.FromE6(r.P)
+		qLimbs := extfield.FromE6(r.Q)
+		aLimbs := extfield.FromE6(r.Alpha)
 		folded := r.Folded()
-		fLimbs := extfield.FromE4(folded)
+		fLimbs := extfield.FromE6(folded)
 		for i := 0; i < extfield.Limbs; i++ {
 			pCols[i][row].Set(&pLimbs[i])
 			qCols[i][row].Set(&qLimbs[i])
@@ -230,7 +230,7 @@ func GenerateTrace(cn ColumnNames, capacity int, rounds []Round) map[string][]ko
 	// loop can be elided.)
 	for k := 0; k+1 < len(rounds); k++ {
 		folded := rounds[k].Folded()
-		var target ext.E4
+		var target ext.E6
 		switch rounds[k+1].Bit {
 		case 0:
 			target = rounds[k+1].P

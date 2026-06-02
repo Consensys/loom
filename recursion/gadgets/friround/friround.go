@@ -144,10 +144,10 @@ func Register(mod *board.Module, prefix string, omegaInv koalabear.Element, kBit
 	invHalf := expr.Const(invTwo())
 	xInv := expr.Col(cn.XInvColName())
 
-	P := extfield.FromLimbs(expr.Col(cn.P[0]), expr.Col(cn.P[1]), expr.Col(cn.P[2]), expr.Col(cn.P[3]))
-	Q := extfield.FromLimbs(expr.Col(cn.Q[0]), expr.Col(cn.Q[1]), expr.Col(cn.Q[2]), expr.Col(cn.Q[3]))
-	alpha := extfield.FromLimbs(expr.Col(cn.Alpha[0]), expr.Col(cn.Alpha[1]), expr.Col(cn.Alpha[2]), expr.Col(cn.Alpha[3]))
-	expected := extfield.FromLimbs(expr.Col(cn.Expected[0]), expr.Col(cn.Expected[1]), expr.Col(cn.Expected[2]), expr.Col(cn.Expected[3]))
+	P := extfield.FromLimbs(expr.Col(cn.P[0]), expr.Col(cn.P[1]), expr.Col(cn.P[2]), expr.Col(cn.P[3]), expr.Col(cn.P[4]), expr.Col(cn.P[5]))
+	Q := extfield.FromLimbs(expr.Col(cn.Q[0]), expr.Col(cn.Q[1]), expr.Col(cn.Q[2]), expr.Col(cn.Q[3]), expr.Col(cn.Q[4]), expr.Col(cn.Q[5]))
+	alpha := extfield.FromLimbs(expr.Col(cn.Alpha[0]), expr.Col(cn.Alpha[1]), expr.Col(cn.Alpha[2]), expr.Col(cn.Alpha[3]), expr.Col(cn.Alpha[4]), expr.Col(cn.Alpha[5]))
+	expected := extfield.FromLimbs(expr.Col(cn.Expected[0]), expr.Col(cn.Expected[1]), expr.Col(cn.Expected[2]), expr.Col(cn.Expected[3]), expr.Col(cn.Expected[4]), expr.Col(cn.Expected[5]))
 
 	sumHalf := P.Add(Q).MulByBase(invHalf)
 	diff := P.Sub(Q)
@@ -174,14 +174,14 @@ func Register(mod *board.Module, prefix string, omegaInv koalabear.Element, kBit
 
 // Query captures one query's fold inputs at this round.
 type Query struct {
-	P     ext.E4
-	Q     ext.E4
-	Alpha ext.E4
+	P     ext.E6
+	Q     ext.E6
+	Alpha ext.E6
 	Base  uint64 // < 2^kBits
 }
 
 // Folded computes the native fold result, using xInv = omegaInv^base.
-func (q Query) Folded(omegaInv koalabear.Element) ext.E4 {
+func (q Query) Folded(omegaInv koalabear.Element) ext.E6 {
 	var xInv koalabear.Element
 	xInv.SetOne()
 	if q.Base > 0 {
@@ -200,7 +200,7 @@ func (q Query) Folded(omegaInv koalabear.Element) ext.E4 {
 	}
 
 	half := invTwo()
-	var sum, diff, scaled, out ext.E4
+	var sum, diff, scaled, out ext.E6
 	sum.Add(&q.P, &q.Q)
 	sum.MulByElement(&sum, &half)
 	diff.Sub(&q.P, &q.Q)
@@ -244,11 +244,11 @@ func GenerateTrace(cn ColumnNames, capacity int, queries []Query) map[string][]k
 		}
 		q := queries[row]
 		baseValues[row] = q.Base
-		pLimbs := extfield.FromE4(q.P)
-		qLimbs := extfield.FromE4(q.Q)
-		aLimbs := extfield.FromE4(q.Alpha)
+		pLimbs := extfield.FromE6(q.P)
+		qLimbs := extfield.FromE6(q.Q)
+		aLimbs := extfield.FromE6(q.Alpha)
 		folded := q.Folded(cn.OmegaInv)
-		fLimbs := extfield.FromE4(folded)
+		fLimbs := extfield.FromE6(folded)
 		for i := 0; i < extfield.Limbs; i++ {
 			pCols[i][row].Set(&pLimbs[i])
 			qCols[i][row].Set(&qLimbs[i])

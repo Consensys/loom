@@ -30,10 +30,9 @@
 // LEAF_TAG = 0x4c454146 ("LEAF") matches commitment.leafDomainTag.
 //
 // Sponge limb ordering: the native HashLeaf uses Poseidon2SpongeHasher's
-// WriteExt, which writes E4 limbs in the order {B0.A0, B0.A1, B1.A0,
-// B1.A1}. The extfield package's E4Expr uses limb order {B0.A0, B1.A0,
-// B0.A1, B1.A1} (= {1, v, v^2, v^3} basis). The wiring below re-maps
-// between these two orderings.
+// WriteExt, which writes E6 limbs in the order {B0.A0, B0.A1, B1.A0,
+// B1.A1, B2.A0, B2.A1}. The extfield package's E6Expr uses the same
+// limb order so the wiring below uses an identity SpongeLimbOrder.
 package leafhash
 
 import (
@@ -56,15 +55,11 @@ const LeafDomainTag uint64 = 0x4c454146 // "LEAF"
 // DigestLen is the number of base-field limbs in a Merkle leaf digest.
 const DigestLen = hash.DIGEST_NB_ELEMENTS // 8
 
-// SpongeLimbOrder maps a sponge-byte position (k in 0..3 within a packed
-// E4) to the extfield.E4Expr limb index that should be written there.
-//
-//	sponge slot | extfield limb
-//	  0 (B0.A0) | 0 (B0.A0)
-//	  1 (B0.A1) | 2 (B0.A1)
-//	  2 (B1.A0) | 1 (B1.A0)
-//	  3 (B1.A1) | 3 (B1.A1)
-var SpongeLimbOrder = [extfield.Limbs]int{0, 2, 1, 3}
+// SpongeLimbOrder maps a sponge slot position to the extfield.E6Expr limb
+// index that should be written there. With E6 the two orderings agree
+// (both lay out limbs as B0.A0, B0.A1, B1.A0, B1.A1, B2.A0, B2.A1), so the
+// mapping is the identity.
+var SpongeLimbOrder = [extfield.Limbs]int{0, 1, 2, 3, 4, 5}
 
 // ColumnNames identifies the columns produced by a RegisterExtLeafHash
 // call. Sponge holds the underlying width-24 Poseidon2 columns; Digest
@@ -81,10 +76,10 @@ type ColumnNames struct {
 // 0...). The Digest field of the returned ColumnNames points at the
 // 8 lanes of output that constitute the leaf digest.
 //
-// leafPCols / leafQCols are the column names of the four E4 limbs of the
-// ext-rail leaf values P and Q (in extfield order: B0.A0, B1.A0, B0.A1,
-// B1.A1). They typically come from a friround.ColumnNames or any other
-// gadget that exposes E4 columns.
+// leafPCols / leafQCols are the column names of the six E6 limbs of the
+// ext-rail leaf values P and Q (in extfield order: B0.A0, B0.A1, B1.A0,
+// B1.A1, B2.A0, B2.A1). They typically come from a friround.ColumnNames
+// or any other gadget that exposes E6 columns.
 func RegisterExtLeafHash(mod *board.Module, prefix string, leafPCols, leafQCols [extfield.Limbs]string) ColumnNames {
 	spongeCN := poseidon2sponge.Register(mod, prefix+".sponge")
 
@@ -101,16 +96,16 @@ func RegisterExtLeafHash(mod *board.Module, prefix string, leafPCols, leafQCols 
 	mod.AssertZero(expr.Col(spongeCN.In[1]).Sub(zero))
 	mod.AssertZero(expr.Col(spongeCN.In[2]).Sub(one))
 
-	// LeafP at sponge positions 3..6; LeafQ at 7..10. Re-map between
-	// sponge order and extfield order.
+	// LeafP at sponge positions 3..3+Limbs-1; LeafQ at 3+Limbs..3+2*Limbs-1.
+	// With E6, sponge and extfield limb orderings agree (identity SpongeLimbOrder).
 	for k := 0; k < extfield.Limbs; k++ {
 		limbIdx := SpongeLimbOrder[k]
 		mod.AssertZero(expr.Col(spongeCN.In[3+k]).Sub(expr.Col(leafPCols[limbIdx])))
-		mod.AssertZero(expr.Col(spongeCN.In[7+k]).Sub(expr.Col(leafQCols[limbIdx])))
+		mod.AssertZero(expr.Col(spongeCN.In[3+extfield.Limbs+k]).Sub(expr.Col(leafQCols[limbIdx])))
 	}
 
-	// Pad: state[11..23] = 0.
-	for i := 11; i < poseidon2sponge.Width; i++ {
+	// Pad: state[3+2*Limbs..23] = 0.
+	for i := 3 + 2*extfield.Limbs; i < poseidon2sponge.Width; i++ {
 		mod.AssertZero(expr.Col(spongeCN.In[i]).Sub(zero))
 	}
 
@@ -139,12 +134,12 @@ type FlexibleColumnNames struct {
 	Digest    [DigestLen]string
 }
 
-// NumBlocksForFlexible returns the number of absorption blocks
-// required for the given leaf layout. Single block when the input
-// fits in one rate (3 + 2*nbBase + 8*nbExt ≤ SpongeRate), more
-// blocks otherwise. Always >= 1.
+// NumBlocksForFlexible returns the number of absorption blocks required
+// for the given leaf layout. Single block when the input fits in one
+// rate (3 + 2*nbBase + 2*extfield.Limbs*nbExt ≤ SpongeRate), more blocks
+// otherwise. Always >= 1.
 func NumBlocksForFlexible(nbBase, nbExt int) int {
-	inLen := 3 + 2*nbBase + 8*nbExt
+	inLen := 3 + 2*nbBase + 2*extfield.Limbs*nbExt
 	if inLen <= 0 {
 		return 1
 	}
@@ -183,7 +178,7 @@ func RegisterFlexibleLeafHash(
 	}
 	nbBase := len(basePCols)
 	nbExt := len(extPCols)
-	inLen := 3 + 2*nbBase + 8*nbExt
+	inLen := 3 + 2*nbBase + 2*extfield.Limbs*nbExt
 	numBlocks := NumBlocksForFlexible(nbBase, nbExt)
 
 	var tagElem, nbBaseElem, nbExtElem koalabear.Element
@@ -263,7 +258,7 @@ func RegisterFlexibleLeafHash(
 
 // FlexibleLeaf is one mixed leaf-hash input matching
 // RegisterFlexibleLeafHash. BasePairsP/Q are base elements; ExtPairsP/Q
-// hold ext.E4 in extfield limb order.
+// hold ext.E6 in extfield limb order.
 type FlexibleLeaf struct {
 	BasePairsP []koalabear.Element
 	BasePairsQ []koalabear.Element
@@ -284,7 +279,7 @@ type FlexibleLeaf struct {
 func FlexibleLeafSpongeStates(leaf FlexibleLeaf) [][poseidon2sponge.Width]koalabear.Element {
 	nbBase := len(leaf.BasePairsP)
 	nbExt := len(leaf.ExtPairsP)
-	inLen := 3 + 2*nbBase + 8*nbExt
+	inLen := 3 + 2*nbBase + 2*extfield.Limbs*nbExt
 	numBlocks := NumBlocksForFlexible(nbBase, nbExt)
 
 	// Flatten leaf into one input slice in the same order the
@@ -381,9 +376,9 @@ func BuildSpongeInputs(leaves []ExtLeaf) [][poseidon2sponge.Width]koalabear.Elem
 		for k := 0; k < extfield.Limbs; k++ {
 			limbIdx := SpongeLimbOrder[k]
 			s[3+k].Set(&leaf.P[limbIdx])
-			s[7+k].Set(&leaf.Q[limbIdx])
+			s[3+extfield.Limbs+k].Set(&leaf.Q[limbIdx])
 		}
-		// s[11..23] stay zero
+		// s[3+2*Limbs..23] stay zero
 		out[row] = s
 	}
 	return out

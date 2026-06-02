@@ -26,9 +26,9 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-func randomExt(t *testing.T) ext.E4 {
+func randomExt(t *testing.T) ext.E6 {
 	t.Helper()
-	var v ext.E4
+	var v ext.E6
 	if _, err := v.B0.A0.SetRandom(); err != nil {
 		t.Fatal(err)
 	}
@@ -57,12 +57,12 @@ func randomBase(t *testing.T) koalabear.Element {
 // without relying on internal/fri internals — so the test is self-contained.
 //
 //	folded = (P+Q)/2 + alpha * (P-Q)/(2 * omega^base)
-func nativeFoldExtSinglePosition(p, q, alpha ext.E4, xInv koalabear.Element) ext.E4 {
+func nativeFoldExtSinglePosition(p, q, alpha ext.E6, xInv koalabear.Element) ext.E6 {
 	var two, invTwo koalabear.Element
 	two.SetUint64(2)
 	invTwo.Inverse(&two)
 
-	var sum, diff, scaled, out ext.E4
+	var sum, diff, scaled, out ext.E6
 	sum.Add(&p, &q)
 	sum.MulByElement(&sum, &invTwo)
 

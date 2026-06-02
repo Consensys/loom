@@ -29,9 +29,9 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-func randExt(t *testing.T) ext.E4 {
+func randExt(t *testing.T) ext.E6 {
 	t.Helper()
-	var v ext.E4
+	var v ext.E6
 	if _, err := v.B0.A0.SetRandom(); err != nil {
 		t.Fatal(err)
 	}
@@ -48,9 +48,9 @@ func randExt(t *testing.T) ext.E4 {
 }
 
 // foldLayer reproduces native fri.foldLayerExt verbatim.
-func foldLayer(layer []ext.E4, alpha ext.E4, domain *fft.Domain) []ext.E4 {
+func foldLayer(layer []ext.E6, alpha ext.E6, domain *fft.Domain) []ext.E6 {
 	half := len(layer) / 2
-	out := make([]ext.E4, half)
+	out := make([]ext.E6, half)
 
 	var two, invTwo koalabear.Element
 	two.SetUint64(2)
@@ -61,7 +61,7 @@ func foldLayer(layer []ext.E4, alpha ext.E4, domain *fft.Domain) []ext.E4 {
 
 	for i := 0; i < half; i++ {
 		p, q := layer[i], layer[i+half]
-		var sum, diff ext.E4
+		var sum, diff ext.E6
 		sum.Add(&p, &q)
 		sum.MulByElement(&sum, &invTwo)
 		diff.Sub(&p, &q)
@@ -78,11 +78,11 @@ func foldLayer(layer []ext.E4, alpha ext.E4, domain *fft.Domain) []ext.E4 {
 //   - layers: layers[j] is the round-j FRI layer (layer[0] = initial)
 //   - omegasInv: omegasInv[j] = round-j domain generator inverse
 //   - kBits: kBits[j] = bit count of base_j = log2(N_j/2)
-func simulateFRI(initialLayer []ext.E4, alphas []ext.E4) (layers [][]ext.E4, omegasInv []koalabear.Element, kBits []int) {
+func simulateFRI(initialLayer []ext.E6, alphas []ext.E6) (layers [][]ext.E6, omegasInv []koalabear.Element, kBits []int) {
 	N := len(initialLayer)
 	numRounds := len(alphas)
 
-	layers = make([][]ext.E4, numRounds+1)
+	layers = make([][]ext.E6, numRounds+1)
 	omegasInv = make([]koalabear.Element, numRounds)
 	kBits = make([]int, numRounds)
 
@@ -118,11 +118,11 @@ func TestEndToEndFRIQueryWithChain(t *testing.T) {
 	const numRounds = 2
 	queries := []int{5, 2}
 
-	initialLayer := make([]ext.E4, N)
+	initialLayer := make([]ext.E6, N)
 	for i := range initialLayer {
 		initialLayer[i] = randExt(t)
 	}
-	alphas := make([]ext.E4, numRounds)
+	alphas := make([]ext.E6, numRounds)
 	for i := range alphas {
 		alphas[i] = randExt(t)
 	}
@@ -174,11 +174,11 @@ func TestEndToEndFRIQueryRejectsCorruptedRound(t *testing.T) {
 	const numRounds = 2
 	queries := []int{5, 2}
 
-	initialLayer := make([]ext.E4, N)
+	initialLayer := make([]ext.E6, N)
 	for i := range initialLayer {
 		initialLayer[i] = randExt(t)
 	}
-	alphas := []ext.E4{randExt(t), randExt(t)}
+	alphas := []ext.E6{randExt(t), randExt(t)}
 	layers, omegasInv, kBits := simulateFRI(initialLayer, alphas)
 
 	capacity := len(queries)
@@ -235,11 +235,11 @@ func TestEndToEndFRIQueryWithFinalPoly(t *testing.T) {
 	const numRounds = 2
 	queries := []int{5, 2} // two queries in [0, N/2 = 8)
 
-	initialLayer := make([]ext.E4, N)
+	initialLayer := make([]ext.E6, N)
 	for i := range initialLayer {
 		initialLayer[i] = randExt(t)
 	}
-	alphas := []ext.E4{randExt(t), randExt(t)}
+	alphas := []ext.E6{randExt(t), randExt(t)}
 	layers, omegasInv, kBits := simulateFRI(initialLayer, alphas)
 
 	finalPoly := layers[numRounds] // length = N / 2^numRounds = N/D = 4
@@ -330,25 +330,25 @@ func TestEndToEndMultiDegreeFRI(t *testing.T) {
 	queries := []int{5, 2}
 
 	// Initial layer (level_0.evals) and level_1.evals.
-	layer0 := make([]ext.E4, N)
+	layer0 := make([]ext.E6, N)
 	for i := range layer0 {
 		layer0[i] = randExt(t)
 	}
-	level1Evals := make([]ext.E4, N/2)
+	level1Evals := make([]ext.E6, N/2)
 	for i := range level1Evals {
 		level1Evals[i] = randExt(t)
 	}
 
-	alphas := []ext.E4{randExt(t), randExt(t)}
+	alphas := []ext.E6{randExt(t), randExt(t)}
 	gamma1 := randExt(t)
 
 	// Native commit phase:
 	domain0 := fft.NewDomain(uint64(N))
 	layer1Unmixed := foldLayer(layer0, alphas[0], domain0)
 	// Mix: layer1 += gamma_1 * level_1.evals (pointwise).
-	layer1Mixed := make([]ext.E4, len(layer1Unmixed))
+	layer1Mixed := make([]ext.E6, len(layer1Unmixed))
 	for i := range layer1Mixed {
-		var term ext.E4
+		var term ext.E6
 		term.Mul(&gamma1, &level1Evals[i])
 		layer1Mixed[i].Add(&layer1Unmixed[i], &term)
 	}
@@ -433,11 +433,11 @@ func TestEndToEndMultiDegreeFRI(t *testing.T) {
 		leafPCols[i] = allocLevelCol(ld.LeafP[i])
 		leafQCols[i] = allocLevelCol(ld.LeafQ[i])
 	}
-	gammaLimbs := extfield.FromE4(gamma1)
+	gammaLimbs := extfield.FromE6(gamma1)
 	for qi, s := range queries {
 		base1 := s % (N / 4)
-		leafP := extfield.FromE4(level1Evals[base1])
-		leafQ := extfield.FromE4(level1Evals[base1+N/4])
+		leafP := extfield.FromE6(level1Evals[base1])
+		leafQ := extfield.FromE6(level1Evals[base1+N/4])
 		for i := 0; i < extfield.Limbs; i++ {
 			gammaCols[i][qi].Set(&gammaLimbs[i])
 			leafPCols[i][qi].Set(&leafP[i])
@@ -467,22 +467,22 @@ func TestEndToEndMultiDegreeFRIRejectsBadLevel(t *testing.T) {
 	const numRounds = 2
 	queries := []int{5, 2}
 
-	layer0 := make([]ext.E4, N)
+	layer0 := make([]ext.E6, N)
 	for i := range layer0 {
 		layer0[i] = randExt(t)
 	}
-	level1Evals := make([]ext.E4, N/2)
+	level1Evals := make([]ext.E6, N/2)
 	for i := range level1Evals {
 		level1Evals[i] = randExt(t)
 	}
-	alphas := []ext.E4{randExt(t), randExt(t)}
+	alphas := []ext.E6{randExt(t), randExt(t)}
 	gamma1 := randExt(t)
 
 	domain0 := fft.NewDomain(uint64(N))
 	layer1Unmixed := foldLayer(layer0, alphas[0], domain0)
-	layer1Mixed := make([]ext.E4, len(layer1Unmixed))
+	layer1Mixed := make([]ext.E6, len(layer1Unmixed))
 	for i := range layer1Mixed {
-		var term ext.E4
+		var term ext.E6
 		term.Mul(&gamma1, &level1Evals[i])
 		layer1Mixed[i].Add(&layer1Unmixed[i], &term)
 	}
@@ -520,7 +520,7 @@ func TestEndToEndMultiDegreeFRIRejectsBadLevel(t *testing.T) {
 		roundQueries := make([]friround.Query, len(queries))
 		for qi, s := range queries {
 			base := s % (Nj / 2)
-			var P, Q ext.E4
+			var P, Q ext.E6
 			if j == 0 {
 				P = layer0[base]
 				Q = layer0[base+Nj/2]
@@ -537,7 +537,7 @@ func TestEndToEndMultiDegreeFRIRejectsBadLevel(t *testing.T) {
 
 	// Level 1 trace.
 	levelCols := make(map[string][]koalabear.Element, 3*extfield.Limbs)
-	gammaLimbs := extfield.FromE4(gamma1)
+	gammaLimbs := extfield.FromE6(gamma1)
 	for i := 0; i < extfield.Limbs; i++ {
 		levelCols[ld.Gamma[i]] = make([]koalabear.Element, capacity)
 		levelCols[ld.LeafP[i]] = make([]koalabear.Element, capacity)
@@ -545,8 +545,8 @@ func TestEndToEndMultiDegreeFRIRejectsBadLevel(t *testing.T) {
 	}
 	for qi, s := range queries {
 		base1 := s % (N / 4)
-		leafP := extfield.FromE4(level1Evals[base1])
-		leafQ := extfield.FromE4(level1Evals[base1+N/4])
+		leafP := extfield.FromE6(level1Evals[base1])
+		leafQ := extfield.FromE6(level1Evals[base1+N/4])
 		for i := 0; i < extfield.Limbs; i++ {
 			levelCols[ld.Gamma[i]][qi].Set(&gammaLimbs[i])
 			levelCols[ld.LeafP[i]][qi].Set(&leafP[i])

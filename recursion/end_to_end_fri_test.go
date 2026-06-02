@@ -34,9 +34,9 @@ import (
 )
 
 // foldLayer reproduces native fri.foldLayerExt for an ext-rail layer.
-func foldLayer(layer []ext.E4, alpha ext.E4, domain *fft.Domain) []ext.E4 {
+func foldLayer(layer []ext.E6, alpha ext.E6, domain *fft.Domain) []ext.E6 {
 	half := len(layer) / 2
-	out := make([]ext.E4, half)
+	out := make([]ext.E6, half)
 
 	var two, invTwo koalabear.Element
 	two.SetUint64(2)
@@ -47,7 +47,7 @@ func foldLayer(layer []ext.E4, alpha ext.E4, domain *fft.Domain) []ext.E4 {
 
 	for i := 0; i < half; i++ {
 		p, q := layer[i], layer[i+half]
-		var sum, diff ext.E4
+		var sum, diff ext.E6
 		sum.Add(&p, &q)
 		sum.MulByElement(&sum, &invTwo)
 		diff.Sub(&p, &q)
@@ -69,9 +69,9 @@ func log2(n int) int {
 	return k
 }
 
-func randExt(t *testing.T) ext.E4 {
+func randExt(t *testing.T) ext.E6 {
 	t.Helper()
-	var v ext.E4
+	var v ext.E6
 	if _, err := v.B0.A0.SetRandom(); err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func randExt(t *testing.T) ext.E4 {
 // makeLayerMerkleTree builds a Merkle tree over the paired-leaf encoding
 // of one FRI layer. Each leaf at position i pairs (layer[i], layer[i +
 // N/2]) and is hashed via Poseidon2LeafHasher.
-func makeLayerMerkleTree(t *testing.T, layer []ext.E4) (*internalmerkle.Tree, []internalmerkle.Proof, []commitment.PairExt) {
+func makeLayerMerkleTree(t *testing.T, layer []ext.E6) (*internalmerkle.Tree, []internalmerkle.Proof, []commitment.PairExt) {
 	t.Helper()
 	half := len(layer) / 2
 
@@ -144,14 +144,14 @@ func TestEndToEndFRIVerifierWithMerkleBinding(t *testing.T) {
 	queries := []int{5, 2, 3, 6}
 	const universalN = 4 // shared by fri_verify and every merkle layer
 
-	initialLayer := make([]ext.E4, N)
+	initialLayer := make([]ext.E6, N)
 	for i := range initialLayer {
 		initialLayer[i] = randExt(t)
 	}
-	alphas := []ext.E4{randExt(t), randExt(t)}
+	alphas := []ext.E6{randExt(t), randExt(t)}
 
 	// Native FRI commit phase: fold layer_0 -> layer_1 -> layer_2.
-	layers := [][]ext.E4{initialLayer}
+	layers := [][]ext.E6{initialLayer}
 	domains := []*fft.Domain{fft.NewDomain(uint64(N))}
 	for j := 0; j < numRounds; j++ {
 		nextLayer := foldLayer(layers[j], alphas[j], domains[j])
@@ -316,13 +316,13 @@ func TestEndToEndFRIVerifierRejectsCrossModuleMismatch(t *testing.T) {
 	queries := []int{5, 2, 3, 6}
 	const universalN = 4
 
-	initialLayer := make([]ext.E4, N)
+	initialLayer := make([]ext.E6, N)
 	for i := range initialLayer {
 		initialLayer[i] = randExt(t)
 	}
-	alphas := []ext.E4{randExt(t), randExt(t)}
+	alphas := []ext.E6{randExt(t), randExt(t)}
 
-	layers := [][]ext.E4{initialLayer}
+	layers := [][]ext.E6{initialLayer}
 	domains := []*fft.Domain{fft.NewDomain(uint64(N))}
 	for j := 0; j < numRounds; j++ {
 		nextLayer := foldLayer(layers[j], alphas[j], domains[j])

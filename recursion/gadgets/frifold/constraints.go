@@ -96,10 +96,10 @@ func BuildExtModule(builder *board.Builder, name string, capacity int) ExtColumn
 	xInv := expr.Col(cn.XInv)
 	invHalf := expr.Const(invTwo())
 
-	P := extfield.FromLimbs(expr.Col(cn.P[0]), expr.Col(cn.P[1]), expr.Col(cn.P[2]), expr.Col(cn.P[3]))
-	Q := extfield.FromLimbs(expr.Col(cn.Q[0]), expr.Col(cn.Q[1]), expr.Col(cn.Q[2]), expr.Col(cn.Q[3]))
-	alpha := extfield.FromLimbs(expr.Col(cn.Alpha[0]), expr.Col(cn.Alpha[1]), expr.Col(cn.Alpha[2]), expr.Col(cn.Alpha[3]))
-	folded := extfield.FromLimbs(expr.Col(cn.Folded[0]), expr.Col(cn.Folded[1]), expr.Col(cn.Folded[2]), expr.Col(cn.Folded[3]))
+	P := extfield.FromLimbs(expr.Col(cn.P[0]), expr.Col(cn.P[1]), expr.Col(cn.P[2]), expr.Col(cn.P[3]), expr.Col(cn.P[4]), expr.Col(cn.P[5]))
+	Q := extfield.FromLimbs(expr.Col(cn.Q[0]), expr.Col(cn.Q[1]), expr.Col(cn.Q[2]), expr.Col(cn.Q[3]), expr.Col(cn.Q[4]), expr.Col(cn.Q[5]))
+	alpha := extfield.FromLimbs(expr.Col(cn.Alpha[0]), expr.Col(cn.Alpha[1]), expr.Col(cn.Alpha[2]), expr.Col(cn.Alpha[3]), expr.Col(cn.Alpha[4]), expr.Col(cn.Alpha[5]))
+	folded := extfield.FromLimbs(expr.Col(cn.Folded[0]), expr.Col(cn.Folded[1]), expr.Col(cn.Folded[2]), expr.Col(cn.Folded[3]), expr.Col(cn.Folded[4]), expr.Col(cn.Folded[5]))
 
 	// sumHalf = (P + Q) * invTwo
 	sumHalf := P.Add(Q).MulByBase(invHalf)

@@ -13,11 +13,11 @@
 
 // Package airzeta implements the in-circuit equivalent of
 // dag.EvalExt — given the inner program's vanishing-relation DAG and a
-// per-leaf E4Expr that holds the column's value at zeta, the gadget
-// produces an E4Expr that evaluates to V(zeta).
+// per-leaf E6Expr that holds the column's value at zeta, the gadget
+// produces an E6Expr that evaluates to V(zeta).
 //
 // This is a pure expression-builder helper: it adds no columns or
-// constraints on its own. The caller wires the returned E4Expr to an
+// constraints on its own. The caller wires the returned E6Expr to an
 // AIR-relation check by constraining
 //
 //	V(zeta) == (zeta^N - 1) * Q(zeta)
@@ -25,7 +25,8 @@
 // per module, where Q(zeta) is reconstructed from the per-chunk
 // values at zeta and zeta^N from PowExt.
 //
-// Limb ordering matches gadgets/extfield: {B0.A0, B1.A0, B0.A1, B1.A1}.
+// Limb ordering matches gadgets/extfield: {B0.A0, B0.A1, B1.A0, B1.A1,
+// B2.A0, B2.A1}.
 package airzeta
 
 import (
@@ -43,8 +44,8 @@ import (
 // that leaf's value at zeta.
 //
 // Missing values panic — leaf coverage must be complete.
-func EvalDAG(d *dag.DAG, leafValues map[string]extfield.E4Expr) extfield.E4Expr {
-	cache := make(map[*dag.DAGNode]extfield.E4Expr, len(d.Nodes))
+func EvalDAG(d *dag.DAG, leafValues map[string]extfield.E6Expr) extfield.E6Expr {
+	cache := make(map[*dag.DAGNode]extfield.E6Expr, len(d.Nodes))
 	for _, node := range d.Nodes {
 		switch node.Kind {
 		case dag.KindLeaf:
@@ -81,9 +82,9 @@ func EvalDAG(d *dag.DAG, leafValues map[string]extfield.E4Expr) extfield.E4Expr 
 	return cache[d.Root]
 }
 
-// PowExt returns base^n as an E4Expr via square-and-multiply. n must be
+// PowExt returns base^n as an E6Expr via square-and-multiply. n must be
 // non-negative; n == 0 returns extfield.One().
-func PowExt(base extfield.E4Expr, n int) extfield.E4Expr {
+func PowExt(base extfield.E6Expr, n int) extfield.E6Expr {
 	if n < 0 {
 		panic("airzeta.PowExt: n must be non-negative")
 	}
@@ -127,9 +128,9 @@ func RegisterAIRCheck(
 	mod *board.Module,
 	d *dag.DAG,
 	N int,
-	leafValues map[string]extfield.E4Expr,
-	zeta extfield.E4Expr,
-	chunks []extfield.E4Expr,
+	leafValues map[string]extfield.E6Expr,
+	zeta extfield.E6Expr,
+	chunks []extfield.E6Expr,
 ) {
 	for _, rel := range buildAIRRelations(d, N, leafValues, zeta, chunks) {
 		mod.AssertZero(rel)
@@ -146,9 +147,9 @@ func RegisterAIRCheckAtRow(
 	mod *board.Module,
 	d *dag.DAG,
 	N int,
-	leafValues map[string]extfield.E4Expr,
-	zeta extfield.E4Expr,
-	chunks []extfield.E4Expr,
+	leafValues map[string]extfield.E6Expr,
+	zeta extfield.E6Expr,
+	chunks []extfield.E6Expr,
 	rowIdx int,
 ) {
 	for _, rel := range buildAIRRelations(d, N, leafValues, zeta, chunks) {
@@ -170,9 +171,9 @@ func RegisterAIRCheckAtRow(
 func RegisterAIRCheckAtRowWithZetaPow(
 	mod *board.Module,
 	d *dag.DAG,
-	leafValues map[string]extfield.E4Expr,
-	zetaPowN extfield.E4Expr,
-	chunks []extfield.E4Expr,
+	leafValues map[string]extfield.E6Expr,
+	zetaPowN extfield.E6Expr,
+	chunks []extfield.E6Expr,
 	rowIdx int,
 ) {
 	for _, rel := range buildAIRRelationsWithZetaPow(d, leafValues, zetaPowN, chunks) {
@@ -186,9 +187,9 @@ func RegisterAIRCheckAtRowWithZetaPow(
 func buildAIRRelations(
 	d *dag.DAG,
 	N int,
-	leafValues map[string]extfield.E4Expr,
-	zeta extfield.E4Expr,
-	chunks []extfield.E4Expr,
+	leafValues map[string]extfield.E6Expr,
+	zeta extfield.E6Expr,
+	chunks []extfield.E6Expr,
 ) [extfield.Limbs]expr.Expr {
 	zetaPowN := PowExt(zeta, N)
 	return buildAIRRelationsWithZetaPow(d, leafValues, zetaPowN, chunks)
@@ -197,15 +198,15 @@ func buildAIRRelations(
 // buildAIRRelationsWithZetaPow is the zetaPowN-supplied variant.
 func buildAIRRelationsWithZetaPow(
 	d *dag.DAG,
-	leafValues map[string]extfield.E4Expr,
-	zetaPowN extfield.E4Expr,
-	chunks []extfield.E4Expr,
+	leafValues map[string]extfield.E6Expr,
+	zetaPowN extfield.E6Expr,
+	chunks []extfield.E6Expr,
 ) [extfield.Limbs]expr.Expr {
 	v := EvalDAG(d, leafValues)
 	one := extfield.One()
 	zetaPowNMinusOne := zetaPowN.Sub(one)
 
-	var qZeta extfield.E4Expr
+	var qZeta extfield.E6Expr
 	switch len(chunks) {
 	case 0:
 		qZeta = extfield.Zero()

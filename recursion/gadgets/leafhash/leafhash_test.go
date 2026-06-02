@@ -28,19 +28,10 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-func randExt(t *testing.T) ext.E4 {
+func randExt(t *testing.T) ext.E6 {
 	t.Helper()
-	var v ext.E4
-	if _, err := v.B0.A0.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B0.A1.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B1.A0.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B1.A1.SetRandom(); err != nil {
+	var v ext.E6
+	if _, err := v.SetRandom(); err != nil {
 		t.Fatal(err)
 	}
 	return v
@@ -48,7 +39,7 @@ func randExt(t *testing.T) ext.E4 {
 
 // nativeLeafDigest computes the expected leaf digest using Loom's native
 // Poseidon2LeafHasher for a single ext pair.
-func nativeLeafDigest(P, Q ext.E4) [leafhash.DigestLen]koalabear.Element {
+func nativeLeafDigest(P, Q ext.E6) [leafhash.DigestLen]koalabear.Element {
 	h := commitment.Poseidon2LeafHasher{}
 	digest := h.HashLeaf(nil, []commitment.PairExt{{P, Q}})
 	return digest
@@ -127,8 +118,8 @@ func TestFlexibleLeafHashMultiBlock(t *testing.T) {
 	ext1P, ext1Q := randExt(t), randExt(t)
 	ext2P, ext2Q := randExt(t), randExt(t)
 	leaf := leafhash.FlexibleLeaf{
-		ExtPairsP: [][extfield.Limbs]koalabear.Element{extfield.FromE4(ext1P), extfield.FromE4(ext2P)},
-		ExtPairsQ: [][extfield.Limbs]koalabear.Element{extfield.FromE4(ext1Q), extfield.FromE4(ext2Q)},
+		ExtPairsP: [][extfield.Limbs]koalabear.Element{extfield.FromE6(ext1P), extfield.FromE6(ext2P)},
+		ExtPairsQ: [][extfield.Limbs]koalabear.Element{extfield.FromE6(ext1Q), extfield.FromE6(ext2Q)},
 	}
 
 	if leafhash.NumBlocksForFlexible(0, 2) != 2 {
@@ -160,9 +151,9 @@ func TestFlexibleLeafHashMultiBlock(t *testing.T) {
 	for j := 0; j < 2; j++ {
 		var p, q [extfield.Limbs]koalabear.Element
 		if j == 0 {
-			p, q = extfield.FromE4(ext1P), extfield.FromE4(ext1Q)
+			p, q = extfield.FromE6(ext1P), extfield.FromE6(ext1Q)
 		} else {
-			p, q = extfield.FromE4(ext2P), extfield.FromE4(ext2Q)
+			p, q = extfield.FromE6(ext2P), extfield.FromE6(ext2Q)
 		}
 		for i := 0; i < extfield.Limbs; i++ {
 			pc := make([]koalabear.Element, mod.N)
@@ -204,8 +195,8 @@ func TestLeafHashGadgetSingle(t *testing.T) {
 	P := randExt(t)
 	Q := randExt(t)
 	leaf := leafhash.ExtLeaf{
-		P: extfield.FromE4(P),
-		Q: extfield.FromE4(Q),
+		P: extfield.FromE6(P),
+		Q: extfield.FromE6(Q),
 	}
 
 	builder, tr, cn := buildOneLeafHashModule(t, "lh_one", 1, []leafhash.ExtLeaf{leaf})
@@ -226,13 +217,13 @@ func TestLeafHashGadgetSingle(t *testing.T) {
 // verifies each row's digest matches the native hasher.
 func TestLeafHashGadgetBatch(t *testing.T) {
 	const n = 4
-	pairs := make([][2]ext.E4, n)
+	pairs := make([][2]ext.E6, n)
 	leaves := make([]leafhash.ExtLeaf, n)
 	for i := 0; i < n; i++ {
-		pairs[i] = [2]ext.E4{randExt(t), randExt(t)}
+		pairs[i] = [2]ext.E6{randExt(t), randExt(t)}
 		leaves[i] = leafhash.ExtLeaf{
-			P: extfield.FromE4(pairs[i][0]),
-			Q: extfield.FromE4(pairs[i][1]),
+			P: extfield.FromE6(pairs[i][0]),
+			Q: extfield.FromE6(pairs[i][1]),
 		}
 	}
 
@@ -258,8 +249,8 @@ func TestLeafHashGadgetRejectsBadLeaf(t *testing.T) {
 	P := randExt(t)
 	Q := randExt(t)
 	leaf := leafhash.ExtLeaf{
-		P: extfield.FromE4(P),
-		Q: extfield.FromE4(Q),
+		P: extfield.FromE6(P),
+		Q: extfield.FromE6(Q),
 	}
 
 	builder, tr, _ := buildOneLeafHashModule(t, "lh_bad", 1, []leafhash.ExtLeaf{leaf})
@@ -281,8 +272,8 @@ func TestLeafHashGadgetRejectsBadDigest(t *testing.T) {
 	P := randExt(t)
 	Q := randExt(t)
 	leaf := leafhash.ExtLeaf{
-		P: extfield.FromE4(P),
-		Q: extfield.FromE4(Q),
+		P: extfield.FromE6(P),
+		Q: extfield.FromE6(Q),
 	}
 
 	builder, tr, cn := buildOneLeafHashModule(t, "lh_dig", 1, []leafhash.ExtLeaf{leaf})

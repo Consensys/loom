@@ -118,26 +118,32 @@ func LinkWithLevel(mod *board.Module, cnPrev, cnNext friround.ColumnNames, ld Le
 	expected := extfield.FromLimbs(
 		expr.Col(cnPrev.Expected[0]), expr.Col(cnPrev.Expected[1]),
 		expr.Col(cnPrev.Expected[2]), expr.Col(cnPrev.Expected[3]),
+		expr.Col(cnPrev.Expected[4]), expr.Col(cnPrev.Expected[5]),
 	)
 	nextP := extfield.FromLimbs(
 		expr.Col(cnNext.P[0]), expr.Col(cnNext.P[1]),
 		expr.Col(cnNext.P[2]), expr.Col(cnNext.P[3]),
+		expr.Col(cnNext.P[4]), expr.Col(cnNext.P[5]),
 	)
 	nextQ := extfield.FromLimbs(
 		expr.Col(cnNext.Q[0]), expr.Col(cnNext.Q[1]),
 		expr.Col(cnNext.Q[2]), expr.Col(cnNext.Q[3]),
+		expr.Col(cnNext.Q[4]), expr.Col(cnNext.Q[5]),
 	)
 	gamma := extfield.FromLimbs(
 		expr.Col(ld.Gamma[0]), expr.Col(ld.Gamma[1]),
 		expr.Col(ld.Gamma[2]), expr.Col(ld.Gamma[3]),
+		expr.Col(ld.Gamma[4]), expr.Col(ld.Gamma[5]),
 	)
 	leafP := extfield.FromLimbs(
 		expr.Col(ld.LeafP[0]), expr.Col(ld.LeafP[1]),
 		expr.Col(ld.LeafP[2]), expr.Col(ld.LeafP[3]),
+		expr.Col(ld.LeafP[4]), expr.Col(ld.LeafP[5]),
 	)
 	leafQ := extfield.FromLimbs(
 		expr.Col(ld.LeafQ[0]), expr.Col(ld.LeafQ[1]),
 		expr.Col(ld.LeafQ[2]), expr.Col(ld.LeafQ[3]),
+		expr.Col(ld.LeafQ[4]), expr.Col(ld.LeafQ[5]),
 	)
 
 	// leaf_l = leafP + top_bit*(leafQ - leafP)

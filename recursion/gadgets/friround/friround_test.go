@@ -26,9 +26,9 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-func randomExt(t *testing.T) ext.E4 {
+func randomExt(t *testing.T) ext.E6 {
 	t.Helper()
-	var v ext.E4
+	var v ext.E6
 	if _, err := v.B0.A0.SetRandom(); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestFriRoundGadgetMatchesNative(t *testing.T) {
 	var two, invTwo koalabear.Element
 	two.SetUint64(2)
 	invTwo.Inverse(&two)
-	var sum, diff, scaled, expected ext.E4
+	var sum, diff, scaled, expected ext.E6
 	sum.Add(&q.P, &q.Q)
 	sum.MulByElement(&sum, &invTwo)
 	diff.Sub(&q.P, &q.Q)

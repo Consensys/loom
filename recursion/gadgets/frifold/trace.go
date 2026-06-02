@@ -21,18 +21,18 @@ import (
 
 // ExtFold is one E4-rail fold-step input record.
 type ExtFold struct {
-	P     ext.E4
-	Q     ext.E4
-	Alpha ext.E4
+	P     ext.E6
+	Q     ext.E6
+	Alpha ext.E6
 	XInv  koalabear.Element // = omega_j^{-base}
 }
 
 // Folded computes the native fold result for sanity-checking outside the
 // gadget.
-func (f ExtFold) Folded() ext.E4 {
+func (f ExtFold) Folded() ext.E6 {
 	half := invTwo()
 
-	var sum, diff, scaled, out ext.E4
+	var sum, diff, scaled, out ext.E6
 	sum.Add(&f.P, &f.Q)
 	sum.MulByElement(&sum, &half)
 
@@ -74,11 +74,11 @@ func GenerateExtTrace(cn ExtColumnNames, capacity int, folds []ExtFold) map[stri
 	for row := 0; row < n; row++ {
 		if row < len(folds) {
 			f := folds[row]
-			pLimbs := extfield.FromE4(f.P)
-			qLimbs := extfield.FromE4(f.Q)
-			aLimbs := extfield.FromE4(f.Alpha)
+			pLimbs := extfield.FromE6(f.P)
+			qLimbs := extfield.FromE6(f.Q)
+			aLimbs := extfield.FromE6(f.Alpha)
 			folded := f.Folded()
-			fLimbs := extfield.FromE4(folded)
+			fLimbs := extfield.FromE6(folded)
 			for i := 0; i < extfield.Limbs; i++ {
 				pCols[i][row].Set(&pLimbs[i])
 				qCols[i][row].Set(&qLimbs[i])

@@ -65,9 +65,9 @@ func (s *State) SqueezeBase(challengerName string) expr.Expr {
 	return v
 }
 
-// SqueezeExt returns one fresh E4 expression by pulling 4 base elements from
+// SqueezeExt returns one fresh E6 expression by pulling 6 base elements from
 // the sponge.
-func (s *State) SqueezeExt(challengerName string) extfield.E4Expr {
+func (s *State) SqueezeExt(challengerName string) extfield.E6Expr {
 	limbs := [extfield.Limbs]expr.Expr{}
 	if len(s.Buf) > 0 {
 		s.Permute(challengerName)
@@ -76,7 +76,7 @@ func (s *State) SqueezeExt(challengerName string) extfield.E4Expr {
 		limbs[i] = s.Sym[i]
 	}
 	s.Permute(challengerName)
-	return extfield.FromLimbs(limbs[0], limbs[1], limbs[2], limbs[3])
+	return extfield.FromLimbs(limbs[0], limbs[1], limbs[2], limbs[3], limbs[4], limbs[5])
 }
 
 // PermuteNative mirrors Permute on native values for trace generation: it

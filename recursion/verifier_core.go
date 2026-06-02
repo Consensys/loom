@@ -130,14 +130,14 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 	type moduleData struct {
 		name     string
 		mod      board.CompiledModule
-		leafVals map[string]ext.E4
-		chunks   []ext.E4
+		leafVals map[string]ext.E6
+		chunks   []ext.E6
 	}
 	mods := make([]moduleData, 0, len(input.Program.Modules))
 
 	for _, name := range sortedModuleNames(input.Program) {
 		m := input.Program.Modules[name]
-		data := moduleData{name: name, mod: m, leafVals: map[string]ext.E4{}}
+		data := moduleData{name: name, mod: m, leafVals: map[string]ext.E6{}}
 
 		if err := collectLeafValuesAtZeta(name, m, zeta, input.Proof, input.PublicInputs, data.leafVals); err != nil {
 			return trace.Trace{},err
@@ -190,8 +190,8 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 	keyToLeafCols := map[string][extfield.Limbs]string{}
 	keyToChunkCols := map[string][extfield.Limbs]string{}
 
-	addE4 := func(prefix string, v ext.E4) extfield.E4Expr {
-		limbs := extfield.FromE4(v)
+	addE6 := func(prefix string, v ext.E6) extfield.E6Expr {
+		limbs := extfield.FromE6(v)
 		var names [extfield.Limbs]string
 		for i := 0; i < extfield.Limbs; i++ {
 			names[i] = prefix + "_" + string('0'+rune(i))
@@ -200,17 +200,18 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 		return extfield.FromLimbs(
 			expr.Col(names[0]), expr.Col(names[1]),
 			expr.Col(names[2]), expr.Col(names[3]),
+			expr.Col(names[4]), expr.Col(names[5]),
 		)
 	}
 
 	type moduleWitnessRefs struct {
-		leafExprs  map[string]extfield.E4Expr
-		chunkExprs []extfield.E4Expr
+		leafExprs  map[string]extfield.E6Expr
+		chunkExprs []extfield.E6Expr
 	}
 	witnesses := make([]moduleWitnessRefs, len(mods))
 
 	for mi, data := range mods {
-		leafExprs := make(map[string]extfield.E4Expr, len(data.leafVals))
+		leafExprs := make(map[string]extfield.E6Expr, len(data.leafVals))
 		leafKeys := make([]string, 0, len(data.leafVals))
 		for k := range data.leafVals {
 			leafKeys = append(leafKeys, k)
@@ -218,23 +219,27 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 		sort.Strings(leafKeys)
 		for _, k := range leafKeys {
 			prefix := fmt.Sprintf(mp+"airverify.%s.leaf_%s", data.name, sanitizeName(k))
-			leafExprs[k] = addE4(prefix, data.leafVals[k])
+			leafExprs[k] = addE6(prefix, data.leafVals[k])
 			if _, exists := keyToLeafCols[k]; !exists {
-				keyToLeafCols[k] = [extfield.Limbs]string{
-					prefix + "_0", prefix + "_1", prefix + "_2", prefix + "_3",
+				var cols [extfield.Limbs]string
+				for i := 0; i < extfield.Limbs; i++ {
+					cols[i] = prefix + "_" + string('0'+rune(i))
 				}
+				keyToLeafCols[k] = cols
 			}
 		}
 
-		chunkExprs := make([]extfield.E4Expr, len(data.chunks))
+		chunkExprs := make([]extfield.E6Expr, len(data.chunks))
 		for i, c := range data.chunks {
 			chunkName := constants.QuotientChunkName(data.name, i)
 			prefix := fmt.Sprintf(mp+"airverify.%s.chunk_%d", data.name, i)
-			chunkExprs[i] = addE4(prefix, c)
+			chunkExprs[i] = addE6(prefix, c)
 			if _, exists := keyToChunkCols[chunkName]; !exists {
-				keyToChunkCols[chunkName] = [extfield.Limbs]string{
-					prefix + "_0", prefix + "_1", prefix + "_2", prefix + "_3",
+				var cols [extfield.Limbs]string
+				for j := 0; j < extfield.Limbs; j++ {
+					cols[j] = prefix + "_" + string('0'+rune(j))
 				}
+				keyToChunkCols[chunkName] = cols
 			}
 		}
 
@@ -258,8 +263,8 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 			}
 		}
 		// Witness-column substitutions for DEEP_ALPHA-style bindings.
-		// extToElements order {B0.A0, B0.A1, B1.A0, B1.A1} maps to our
-		// extfield limb order via {0, 2, 1, 3}.
+		// extToElements order (B0.A0, B0.A1, B1.A0, B1.A1, B2.A0, B2.A1)
+		// matches our extfield limb order — identity mapping.
 		for _, b := range step.WitnessBindings {
 			var cols [extfield.Limbs]string
 			var ok bool
@@ -271,10 +276,9 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 			if !ok {
 				return trace.Trace{},fmt.Errorf("recursion: WitnessBinding key %q (chunk=%v) has no witness column allocated", b.Key, b.IsChunk)
 			}
-			inputs[b.Start+0] = expr.Col(cols[0])
-			inputs[b.Start+1] = expr.Col(cols[2])
-			inputs[b.Start+2] = expr.Col(cols[1])
-			inputs[b.Start+3] = expr.Col(cols[3])
+			for k := 0; k < extfield.Limbs; k++ {
+				inputs[b.Start+k] = expr.Col(cols[k])
+			}
 		}
 
 		prefix := fmt.Sprintf(mp+"airverify.ch%d", i)
@@ -296,12 +300,12 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 	}
 	chCN := chSpongeCNs[zetaSpongeIdx]
 
-	// zeta limbs in OutputToExt order: limb[0]=digest[0] (B0.A0),
-	// limb[1]=digest[2] (B1.A0), limb[2]=digest[1] (B0.A1),
-	// limb[3]=digest[3] (B1.A1).
+	// zeta limbs in OutputToExt order: limb[i] = digest[i] for i in 0..5,
+	// matching the (B0.A0, B0.A1, B1.A0, B1.A1, B2.A0, B2.A1) tower layout.
 	zetaExpr := extfield.FromLimbs(
-		expr.Col(chCN.Digest[0]), expr.Col(chCN.Digest[2]),
-		expr.Col(chCN.Digest[1]), expr.Col(chCN.Digest[3]),
+		expr.Col(chCN.Digest[0]), expr.Col(chCN.Digest[1]),
+		expr.Col(chCN.Digest[2]), expr.Col(chCN.Digest[3]),
+		expr.Col(chCN.Digest[4]), expr.Col(chCN.Digest[5]),
 	)
 
 	// Materialize a witness-column chain of zeta^(2^i) so per-module
@@ -323,16 +327,16 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 		}
 	}
 	maxZetaLog2 := log2int(maxModN)
-	zetaPowChain := make([]extfield.E4Expr, maxZetaLog2+1)
+	zetaPowChain := make([]extfield.E6Expr, maxZetaLog2+1)
 	zetaPowChain[0] = zetaExpr
 
-	zetaPowNative := make([]ext.E4, maxZetaLog2+1)
+	zetaPowNative := make([]ext.E6, maxZetaLog2+1)
 	zetaPowNative[0] = zeta
 	for i := 1; i <= maxZetaLog2; i++ {
 		zetaPowNative[i].Square(&zetaPowNative[i-1])
 
 		prefix := fmt.Sprintf(mp+"airverify.zetaPow_%d", 1<<i)
-		curExpr := addE4(prefix, zetaPowNative[i])
+		curExpr := addE6(prefix, zetaPowNative[i])
 
 		prevSquared := zetaPowChain[i-1].Square()
 		for _, rel := range curExpr.EqualityConstraints(prevSquared) {
@@ -459,15 +463,16 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 		// row (same pattern as the zeta^N witness chain). Off-row the
 		// witness columns hold the constant alpha_j, so later fold
 		// constraints can reference them anywhere.
-		alphaExprs := make([]extfield.E4Expr, numRounds)
+		alphaExprs := make([]extfield.E6Expr, numRounds)
 		for j := 0; j < numRounds; j++ {
 			foldCN := chSpongeCNs[foldStepIdx[j]]
 			foldDigestExpr := extfield.FromLimbs(
-				expr.Col(foldCN.Digest[0]), expr.Col(foldCN.Digest[2]),
-				expr.Col(foldCN.Digest[1]), expr.Col(foldCN.Digest[3]),
+				expr.Col(foldCN.Digest[0]), expr.Col(foldCN.Digest[1]),
+				expr.Col(foldCN.Digest[2]), expr.Col(foldCN.Digest[3]),
+				expr.Col(foldCN.Digest[4]), expr.Col(foldCN.Digest[5]),
 			)
-			alphaNative := hashDigestToE4(chain[foldStepIdx[j]].NativeDigest)
-			alphaJExpr := addE4(fmt.Sprintf(mp+"airverify.fri_alpha_%d", j), alphaNative)
+			alphaNative := hashDigestToE6(chain[foldStepIdx[j]].NativeDigest)
+			alphaJExpr := addE6(fmt.Sprintf(mp+"airverify.fri_alpha_%d", j), alphaNative)
 			for _, rel := range alphaJExpr.EqualityConstraints(foldDigestExpr) {
 				verifierMod.AssertZeroAt(rel, foldCN.DigestRow)
 			}
@@ -498,15 +503,15 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 		// Per-(round, query) trusted P, Q witnesses. Each entry is the
 		// LeafPExt / LeafQExt for that round's layer of the query.
 		type leafPair struct {
-			P, Q extfield.E4Expr
+			P, Q extfield.E6Expr
 		}
 		leafExprs := make([][]leafPair, numRounds)
 		for j := 0; j < numRounds; j++ {
 			leafExprs[j] = make([]leafPair, len(queries))
 			for k := range queries {
 				layer := friProof.FRIQueries[k].Layers[j]
-				p := addE4(fmt.Sprintf(mp+"airverify.fri_q%d_P_%d", k, j), layer.LeafPExt)
-				q := addE4(fmt.Sprintf(mp+"airverify.fri_q%d_Q_%d", k, j), layer.LeafQExt)
+				p := addE6(fmt.Sprintf(mp+"airverify.fri_q%d_P_%d", k, j), layer.LeafPExt)
+				q := addE6(fmt.Sprintf(mp+"airverify.fri_q%d_Q_%d", k, j), layer.LeafQExt)
 				leafExprs[j][k] = leafPair{P: p, Q: q}
 			}
 		}
@@ -525,17 +530,17 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 		// lo + bits[l] * (hi - lo); after k levels a single E4Expr
 		// remains. Used for the FRI final-poly lookup at any
 		// power-of-two len(finalPoly).
-		e4SelectTree := func(table []ext.E4, bits []expr.Expr) extfield.E4Expr {
+		e4SelectTree := func(table []ext.E6, bits []expr.Expr) extfield.E6Expr {
 			if len(table) != 1<<len(bits) {
 				panic(fmt.Sprintf("e4SelectTree: table size %d != 2^%d", len(table), len(bits)))
 			}
-			level := make([]extfield.E4Expr, len(table))
+			level := make([]extfield.E6Expr, len(table))
 			for i, t := range table {
 				level[i] = extfield.Const(t)
 			}
 			for l := 0; l < len(bits); l++ {
 				b := bits[l]
-				next := make([]extfield.E4Expr, len(level)/2)
+				next := make([]extfield.E6Expr, len(level)/2)
 				for i := range next {
 					lo := level[2*i]
 					hi := level[2*i+1]
@@ -673,7 +678,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 				// digest column, which only holds the correct value at
 				// chCN.DigestRow; the bridge needs zeta accessible at
 				// the query row. Same anchor pattern as alpha_j.
-				zetaConst := addE4(mp+"airverify.zeta_const", zeta)
+				zetaConst := addE6(mp+"airverify.zeta_const", zeta)
 				for _, rel := range zetaConst.EqualityConstraints(zetaExpr) {
 					verifierMod.AssertZeroAt(rel, chCN.DigestRow)
 				}
@@ -692,11 +697,12 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 				}
 				deepAlphaCN := chSpongeCNs[deepAlphaIdx]
 				deepAlphaDigestExpr := extfield.FromLimbs(
-					expr.Col(deepAlphaCN.Digest[0]), expr.Col(deepAlphaCN.Digest[2]),
-					expr.Col(deepAlphaCN.Digest[1]), expr.Col(deepAlphaCN.Digest[3]),
+					expr.Col(deepAlphaCN.Digest[0]), expr.Col(deepAlphaCN.Digest[1]),
+					expr.Col(deepAlphaCN.Digest[2]), expr.Col(deepAlphaCN.Digest[3]),
+					expr.Col(deepAlphaCN.Digest[4]), expr.Col(deepAlphaCN.Digest[5]),
 				)
-				deepAlphaNative := hashDigestToE4(chain[deepAlphaIdx].NativeDigest)
-				deepAlphaExpr := addE4(mp+"airverify.deep_alpha", deepAlphaNative)
+				deepAlphaNative := hashDigestToE6(chain[deepAlphaIdx].NativeDigest)
+				deepAlphaExpr := addE6(mp+"airverify.deep_alpha", deepAlphaNative)
 				for _, rel := range deepAlphaExpr.EqualityConstraints(deepAlphaDigestExpr) {
 					verifierMod.AssertZeroAt(rel, deepAlphaCN.DigestRow)
 				}
@@ -712,13 +718,13 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 				if totalCols == 0 {
 					return trace.Trace{},fmt.Errorf("recursion: dqLayout empty for size %d", size)
 				}
-				alphaPowChain := make([]extfield.E4Expr, totalCols)
-				alphaPowNative := make([]ext.E4, totalCols)
+				alphaPowChain := make([]extfield.E6Expr, totalCols)
+				alphaPowNative := make([]ext.E6, totalCols)
 				alphaPowNative[0].SetOne()
 				alphaPowChain[0] = extfield.One()
 				for k := 1; k < totalCols; k++ {
 					alphaPowNative[k].Mul(&alphaPowNative[k-1], &deepAlphaNative)
-					curr := addE4(fmt.Sprintf(mp+"airverify.deep_alphaPow_%d", k), alphaPowNative[k])
+					curr := addE6(fmt.Sprintf(mp+"airverify.deep_alphaPow_%d", k), alphaPowNative[k])
 					prevTimesAlpha := alphaPowChain[k-1].Mul(deepAlphaExpr)
 					for _, rel := range curr.EqualityConstraints(prevTimesAlpha) {
 						verifierMod.AssertZeroAt(rel, 0)
@@ -743,35 +749,35 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 				}
 				sort.Strings(bareList)
 
-				sampleP := map[string][]extfield.E4Expr{}
-				sampleQ := map[string][]extfield.E4Expr{}
+				sampleP := map[string][]extfield.E6Expr{}
+				sampleQ := map[string][]extfield.E6Expr{}
 				for _, n := range bareList {
-					sampleP[n] = make([]extfield.E4Expr, len(queries))
-					sampleQ[n] = make([]extfield.E4Expr, len(queries))
+					sampleP[n] = make([]extfield.E6Expr, len(queries))
+					sampleQ[n] = make([]extfield.E6Expr, len(queries))
 				}
-				chunkSampleP := map[string][]extfield.E4Expr{}
-				chunkSampleQ := map[string][]extfield.E4Expr{}
+				chunkSampleP := map[string][]extfield.E6Expr{}
+				chunkSampleQ := map[string][]extfield.E6Expr{}
 				for _, n := range dqLayout.AIRChunks[0] {
-					chunkSampleP[n] = make([]extfield.E4Expr, len(queries))
-					chunkSampleQ[n] = make([]extfield.E4Expr, len(queries))
+					chunkSampleP[n] = make([]extfield.E6Expr, len(queries))
+					chunkSampleQ[n] = make([]extfield.E6Expr, len(queries))
 				}
 
 				innerLayout := prover.BuildLayout(input.Program, 0)
-				sampleE4 := func(slot prover.Slot, q int) (ext.E4, ext.E4, error) {
+				sampleE4 := func(slot prover.Slot, q int) (ext.E6, ext.E6, error) {
 					if slot.TreeIdx >= len(input.Proof.PointSamplings[q]) {
-						return ext.E4{}, ext.E4{}, fmt.Errorf("recursion: tree %d out of range for query %d", slot.TreeIdx, q)
+						return ext.E6{}, ext.E6{}, fmt.Errorf("recursion: tree %d out of range for query %d", slot.TreeIdx, q)
 					}
 					wp := input.Proof.PointSamplings[q][slot.TreeIdx]
 					if slot.Field == field.Ext {
 						if slot.PolyIdx >= len(wp.RawLeafExt) {
-							return ext.E4{}, ext.E4{}, fmt.Errorf("recursion: ext raw leaf %d out of range", slot.PolyIdx)
+							return ext.E6{}, ext.E6{}, fmt.Errorf("recursion: ext raw leaf %d out of range", slot.PolyIdx)
 						}
 						return wp.RawLeafExt[slot.PolyIdx][0], wp.RawLeafExt[slot.PolyIdx][1], nil
 					}
 					if slot.PolyIdx >= len(wp.RawLeafBase) {
-						return ext.E4{}, ext.E4{}, fmt.Errorf("recursion: base raw leaf %d out of range", slot.PolyIdx)
+						return ext.E6{}, ext.E6{}, fmt.Errorf("recursion: base raw leaf %d out of range", slot.PolyIdx)
 					}
-					var p, qE ext.E4
+					var p, qE ext.E6
 					p.B0.A0.Set(&wp.RawLeafBase[slot.PolyIdx][0])
 					qE.B0.A0.Set(&wp.RawLeafBase[slot.PolyIdx][1])
 					return p, qE, nil
@@ -787,8 +793,8 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 						if err != nil {
 							return trace.Trace{},err
 						}
-						sampleP[n][qi] = addE4(fmt.Sprintf(mp+"airverify.deep_sP_%d_%s", qi, sanitizeName(n)), pNative)
-						sampleQ[n][qi] = addE4(fmt.Sprintf(mp+"airverify.deep_sQ_%d_%s", qi, sanitizeName(n)), qNative)
+						sampleP[n][qi] = addE6(fmt.Sprintf(mp+"airverify.deep_sP_%d_%s", qi, sanitizeName(n)), pNative)
+						sampleQ[n][qi] = addE6(fmt.Sprintf(mp+"airverify.deep_sQ_%d_%s", qi, sanitizeName(n)), qNative)
 					}
 					for _, n := range dqLayout.AIRChunks[0] {
 						slot, ok := innerLayout.AIRChunkSlot[n]
@@ -799,8 +805,8 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 						if err != nil {
 							return trace.Trace{},err
 						}
-						chunkSampleP[n][qi] = addE4(fmt.Sprintf(mp+"airverify.deep_csP_%d_%s", qi, sanitizeName(n)), pNative)
-						chunkSampleQ[n][qi] = addE4(fmt.Sprintf(mp+"airverify.deep_csQ_%d_%s", qi, sanitizeName(n)), qNative)
+						chunkSampleP[n][qi] = addE6(fmt.Sprintf(mp+"airverify.deep_csP_%d_%s", qi, sanitizeName(n)), pNative)
+						chunkSampleQ[n][qi] = addE6(fmt.Sprintf(mp+"airverify.deep_csQ_%d_%s", qi, sanitizeName(n)), qNative)
 					}
 				}
 
@@ -814,8 +820,8 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 				if err != nil {
 					return trace.Trace{},fmt.Errorf("recursion: omega_size: %w", err)
 				}
-				omegaShiftE4 := make([]ext.E4, len(dqLayout.Shifts[0]))
-				omegaShiftExpr := make([]extfield.E4Expr, len(dqLayout.Shifts[0]))
+				omegaShiftE4 := make([]ext.E6, len(dqLayout.Shifts[0]))
+				omegaShiftExpr := make([]extfield.E6Expr, len(dqLayout.Shifts[0]))
 				for j, shift := range dqLayout.Shifts[0] {
 					var w koalabear.Element
 					w.Exp(omegaSize, big.NewInt(int64(shift)))
@@ -826,8 +832,8 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 				// Unified leaf-by-key lookup for evalAtZ. Multiple inner
 				// modules at the same size pool their leaf witnesses by
 				// leaf.String().
-				leafByKey := map[string]extfield.E4Expr{}
-				chunkByName := map[string]extfield.E4Expr{}
+				leafByKey := map[string]extfield.E6Expr{}
+				chunkByName := map[string]extfield.E6Expr{}
 				for mi, data := range mods {
 					if data.mod.N != size {
 						continue
@@ -892,23 +898,23 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 						denomNegX := zsExpr.Sub(negXExpr) // = zs + X
 
 						// Native denom values for trace-fill of inverses.
-						var zsNat ext.E4
+						var zsNat ext.E6
 						zsNat.MulByElement(&zeta, &omegaShiftE4[j].B0.A0)
-						var xNat ext.E4
+						var xNat ext.E6
 						xNat.B0.A0.Exp(friDomainGen, big.NewInt(int64(query.digestNat%uint64(halfDomain))))
-						var negXNat ext.E4
+						var negXNat ext.E6
 						negXNat.B0.A0.Neg(&xNat.B0.A0)
-						var dXNat ext.E4
+						var dXNat ext.E6
 						dXNat.Sub(&zsNat, &xNat)
-						var dNegXNat ext.E4
+						var dNegXNat ext.E6
 						dNegXNat.Sub(&zsNat, &negXNat)
-						var invDXNat ext.E4
+						var invDXNat ext.E6
 						invDXNat.Inverse(&dXNat)
-						var invDNegXNat ext.E4
+						var invDNegXNat ext.E6
 						invDNegXNat.Inverse(&dNegXNat)
 
-						invDXExpr := addE4(fmt.Sprintf(mp+"airverify.deep_q%d_g%d_invX", qi, j), invDXNat)
-						invDNegXExpr := addE4(fmt.Sprintf(mp+"airverify.deep_q%d_g%d_invNegX", qi, j), invDNegXNat)
+						invDXExpr := addE6(fmt.Sprintf(mp+"airverify.deep_q%d_g%d_invX", qi, j), invDXNat)
+						invDNegXExpr := addE6(fmt.Sprintf(mp+"airverify.deep_q%d_g%d_invNegX", qi, j), invDNegXNat)
 
 						// Constrain inv * denom = 1 (E4 equality, 4 limbs).
 						oneE4 := extfield.One()
@@ -947,20 +953,20 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 						denomX := zsExpr.Sub(xExpr)
 						denomNegX := zsExpr.Sub(negXExpr)
 
-						var xNat ext.E4
+						var xNat ext.E6
 						xNat.B0.A0.Exp(friDomainGen, big.NewInt(int64(query.digestNat%uint64(halfDomain))))
-						var negXNat ext.E4
+						var negXNat ext.E6
 						negXNat.B0.A0.Neg(&xNat.B0.A0)
-						var dXNat ext.E4
+						var dXNat ext.E6
 						dXNat.Sub(&zeta, &xNat)
-						var dNegXNat ext.E4
+						var dNegXNat ext.E6
 						dNegXNat.Sub(&zeta, &negXNat)
-						var invDXNat, invDNegXNat ext.E4
+						var invDXNat, invDNegXNat ext.E6
 						invDXNat.Inverse(&dXNat)
 						invDNegXNat.Inverse(&dNegXNat)
 
-						invDXExpr := addE4(fmt.Sprintf(mp+"airverify.deep_q%d_chunks_invX", qi), invDXNat)
-						invDNegXExpr := addE4(fmt.Sprintf(mp+"airverify.deep_q%d_chunks_invNegX", qi), invDNegXNat)
+						invDXExpr := addE6(fmt.Sprintf(mp+"airverify.deep_q%d_chunks_invX", qi), invDXNat)
+						invDNegXExpr := addE6(fmt.Sprintf(mp+"airverify.deep_q%d_chunks_invNegX", qi), invDNegXNat)
 
 						oneE4 := extfield.One()
 						prodX := invDXExpr.Mul(denomX)
@@ -1124,7 +1130,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 			}
 
 			// Anchor zeta_const + DEEP_ALPHA (same pattern as single-size).
-			zetaConst := addE4(mp+"airverify.zeta_const_md", zeta)
+			zetaConst := addE6(mp+"airverify.zeta_const_md", zeta)
 			for _, rel := range zetaConst.EqualityConstraints(zetaExpr) {
 				verifierMod.AssertZeroAt(rel, chCN.DigestRow)
 			}
@@ -1140,11 +1146,12 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 			}
 			deepAlphaCN := chSpongeCNs[deepAlphaIdx]
 			deepAlphaDigestExpr := extfield.FromLimbs(
-				expr.Col(deepAlphaCN.Digest[0]), expr.Col(deepAlphaCN.Digest[2]),
-				expr.Col(deepAlphaCN.Digest[1]), expr.Col(deepAlphaCN.Digest[3]),
+				expr.Col(deepAlphaCN.Digest[0]), expr.Col(deepAlphaCN.Digest[1]),
+				expr.Col(deepAlphaCN.Digest[2]), expr.Col(deepAlphaCN.Digest[3]),
+				expr.Col(deepAlphaCN.Digest[4]), expr.Col(deepAlphaCN.Digest[5]),
 			)
-			deepAlphaNative := hashDigestToE4(chain[deepAlphaIdx].NativeDigest)
-			deepAlphaExpr := addE4(mp+"airverify.deep_alpha_md", deepAlphaNative)
+			deepAlphaNative := hashDigestToE6(chain[deepAlphaIdx].NativeDigest)
+			deepAlphaExpr := addE6(mp+"airverify.deep_alpha_md", deepAlphaNative)
 			for _, rel := range deepAlphaExpr.EqualityConstraints(deepAlphaDigestExpr) {
 				verifierMod.AssertZeroAt(rel, deepAlphaCN.DigestRow)
 			}
@@ -1161,15 +1168,15 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 					maxK = K
 				}
 			}
-			alphaPowChain := make([]extfield.E4Expr, maxK)
-			alphaPowNative := make([]ext.E4, maxK)
+			alphaPowChain := make([]extfield.E6Expr, maxK)
+			alphaPowNative := make([]ext.E6, maxK)
 			if maxK > 0 {
 				alphaPowNative[0].SetOne()
 				alphaPowChain[0] = extfield.One()
 			}
 			for k := 1; k < maxK; k++ {
 				alphaPowNative[k].Mul(&alphaPowNative[k-1], &deepAlphaNative)
-				curr := addE4(fmt.Sprintf(mp+"airverify.deep_alphaPow_md_%d", k), alphaPowNative[k])
+				curr := addE6(fmt.Sprintf(mp+"airverify.deep_alphaPow_md_%d", k), alphaPowNative[k])
 				prevTimesAlpha := alphaPowChain[k-1].Mul(deepAlphaExpr)
 				for _, rel := range curr.EqualityConstraints(prevTimesAlpha) {
 					verifierMod.AssertZeroAt(rel, 0)
@@ -1178,8 +1185,8 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 			}
 
 			// Unified leaf-by-key + chunk-by-name lookups across all sizes.
-			leafByKey := map[string]extfield.E4Expr{}
-			chunkByName := map[string]extfield.E4Expr{}
+			leafByKey := map[string]extfield.E6Expr{}
+			chunkByName := map[string]extfield.E6Expr{}
 			for mi, data := range mods {
 				for key, e := range witnesses[mi].leafExprs {
 					leafByKey[key] = e
@@ -1215,74 +1222,74 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 			sort.Strings(chunkList)
 
 			innerLayout := prover.BuildLayout(input.Program, 0)
-			sampleE4 := func(slot prover.Slot, q int) (ext.E4, ext.E4, error) {
+			sampleE4 := func(slot prover.Slot, q int) (ext.E6, ext.E6, error) {
 				if slot.TreeIdx >= len(input.Proof.PointSamplings[q]) {
-					return ext.E4{}, ext.E4{}, fmt.Errorf("tree %d out of range for query %d", slot.TreeIdx, q)
+					return ext.E6{}, ext.E6{}, fmt.Errorf("tree %d out of range for query %d", slot.TreeIdx, q)
 				}
 				wp := input.Proof.PointSamplings[q][slot.TreeIdx]
 				if slot.Field == field.Ext {
 					if slot.PolyIdx >= len(wp.RawLeafExt) {
-						return ext.E4{}, ext.E4{}, fmt.Errorf("ext raw leaf %d out of range", slot.PolyIdx)
+						return ext.E6{}, ext.E6{}, fmt.Errorf("ext raw leaf %d out of range", slot.PolyIdx)
 					}
 					return wp.RawLeafExt[slot.PolyIdx][0], wp.RawLeafExt[slot.PolyIdx][1], nil
 				}
 				if slot.PolyIdx >= len(wp.RawLeafBase) {
-					return ext.E4{}, ext.E4{}, fmt.Errorf("base raw leaf %d out of range", slot.PolyIdx)
+					return ext.E6{}, ext.E6{}, fmt.Errorf("base raw leaf %d out of range", slot.PolyIdx)
 				}
-				var p, qE ext.E4
+				var p, qE ext.E6
 				p.B0.A0.Set(&wp.RawLeafBase[slot.PolyIdx][0])
 				qE.B0.A0.Set(&wp.RawLeafBase[slot.PolyIdx][1])
 				return p, qE, nil
 			}
 
-			sampleP := map[string][]extfield.E4Expr{}
-			sampleQ := map[string][]extfield.E4Expr{}
+			sampleP := map[string][]extfield.E6Expr{}
+			sampleQ := map[string][]extfield.E6Expr{}
 			for _, n := range bareList {
 				slot, ok := innerLayout.ColSlot[n]
 				if !ok {
 					return trace.Trace{},fmt.Errorf("recursion: column %q missing from layout.ColSlot", n)
 				}
-				sampleP[n] = make([]extfield.E4Expr, len(queries))
-				sampleQ[n] = make([]extfield.E4Expr, len(queries))
+				sampleP[n] = make([]extfield.E6Expr, len(queries))
+				sampleQ[n] = make([]extfield.E6Expr, len(queries))
 				for qi := range queries {
 					pNative, qNative, err := sampleE4(slot, qi)
 					if err != nil {
 						return trace.Trace{},err
 					}
-					sampleP[n][qi] = addE4(fmt.Sprintf(mp+"airverify.deep_md_sP_%d_%s", qi, sanitizeName(n)), pNative)
-					sampleQ[n][qi] = addE4(fmt.Sprintf(mp+"airverify.deep_md_sQ_%d_%s", qi, sanitizeName(n)), qNative)
+					sampleP[n][qi] = addE6(fmt.Sprintf(mp+"airverify.deep_md_sP_%d_%s", qi, sanitizeName(n)), pNative)
+					sampleQ[n][qi] = addE6(fmt.Sprintf(mp+"airverify.deep_md_sQ_%d_%s", qi, sanitizeName(n)), qNative)
 				}
 			}
-			chunkSampleP := map[string][]extfield.E4Expr{}
-			chunkSampleQ := map[string][]extfield.E4Expr{}
+			chunkSampleP := map[string][]extfield.E6Expr{}
+			chunkSampleQ := map[string][]extfield.E6Expr{}
 			for _, n := range chunkList {
 				slot, ok := innerLayout.AIRChunkSlot[n]
 				if !ok {
 					return trace.Trace{},fmt.Errorf("recursion: chunk %q missing from layout.AIRChunkSlot", n)
 				}
-				chunkSampleP[n] = make([]extfield.E4Expr, len(queries))
-				chunkSampleQ[n] = make([]extfield.E4Expr, len(queries))
+				chunkSampleP[n] = make([]extfield.E6Expr, len(queries))
+				chunkSampleQ[n] = make([]extfield.E6Expr, len(queries))
 				for qi := range queries {
 					pNative, qNative, err := sampleE4(slot, qi)
 					if err != nil {
 						return trace.Trace{},err
 					}
-					chunkSampleP[n][qi] = addE4(fmt.Sprintf(mp+"airverify.deep_md_csP_%d_%s", qi, sanitizeName(n)), pNative)
-					chunkSampleQ[n][qi] = addE4(fmt.Sprintf(mp+"airverify.deep_md_csQ_%d_%s", qi, sanitizeName(n)), qNative)
+					chunkSampleP[n][qi] = addE6(fmt.Sprintf(mp+"airverify.deep_md_csP_%d_%s", qi, sanitizeName(n)), pNative)
+					chunkSampleQ[n][qi] = addE6(fmt.Sprintf(mp+"airverify.deep_md_csQ_%d_%s", qi, sanitizeName(n)), qNative)
 				}
 			}
 
 			// Allocate level leaves up front (i > 0) so both Stage 15
 			// (cross-round chain with gamma intro term) and Stage 13
 			// (DEEP bridge) reference the same witness columns.
-			type lp struct{ P, Q extfield.E4Expr }
+			type lp struct{ P, Q extfield.E6Expr }
 			levelLeavesAll := make(map[int][]lp)
 			for li := 1; li < numSizes; li++ {
 				levelLeavesAll[li] = make([]lp, len(queries))
 				for qi := range queries {
 					lvq := friProof.LevelQueries[li-1][qi]
-					pE := addE4(fmt.Sprintf(mp+"airverify.deep_md_levelP_%d_%d", li, qi), lvq.LeafPExt)
-					qE := addE4(fmt.Sprintf(mp+"airverify.deep_md_levelQ_%d_%d", li, qi), lvq.LeafQExt)
+					pE := addE6(fmt.Sprintf(mp+"airverify.deep_md_levelP_%d_%d", li, qi), lvq.LeafPExt)
+					qE := addE6(fmt.Sprintf(mp+"airverify.deep_md_levelQ_%d_%d", li, qi), lvq.LeafQExt)
 					levelLeavesAll[li][qi] = lp{P: pE, Q: qE}
 				}
 			}
@@ -1315,7 +1322,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 
 			// Anchor gammas as constant-fill witness columns linked to
 			// their fri_level_l_gamma chain digest at the digest row.
-			gammaExprs := map[int]extfield.E4Expr{}
+			gammaExprs := map[int]extfield.E6Expr{}
 			for l := 1; l < numSizes; l++ {
 				gammaName := friLevelGammaName(l)
 				gammaIdx := -1
@@ -1330,11 +1337,12 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 				}
 				gammaCN := chSpongeCNs[gammaIdx]
 				gammaDigestExpr := extfield.FromLimbs(
-					expr.Col(gammaCN.Digest[0]), expr.Col(gammaCN.Digest[2]),
-					expr.Col(gammaCN.Digest[1]), expr.Col(gammaCN.Digest[3]),
+					expr.Col(gammaCN.Digest[0]), expr.Col(gammaCN.Digest[1]),
+					expr.Col(gammaCN.Digest[2]), expr.Col(gammaCN.Digest[3]),
+					expr.Col(gammaCN.Digest[4]), expr.Col(gammaCN.Digest[5]),
 				)
-				gammaNative := hashDigestToE4(chain[gammaIdx].NativeDigest)
-				gammaExpr := addE4(fmt.Sprintf(mp+"airverify.fri_gamma_%d", l), gammaNative)
+				gammaNative := hashDigestToE6(chain[gammaIdx].NativeDigest)
+				gammaExpr := addE6(fmt.Sprintf(mp+"airverify.fri_gamma_%d", l), gammaNative)
 				for _, rel := range gammaExpr.EqualityConstraints(gammaDigestExpr) {
 					verifierMod.AssertZeroAt(rel, gammaCN.DigestRow)
 				}
@@ -1401,8 +1409,8 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 				if err != nil {
 					return trace.Trace{},fmt.Errorf("recursion: stage 13 omegaSize %d: %w", size, err)
 				}
-				omegaShiftE4 := make([]ext.E4, len(dqLayout.Shifts[li]))
-				omegaShiftExpr := make([]extfield.E4Expr, len(dqLayout.Shifts[li]))
+				omegaShiftE4 := make([]ext.E6, len(dqLayout.Shifts[li]))
+				omegaShiftExpr := make([]extfield.E6Expr, len(dqLayout.Shifts[li]))
 				for j, shift := range dqLayout.Shifts[li] {
 					var w koalabear.Element
 					w.Exp(omegaSize, big.NewInt(int64(shift)))
@@ -1440,9 +1448,9 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 
 					// Native helpers for inverse witness fill.
 					sLNat := query.digestNat % uint64(halfDomain)
-					var xNat ext.E4
+					var xNat ext.E6
 					xNat.B0.A0.Exp(friDomainGen, big.NewInt(int64(sLNat)))
-					var negXNat ext.E4
+					var negXNat ext.E6
 					negXNat.B0.A0.Neg(&xNat.B0.A0)
 
 					dqP := extfield.Zero()
@@ -1472,16 +1480,16 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 						denomX := zsExpr.Sub(xExpr)
 						denomNegX := zsExpr.Sub(negXExpr)
 
-						var zsNat ext.E4
+						var zsNat ext.E6
 						zsNat.MulByElement(&zeta, &omegaShiftE4[j].B0.A0)
-						var dXNat, dNegXNat ext.E4
+						var dXNat, dNegXNat ext.E6
 						dXNat.Sub(&zsNat, &xNat)
 						dNegXNat.Sub(&zsNat, &negXNat)
-						var invDXNat, invDNegXNat ext.E4
+						var invDXNat, invDNegXNat ext.E6
 						invDXNat.Inverse(&dXNat)
 						invDNegXNat.Inverse(&dNegXNat)
-						invDXExpr := addE4(fmt.Sprintf(mp+"airverify.deep_md_q%d_l%d_g%d_invX", qi, li, j), invDXNat)
-						invDNegXExpr := addE4(fmt.Sprintf(mp+"airverify.deep_md_q%d_l%d_g%d_invNegX", qi, li, j), invDNegXNat)
+						invDXExpr := addE6(fmt.Sprintf(mp+"airverify.deep_md_q%d_l%d_g%d_invX", qi, li, j), invDXNat)
+						invDNegXExpr := addE6(fmt.Sprintf(mp+"airverify.deep_md_q%d_l%d_g%d_invNegX", qi, li, j), invDNegXNat)
 
 						oneE4 := extfield.One()
 						for _, rel := range invDXExpr.Mul(denomX).EqualityConstraints(oneE4) {
@@ -1515,14 +1523,14 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 						denomX := zsExpr.Sub(xExpr)
 						denomNegX := zsExpr.Sub(negXExpr)
 
-						var dXNat, dNegXNat ext.E4
+						var dXNat, dNegXNat ext.E6
 						dXNat.Sub(&zeta, &xNat)
 						dNegXNat.Sub(&zeta, &negXNat)
-						var invDXNat, invDNegXNat ext.E4
+						var invDXNat, invDNegXNat ext.E6
 						invDXNat.Inverse(&dXNat)
 						invDNegXNat.Inverse(&dNegXNat)
-						invDXExpr := addE4(fmt.Sprintf(mp+"airverify.deep_md_q%d_l%d_chunks_invX", qi, li), invDXNat)
-						invDNegXExpr := addE4(fmt.Sprintf(mp+"airverify.deep_md_q%d_l%d_chunks_invNegX", qi, li), invDNegXNat)
+						invDXExpr := addE6(fmt.Sprintf(mp+"airverify.deep_md_q%d_l%d_chunks_invX", qi, li), invDXNat)
+						invDNegXExpr := addE6(fmt.Sprintf(mp+"airverify.deep_md_q%d_l%d_chunks_invNegX", qi, li), invDNegXNat)
 
 						oneE4 := extfield.One()
 						for _, rel := range invDXExpr.Mul(denomX).EqualityConstraints(oneE4) {
@@ -1683,7 +1691,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 
 				// Expose airverify's leaf witnesses so the merkle module
 				// (with the same N) can pin its row-0 LeafP/LeafQ to them.
-				// pos=0 is arbitrary: addE4 fills every row with the same
+				// pos=0 is arbitrary: addE6 fills every row with the same
 				// constant so the column is row-invariant.
 				for i := 0; i < extfield.Limbs; i++ {
 					pName := fmt.Sprintf(mp+"airverify.fri_q%d_P_%d_%d", k, j, i)
@@ -1958,7 +1966,7 @@ func buildVerifierCoreInto(builder *board.Builder, input RecursionInput, cfg Con
 	if zetaStepIdx < 0 {
 		return trace.Trace{},fmt.Errorf("recursion: __zeta step missing from chain")
 	}
-	expectedZeta := hashDigestToE4(chain[zetaStepIdx].NativeDigest)
+	expectedZeta := hashDigestToE6(chain[zetaStepIdx].NativeDigest)
 	if !expectedZeta.Equal(&zeta) {
 		return trace.Trace{},fmt.Errorf("recursion: chain zeta-step digest != native zeta")
 	}
@@ -2161,7 +2169,7 @@ func computeChallengeChain(input RecursionInput) ([]challengeStep, error) {
 					return nil, err
 				}
 				deepBindings = append(deepBindings, witnessBinding{Start: deepStart, Key: key, IsChunk: false})
-				deepStart += 4
+				deepStart += extfield.Limbs
 			}
 		}
 		for _, chunkName := range dqLayout.AIRChunks[i] {
@@ -2175,7 +2183,7 @@ func computeChallengeChain(input RecursionInput) ([]challengeStep, error) {
 				return nil, err
 			}
 			deepBindings = append(deepBindings, witnessBinding{Start: deepStart, Key: chunkName, IsChunk: true})
-			deepStart += 4
+			deepStart += extfield.Limbs
 		}
 	}
 
@@ -2378,31 +2386,26 @@ func transcriptBasePolyElements(poly []koalabear.Element) []koalabear.Element {
 	return res
 }
 
-func transcriptExtPolyElements(poly []ext.E4) []koalabear.Element {
-	res := make([]koalabear.Element, 0, 2+4*len(poly))
+func transcriptExtPolyElements(poly []ext.E6) []koalabear.Element {
+	res := make([]koalabear.Element, 0, 2+extfield.Limbs*len(poly))
 	res = append(res, hash.NewElement(friExtDomainTag), hash.NewElement(uint64(len(poly))))
 	for _, v := range poly {
-		res = append(res, v.B0.A0, v.B0.A1, v.B1.A0, v.B1.A1)
+		res = append(res, v.B0.A0, v.B0.A1, v.B1.A0, v.B1.A1, v.B2.A0, v.B2.A1)
 	}
 	return res
 }
 
-// extToElements flattens an E4 into the 4-element order Loom's FS uses
-// when binding extension values: (B0.A0, B0.A1, B1.A0, B1.A1). Mirrors
-// the unexported prover.extToElements.
-func extToElements(v ext.E4) []koalabear.Element {
-	return []koalabear.Element{v.B0.A0, v.B0.A1, v.B1.A0, v.B1.A1}
+// extToElements flattens an E6 into the 6-element order Loom's FS uses
+// when binding extension values: (B0.A0, B0.A1, B1.A0, B1.A1, B2.A0, B2.A1).
+// Mirrors hash.AppendExtElements.
+func extToElements(v ext.E6) []koalabear.Element {
+	return []koalabear.Element{v.B0.A0, v.B0.A1, v.B1.A0, v.B1.A1, v.B2.A0, v.B2.A1}
 }
 
-// hashDigestToE4 mirrors hash.OutputToExt for an 8-element digest:
-// the first 4 elements become an E4 with the OutputToExt mapping.
-func hashDigestToE4(d hash.Digest) ext.E4 {
-	var v ext.E4
-	v.B0.A0.Set(&d[0])
-	v.B0.A1.Set(&d[1])
-	v.B1.A0.Set(&d[2])
-	v.B1.A1.Set(&d[3])
-	return v
+// hashDigestToE6 mirrors hash.OutputToExt for an 8-element digest:
+// the first 6 elements become an E6 with the OutputToExt mapping.
+func hashDigestToE6(d hash.Digest) ext.E6 {
+	return hash.OutputToExt(d)
 }
 
 func nextPow2Internal(n int) int {
@@ -2424,10 +2427,10 @@ func nextPow2Internal(n int) int {
 //
 // Mirrors verifier.deriveChallenges + the FS-setup logic in
 // newVerifierRuntime.
-func replayInnerFS(input RecursionInput) (ext.E4, map[string]ext.E4, error) {
+func replayInnerFS(input RecursionInput) (ext.E6, map[string]ext.E6, error) {
 	hb, err := commitment.HashBackendByID(input.Proof.HashBackendID)
 	if err != nil {
-		return ext.E4{}, nil, err
+		return ext.E6{}, nil, err
 	}
 
 	pg := input.Program
@@ -2444,39 +2447,39 @@ func replayInnerFS(input RecursionInput) (ext.E4, map[string]ext.E4, error) {
 	numRounds := len(pg.FScolumnsDependencies)
 	for i := 0; i < numRounds; i++ {
 		if err := fs.NewChallenge(constants.CanonicalChallengeName(i)); err != nil {
-			return ext.E4{}, nil, err
+			return ext.E6{}, nil, err
 		}
 	}
 	if err := fs.NewChallenge(constants.FINAL_EVALUATION_POINT); err != nil {
-		return ext.E4{}, nil, err
+		return ext.E6{}, nil, err
 	}
 
 	initialChallenge := constants.InitialChallengeName(numRounds)
 	if err := fs.Bind(initialChallenge, hash.StringToElements(constants.HASH_BACKEND_DOMAIN_TAG, hb.ID)); err != nil {
-		return ext.E4{}, nil, err
+		return ext.E6{}, nil, err
 	}
 
 	// PublicInputs (if any) are bound into the initial challenge before
 	// any trace roots — matching newVerifierRuntime.
 	if len(input.PublicInputs) > 0 {
 		if err := fs.Bind(initialChallenge, input.PublicInputs.TranscriptElements()); err != nil {
-			return ext.E4{}, nil, err
+			return ext.E6{}, nil, err
 		}
 	}
 
 	// Per-round trace roots, then compute each round challenge.
-	challengeVals := make(map[string]ext.E4)
+	challengeVals := make(map[string]ext.E6)
 	for r := 0; r < numRounds; r++ {
 		name := constants.CanonicalChallengeName(r)
 		for i := layout.TraceBegin[r]; i < layout.TraceEnd[r]; i++ {
 			root := roots[i]
 			if err := fs.Bind(name, root[:]); err != nil {
-				return ext.E4{}, nil, err
+				return ext.E6{}, nil, err
 			}
 		}
 		c, err := fs.ComputeChallenge(name)
 		if err != nil {
-			return ext.E4{}, nil, err
+			return ext.E6{}, nil, err
 		}
 		challengeVals[name] = hash.OutputToExt(c)
 	}
@@ -2485,12 +2488,12 @@ func replayInnerFS(input RecursionInput) (ext.E4, map[string]ext.E4, error) {
 	for i := layout.AIRBegin; i < layout.AIREnd; i++ {
 		root := roots[i]
 		if err := fs.Bind(constants.FINAL_EVALUATION_POINT, root[:]); err != nil {
-			return ext.E4{}, nil, err
+			return ext.E6{}, nil, err
 		}
 	}
 	zetaDigest, err := fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
 	if err != nil {
-		return ext.E4{}, nil, err
+		return ext.E6{}, nil, err
 	}
 	return hash.OutputToExt(zetaDigest), challengeVals, nil
 }
@@ -2520,10 +2523,10 @@ func sortedModuleNames(p board.Program) []string {
 func collectLeafValuesAtZeta(
 	modName string,
 	m board.CompiledModule,
-	zeta ext.E4,
+	zeta ext.E6,
 	prf proof.Proof,
 	publicInputs public.Inputs,
-	out map[string]ext.E4,
+	out map[string]ext.E6,
 ) error {
 	for _, node := range m.VanishingRelation.Nodes {
 		if node.IsConst || node.Leaf == nil {
@@ -2574,17 +2577,17 @@ func collectLeafValuesAtZeta(
 // reconstruction helper.
 type entryAtIdx struct {
 	Idx   int
-	Value ext.E4
+	Value ext.E6
 }
 
 // reconstructFromEntries computes sum_e L_{N, e.Idx}(zeta) * e.Value,
 // the Lagrange-interpolation form of a sparse column at zeta. Used to
 // resolve both PublicInputColumn and ExposedColumn leaves.
-func reconstructFromEntries(zeta ext.E4, N int, entries []entryAtIdx) ext.E4 {
-	var acc ext.E4
+func reconstructFromEntries(zeta ext.E6, N int, entries []entryAtIdx) ext.E6 {
+	var acc ext.E6
 	for _, e := range entries {
 		lag := poly.LagrangeAtZetaExt(zeta, N, e.Idx)
-		var term ext.E4
+		var term ext.E6
 		term.Mul(&lag, &e.Value)
 		acc.Add(&acc, &term)
 	}
@@ -2626,8 +2629,8 @@ func nativeLeafFor(entries []colEntry, wp commitment.WMerkleProof) leafhash.Flex
 			leaf.BasePairsP = append(leaf.BasePairsP, wp.RawLeafBase[e.polyIdx][0])
 			leaf.BasePairsQ = append(leaf.BasePairsQ, wp.RawLeafBase[e.polyIdx][1])
 		} else {
-			leaf.ExtPairsP = append(leaf.ExtPairsP, extfield.FromE4(wp.RawLeafExt[e.polyIdx][0]))
-			leaf.ExtPairsQ = append(leaf.ExtPairsQ, extfield.FromE4(wp.RawLeafExt[e.polyIdx][1]))
+			leaf.ExtPairsP = append(leaf.ExtPairsP, extfield.FromE6(wp.RawLeafExt[e.polyIdx][0]))
+			leaf.ExtPairsQ = append(leaf.ExtPairsQ, extfield.FromE6(wp.RawLeafExt[e.polyIdx][1]))
 		}
 	}
 	return leaf

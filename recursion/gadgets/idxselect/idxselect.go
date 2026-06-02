@@ -60,7 +60,7 @@ type ColumnNames struct {
 
 // Register appends idxselect constraints to mod under the given prefix.
 // table must have length 2^bitsCN.NumBits.
-func Register(mod *board.Module, prefix string, table []ext.E4, bitsCN bits.ColumnNames) ColumnNames {
+func Register(mod *board.Module, prefix string, table []ext.E6, bitsCN bits.ColumnNames) ColumnNames {
 	k := bitsCN.NumBits
 	if len(table) != 1<<uint(k) {
 		panic(fmt.Sprintf("idxselect.Register: table size %d != 2^%d", len(table), k))
@@ -73,14 +73,14 @@ func Register(mod *board.Module, prefix string, table []ext.E4, bitsCN bits.Colu
 
 	// Tree-reduce, building a slice of E4Expr-typed entries that shrinks by
 	// half at each level.
-	level := make([]extfield.E4Expr, len(table))
+	level := make([]extfield.E6Expr, len(table))
 	for i, t := range table {
 		level[i] = extfield.Const(t)
 	}
 
 	for l := 0; l < k; l++ {
 		b := expr.Col(bitsCN.Bits[l]) // pick b_l at each level
-		next := make([]extfield.E4Expr, len(level)/2)
+		next := make([]extfield.E6Expr, len(level)/2)
 		for i := 0; i < len(next); i++ {
 			lo := level[2*i]
 			hi := level[2*i+1]
@@ -96,6 +96,8 @@ func Register(mod *board.Module, prefix string, table []ext.E4, bitsCN bits.Colu
 		expr.Col(cn.Out[1]),
 		expr.Col(cn.Out[2]),
 		expr.Col(cn.Out[3]),
+		expr.Col(cn.Out[4]),
+		expr.Col(cn.Out[5]),
 	)
 	for _, rel := range out.EqualityConstraints(level[0]) {
 		mod.AssertZero(rel)
@@ -110,7 +112,7 @@ func Register(mod *board.Module, prefix string, table []ext.E4, bitsCN bits.Colu
 //
 // koalabear.Element is the element type used by Loom traces; we keep the
 // import for the return-type alias and limb-by-limb writes.
-func GenerateTrace(cn ColumnNames, capacity int, table []ext.E4, indices []uint64) map[string][]koalabear.Element {
+func GenerateTrace(cn ColumnNames, capacity int, table []ext.E6, indices []uint64) map[string][]koalabear.Element {
 	n := nextPow2(capacity)
 	cols := make(map[string][]koalabear.Element, extfield.Limbs)
 	for i := 0; i < extfield.Limbs; i++ {
@@ -124,7 +126,7 @@ func GenerateTrace(cn ColumnNames, capacity int, table []ext.E4, indices []uint6
 		if idx >= uint64(len(table)) {
 			panic(fmt.Sprintf("idxselect.GenerateTrace: indices[%d]=%d out of range [0, %d)", row, idx, len(table)))
 		}
-		limbs := extfield.FromE4(table[idx])
+		limbs := extfield.FromE6(table[idx])
 		for i := 0; i < extfield.Limbs; i++ {
 			cols[cn.Out[i]][row].Set(&limbs[i])
 		}

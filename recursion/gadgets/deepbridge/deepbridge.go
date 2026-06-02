@@ -59,8 +59,8 @@ func DivColName(prefix string, i int) string {
 // identically zero on some row, no valid witness exists and the proof
 // will fail to verify; callers must ensure denom != 0 wherever the
 // constraint is meaningful.
-func RegisterDivExt(mod *board.Module, prefix string, num, denom extfield.E4Expr) extfield.E4Expr {
-	var result extfield.E4Expr
+func RegisterDivExt(mod *board.Module, prefix string, num, denom extfield.E6Expr) extfield.E6Expr {
+	var result extfield.E6Expr
 	for i := 0; i < extfield.Limbs; i++ {
 		result.Limb[i] = expr.Col(DivColName(prefix, i))
 	}
@@ -80,7 +80,7 @@ func RegisterDivExt(mod *board.Module, prefix string, num, denom extfield.E4Expr
 // inside mod under prefix. v, C, z, X are caller-supplied E4Expr
 // inputs (typically pre-computed via alpha-batching across columns).
 // Returns an E4Expr referencing the underlying witness columns.
-func RegisterSummand(mod *board.Module, prefix string, v, C, z, X extfield.E4Expr) extfield.E4Expr {
+func RegisterSummand(mod *board.Module, prefix string, v, C, z, X extfield.E6Expr) extfield.E6Expr {
 	num := v.Sub(C)
 	denom := z.Sub(X)
 	return RegisterDivExt(mod, prefix, num, denom)

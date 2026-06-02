@@ -28,9 +28,9 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-func randExt(t *testing.T) ext.E4 {
+func randExt(t *testing.T) ext.E6 {
 	t.Helper()
-	var v ext.E4
+	var v ext.E6
 	if _, err := v.B0.A0.SetRandom(); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func randExt(t *testing.T) ext.E4 {
 // gadget output, then proves+verifies that the gadget's E4Expr evaluates
 // to the same value the native dag.EvalExt does. The proof passes only
 // if the in-circuit walk matches the native walk on every limb.
-func runDAGTest(t *testing.T, name string, relation expr.Expr, vals map[string]ext.E4) {
+func runDAGTest(t *testing.T, name string, relation expr.Expr, vals map[string]ext.E6) {
 	t.Helper()
 
 	d := dag.ExprToDAG(relation)
@@ -62,9 +62,9 @@ func runDAGTest(t *testing.T, name string, relation expr.Expr, vals map[string]e
 	mod.N = 4
 
 	// For each leaf, allocate 4 base columns holding its E4 value and
-	// build an extfield.E4Expr referencing those columns. Also allocate
+	// build an extfield.E6Expr referencing those columns. Also allocate
 	// 4 base columns for the expected output and assert equality.
-	leafValues := make(map[string]extfield.E4Expr, len(vals))
+	leafValues := make(map[string]extfield.E6Expr, len(vals))
 	cols := make(map[string][]koalabear.Element)
 	allocCol := func(col string, v koalabear.Element) {
 		c := make([]koalabear.Element, mod.N)
@@ -74,7 +74,7 @@ func runDAGTest(t *testing.T, name string, relation expr.Expr, vals map[string]e
 		cols[col] = c
 	}
 	for leafName, val := range vals {
-		limbs := extfield.FromE4(val)
+		limbs := extfield.FromE6(val)
 		var leafCols [extfield.Limbs]string
 		for i := 0; i < extfield.Limbs; i++ {
 			c := name + "." + leafName + "_" + string('0'+rune(i))
@@ -84,12 +84,13 @@ func runDAGTest(t *testing.T, name string, relation expr.Expr, vals map[string]e
 		leafValues[leafName] = extfield.FromLimbs(
 			expr.Col(leafCols[0]), expr.Col(leafCols[1]),
 			expr.Col(leafCols[2]), expr.Col(leafCols[3]),
+			expr.Col(leafCols[4]), expr.Col(leafCols[5]),
 		)
 	}
 
 	gadgetExpr := airzeta.EvalDAG(d, leafValues)
 
-	wantLimbs := extfield.FromE4(want)
+	wantLimbs := extfield.FromE6(want)
 	for i := 0; i < extfield.Limbs; i++ {
 		c := name + ".want_" + string('0'+rune(i))
 		allocCol(c, wantLimbs[i])
@@ -109,7 +110,7 @@ func runDAGTest(t *testing.T, name string, relation expr.Expr, vals map[string]e
 // TestEvalDAGLeafIdentity covers the simplest DAG: a single leaf.
 func TestEvalDAGLeafIdentity(t *testing.T) {
 	rel := expr.Col("A")
-	vals := map[string]ext.E4{"A": randExt(t)}
+	vals := map[string]ext.E6{"A": randExt(t)}
 	runDAGTest(t, "leaf", rel, vals)
 }
 
@@ -117,7 +118,7 @@ func TestEvalDAGLeafIdentity(t *testing.T) {
 func TestEvalDAGAddSubMul(t *testing.T) {
 	// (A + B) * (C - A)
 	rel := expr.Col("A").Add(expr.Col("B")).Mul(expr.Col("C").Sub(expr.Col("A")))
-	vals := map[string]ext.E4{
+	vals := map[string]ext.E6{
 		"A": randExt(t),
 		"B": randExt(t),
 		"C": randExt(t),
@@ -128,7 +129,7 @@ func TestEvalDAGAddSubMul(t *testing.T) {
 // TestEvalDAGPow exercises the Pow node (square-and-multiply).
 func TestEvalDAGPow(t *testing.T) {
 	rel := expr.Col("X").Pow(5).Sub(expr.Col("Y"))
-	vals := map[string]ext.E4{
+	vals := map[string]ext.E6{
 		"X": randExt(t),
 		"Y": randExt(t),
 	}
@@ -142,7 +143,7 @@ func TestEvalDAGPow(t *testing.T) {
 func TestEvalDAGFibonacciStyle(t *testing.T) {
 	// C - A - B (the standard Fibonacci recurrence relation per row)
 	rel := expr.Col("C").Sub(expr.Col("A")).Sub(expr.Col("B"))
-	vals := map[string]ext.E4{
+	vals := map[string]ext.E6{
 		"A": randExt(t),
 		"B": randExt(t),
 		"C": randExt(t),
@@ -155,7 +156,7 @@ func TestEvalDAGConstants(t *testing.T) {
 	var seven koalabear.Element
 	seven.SetUint64(7)
 	rel := expr.Col("X").Mul(expr.Const(seven)).Add(expr.Col("Y"))
-	vals := map[string]ext.E4{
+	vals := map[string]ext.E6{
 		"X": randExt(t),
 		"Y": randExt(t),
 	}
@@ -168,31 +169,31 @@ func TestEvalDAGConstants(t *testing.T) {
 func TestAIRCheckHappyPath(t *testing.T) {
 	const N = 8
 	zeta := randExt(t)
-	chunkVals := []ext.E4{randExt(t), randExt(t), randExt(t)}
+	chunkVals := []ext.E6{randExt(t), randExt(t), randExt(t)}
 
 	// Compute target V = (zeta^N - 1) * sum_i chunks[i] * (zeta^N)^i
-	var zetaN ext.E4
+	var zetaN ext.E6
 	zetaN.Set(&zeta)
 	for i := 1; i < N; i++ {
 		zetaN.Mul(&zetaN, &zeta)
 	}
-	var zetaNm1 ext.E4
-	var one ext.E4
+	var zetaNm1 ext.E6
+	var one ext.E6
 	one.SetOne()
 	zetaNm1.Sub(&zetaN, &one)
-	var qZeta ext.E4
+	var qZeta ext.E6
 	qZeta.Set(&chunkVals[0])
-	var zetaPowIN ext.E4
+	var zetaPowIN ext.E6
 	zetaPowIN.Set(&zetaN)
 	for i := 1; i < len(chunkVals); i++ {
-		var term ext.E4
+		var term ext.E6
 		term.Mul(&chunkVals[i], &zetaPowIN)
 		qZeta.Add(&qZeta, &term)
 		if i+1 < len(chunkVals) {
 			zetaPowIN.Mul(&zetaPowIN, &zetaN)
 		}
 	}
-	var V ext.E4
+	var V ext.E6
 	V.Mul(&zetaNm1, &qZeta)
 
 	rel := expr.Col("X")
@@ -209,10 +210,10 @@ func TestAIRCheckHappyPath(t *testing.T) {
 		}
 		cols[name] = c
 	}
-	makeE4Expr := func(prefix string, v ext.E4) extfield.E4Expr {
-		limbs := extfield.FromE4(v)
-		names := [4]string{
-			prefix + "_0", prefix + "_1", prefix + "_2", prefix + "_3",
+	makeE6Expr := func(prefix string, v ext.E6) extfield.E6Expr {
+		limbs := extfield.FromE6(v)
+		names := [6]string{
+			prefix + "_0", prefix + "_1", prefix + "_2", prefix + "_3", prefix + "_4", prefix + "_5",
 		}
 		for i := 0; i < extfield.Limbs; i++ {
 			allocAndFill(names[i], limbs[i])
@@ -220,16 +221,17 @@ func TestAIRCheckHappyPath(t *testing.T) {
 		return extfield.FromLimbs(
 			expr.Col(names[0]), expr.Col(names[1]),
 			expr.Col(names[2]), expr.Col(names[3]),
+			expr.Col(names[4]), expr.Col(names[5]),
 		)
 	}
 
-	leafValues := map[string]extfield.E4Expr{
-		"X": makeE4Expr("X", V),
+	leafValues := map[string]extfield.E6Expr{
+		"X": makeE6Expr("X", V),
 	}
-	zetaExpr := makeE4Expr("zeta", zeta)
-	chunks := make([]extfield.E4Expr, len(chunkVals))
+	zetaExpr := makeE6Expr("zeta", zeta)
+	chunks := make([]extfield.E6Expr, len(chunkVals))
 	for i, c := range chunkVals {
-		chunks[i] = makeE4Expr("chunk_"+string('0'+rune(i)), c)
+		chunks[i] = makeE6Expr("chunk_"+string('0'+rune(i)), c)
 	}
 
 	airzeta.RegisterAIRCheck(&mod, d, N, leafValues, zetaExpr, chunks)
@@ -249,7 +251,7 @@ func TestAIRCheckHappyPath(t *testing.T) {
 func TestAIRCheckRejectsBadV(t *testing.T) {
 	const N = 4
 	zeta := randExt(t)
-	chunks := []ext.E4{randExt(t)}
+	chunks := []ext.E6{randExt(t)}
 
 	rel := expr.Col("X")
 	d := dag.ExprToDAG(rel)
@@ -265,10 +267,10 @@ func TestAIRCheckRejectsBadV(t *testing.T) {
 		}
 		cols[name] = c
 	}
-	makeE4Expr := func(prefix string, v ext.E4) extfield.E4Expr {
-		limbs := extfield.FromE4(v)
-		names := [4]string{
-			prefix + "_0", prefix + "_1", prefix + "_2", prefix + "_3",
+	makeE6Expr := func(prefix string, v ext.E6) extfield.E6Expr {
+		limbs := extfield.FromE6(v)
+		names := [6]string{
+			prefix + "_0", prefix + "_1", prefix + "_2", prefix + "_3", prefix + "_4", prefix + "_5",
 		}
 		for i := 0; i < extfield.Limbs; i++ {
 			allocAndFill(names[i], limbs[i])
@@ -276,15 +278,16 @@ func TestAIRCheckRejectsBadV(t *testing.T) {
 		return extfield.FromLimbs(
 			expr.Col(names[0]), expr.Col(names[1]),
 			expr.Col(names[2]), expr.Col(names[3]),
+			expr.Col(names[4]), expr.Col(names[5]),
 		)
 	}
 
 	// Set X to a random value that does NOT match (zeta^N - 1) * Q.
-	leafValues := map[string]extfield.E4Expr{
-		"X": makeE4Expr("X", randExt(t)),
+	leafValues := map[string]extfield.E6Expr{
+		"X": makeE6Expr("X", randExt(t)),
 	}
-	zetaExpr := makeE4Expr("zeta", zeta)
-	chunkExprs := []extfield.E4Expr{makeE4Expr("chunk", chunks[0])}
+	zetaExpr := makeE6Expr("zeta", zeta)
+	chunkExprs := []extfield.E6Expr{makeE6Expr("chunk", chunks[0])}
 
 	airzeta.RegisterAIRCheck(&mod, d, N, leafValues, zetaExpr, chunkExprs)
 
@@ -305,9 +308,9 @@ func TestAIRCheckRejectsBadV(t *testing.T) {
 func TestPowExtMatchesNative(t *testing.T) {
 	for _, n := range []int{0, 1, 2, 3, 5, 8, 13, 16} {
 		base := randExt(t)
-		var want ext.E4
+		var want ext.E6
 		want.SetOne()
-		var baseCopy ext.E4
+		var baseCopy ext.E6
 		baseCopy.Set(&base)
 		// Square-and-multiply on the native side.
 		expN := n
@@ -323,7 +326,7 @@ func TestPowExtMatchesNative(t *testing.T) {
 		mod := board.NewModule("powext")
 		mod.N = 4
 
-		baseLimbs := extfield.FromE4(base)
+		baseLimbs := extfield.FromE6(base)
 		var baseCols [extfield.Limbs]string
 		cols := make(map[string][]koalabear.Element)
 		for i := 0; i < extfield.Limbs; i++ {
@@ -337,11 +340,12 @@ func TestPowExtMatchesNative(t *testing.T) {
 		baseExpr := extfield.FromLimbs(
 			expr.Col(baseCols[0]), expr.Col(baseCols[1]),
 			expr.Col(baseCols[2]), expr.Col(baseCols[3]),
+			expr.Col(baseCols[4]), expr.Col(baseCols[5]),
 		)
 
 		gadgetExpr := airzeta.PowExt(baseExpr, n)
 
-		wantLimbs := extfield.FromE4(want)
+		wantLimbs := extfield.FromE6(want)
 		for i := 0; i < extfield.Limbs; i++ {
 			c := "powext.want_" + string('0'+rune(i))
 			col := make([]koalabear.Element, mod.N)

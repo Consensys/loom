@@ -29,12 +29,12 @@ import (
 
 // makeRandomLeafPairs returns nLeaves deterministic (LeafP, LeafQ) ext
 // pairs and their HashLeaf digests.
-func makeRandomLeafPairs(nLeaves int) (pairs [][2]ext.E4, digests []hash.Digest) {
-	pairs = make([][2]ext.E4, nLeaves)
+func makeRandomLeafPairs(nLeaves int) (pairs [][2]ext.E6, digests []hash.Digest) {
+	pairs = make([][2]ext.E6, nLeaves)
 	digests = make([]hash.Digest, nLeaves)
 	h := commitment.Poseidon2LeafHasher{}
 	for i := range pairs {
-		var P, Q ext.E4
+		var P, Q ext.E6
 		P.B0.A0.SetUint64(uint64(i*1000 + 1))
 		P.B0.A1.SetUint64(uint64(i*1000 + 2))
 		P.B1.A0.SetUint64(uint64(i*1000 + 3))
@@ -43,7 +43,7 @@ func makeRandomLeafPairs(nLeaves int) (pairs [][2]ext.E4, digests []hash.Digest)
 		Q.B0.A1.SetUint64(uint64(i*1000 + 6))
 		Q.B1.A0.SetUint64(uint64(i*1000 + 7))
 		Q.B1.A1.SetUint64(uint64(i*1000 + 8))
-		pairs[i] = [2]ext.E4{P, Q}
+		pairs[i] = [2]ext.E6{P, Q}
 		digests[i] = h.HashLeaf(nil, []commitment.PairExt{{P, Q}})
 	}
 	return

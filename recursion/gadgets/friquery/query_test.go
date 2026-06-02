@@ -26,9 +26,9 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-func randomExt(t *testing.T) ext.E4 {
+func randomExt(t *testing.T) ext.E6 {
 	t.Helper()
-	var v ext.E4
+	var v ext.E6
 	if _, err := v.B0.A0.SetRandom(); err != nil {
 		t.Fatal(err)
 	}
@@ -46,9 +46,9 @@ func randomExt(t *testing.T) ext.E4 {
 
 // foldLayer reproduces the native fri.foldLayerExt verbatim so the test is
 // self-contained (no dependency on internal/fri).
-func foldLayer(layer []ext.E4, alpha ext.E4, domain *fft.Domain) []ext.E4 {
+func foldLayer(layer []ext.E6, alpha ext.E6, domain *fft.Domain) []ext.E6 {
 	half := len(layer) / 2
-	out := make([]ext.E4, half)
+	out := make([]ext.E6, half)
 
 	var two, invTwo koalabear.Element
 	two.SetUint64(2)
@@ -59,7 +59,7 @@ func foldLayer(layer []ext.E4, alpha ext.E4, domain *fft.Domain) []ext.E4 {
 
 	for i := 0; i < half; i++ {
 		p, q := layer[i], layer[i+half]
-		var sum, diff ext.E4
+		var sum, diff ext.E6
 		sum.Add(&p, &q)
 		sum.MulByElement(&sum, &invTwo)
 		diff.Sub(&p, &q)
@@ -76,7 +76,7 @@ func foldLayer(layer []ext.E4, alpha ext.E4, domain *fft.Domain) []ext.E4 {
 // buildRounds simulates a FRI fold pipeline of numRounds rounds starting
 // from initialLayer of size N, picks query position s in [0, N/2), and
 // returns a friquery.Round slice that the gadget can consume directly.
-func buildRounds(initialLayer []ext.E4, alphas []ext.E4, s int) []friquery.Round {
+func buildRounds(initialLayer []ext.E6, alphas []ext.E6, s int) []friquery.Round {
 	N := len(initialLayer)
 	numRounds := len(alphas)
 	if N <= 0 || N&(N-1) != 0 {
@@ -126,11 +126,11 @@ func TestFriQueryGadget(t *testing.T) {
 	const numRounds = 2
 	const s = 5 // query position in [0, N/2)
 
-	layer := make([]ext.E4, N)
+	layer := make([]ext.E6, N)
 	for i := range layer {
 		layer[i] = randomExt(t)
 	}
-	alphas := []ext.E4{randomExt(t), randomExt(t)}
+	alphas := []ext.E6{randomExt(t), randomExt(t)}
 
 	rounds := buildRounds(layer, alphas, s)
 	if len(rounds) != numRounds {
@@ -154,11 +154,11 @@ func TestFriQueryGadgetDeepRecursion(t *testing.T) {
 	const numRounds = 4
 	const s = 13
 
-	layer := make([]ext.E4, N)
+	layer := make([]ext.E6, N)
 	for i := range layer {
 		layer[i] = randomExt(t)
 	}
-	alphas := make([]ext.E4, numRounds)
+	alphas := make([]ext.E6, numRounds)
 	for i := range alphas {
 		alphas[i] = randomExt(t)
 	}
@@ -183,11 +183,11 @@ func TestFriQueryGadgetRejectsBrokenChain(t *testing.T) {
 	const numRounds = 2
 	const s = 5
 
-	layer := make([]ext.E4, N)
+	layer := make([]ext.E6, N)
 	for i := range layer {
 		layer[i] = randomExt(t)
 	}
-	alphas := []ext.E4{randomExt(t), randomExt(t)}
+	alphas := []ext.E6{randomExt(t), randomExt(t)}
 	rounds := buildRounds(layer, alphas, s)
 
 	builder := board.NewBuilder()
@@ -220,11 +220,11 @@ func TestFriQueryGadgetRejectsNonBinaryBit(t *testing.T) {
 	const numRounds = 2
 	const s = 3
 
-	layer := make([]ext.E4, N)
+	layer := make([]ext.E6, N)
 	for i := range layer {
 		layer[i] = randomExt(t)
 	}
-	alphas := []ext.E4{randomExt(t), randomExt(t)}
+	alphas := []ext.E6{randomExt(t), randomExt(t)}
 	rounds := buildRounds(layer, alphas, s)
 
 	builder := board.NewBuilder()

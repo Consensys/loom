@@ -21,7 +21,6 @@ import (
 	"github.com/consensys/loom/recursion/extfield"
 	"github.com/consensys/loom/recursion/gadgets/leafhash"
 	"github.com/consensys/loom/recursion/gadgets/nodehash"
-	"github.com/consensys/loom/recursion/gadgets/poseidon2"
 	"github.com/consensys/loom/recursion/gadgets/poseidon2sponge"
 )
 
@@ -121,13 +120,9 @@ func GenerateTraceWithDigest(cn ColumnNames, capacity int, path PathWithDigest) 
 		idx >>= 1
 	}
 
-	c1Inputs, c2Inputs := nodehash.BuildCompressInputs(nodes)
-	c1Cols, _ := poseidon2.GenerateTrace(cn.NodeHash.Compress, n, c1Inputs)
-	for k, v := range c1Cols {
-		cols[k] = v
-	}
-	c2Cols, _ := poseidon2.GenerateTrace(cn.NodeHash.Tail, n, c2Inputs)
-	for k, v := range c2Cols {
+	spongeInputs := nodehash.BuildSpongeInputs(nodes)
+	spCols, _ := poseidon2sponge.GenerateTrace(cn.NodeHash.Sponge, n, spongeInputs)
+	for k, v := range spCols {
 		cols[k] = v
 	}
 	for i := 0; i < nodehash.DigestLen; i++ {
@@ -147,8 +142,8 @@ func GenerateTraceWithDigest(cn ColumnNames, capacity int, path PathWithDigest) 
 // row-0 current to equal that digest. LeafIdx selects the path direction
 // (its low bit per layer).
 type Path struct {
-	LeafP    ext.E4
-	LeafQ    ext.E4
+	LeafP    ext.E6
+	LeafQ    ext.E6
 	LeafIdx  int
 	Siblings []hash.Digest
 }
@@ -263,8 +258,8 @@ func GenerateTrace(cn ColumnNames, capacity int, path Path) map[string][]koalabe
 		// the per-row leafhash gadget is self-consistent across the
 		// entire module domain. (Only row 0 is constrained to match
 		// current; other rows just keep the leafhash AIR satisfied.)
-		pLimbs := extfield.FromE4(path.LeafP)
-		qLimbs := extfield.FromE4(path.LeafQ)
+		pLimbs := extfield.FromE6(path.LeafP)
+		qLimbs := extfield.FromE6(path.LeafQ)
 		for i := 0; i < extfield.Limbs; i++ {
 			leafP[i][row].Set(&pLimbs[i])
 			leafQ[i][row].Set(&qLimbs[i])
@@ -275,16 +270,10 @@ func GenerateTrace(cn ColumnNames, capacity int, path Path) map[string][]koalabe
 	}
 
 	// Fill the nodehash sub-columns. Each row independently computes
-	// HashNode(left, right) via two width-16 Poseidon2 permutations + MD
-	// feedforward.
-	c1Inputs, c2Inputs := nodehash.BuildCompressInputs(nodes)
-
-	c1Cols, _ := poseidon2.GenerateTrace(cn.NodeHash.Compress, n, c1Inputs)
-	for k, v := range c1Cols {
-		cols[k] = v
-	}
-	c2Cols, _ := poseidon2.GenerateTrace(cn.NodeHash.Tail, n, c2Inputs)
-	for k, v := range c2Cols {
+	// HashNode(left, right) via one width-24 Poseidon2 sponge permutation.
+	spongeInputs := nodehash.BuildSpongeInputs(nodes)
+	spCols, _ := poseidon2sponge.GenerateTrace(cn.NodeHash.Sponge, n, spongeInputs)
+	for k, v := range spCols {
 		cols[k] = v
 	}
 
@@ -311,9 +300,9 @@ func GenerateTrace(cn ColumnNames, capacity int, path Path) map[string][]koalabe
 		}
 		rowLeaves[row] = leaf
 	}
-	spongeInputs := leafhash.BuildSpongeInputs(rowLeaves)
-	spongeCols, _ := poseidon2sponge.GenerateTrace(cn.LeafHash.Sponge, n, spongeInputs)
-	for k, v := range spongeCols {
+	leafInputs := leafhash.BuildSpongeInputs(rowLeaves)
+	leafCols, _ := poseidon2sponge.GenerateTrace(cn.LeafHash.Sponge, n, leafInputs)
+	for k, v := range leafCols {
 		cols[k] = v
 	}
 	// The leafhash digest columns are aliases of the sponge's last-round

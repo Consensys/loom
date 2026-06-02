@@ -26,9 +26,9 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-func randExt(t *testing.T) ext.E4 {
+func randExt(t *testing.T) ext.E6 {
 	t.Helper()
-	var v ext.E4
+	var v ext.E6
 	if _, err := v.B0.A0.SetRandom(); err != nil {
 		t.Fatal(err)
 	}
@@ -44,9 +44,9 @@ func randExt(t *testing.T) ext.E4 {
 	return v
 }
 
-func makeE4ExprConst(t *testing.T, name string, v ext.E4, cols map[string][]koalabear.Element, n int) extfield.E4Expr {
+func makeE4ExprConst(t *testing.T, name string, v ext.E6, cols map[string][]koalabear.Element, n int) extfield.E6Expr {
 	t.Helper()
-	limbs := extfield.FromE4(v)
+	limbs := extfield.FromE6(v)
 	var names [extfield.Limbs]string
 	for i := 0; i < extfield.Limbs; i++ {
 		names[i] = name + "_" + string('0'+rune(i))
@@ -59,17 +59,18 @@ func makeE4ExprConst(t *testing.T, name string, v ext.E4, cols map[string][]koal
 	return extfield.FromLimbs(
 		expr.Col(names[0]), expr.Col(names[1]),
 		expr.Col(names[2]), expr.Col(names[3]),
+		expr.Col(names[4]), expr.Col(names[5]),
 	)
 }
 
 // fillDivWitness writes the native value of num/denom into the four
 // columns RegisterDivExt allocated under prefix. The caller invokes
 // this after building the gadget to populate the witness.
-func fillDivWitness(prefix string, num, denom ext.E4, cols map[string][]koalabear.Element, n int) {
-	var inv, res ext.E4
+func fillDivWitness(prefix string, num, denom ext.E6, cols map[string][]koalabear.Element, n int) {
+	var inv, res ext.E6
 	inv.Inverse(&denom)
 	res.Mul(&num, &inv)
-	limbs := extfield.FromE4(res)
+	limbs := extfield.FromE6(res)
 	for i := 0; i < extfield.Limbs; i++ {
 		name := deepbridge.DivColName(prefix, i)
 		c := make([]koalabear.Element, n)
@@ -92,7 +93,7 @@ func TestDivExtPositive(t *testing.T) {
 
 	pairs := []struct {
 		name        string
-		num, denom  ext.E4
+		num, denom  ext.E6
 	}{
 		{"p0", randExt(t), randExt(t)},
 		{"p1", randExt(t), randExt(t)},
@@ -162,10 +163,10 @@ func TestSummandMatchesNative(t *testing.T) {
 	X := randExt(t)
 
 	// Native expected value.
-	var num, denom, expected ext.E4
+	var num, denom, expected ext.E6
 	num.Sub(&v, &C)
 	denom.Sub(&z, &X)
-	var inv ext.E4
+	var inv ext.E6
 	inv.Inverse(&denom)
 	expected.Mul(&num, &inv)
 
@@ -207,27 +208,27 @@ func TestSummandSum(t *testing.T) {
 
 	// Three columns at the same shift, alpha-batched.
 	alpha := randExt(t)
-	cols0 := []ext.E4{randExt(t), randExt(t), randExt(t)} // f_k(zeta)
-	cols1 := []ext.E4{randExt(t), randExt(t), randExt(t)} // f_k(X)
+	cols0 := []ext.E6{randExt(t), randExt(t), randExt(t)} // f_k(zeta)
+	cols1 := []ext.E6{randExt(t), randExt(t), randExt(t)} // f_k(X)
 	z := randExt(t)
 	X := randExt(t)
 
 	// Native expected: DQ = sum_k alpha^k * (f_k(zeta) - f_k(X)) / (z - X)
-	var V, Cx ext.E4
-	var alphaAcc ext.E4
+	var V, Cx ext.E6
+	var alphaAcc ext.E6
 	alphaAcc.SetOne()
 	for k := range cols0 {
-		var t1 ext.E4
+		var t1 ext.E6
 		t1.Mul(&cols0[k], &alphaAcc)
 		V.Add(&V, &t1)
 		t1.Mul(&cols1[k], &alphaAcc)
 		Cx.Add(&Cx, &t1)
 		alphaAcc.Mul(&alphaAcc, &alpha)
 	}
-	var num, denom, expected ext.E4
+	var num, denom, expected ext.E6
 	num.Sub(&V, &Cx)
 	denom.Sub(&z, &X)
-	var inv ext.E4
+	var inv ext.E6
 	inv.Inverse(&denom)
 	expected.Mul(&num, &inv)
 
