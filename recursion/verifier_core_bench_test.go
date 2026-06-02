@@ -206,14 +206,14 @@ func BenchmarkRecursionVerify(b *testing.B) {
 			if err != nil {
 				b.Fatalf("BuildVerifierCore: %v", err)
 			}
-			outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram, prover.SkipFRI())
+			outerProof, err := prover.Prove(outerTrace, setup.ProvingKey{}, nil, outerProgram /*, prover.SkipFRI()*/)
 			if err != nil {
 				b.Fatalf("outer prove: %v", err)
 			}
 			b.ResetTimer()
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				if err := verifier.Verify(nil, setup.VerificationKey{}, outerProgram, outerProof, verifier.SkipFRI()); err != nil {
+				if err := verifier.Verify(nil, setup.VerificationKey{}, outerProgram, outerProof /*, verifier.SkipFRI()*/); err != nil {
 					b.Fatalf("outer verify: %v", err)
 				}
 			}
