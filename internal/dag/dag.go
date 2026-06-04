@@ -1502,7 +1502,7 @@ func evalDAGNodeSlice(n *DAGNode, cache []koalabear.Element, vals map[string]koa
 // that is not excluded by config. The filtering rules are identical to those
 // of Expr.Leaves: WithoutCommittedColumns, WithoutChallenges,
 // WithoutLagrangeColumns, WithoutSetupColumns, WithoutExposedColumns and
-// WithoutPublicColumns suppress the corresponding leaf kinds; Const leaves are
+// WithoutPublicInputsColumns suppress the corresponding leaf kinds; Const leaves are
 // never included.
 // Because the DAG deduplicates nodes, each structurally-identical leaf appears
 // at most once.

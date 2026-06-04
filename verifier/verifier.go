@@ -283,22 +283,22 @@ func (vr *verifierRunTime) computeLagrange() error {
 	return nil
 }
 
-func (vr *verifierRunTime) computePublicColumns() error {
-	config := expr.OnlyPublicColumns
+func (vr *verifierRunTime) computePublicInputsColumns() error {
+	config := expr.OnlyPublicInputsColumns
 	for _, m := range vr.program.Modules {
 		leafs := m.VanishingRelation.Leaves(expr.NewConfig(config...))
 		for _, leaf := range leafs {
 			pi, ok := vr.publicInputs[leaf]
 			if !ok {
-				return fmt.Errorf("computePublicColumns: %s not found in public inputs", leaf)
+				return fmt.Errorf("computePublicInputsColumns: %s not found in public inputs", leaf)
 			}
 			if pi.Module != m.Name {
-				return fmt.Errorf("computePublicColumns: %s belongs to module %q, used from module %q", leaf, pi.Module, m.Name)
+				return fmt.Errorf("computePublicInputsColumns: %s belongs to module %q, used from module %q", leaf, pi.Module, m.Name)
 			}
 			var val ext.E6
 			for _, pe := range pi.Entries {
 				if pe.Idx < 0 || pe.Idx >= m.N {
-					return fmt.Errorf("computePublicColumns: %s entry index %d out of bounds for module %q of size %d", leaf, pe.Idx, m.Name, m.N)
+					return fmt.Errorf("computePublicInputsColumns: %s entry index %d out of bounds for module %q of size %d", leaf, pe.Idx, m.Name, m.N)
 				}
 				tmp := poly.LagrangeAtZetaExt(vr.zeta, m.N, pe.Idx)
 				value := pe.ExtValue()
@@ -638,7 +638,7 @@ func Verify(publicInputs public.Inputs, verificationKey setup.VerificationKey, p
 	if err != nil {
 		return err
 	}
-	err = vr.computePublicColumns()
+	err = vr.computePublicInputsColumns()
 	if err != nil {
 		return err
 	}

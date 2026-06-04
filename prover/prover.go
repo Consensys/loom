@@ -631,7 +631,7 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 		expr.WithoutLagrangeColumns(),
 		expr.WithoutChallenges(),
 		expr.WithoutExposedColumns(),
-		expr.WithoutPublicColumns(),
+		expr.WithoutPublicInputsColumns(),
 	)
 
 	moduleNames := make([]string, 0, len(pr.program.Modules))

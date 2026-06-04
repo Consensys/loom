@@ -118,7 +118,7 @@ func TestLeaves(t *testing.T) {
 	woCC := NewConfig(WithoutLagrangeColumns())
 	woChal := NewConfig(WithoutChallenges())
 	woSetup := NewConfig(WithoutSetupColumns())
-	woPub := NewConfig(WithoutPublicColumns())
+	woPub := NewConfig(WithoutPublicInputsColumns())
 	woAll := NewConfig(WithoutLagrangeColumns(), WithoutChallenges())
 
 	// --- Leaf nodes ---
@@ -190,7 +190,7 @@ func TestLeaves(t *testing.T) {
 	e = PublicInput("pub").Add(Col("x"))
 	AssertSameSet(t, e.Leaves(all), []string{"pub", "x"})
 	AssertSameSet(t, e.Leaves(woPub), []string{"x"})
-	AssertSameSet(t, e.Leaves(NewConfig(OnlyPublicColumns...)), []string{"pub"})
+	AssertSameSet(t, e.Leaves(NewConfig(OnlyPublicInputsColumns...)), []string{"pub"})
 
 	// Setup columns are filtered independently from committed columns.
 	e = Setup("q_l").Add(Col("x"))

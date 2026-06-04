@@ -252,7 +252,7 @@ func BuildDeepQuotientLayout(program board.Program) DEEPquotientLayout {
 		expr.WithoutLagrangeColumns(),
 		expr.WithoutChallenges(),
 		expr.WithoutExposedColumns(),
-		expr.WithoutPublicColumns(),
+		expr.WithoutPublicInputsColumns(),
 	)
 
 	// Group module names by size, deterministic within a size.

@@ -117,7 +117,7 @@ func WithoutExposedColumns() Option {
 }
 
 // Leaves() doesnt return the PublicInputColumns
-func WithoutPublicColumns() Option {
+func WithoutPublicInputsColumns() Option {
 	return func(c *Config) {
 		c.WoPublicColumns = true
 	}
@@ -131,11 +131,11 @@ func NewConfig(opts ...Option) Config {
 	return res
 }
 
-var OnlyChallenges = []Option{WithoutSetupColumns(), WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns(), WithoutPublicColumns()}
-var OnlyLagranges = []Option{WithoutSetupColumns(), WithoutChallenges(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns(), WithoutPublicColumns()}
-var OnlySetupColumns = []Option{WithoutLagrangeColumns(), WithoutChallenges(), WithoutCommittedColumns(), WithoutExposedColumns(), WithoutPublicColumns()}
-var OnlyExposedColumns = []Option{WithoutSetupColumns(), WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutChallenges(), WithoutPublicColumns()}
-var OnlyPublicColumns = []Option{WithoutSetupColumns(), WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutChallenges(), WithoutExposedColumns()}
+var OnlyChallenges = []Option{WithoutSetupColumns(), WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns(), WithoutPublicInputsColumns()}
+var OnlyLagranges = []Option{WithoutSetupColumns(), WithoutChallenges(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns(), WithoutPublicInputsColumns()}
+var OnlySetupColumns = []Option{WithoutLagrangeColumns(), WithoutChallenges(), WithoutCommittedColumns(), WithoutExposedColumns(), WithoutPublicInputsColumns()}
+var OnlyExposedColumns = []Option{WithoutSetupColumns(), WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutChallenges(), WithoutPublicInputsColumns()}
+var OnlyPublicInputsColumns = []Option{WithoutSetupColumns(), WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutChallenges(), WithoutExposedColumns()}
 
 type Expr interface {
 	Degree() int

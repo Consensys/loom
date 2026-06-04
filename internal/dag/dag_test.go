@@ -211,7 +211,7 @@ func TestDAGLeaves(t *testing.T) {
 	woChal := expr.NewConfig(expr.WithoutChallenges())
 	woComp := expr.NewConfig(expr.WithoutLagrangeColumns())
 	woSetup := expr.NewConfig(expr.WithoutSetupColumns())
-	woPub := expr.NewConfig(expr.WithoutPublicColumns())
+	woPub := expr.NewConfig(expr.WithoutPublicInputsColumns())
 
 	mixed := expr.Col("x").
 		Mul(expr.Challenge("gamma")).

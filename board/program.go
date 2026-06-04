@@ -245,7 +245,7 @@ func Compile(b *Builder) (Program, error) {
 		expr.WithoutLagrangeColumns(),
 		expr.WithoutChallenges(),
 		expr.WithoutExposedColumns(),
-		expr.WithoutPublicColumns(),
+		expr.WithoutPublicInputsColumns(),
 	)
 
 	// Step 7a: Identify which levels are FS steps and assign round indices in level order.
