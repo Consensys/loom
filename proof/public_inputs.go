@@ -46,14 +46,8 @@ func (e ExposedEntry) ExtValue() extensions.E6 {
 }
 
 type ExposedValue struct {
-	// N       int // N = size of the module that the public column corresponding to this publicEntry belongs to
 	Entries []ExposedEntry
 }
-
-// type ExposedValue PublicInput
-
-// PublicInputs public values
-// type PublicInputs map[string]PublicInput
 
 // ExposedValues values made public by the prover
 type ExposedValues map[string]ExposedValue

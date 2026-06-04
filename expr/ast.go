@@ -31,6 +31,7 @@ const (
 	LagrangeColumn
 	ChallengeColumn
 	ConstantColumn
+	SetupColumn       // structural columns like ql, qr, etc in plonk, committed beforehand
 	ExposedColumn     // prover-exposed local values, carried by the proof
 	PublicInputColumn // verifier-supplied statement values
 )
@@ -47,7 +48,8 @@ type Leaf struct {
 // Config useful for querying the leaves
 type Config struct {
 	WoCommittedColumns bool
-	WoLagrangeumns     bool
+	WoLagrangeComumns  bool
+	WoSetupColumns     bool
 	WoRotatedColumns   bool
 	WoChallenges       bool
 	WoExposedColumns   bool
@@ -73,7 +75,14 @@ func WithoutCommittedColumns() Option {
 // Leaves() doesnt return the LagrangeColumns
 func WithoutLagrangeColumns() Option {
 	return func(c *Config) {
-		c.WoLagrangeumns = true
+		c.WoLagrangeComumns = true
+	}
+}
+
+// Leaves() doesnt return the SetupColumn
+func WithoutSetupColumns() Option {
+	return func(c *Config) {
+		c.WoSetupColumns = true
 	}
 }
 
@@ -106,10 +115,11 @@ func NewConfig(opts ...Option) Config {
 	return res
 }
 
-var OnlyChallenges = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns(), WithoutPublicColumns()}
-var OnlyLagranges = []Option{WithoutChallenges(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns(), WithoutPublicColumns()}
-var OnlyExposedColumns = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutChallenges(), WithoutPublicColumns()}
-var OnlyPublicColumns = []Option{WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutChallenges(), WithoutExposedColumns()}
+var OnlyChallenges = []Option{WithoutSetupColumns(), WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns(), WithoutPublicColumns()}
+var OnlyLagranges = []Option{WithoutSetupColumns(), WithoutChallenges(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns(), WithoutPublicColumns()}
+var OnlySetupColumns = []Option{WithoutLagrangeColumns(), WithoutChallenges(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns(), WithoutPublicColumns()}
+var OnlyExposedColumns = []Option{WithoutSetupColumns(), WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutChallenges(), WithoutPublicColumns()}
+var OnlyPublicColumns = []Option{WithoutSetupColumns(), WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutChallenges(), WithoutExposedColumns()}
 
 type Expr interface {
 	Degree() int
@@ -157,6 +167,14 @@ func Col(name string) *Leaf {
 
 func ExtCol(name string) *Leaf {
 	return &Leaf{Type: CommittedColumn, Name: name, Field: field.Ext}
+}
+
+func Setup(name string) *Leaf {
+	return &Leaf{Type: SetupColumn, Name: name}
+}
+
+func ExtSetup(name string) *Leaf {
+	return &Leaf{Type: SetupColumn, Name: name, Field: field.Ext}
 }
 
 func Exposed(name string) *Leaf {
@@ -207,7 +225,7 @@ func FieldOfWithColumnFields(e Expr, columnFields map[string]field.Kind) field.K
 	case *Leaf:
 		f := v.FieldKind()
 		switch v.Type {
-		case CommittedColumn, RotatedColumn, ExposedColumn:
+		case CommittedColumn, RotatedColumn, SetupColumn, ExposedColumn:
 			if columnFields != nil {
 				f = field.Join(f, columnFields[v.Name])
 			}
@@ -274,7 +292,12 @@ func (l *Leaf) Leaves(config Config) []string {
 		}
 		return []string{l.String()}
 	case LagrangeColumn:
-		if config.WoLagrangeumns {
+		if config.WoLagrangeComumns {
+			return []string{}
+		}
+		return []string{l.Name}
+	case SetupColumn:
+		if config.WoSetupColumns {
 			return []string{}
 		}
 		return []string{l.Name}
@@ -556,7 +579,11 @@ func (l *Leaf) LeavesFull(config Config) []*Leaf {
 			return nil
 		}
 	case LagrangeColumn:
-		if config.WoLagrangeumns {
+		if config.WoLagrangeComumns {
+			return nil
+		}
+	case SetupColumn:
+		if config.WoSetupColumns {
 			return nil
 		}
 	case ChallengeColumn:

@@ -210,10 +210,12 @@ func TestDAGLeaves(t *testing.T) {
 	woCC := expr.NewConfig(expr.WithoutCommittedColumns())
 	woChal := expr.NewConfig(expr.WithoutChallenges())
 	woComp := expr.NewConfig(expr.WithoutLagrangeColumns())
+	woSetup := expr.NewConfig(expr.WithoutSetupColumns())
 	woPub := expr.NewConfig(expr.WithoutPublicColumns())
 
 	mixed := expr.Col("x").
 		Mul(expr.Challenge("gamma")).
+		Add(expr.Setup("q_l")).
 		Add(expr.Lagrange("L0")).
 		Sub(expr.Const(c))
 
@@ -228,6 +230,7 @@ func TestDAGLeaves(t *testing.T) {
 		{"CommittedColumn/all", expr.Col("x"), all, []string{"x"}},
 		{"Challenge/all", expr.Challenge("alpha"), all, []string{"alpha"}},
 		{"LagrangeColumn/all", expr.Lagrange("L0"), all, []string{lagrangeName}},
+		{"SetupColumn/all", expr.Setup("q_l"), all, []string{"q_l"}},
 		{"PublicInputColumn/all", expr.PublicInput("pub"), all, []string{"pub"}},
 		{"Const/all", expr.Const(c), all, []string{}}, // Const never included
 
@@ -235,6 +238,7 @@ func TestDAGLeaves(t *testing.T) {
 		{"CommittedColumn/woCC", expr.Col("x"), woCC, []string{}},
 		{"Challenge/woChal", expr.Challenge("alpha"), woChal, []string{}},
 		{"LagrangeColumn/woComp", expr.Lagrange("L0"), woComp, []string{}},
+		{"SetupColumn/woSetup", expr.Setup("q_l"), woSetup, []string{}},
 		{"PublicInputColumn/woPub", expr.PublicInput("pub"), woPub, []string{}},
 
 		// DAG deduplication
@@ -247,11 +251,12 @@ func TestDAGLeaves(t *testing.T) {
 			all, []string{"a", "b"}},
 
 		// Mixed leaf kinds with filtering
-		{"Mixed/all", mixed, all, []string{"x", "gamma", lagrangeName}}, // Const excluded always
-		{"Mixed/woCC", mixed, woCC, []string{"gamma", lagrangeName}},
-		{"Mixed/woChal", mixed, woChal, []string{"x", lagrangeName}},
-		{"Mixed/woComp", mixed, woComp, []string{"x", "gamma"}},
-		{"Mixed/woCC+woChal", mixed, expr.NewConfig(expr.WithoutCommittedColumns(), expr.WithoutChallenges()), []string{lagrangeName}},
+		{"Mixed/all", mixed, all, []string{"x", "gamma", "q_l", lagrangeName}}, // Const excluded always
+		{"Mixed/woCC", mixed, woCC, []string{"gamma", "q_l", lagrangeName}},
+		{"Mixed/woChal", mixed, woChal, []string{"x", "q_l", lagrangeName}},
+		{"Mixed/woComp", mixed, woComp, []string{"x", "gamma", "q_l"}},
+		{"Mixed/woSetup", mixed, woSetup, []string{"x", "gamma", lagrangeName}},
+		{"Mixed/woCC+woChal", mixed, expr.NewConfig(expr.WithoutCommittedColumns(), expr.WithoutChallenges()), []string{"q_l", lagrangeName}},
 	}
 
 	for _, tc := range tests {
@@ -276,6 +281,7 @@ func TestDAGDegree(t *testing.T) {
 		// Leaves
 		{"CommittedColumn", expr.Col("x"), 1},
 		{"LagrangeColumn", expr.Lagrange("L0"), 1},
+		{"SetupColumn", expr.Setup("q_l"), 1},
 		{"PublicInputColumn", expr.PublicInput("pub"), 1},
 		{"Challenge", expr.Challenge("alpha"), 0},    // Challenge is degree 0
 		{"ConstNonZero", expr.Const(one), 0},         // non-zero constant

@@ -61,6 +61,8 @@ func TestFieldMetadata(t *testing.T) {
 		{"ExtCol", ExtCol("x"), field.Ext},
 		{"Rot", Rot("x", 1), field.Base},
 		{"ExtRot", ExtRot("x", 1), field.Ext},
+		{"Setup", Setup("q_l"), field.Base},
+		{"ExtSetup", ExtSetup("q_l"), field.Ext},
 		{"Exposed", Exposed("x"), field.Base},
 		{"Lagrange", Lagrange("L0"), field.Base},
 		{"Const", Const(one), field.Base},
@@ -70,6 +72,7 @@ func TestFieldMetadata(t *testing.T) {
 		{"ChallengeExpression", Col("x").Mul(Challenge("gamma")), field.Ext},
 		{"ExtColumnExpression", ExtCol("x").Sub(Col("y")).Pow(2), field.Ext},
 		{"ColumnRegistryExpression", Col("logup").Add(Col("x")), field.Ext},
+		{"SetupRegistryExpression", Setup("logup").Add(Col("x")), field.Ext},
 		{"PublicInput", PublicInput("x"), field.Base},
 		{"PublicInputExt", PublicInputExt("x"), field.Ext},
 	}
@@ -114,6 +117,7 @@ func TestLeaves(t *testing.T) {
 	all := NewConfig()
 	woCC := NewConfig(WithoutLagrangeColumns())
 	woChal := NewConfig(WithoutChallenges())
+	woSetup := NewConfig(WithoutSetupColumns())
 	woPub := NewConfig(WithoutPublicColumns())
 	woAll := NewConfig(WithoutLagrangeColumns(), WithoutChallenges())
 
@@ -134,6 +138,10 @@ func TestLeaves(t *testing.T) {
 	// Challenge: present by default, absent when excluded
 	AssertSameSet(t, Challenge("beta").Leaves(all), []string{"beta"})
 	AssertSameSet(t, Challenge("beta").Leaves(woChal), []string{})
+
+	// SetupColumn: present by default, absent when excluded
+	AssertSameSet(t, Setup("q_l").Leaves(all), []string{"q_l"})
+	AssertSameSet(t, Setup("q_l").Leaves(woSetup), []string{})
 
 	// PublicInputColumn: present by default, absent when excluded
 	AssertSameSet(t, PublicInput("pub").Leaves(all), []string{"pub"})
@@ -183,6 +191,12 @@ func TestLeaves(t *testing.T) {
 	AssertSameSet(t, e.Leaves(all), []string{"pub", "x"})
 	AssertSameSet(t, e.Leaves(woPub), []string{"x"})
 	AssertSameSet(t, e.Leaves(NewConfig(OnlyPublicColumns...)), []string{"pub"})
+
+	// Setup columns are filtered independently from committed columns.
+	e = Setup("q_l").Add(Col("x"))
+	AssertSameSet(t, e.Leaves(all), []string{"q_l", "x"})
+	AssertSameSet(t, e.Leaves(woSetup), []string{"x"})
+	AssertSameSet(t, e.Leaves(NewConfig(OnlySetupColumns...)), []string{"q_l"})
 
 	// Same LagrangeColumn appearing multiple times — deduplicated
 	e = Lagrange("L0").Add(Lagrange("L0"))
