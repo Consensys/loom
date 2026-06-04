@@ -237,7 +237,7 @@ func (b *Builder) addLogupConstraint(module string, E, M expr.Expr, output strin
 	m := b.Modules[module]
 
 	// logup * E - logup-1*E - M = 0, except at 0
-	recurrenceRelation := expr.Col(output).Mul(E).Sub(expr.Rot(output, -1).Mul(E)).Sub(M)
+	recurrenceRelation := expr.Col(output).Mul(E).Sub(expr.Col(output, expr.WithShift(-1)).Mul(E)).Sub(M)
 	m.AssertZeroExceptAt(recurrenceRelation, 0)
 
 	// logup[0]*E[0] - M[0] = 0
@@ -256,7 +256,7 @@ func (b *Builder) AddLogupStep(module string, E, M expr.Expr, output string) {
 func (b *Builder) addGrandProductConstraint(module string, N, D expr.Expr, output string) {
 	m := b.Modules[module]
 	gp := expr.Col(output)
-	gpshifted := expr.Rot(output, 1)
+	gpshifted := expr.Col(output, expr.WithShift(1))
 	recurrence := gpshifted.Mul(D).Sub(gp.Mul(N))
 	m.AssertZero(recurrence)
 

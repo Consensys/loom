@@ -34,9 +34,9 @@ func TestViz(t *testing.T) {
 	fibonacciModule.N = N
 	rangeModule.N = 2 * N
 
-	C := expr.Rot("A", 1).Sub(expr.Col("B"))
+	C := expr.Col("A", expr.WithShift(1)).Sub(expr.Col("B"))
 	fibonacciModule.AssertZeroExceptAt(C, N-1)
-	C = expr.Rot("B", 1).Sub(expr.Col("C"))
+	C = expr.Col("B", expr.WithShift(1)).Sub(expr.Col("C"))
 	fibonacciModule.AssertZeroExceptAt(C, N-1)
 	C = expr.Col("C").Sub(expr.Col("A")).Sub(expr.Col("B"))
 	fibonacciModule.AssertZero(C)

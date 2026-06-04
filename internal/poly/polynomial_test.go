@@ -349,12 +349,12 @@ func TestEvaluateOnIthEntry(t *testing.T) {
 		}
 	})
 
-	t.Run("RotatedColumn", func(t *testing.T) {
+	t.Run("ShiftedColumn", func(t *testing.T) {
 		// E = x0(shift=1) - x0; should equal P0[(i+1)%N] - P0[i]
 		size := 8
 		P0 := makeLagrangePoly(1, 3, 2, 7, 5, 4, 6, 8)
 		Pi := map[string]Polynomial{"x0": P0}
-		E := expr.Rot("x0", 1).Sub(expr.Col("x0"))
+		E := expr.Col("x0", expr.WithShift(1)).Sub(expr.Col("x0"))
 
 		_Pi := setupPiSlice(Pi, E)
 		for i := 0; i < size; i++ {
@@ -372,7 +372,7 @@ func TestEvaluateOnIthEntry(t *testing.T) {
 		size := 8
 		P0 := makeLagrangePoly(2, 4, 6, 8, 10, 12, 14, 16)
 		Pi := map[string]Polynomial{"x0": P0}
-		E := expr.Rot("x0", -1)
+		E := expr.Col("x0", expr.WithShift(-1))
 
 		_Pi := setupPiSlice(Pi, E)
 		for i := 0; i < size; i++ {

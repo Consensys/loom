@@ -60,7 +60,7 @@ func benchmarkFoldedRelation(numRelations int) (expr.Expr, map[string]field.Kind
 
 		linA := expr.Col(a).Add(expr.Col(b))
 		linB := expr.Col(b).Add(expr.Col(a)) // same expression as linA up to commutativity
-		transition := expr.Rot(carry, 1).Sub(expr.Col(next))
+		transition := expr.Col(carry, expr.WithShift(1)).Sub(expr.Col(next))
 		gatedTransition := transition.Mul(expr.Col(sel).Add(expr.Lagrange(lag)))
 		rangeLike := expr.Col(carry).Mul(expr.Col(carry).Sub(expr.Const(c)))
 

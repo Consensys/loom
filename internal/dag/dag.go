@@ -929,8 +929,8 @@ func childCacheAsExt(child *DAGNode, baseCache []koalabear.Element, extCache []e
 // Row selection follows the same rules as expr.Expr.EvaluateOnIthEntry:
 //   - Const leaf              : returns the constant value
 //   - len(_Pi[leaf.Idx]) == 1 : constant polynomial, returns _Pi[leaf.Idx][0]
-//   - RotatedColumn leaf      : returns _Pi[leaf.Idx][(i+N+leaf.Shift)%N]
-//   - all other leaves        : returns _Pi[leaf.Idx][i]
+//   - shifted leaf            : returns _Pi[leaf.Idx][(i+N+leaf.Shift)%N]
+//   - unshifted leaf          : returns _Pi[leaf.Idx][i]
 //
 // Composite nodes are evaluated in topological order using an internal cache
 // so that shared sub-expressions are computed only once.
@@ -1035,7 +1035,7 @@ func (d *DAG) EvalOnAllEntries(Pi [][]koalabear.Element, N int) []koalabear.Elem
 					for j := range N {
 						dst[j] = p[0]
 					}
-				} else if l.Type == expr.RotatedColumn {
+				} else if l.Shift != 0 {
 					for j := range N {
 						dst[j] = p[(j+N+l.Shift)%N]
 					}
@@ -1298,7 +1298,7 @@ func fillBaseLeafVector(dst []koalabear.Element, n *DAGNode, PiBase [][]koalabea
 		for j := range N {
 			dst[j] = p[0]
 		}
-	} else if l.Type == expr.RotatedColumn {
+	} else if l.Shift != 0 {
 		for j := range N {
 			dst[j] = p[(j+N+l.Shift)%N]
 		}
@@ -1374,7 +1374,7 @@ func fillExtLeafVector(dst []ext.E6, n *DAGNode, PiExt [][]ext.E6, N int) {
 		for j := range N {
 			dst[j] = p[0]
 		}
-	} else if l.Type == expr.RotatedColumn {
+	} else if l.Shift != 0 {
 		for j := range N {
 			dst[j] = p[(j+N+l.Shift)%N]
 		}

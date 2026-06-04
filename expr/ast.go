@@ -27,7 +27,6 @@ type LeafType int
 
 const (
 	CommittedColumn LeafType = iota
-	RotatedColumn
 	LagrangeColumn
 	ChallengeColumn
 	ConstantColumn
@@ -75,7 +74,7 @@ type Config struct {
 
 type Option func(*Config)
 
-// Leaves() doesnt return the RotatedColumns
+// Leaves() doesnt return shifted leafs
 func WithoutRotatedColumns() Option {
 	return func(c *Config) {
 		c.WoRotatedColumns = true
@@ -134,7 +133,7 @@ func NewConfig(opts ...Option) Config {
 
 var OnlyChallenges = []Option{WithoutSetupColumns(), WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns(), WithoutPublicColumns()}
 var OnlyLagranges = []Option{WithoutSetupColumns(), WithoutChallenges(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns(), WithoutPublicColumns()}
-var OnlySetupColumns = []Option{WithoutLagrangeColumns(), WithoutChallenges(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutExposedColumns(), WithoutPublicColumns()}
+var OnlySetupColumns = []Option{WithoutLagrangeColumns(), WithoutChallenges(), WithoutCommittedColumns(), WithoutExposedColumns(), WithoutPublicColumns()}
 var OnlyExposedColumns = []Option{WithoutSetupColumns(), WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutChallenges(), WithoutPublicColumns()}
 var OnlyPublicColumns = []Option{WithoutSetupColumns(), WithoutLagrangeColumns(), WithoutCommittedColumns(), WithoutRotatedColumns(), WithoutChallenges(), WithoutExposedColumns()}
 
@@ -166,8 +165,8 @@ type Expr interface {
 	// Row selection rules:
 	//   - Const leaf          : returns the constant value (ignores _Pi and i)
 	//   - len(_Pi[l.Idx]) == 1: constant polynomial, always returns _Pi[l.Idx][0]
-	//   - RotatedColumn leaf  : returns _Pi[l.Idx][(i + N + l.Shift) % N] where N = len(_Pi[l.Idx])
-	//   - all other leaves    : returns _Pi[l.Idx][i]
+	//   - shifted leaf        : returns _Pi[l.Idx][(i + N + l.Shift) % N] where N = len(_Pi[l.Idx])
+	//   - unshifted leaf      : returns _Pi[l.Idx][i]
 	// Leaf Idx values must be set by the caller before invoking this method (e.g. via LeavesFull).
 	EvaluateOnIthEntry(_Pi [][]koalabear.Element, i int) koalabear.Element
 
@@ -206,14 +205,6 @@ func PublicInputExt(name string, opts ...LeafOption) *Leaf {
 	return applyLeafOptions(&Leaf{Type: PublicInputColumn, Name: name, Field: field.Ext}, opts...)
 }
 
-func Rot(name string, shift int, opts ...LeafOption) *Leaf {
-	return applyLeafOptions(&Leaf{Type: RotatedColumn, Shift: shift, Name: name}, opts...)
-}
-
-func ExtRot(name string, shift int, opts ...LeafOption) *Leaf {
-	return applyLeafOptions(&Leaf{Type: RotatedColumn, Shift: shift, Name: name, Field: field.Ext}, opts...)
-}
-
 func Lagrange(name string, opts ...LeafOption) *Leaf {
 	return applyLeafOptions(&Leaf{Type: LagrangeColumn, Name: name}, opts...)
 }
@@ -242,7 +233,7 @@ func FieldOfWithColumnFields(e Expr, columnFields map[string]field.Kind) field.K
 	case *Leaf:
 		f := v.FieldKind()
 		switch v.Type {
-		case CommittedColumn, RotatedColumn, SetupColumn, ExposedColumn:
+		case CommittedColumn, SetupColumn, ExposedColumn:
 			if columnFields != nil {
 				f = field.Join(f, columnFields[v.Name])
 			}
@@ -262,14 +253,13 @@ func FieldOfWithColumnFields(e Expr, columnFields map[string]field.Kind) field.K
 }
 
 func (l *Leaf) String() string {
-	switch l.Type {
-	case RotatedColumn:
-		return fmt.Sprintf("%s_shift_%d", l.Name, l.Shift)
-	case ConstantColumn:
+	if l.Type == ConstantColumn {
 		return l.Value.String()
-	default:
-		return l.Name
 	}
+	if l.Shift != 0 {
+		return fmt.Sprintf("%s_shift_%d", l.Name, l.Shift)
+	}
+	return l.Name
 }
 
 func (l *Leaf) Degree() int {
@@ -281,7 +271,7 @@ func (l *Leaf) Degree() int {
 		return 0
 	case ChallengeColumn:
 		return 0
-	default: // CommittedColumn, RotatedColumn, LagrangeColumn
+	default: // CommittedColumn, LagrangeColumn, SetupColumn, ExposedColumn, PublicInputColumn
 		return 1
 	}
 }
@@ -297,14 +287,16 @@ func (l *Leaf) Pow(n uint32) Expr {
 }
 
 func (l *Leaf) Leaves(config Config) []string {
+	if l.Type == ConstantColumn {
+		return []string{}
+	}
+	if config.WoRotatedColumns && l.Shift != 0 {
+		return []string{}
+	}
+
 	switch l.Type {
 	case CommittedColumn:
 		if config.WoCommittedColumns {
-			return []string{}
-		}
-		return []string{l.Name}
-	case RotatedColumn:
-		if config.WoRotatedColumns {
 			return []string{}
 		}
 		return []string{l.String()}
@@ -312,29 +304,27 @@ func (l *Leaf) Leaves(config Config) []string {
 		if config.WoLagrangeComumns {
 			return []string{}
 		}
-		return []string{l.Name}
+		return []string{l.String()}
 	case SetupColumn:
 		if config.WoSetupColumns {
 			return []string{}
 		}
-		return []string{l.Name}
+		return []string{l.String()}
 	case ChallengeColumn:
 		if config.WoChallenges {
 			return []string{}
 		}
-		return []string{l.Name}
+		return []string{l.String()}
 	case ExposedColumn:
 		if config.WoExposedColumns {
 			return []string{}
 		}
-		return []string{l.Name}
+		return []string{l.String()}
 	case PublicInputColumn:
 		if config.WoPublicColumns {
 			return []string{}
 		}
-		return []string{l.Name}
-	case ConstantColumn:
-		return []string{}
+		return []string{l.String()}
 	}
 	return []string{}
 }
@@ -343,11 +333,7 @@ func (l *Leaf) ReplaceLeafByExpression(leaf string, e Expr) Expr {
 	if l.Type == ConstantColumn {
 		return l
 	}
-	name := l.Name
-	if l.Type == RotatedColumn {
-		name = l.String() // only allocate when shift suffix is needed
-	}
-	if name == leaf {
+	if l.String() == leaf {
 		return e
 	}
 
@@ -377,7 +363,7 @@ func (l *Leaf) EvaluateOnIthEntry(_Pi [][]koalabear.Element, i int) koalabear.El
 		return p[0]
 	}
 	N := len(p)
-	if l.Type == RotatedColumn {
+	if l.Shift != 0 {
 		return p[(i+N+l.Shift)%N]
 	}
 	return p[i]
@@ -586,13 +572,16 @@ func (m *Mul) Leaves(config Config) []string {
 func (p *Pow) Leaves(config Config) []string { return p.Base.Leaves(config) }
 
 func (l *Leaf) LeavesFull(config Config) []*Leaf {
+	if l.Type == ConstantColumn {
+		return nil
+	}
+	if config.WoRotatedColumns && l.Shift != 0 {
+		return nil
+	}
+
 	switch l.Type {
 	case CommittedColumn:
 		if config.WoCommittedColumns {
-			return nil
-		}
-	case RotatedColumn:
-		if config.WoRotatedColumns {
 			return nil
 		}
 	case LagrangeColumn:
@@ -615,8 +604,6 @@ func (l *Leaf) LeavesFull(config Config) []*Leaf {
 		if config.WoPublicColumns {
 			return nil
 		}
-	case ConstantColumn:
-		return nil
 	}
 	return []*Leaf{l}
 }

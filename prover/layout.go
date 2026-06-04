@@ -295,7 +295,7 @@ func BuildDeepQuotientLayout(program board.Program) DEEPquotientLayout {
 				}
 				seenKey[k] = true
 				normalizedShift := 0
-				if leaf.Type == expr.RotatedColumn {
+				if leaf.Shift != 0 {
 					normalizedShift = ((leaf.Shift % N) + N) % N
 				}
 				byShift[normalizedShift] = append(byShift[normalizedShift], colEntry{name: leaf.Name, key: k})

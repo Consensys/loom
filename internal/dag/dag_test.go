@@ -491,7 +491,7 @@ func TestDAGEvalOnAllEntriesMixed(t *testing.T) {
 	var two koalabear.Element
 	two.SetUint64(2)
 
-	ex := expr.Rot("x", 1).
+	ex := expr.Col("x", expr.WithShift(1)).
 		Mul(expr.Challenge("gamma")).
 		Add(expr.ExtCol("logup").Pow(2)).
 		Sub(expr.Const(two))
@@ -743,11 +743,11 @@ func TestDAGEvalOnIthEntry(t *testing.T) {
 		}
 	})
 
-	t.Run("RotatedColumn", func(t *testing.T) {
+	t.Run("ShiftedColumn", func(t *testing.T) {
 		// E = x0(shift=1) - x0 → P0[(i+1)%N] - P0[i]
 		P0 := makePoly(1, 3, 2, 7, 5, 4, 6, 8)
 		pi := map[string][]koalabear.Element{"x0": P0}
-		expr := expr.Rot("x0", 1).Sub(expr.Col("x0"))
+		expr := expr.Col("x0", expr.WithShift(1)).Sub(expr.Col("x0"))
 		d := ExprToDAG(expr)
 		_Pi := setupPiSlice(expr, pi)
 

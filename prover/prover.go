@@ -689,7 +689,7 @@ func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
 		module := pr.program.Modules[moduleName]
 		for _, leaf := range module.VanishingRelation.LeavesFull(config) {
 			shift := 0
-			if leaf.Type == expr.RotatedColumn {
+			if leaf.Shift != 0 {
 				shift = ((leaf.Shift % module.N) + module.N) % module.N
 			}
 			if p, ok := pr.t.Ext[leaf.Name]; ok {

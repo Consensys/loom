@@ -59,8 +59,8 @@ func TestFieldMetadata(t *testing.T) {
 	}{
 		{"Col", Col("x"), field.Base},
 		{"ExtCol", ExtCol("x"), field.Ext},
-		{"Rot", Rot("x", 1), field.Base},
-		{"ExtRot", ExtRot("x", 1), field.Ext},
+		{"ShiftedCol", Col("x", WithShift(1)), field.Base},
+		{"ShiftedExtCol", ExtCol("x", WithShift(1)), field.Ext},
 		{"Setup", Setup("q_l"), field.Base},
 		{"ExtSetup", ExtSetup("q_l"), field.Ext},
 		{"Exposed", Exposed("x"), field.Base},

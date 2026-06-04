@@ -240,7 +240,7 @@ func Compile(b *Builder) (Program, error) {
 
 	// --- Phase 7: Collapse FS steps of the same round (level) into one canonical step. ---
 
-	// Config: keep CommittedColumn and RotatedColumn; discard virtual verifier-side leaves.
+	// Config: keep committed and shifted committed columns; discard virtual verifier-side leaves.
 	noLagrangeNoChallengeNoExposedCols := expr.NewConfig(
 		expr.WithoutLagrangeColumns(),
 		expr.WithoutChallenges(),

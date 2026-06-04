@@ -196,12 +196,12 @@ func (b *CorsetBridge) termToExpr(t air.Term[gocorset_kb.Element], moduleID uint
 		if shift < 0 && -int(shift) <= boundsStart && boundsStart > 0 {
 			// Bounded backward shift: at rows 0..|shift|-1 the cyclic wrap would
 			// read the wrong end of the trace. Replace with 0 (matching spillage).
-			// (1-L_0)·…·(1-L_{|shift|-1}) · Rot(name, shift)
+			// (1-L_0)·…·(1-L_{|shift|-1}) · Col(name, WithShift(shift))
 			modName := b.loomModuleName(moduleID)
 			m, ok := b.Builder.Modules[modName]
 			if ok {
 				one := gnark_kb.One()
-				base := expr.Rot(name, shift)
+				base := expr.Col(name, expr.WithShift(shift))
 				sel := expr.Expr(expr.Const(one))
 				for i := 0; i < -int(shift); i++ {
 					sel = sel.Mul(expr.Const(one).Sub(m.LagrangeCol(i)))
@@ -210,7 +210,7 @@ func (b *CorsetBridge) termToExpr(t air.Term[gocorset_kb.Element], moduleID uint
 			}
 		}
 		if shift != 0 {
-			return expr.Rot(name, shift)
+			return expr.Col(name, expr.WithShift(shift))
 		}
 		return expr.Col(name)
 
@@ -260,7 +260,7 @@ func (b *CorsetBridge) termToExpr(t air.Term[gocorset_kb.Element], moduleID uint
 // row. This function substitutes accordingly:
 //   - column access with shift ≤ 0 → Const(0) (spillage value)
 //   - column access with shift k > 0 → Col(name) at real offset k-1
-//     (shift=1 → Col(name) at row 0; shift=2 → Rot(name, 1); etc.)
+//     (shift=1 → Col(name) at row 0; shift=2 → Col(name, WithShift(1)); etc.)
 func (b *CorsetBridge) termToSpillageBoundaryExpr(t air.Term[gocorset_kb.Element], moduleID uint) expr.Expr {
 	switch v := t.(type) {
 	case *air.ColumnAccess[gocorset_kb.Element]:
@@ -279,7 +279,7 @@ func (b *CorsetBridge) termToSpillageBoundaryExpr(t air.Term[gocorset_kb.Element
 		if shift == 1 {
 			return expr.Col(name)
 		}
-		return expr.Rot(name, shift-1)
+		return expr.Col(name, expr.WithShift(shift-1))
 
 	case *air.Constant[gocorset_kb.Element]:
 		return expr.Const(toGnarkElement(v.Value))
@@ -363,7 +363,7 @@ func (b *CorsetBridge) AddConstraintInLoom(name string, corsetCS schema.Constrai
 			// factor handles H=N traces (where IS_REAL is constant 1 and the shift
 			// selector wraps around cyclically).
 			for j := uint(1); j <= bounds.End; j++ {
-				sel = sel.Mul(expr.Rot(isRealName, int(j)))
+				sel = sel.Mul(expr.Col(isRealName, expr.WithShift(int(j))))
 				sel = sel.Mul(expr.Const(one).Sub(m.LagrangeColRelative(int(j) - 1)))
 			}
 
@@ -406,10 +406,10 @@ func (b *CorsetBridge) AddConstraintInLoom(name string, corsetCS schema.Constrai
 		// with IS_REAL=1 for 0..H-1 and 0 for H..N-1. We need a selector that
 		// fires at exactly row H-K.
 		//
-		// selector = prefix * ((1 - Rot(IS_REAL, K)) + LagrangeColRelative(K-1))
-		// prefix   = IS_REAL * Rot(IS_REAL, 1) * … * Rot(IS_REAL, K-1)
+		// selector = prefix * ((1 - shifted IS_REAL by K) + LagrangeColRelative(K-1))
+		// prefix   = IS_REAL * shifted IS_REAL by 1 * … * shifted IS_REAL by K-1
 		//
-		// The (1-Rot(IS_REAL,K)) term fires at row H-K when H<N (IS_REAL drops to
+		// The shifted IS_REAL correction fires at row H-K when H<N (IS_REAL drops to
 		// 0 at row H). The LagrangeColRelative(K-1) term (fires at row N-K) handles
 		// the H=N case where IS_REAL wraps cyclically and never drops to 0.
 		K := -position
@@ -420,13 +420,13 @@ func (b *CorsetBridge) AddConstraintInLoom(name string, corsetCS schema.Constrai
 		if !ok {
 			return fmt.Errorf("constraint %q: module %q not found in builder", name, modName)
 		}
-		// Build prefix = IS_REAL * Rot(IS_REAL, 1) * ... * Rot(IS_REAL, K-1)
+		// Build prefix = IS_REAL * shifted IS_REAL by 1 * ... * shifted IS_REAL by K-1
 		prefix := expr.Expr(expr.Col(isRealName))
 		for i := 1; i < K; i++ {
-			prefix = prefix.Mul(expr.Rot(isRealName, i))
+			prefix = prefix.Mul(expr.Col(isRealName, expr.WithShift(i)))
 		}
-		// correction = (1 - Rot(IS_REAL, K)) + LagrangeColRelative(K-1)
-		correction := expr.Const(one).Sub(expr.Rot(isRealName, K)).Add(m.LagrangeColRelative(K - 1))
+		// correction = (1 - shifted IS_REAL by K) + LagrangeColRelative(K-1)
+		correction := expr.Const(one).Sub(expr.Col(isRealName, expr.WithShift(K))).Add(m.LagrangeColRelative(K - 1))
 		sel := prefix.Mul(correction)
 		m.AssertZero(loomExpr.Mul(sel))
 		return nil
