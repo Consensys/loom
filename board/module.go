@@ -71,7 +71,7 @@ func (rc RangeColumnGen) Gen(t trace.Trace, m *CompiledModule) error {
 }
 
 type LagrangeRelativeGen struct {
-	i int // <- real position: module.N-i
+	i int // <- real position: module.N-i-1
 }
 
 func (p LagrangeRelativeGen) Gen(t trace.Trace, m *CompiledModule) error {
@@ -125,20 +125,43 @@ func (m *Module) AssertEqualRelativeAt(A, B expr.Expr, i int) {
 	m.AssertZero(relation)
 }
 
-func (m *Module) LagrangeCol(i int) expr.Expr {
-	m.GenCol = append(m.GenCol, LagrangeGen{i: i})
-	name := constants.LagrangeName(m.Name, i)
-	return &expr.Leaf{Type: expr.LagrangeColumn, Name: name}
-}
-
 func (m *Module) AssertEqualAt(A, B expr.Expr, i int) {
 	relation := A.Sub(B)
 	relation = relation.Mul(m.LagrangeCol(i))
 	m.AssertZero(relation)
 }
 
+func (m *Module) AssertEqualFirstEntry(A, B expr.Expr) {
+	m.AssertEqualAt(A, B, 0)
+}
+
+func (m *Module) AssertEqualLastEntry(A, B expr.Expr) {
+	m.AssertEqualRelativeAt(A, B, 0)
+}
+
+func (m *Module) LagrangeCol(i int) expr.Expr {
+	m.GenCol = append(m.GenCol, LagrangeGen{i: i})
+	name := constants.LagrangeName(m.Name, i)
+	return &expr.Leaf{Type: expr.LagrangeColumn, Name: name}
+}
+
 func (m *Module) AssertZero(relation expr.Expr) {
 	m.Relations = append(m.Relations, relation)
+}
+
+func (m *Module) AssertZeroFirstEntry(relation expr.Expr) {
+	m.AssertZeroAt(relation, 0)
+}
+
+func (m *Module) AssertZeroLastEntry(relation expr.Expr) {
+	m.AssertZeroRelativeAt(relation, 0)
+}
+
+func (m *Module) AssertZeroExceptLastEntry(relation expr.Expr) {
+	one := koalabear.One()
+	conj := expr.Const(one).Sub(m.LagrangeColRelative(0))
+	_relation := conj.Mul(relation)
+	m.AssertZero(_relation)
 }
 
 func (m *Module) AssertZeroExceptAt(relation expr.Expr, i ...int) {
