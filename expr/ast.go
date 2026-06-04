@@ -45,6 +45,23 @@ type Leaf struct {
 	Value koalabear.Element // only set for Const type
 }
 
+type LeafOption func(leaf *Leaf)
+
+func WithShift(shift int) LeafOption {
+	return func(leaf *Leaf) {
+		leaf.Shift = shift
+	}
+}
+
+func applyLeafOptions(leaf *Leaf, opts ...LeafOption) *Leaf {
+	for _, opt := range opts {
+		if opt != nil {
+			opt(leaf)
+		}
+	}
+	return leaf
+}
+
 // Config useful for querying the leaves
 type Config struct {
 	WoCommittedColumns bool
@@ -161,52 +178,52 @@ type Expr interface {
 	Evaluate(vals map[string]koalabear.Element) koalabear.Element
 }
 
-func Col(name string) *Leaf {
-	return &Leaf{Type: CommittedColumn, Name: name}
+func Col(name string, opts ...LeafOption) *Leaf {
+	return applyLeafOptions(&Leaf{Type: CommittedColumn, Name: name}, opts...)
 }
 
-func ExtCol(name string) *Leaf {
-	return &Leaf{Type: CommittedColumn, Name: name, Field: field.Ext}
+func ExtCol(name string, opts ...LeafOption) *Leaf {
+	return applyLeafOptions(&Leaf{Type: CommittedColumn, Name: name, Field: field.Ext}, opts...)
 }
 
-func Setup(name string) *Leaf {
-	return &Leaf{Type: SetupColumn, Name: name}
+func Setup(name string, opts ...LeafOption) *Leaf {
+	return applyLeafOptions(&Leaf{Type: SetupColumn, Name: name}, opts...)
 }
 
-func ExtSetup(name string) *Leaf {
-	return &Leaf{Type: SetupColumn, Name: name, Field: field.Ext}
+func ExtSetup(name string, opts ...LeafOption) *Leaf {
+	return applyLeafOptions(&Leaf{Type: SetupColumn, Name: name, Field: field.Ext}, opts...)
 }
 
-func Exposed(name string) *Leaf {
-	return &Leaf{Type: ExposedColumn, Name: name}
+func Exposed(name string, opts ...LeafOption) *Leaf {
+	return applyLeafOptions(&Leaf{Type: ExposedColumn, Name: name}, opts...)
 }
 
-func PublicInput(name string) *Leaf {
-	return &Leaf{Type: PublicInputColumn, Name: name}
+func PublicInput(name string, opts ...LeafOption) *Leaf {
+	return applyLeafOptions(&Leaf{Type: PublicInputColumn, Name: name}, opts...)
 }
 
-func PublicInputExt(name string) *Leaf {
-	return &Leaf{Type: PublicInputColumn, Name: name, Field: field.Ext}
+func PublicInputExt(name string, opts ...LeafOption) *Leaf {
+	return applyLeafOptions(&Leaf{Type: PublicInputColumn, Name: name, Field: field.Ext}, opts...)
 }
 
-func Rot(name string, shift int) *Leaf {
-	return &Leaf{Type: RotatedColumn, Shift: shift, Name: name}
+func Rot(name string, shift int, opts ...LeafOption) *Leaf {
+	return applyLeafOptions(&Leaf{Type: RotatedColumn, Shift: shift, Name: name}, opts...)
 }
 
-func ExtRot(name string, shift int) *Leaf {
-	return &Leaf{Type: RotatedColumn, Shift: shift, Name: name, Field: field.Ext}
+func ExtRot(name string, shift int, opts ...LeafOption) *Leaf {
+	return applyLeafOptions(&Leaf{Type: RotatedColumn, Shift: shift, Name: name, Field: field.Ext}, opts...)
 }
 
-func Lagrange(name string) *Leaf {
-	return &Leaf{Type: LagrangeColumn, Name: name}
+func Lagrange(name string, opts ...LeafOption) *Leaf {
+	return applyLeafOptions(&Leaf{Type: LagrangeColumn, Name: name}, opts...)
 }
 
-func Challenge(name string) *Leaf {
-	return &Leaf{Type: ChallengeColumn, Name: name, Field: field.Ext}
+func Challenge(name string, opts ...LeafOption) *Leaf {
+	return applyLeafOptions(&Leaf{Type: ChallengeColumn, Name: name, Field: field.Ext}, opts...)
 }
 
-func Const(value koalabear.Element) *Leaf {
-	return &Leaf{Type: ConstantColumn, Value: value}
+func Const(value koalabear.Element, opts ...LeafOption) *Leaf {
+	return applyLeafOptions(&Leaf{Type: ConstantColumn, Value: value}, opts...)
 }
 
 func (l *Leaf) FieldKind() field.Kind {
