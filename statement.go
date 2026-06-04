@@ -124,7 +124,7 @@ func checkVerificationKey(statement Statement, witnessKey setup.ProvingKey) erro
 
 func expectedSetupTreeCount(program board.Program) int {
 	seenSizes := make(map[int]bool)
-	for _, ref := range program.PublicColumns {
+	for _, ref := range program.SetupColumns {
 		m, ok := program.Modules[ref.Module]
 		if !ok {
 			continue

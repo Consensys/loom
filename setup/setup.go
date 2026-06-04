@@ -80,19 +80,19 @@ func Setup(t trace.Trace, program board.Program, opts ...Option) (ProvingKey, Ve
 		return ProvingKey{}, VerificationKey{}, err
 	}
 
-	if len(program.PublicColumns) == 0 {
+	if len(program.SetupColumns) == 0 {
 		pk := ProvingKey{HashBackendID: hashBackend.ID, Trace: setupTrace}
 		return pk, pk.VerificationKey(), nil
 	}
 
-	// Group public columns by their owning module's domain size, then
+	// Group setup columns by their owning module's domain size, then
 	// sort each group by name so the polynomial order inside the per-size
 	// commitment tree matches prover.BuildLayout (which sorts setup columns
 	// by name before assigning rail-local PolyIdx). Without this, the verifier's
 	// layout.ColSlot[name].PolyIdx points at the wrong polynomial in the
 	// setup tree.
 	colsByN := map[int][]board.ColumnRef{}
-	for _, c := range program.PublicColumns {
+	for _, c := range program.SetupColumns {
 		m, ok := program.Modules[c.Module]
 		if !ok {
 			continue
@@ -116,7 +116,7 @@ func Setup(t trace.Trace, program board.Program, opts ...Option) (ProvingKey, Ve
 			if ref.Field == field.Base {
 				p, ok := setupTrace.Base[ref.Name]
 				if !ok {
-					return ProvingKey{}, VerificationKey{}, fmt.Errorf("setup: base public column %q not found", ref.Name)
+					return ProvingKey{}, VerificationKey{}, fmt.Errorf("setup: base setup column %q not found", ref.Name)
 				}
 				basePublic = append(basePublic, p)
 			}
@@ -125,7 +125,7 @@ func Setup(t trace.Trace, program board.Program, opts ...Option) (ProvingKey, Ve
 			if ref.Field == field.Ext {
 				p, ok := setupTrace.Ext[ref.Name]
 				if !ok {
-					return ProvingKey{}, VerificationKey{}, fmt.Errorf("setup: extension public column %q not found", ref.Name)
+					return ProvingKey{}, VerificationKey{}, fmt.Errorf("setup: extension setup column %q not found", ref.Name)
 				}
 				extPublic = append(extPublic, p)
 			}
@@ -142,13 +142,13 @@ func Setup(t trace.Trace, program board.Program, opts ...Option) (ProvingKey, Ve
 }
 
 func setupTraceFromProgram(t trace.Trace, program board.Program) (trace.Trace, error) {
-	res := trace.New(len(program.PublicColumns))
-	for _, ref := range program.PublicColumns {
+	res := trace.New(len(program.SetupColumns))
+	for _, ref := range program.SetupColumns {
 		switch ref.Field {
 		case field.Base:
 			p, ok := t.Base[ref.Name]
 			if !ok {
-				return trace.Trace{}, fmt.Errorf("setup: base public column %q not found", ref.Name)
+				return trace.Trace{}, fmt.Errorf("setup: base setup column %q not found", ref.Name)
 			}
 			if err := res.PutBase(ref.Name, p); err != nil {
 				return trace.Trace{}, err
@@ -156,13 +156,13 @@ func setupTraceFromProgram(t trace.Trace, program board.Program) (trace.Trace, e
 		case field.Ext:
 			p, ok := t.Ext[ref.Name]
 			if !ok {
-				return trace.Trace{}, fmt.Errorf("setup: extension public column %q not found", ref.Name)
+				return trace.Trace{}, fmt.Errorf("setup: extension setup column %q not found", ref.Name)
 			}
 			if err := res.PutExt(ref.Name, p); err != nil {
 				return trace.Trace{}, err
 			}
 		default:
-			return trace.Trace{}, fmt.Errorf("setup: unsupported field kind for public column %q", ref.Name)
+			return trace.Trace{}, fmt.Errorf("setup: unsupported field kind for setup column %q", ref.Name)
 		}
 	}
 	return res, nil

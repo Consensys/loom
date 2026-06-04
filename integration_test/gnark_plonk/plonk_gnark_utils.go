@@ -211,14 +211,22 @@ func GetIthPlonkTrace(N int, i int) (trace.Trace, []int64, int, error) {
 }
 
 func PrepareIthPlonk(N int, i int) board.Module {
+	return prepareIthPlonk(N, i, expr.Col)
+}
+
+func PrepareIthPlonkWithSetup(N int, i int) board.Module {
+	return prepareIthPlonk(N, i, expr.Setup)
+}
+
+func prepareIthPlonk(N int, i int, setupColumn func(string, ...expr.LeafOption) *expr.Leaf) board.Module {
 	plonkModule := board.NewModule(Ith("plonk", i))
 	plonkModule.N = N
 
-	qll := expr.Col(Ith(ID_Ql, i)).Mul(expr.Col(Ith(ID_L, i)))
-	qrr := expr.Col(Ith(ID_Qr, i)).Mul(expr.Col(Ith(ID_R, i)))
-	qmlr := expr.Col(Ith(ID_Qm, i)).Mul(expr.Col(Ith(ID_L, i))).Mul(expr.Col(Ith(ID_R, i)))
-	qoo := expr.Col(Ith(ID_Qo, i)).Mul(expr.Col(Ith(ID_O, i)))
-	qk := expr.Col(Ith(ID_Qk, i))
+	qll := setupColumn(Ith(ID_Ql, i)).Mul(expr.Col(Ith(ID_L, i)))
+	qrr := setupColumn(Ith(ID_Qr, i)).Mul(expr.Col(Ith(ID_R, i)))
+	qmlr := setupColumn(Ith(ID_Qm, i)).Mul(expr.Col(Ith(ID_L, i))).Mul(expr.Col(Ith(ID_R, i)))
+	qoo := setupColumn(Ith(ID_Qo, i)).Mul(expr.Col(Ith(ID_O, i)))
+	qk := setupColumn(Ith(ID_Qk, i))
 	vanishingRelation := qll.Add(qrr).Add(qmlr).Add(qoo).Add(qk)
 	plonkModule.AssertZero(vanishingRelation)
 	return plonkModule

@@ -46,7 +46,7 @@ type Slot struct {
 //	[setup, decreasing N] [trace-round-0, decreasing N] … [trace-round-{r-1}] [AIR, decreasing N]
 //
 // The setup section length is given by the proving/verification key (i.e. the
-// number of distinct sizes among program.PublicColumns).
+// number of distinct sizes among program.SetupColumns).
 type Layout struct {
 	NumTrees int // total number of trees in the canonical order
 
@@ -86,9 +86,9 @@ func BuildLayout(program board.Program, numSetupSizes int) Layout {
 	// ---- Setup section ----
 	layout.SetupBegin = treeIdx
 	{
-		// Group public columns by size, decreasing N.
+		// Group setup columns by size, decreasing N.
 		colsByN := map[int][]board.ColumnRef{}
-		for _, c := range program.PublicColumns {
+		for _, c := range program.SetupColumns {
 			m, ok := program.Modules[c.Module]
 			if !ok { // TODO should raise an error here ?
 				continue

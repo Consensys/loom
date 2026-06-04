@@ -175,7 +175,7 @@ func TestVerifierPlonk(t *testing.T) {
 		}
 
 		// build the plonk module
-		plonkModule := PrepareIthPlonk(size, 0)
+		plonkModule := PrepareIthPlonkWithSetup(size, 0)
 		builder.AddModule(plonkModule)
 
 		lro := []expr.Expr{expr.Col(Ith(ID_L, 0)), expr.Col(Ith(ID_R, 0)), expr.Col(Ith(ID_O, 0))}
@@ -184,12 +184,6 @@ func TestVerifierPlonk(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-
-		builder.MakeColumnPublic(Ith("plonk", 0), Ith(ID_Ql, 0))
-		builder.MakeColumnPublic(Ith("plonk", 0), Ith(ID_Qr, 0))
-		builder.MakeColumnPublic(Ith("plonk", 0), Ith(ID_Qm, 0))
-		builder.MakeColumnPublic(Ith("plonk", 0), Ith(ID_Qo, 0))
-		builder.MakeColumnPublic(Ith("plonk", 0), Ith(ID_Qk, 0))
 
 		program, err := board.Compile(&builder)
 		if err != nil {

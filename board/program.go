@@ -15,7 +15,7 @@ import (
 // Program the double slice [][] means that the steps are scheduled
 type Program struct {
 	Modules               map[string]CompiledModule
-	PublicColumns         []ColumnRef // known columns, precommitted (ex: ql, qr, etc in plonk)
+	SetupColumns          []ColumnRef // setup columns, precommitted (ex: ql, qr, etc in plonk)
 	FScolumnsDependencies [][]ColumnRef
 	ColumnFields          map[string]field.Kind
 	LogupBus              []LogupBus
@@ -245,6 +245,7 @@ func Compile(b *Builder) (Program, error) {
 		expr.WithoutLagrangeColumns(),
 		expr.WithoutChallenges(),
 		expr.WithoutExposedColumns(),
+		expr.WithoutSetupColumns(),
 		expr.WithoutPublicInputsColumns(),
 	)
 
@@ -298,9 +299,9 @@ func Compile(b *Builder) (Program, error) {
 		}
 	}
 
-	// Step 7e: Build res.FiatShamir and replace per-round FS steps with a single canonical one.
-	res.PublicColumns = make([]ColumnRef, len(b.PublicColumns))
-	copy(res.PublicColumns, b.PublicColumns)
+	// Step 7e: Infer setup columns, build res.FiatShamir and replace
+	// per-round FS steps with a single canonical one.
+	res.SetupColumns = collectSetupColumns(b.Modules)
 	res.FScolumnsDependencies = make([][]ColumnRef, numRounds)
 
 	// Build a column-name → owning-module map by scanning every module's
@@ -316,7 +317,7 @@ func Compile(b *Builder) (Program, error) {
 	}
 
 	prevCovered := map[string]bool{}
-	for _, c := range res.PublicColumns {
+	for _, c := range res.SetupColumns {
 		prevCovered[c.Name] = true
 	}
 	for lvl := 0; lvl < len(res.Steps); lvl++ {
@@ -410,7 +411,7 @@ func inferProgramColumnFields(program *Program, modules map[string]*Module) map[
 		fields[name] = field.Join(fields[name], f)
 	}
 
-	for _, ref := range program.PublicColumns {
+	for _, ref := range program.SetupColumns {
 		setField(ref.Name, ref.Field)
 	}
 
@@ -443,9 +444,39 @@ func inferProgramColumnFields(program *Program, modules map[string]*Module) map[
 	return fields
 }
 
+func collectSetupColumns(modules map[string]*Module) []ColumnRef {
+	config := expr.NewConfig(expr.OnlySetupColumns...)
+	byKey := make(map[string]ColumnRef)
+
+	for moduleName, m := range modules {
+		for _, rel := range m.Relations {
+			for _, leaf := range rel.LeavesFull(config) {
+				key := moduleName + "\x00" + leaf.Name
+				ref := byKey[key]
+				ref.Name = leaf.Name
+				ref.Module = moduleName
+				ref.Field = field.Join(ref.Field, leaf.FieldKind())
+				byKey[key] = ref
+			}
+		}
+	}
+
+	keys := make([]string, 0, len(byKey))
+	for key := range byKey {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	res := make([]ColumnRef, 0, len(keys))
+	for _, key := range keys {
+		res = append(res, byKey[key])
+	}
+	return res
+}
+
 func applyProgramColumnFields(program *Program) {
-	for i := range program.PublicColumns {
-		ref := &program.PublicColumns[i]
+	for i := range program.SetupColumns {
+		ref := &program.SetupColumns[i]
 		ref.Field = field.Join(ref.Field, program.ColumnFields[ref.Name])
 	}
 	for round := range program.FScolumnsDependencies {

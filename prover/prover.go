@@ -272,13 +272,13 @@ func (pr *proverRuntime) commitIdxOf(treeIdx int) int {
 }
 
 func (pr *proverRuntime) initSetupOpeningSources() error {
-	for _, ref := range pr.program.PublicColumns {
+	for _, ref := range pr.program.SetupColumns {
 		slot, ok := pr.layout.ColSlot[ref.Name]
 		if !ok {
 			continue
 		}
 		if slot.TreeIdx < pr.layout.SetupBegin || slot.TreeIdx >= pr.layout.SetupEnd {
-			return fmt.Errorf("initSetupOpeningSources: public column %q mapped outside setup section", ref.Name)
+			return fmt.Errorf("initSetupOpeningSources: setup column %q mapped outside setup section", ref.Name)
 		}
 		if slot.TreeIdx >= len(pr.layout.TreeSize) {
 			return fmt.Errorf("initSetupOpeningSources: setup tree index %d out of range", slot.TreeIdx)

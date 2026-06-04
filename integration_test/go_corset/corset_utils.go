@@ -154,6 +154,17 @@ func (b *CorsetBridge) colName(moduleID uint, regID register.Id) string {
 	return modName + "." + regName
 }
 
+func (b *CorsetBridge) colExpr(moduleID uint, name string, shift int) expr.Expr {
+	opts := []expr.LeafOption(nil)
+	if shift != 0 {
+		opts = append(opts, expr.WithShift(shift))
+	}
+	if b.Schema.Module(moduleID).IsStatic() {
+		return expr.Setup(name, opts...)
+	}
+	return expr.Col(name, opts...)
+}
+
 // toGnarkElement converts a go-corset koalabear field element to the
 // gnark-crypto representation used by loom.
 func toGnarkElement(e gocorset_kb.Element) gnark_kb.Element {
@@ -201,7 +212,7 @@ func (b *CorsetBridge) termToExpr(t air.Term[gocorset_kb.Element], moduleID uint
 			m, ok := b.Builder.Modules[modName]
 			if ok {
 				one := gnark_kb.One()
-				base := expr.Col(name, expr.WithShift(shift))
+				base := b.colExpr(moduleID, name, shift)
 				sel := expr.Expr(expr.Const(one))
 				for i := 0; i < -int(shift); i++ {
 					sel = sel.Mul(expr.Const(one).Sub(m.LagrangeCol(i)))
@@ -210,9 +221,9 @@ func (b *CorsetBridge) termToExpr(t air.Term[gocorset_kb.Element], moduleID uint
 			}
 		}
 		if shift != 0 {
-			return expr.Col(name, expr.WithShift(shift))
+			return b.colExpr(moduleID, name, shift)
 		}
-		return expr.Col(name)
+		return b.colExpr(moduleID, name, 0)
 
 	case *air.Constant[gocorset_kb.Element]:
 		return expr.Const(toGnarkElement(v.Value))
@@ -277,9 +288,9 @@ func (b *CorsetBridge) termToSpillageBoundaryExpr(t air.Term[gocorset_kb.Element
 		}
 		// shift > 0: use actual column at real-data offset (shift-1)
 		if shift == 1 {
-			return expr.Col(name)
+			return b.colExpr(moduleID, name, 0)
 		}
-		return expr.Col(name, expr.WithShift(shift-1))
+		return b.colExpr(moduleID, name, shift-1)
 
 	case *air.Constant[gocorset_kb.Element]:
 		return expr.Const(toGnarkElement(v.Value))

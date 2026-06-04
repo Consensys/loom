@@ -175,18 +175,6 @@ func (m *FrontendManifest) ApplyToBridge(bridge *CorsetBridge) error {
 		return fmt.Errorf("FrontendManifest.ApplyToBridge: nil bridge")
 	}
 
-	staticModules := sortedKeys(m.StaticModules)
-	for _, moduleName := range staticModules {
-		if _, ok := bridge.Builder.Modules[moduleName]; !ok {
-			return fmt.Errorf("FrontendManifest.ApplyToBridge: static module %q not found in builder", moduleName)
-		}
-		for _, col := range m.StaticModules[moduleName].Columns {
-			if !builderHasPublicColumn(bridge, moduleName, col) {
-				bridge.Builder.MakeColumnPublic(moduleName, col)
-			}
-		}
-	}
-
 	publicInputs := sortedKeys(m.PublicInputs)
 	for _, name := range publicInputs {
 		spec := m.PublicInputs[name]
@@ -496,15 +484,6 @@ func qualifyColumnName(moduleName, registerName string) string {
 		return registerName
 	}
 	return moduleName + "." + registerName
-}
-
-func builderHasPublicColumn(bridge *CorsetBridge, module, name string) bool {
-	for _, ref := range bridge.Builder.PublicColumns {
-		if ref.Module == module && ref.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 func sortedKeys[V any](m map[string]V) []string {

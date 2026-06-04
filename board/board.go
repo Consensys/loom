@@ -47,10 +47,9 @@ type ColumnRef struct {
 }
 
 type Builder struct {
-	Modules       map[string]*Module
-	LogupBus      []LogupBus
-	Steps         []ProverStep
-	PublicColumns []ColumnRef // known columns, precommitted (ex: ql, qr, etc in plonk)
+	Modules  map[string]*Module
+	LogupBus []LogupBus
+	Steps    []ProverStep
 }
 
 func NewBuilder() Builder {
@@ -59,10 +58,6 @@ func NewBuilder() Builder {
 	res.Steps = make([]ProverStep, 0)
 	res.LogupBus = make([]LogupBus, 0)
 	return res
-}
-
-func (b *Builder) MakeColumnPublic(module, name string) {
-	b.PublicColumns = append(b.PublicColumns, ColumnRef{Name: name, Module: module})
 }
 
 func (b *Builder) AddModule(m Module) {

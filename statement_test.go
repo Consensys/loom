@@ -61,9 +61,8 @@ func TestSetupHashBackendIsUsedByProveAndVerify(t *testing.T) {
 	builder := board.NewBuilder()
 	module := board.NewModule("main")
 	module.N = 4
-	module.AssertZero(expr.Col("A").Sub(expr.Col("B")))
+	module.AssertZero(expr.Setup("A").Sub(expr.Col("B")))
 	builder.AddModule(module)
-	builder.MakeColumnPublic("main", "A")
 	program, err := board.Compile(&builder)
 	if err != nil {
 		t.Fatal(err)

@@ -37,7 +37,10 @@ func TestBuildLayoutBaseOnlySlotStability(t *testing.T) {
 	// (((z + mul_0) + s) + t).LeavesFull = [z, mul_0, s, t].
 	rel := expr.Col("z").Add(expr.Col(mulChunk)).
 		Add(expr.Col("s")).
-		Add(expr.Col("t"))
+		Add(expr.Col("t")).
+		Add(expr.Setup("pz")).
+		Add(expr.Setup("pa")).
+		Add(expr.Setup("pm"))
 	m.AssertZero(rel)
 	builder.AddModule(m)
 
@@ -49,11 +52,6 @@ func TestBuildLayoutBaseOnlySlotStability(t *testing.T) {
 		"mul",
 	)
 
-	// Public columns: insertion order pz/pa/pm; sorted order pa/pm/pz.
-	builder.MakeColumnPublic("m", "pz")
-	builder.MakeColumnPublic("m", "pa")
-	builder.MakeColumnPublic("m", "pm")
-
 	program, err := board.Compile(&builder)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +60,7 @@ func TestBuildLayoutBaseOnlySlotStability(t *testing.T) {
 	layout := BuildLayout(program, 1)
 
 	wantColSlot := map[string]Slot{
-		// Setup section (TreeIdx=0): public columns sorted by name.
+		// Setup section (TreeIdx=0): setup columns sorted by name.
 		"pa": {TreeIdx: 0, PolyIdx: 0, Field: field.Base},
 		"pm": {TreeIdx: 0, PolyIdx: 1, Field: field.Base},
 		"pz": {TreeIdx: 0, PolyIdx: 2, Field: field.Base},
