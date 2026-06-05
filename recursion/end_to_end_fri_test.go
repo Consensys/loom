@@ -69,21 +69,9 @@ func log2(n int) int {
 	return k
 }
 
-func randExt(t *testing.T) ext.E6 {
-	t.Helper()
+func randExt() ext.E6 {
 	var v ext.E6
-	if _, err := v.B0.A0.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B0.A1.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B1.A0.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B1.A1.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
+	v.MustSetRandom()
 	return v
 }
 
@@ -146,9 +134,9 @@ func TestEndToEndFRIVerifierWithMerkleBinding(t *testing.T) {
 
 	initialLayer := make([]ext.E6, N)
 	for i := range initialLayer {
-		initialLayer[i] = randExt(t)
+		initialLayer[i] = randExt()
 	}
-	alphas := []ext.E6{randExt(t), randExt(t)}
+	alphas := []ext.E6{randExt(), randExt()}
 
 	// Native FRI commit phase: fold layer_0 -> layer_1 -> layer_2.
 	layers := [][]ext.E6{initialLayer}
@@ -318,9 +306,9 @@ func TestEndToEndFRIVerifierRejectsCrossModuleMismatch(t *testing.T) {
 
 	initialLayer := make([]ext.E6, N)
 	for i := range initialLayer {
-		initialLayer[i] = randExt(t)
+		initialLayer[i] = randExt()
 	}
-	alphas := []ext.E6{randExt(t), randExt(t)}
+	alphas := []ext.E6{randExt(), randExt()}
 
 	layers := [][]ext.E6{initialLayer}
 	domains := []*fft.Domain{fft.NewDomain(uint64(N))}

@@ -29,21 +29,9 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-func randExt(t *testing.T) ext.E6 {
-	t.Helper()
+func randExt() ext.E6 {
 	var v ext.E6
-	if _, err := v.B0.A0.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B0.A1.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B1.A0.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B1.A1.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
+	v.MustSetRandom()
 	return v
 }
 
@@ -120,11 +108,11 @@ func TestEndToEndFRIQueryWithChain(t *testing.T) {
 
 	initialLayer := make([]ext.E6, N)
 	for i := range initialLayer {
-		initialLayer[i] = randExt(t)
+		initialLayer[i] = randExt()
 	}
 	alphas := make([]ext.E6, numRounds)
 	for i := range alphas {
-		alphas[i] = randExt(t)
+		alphas[i] = randExt()
 	}
 	layers, omegasInv, kBits := simulateFRI(initialLayer, alphas)
 
@@ -176,9 +164,9 @@ func TestEndToEndFRIQueryRejectsCorruptedRound(t *testing.T) {
 
 	initialLayer := make([]ext.E6, N)
 	for i := range initialLayer {
-		initialLayer[i] = randExt(t)
+		initialLayer[i] = randExt()
 	}
-	alphas := []ext.E6{randExt(t), randExt(t)}
+	alphas := []ext.E6{randExt(), randExt()}
 	layers, omegasInv, kBits := simulateFRI(initialLayer, alphas)
 
 	capacity := len(queries)
@@ -237,9 +225,9 @@ func TestEndToEndFRIQueryWithFinalPoly(t *testing.T) {
 
 	initialLayer := make([]ext.E6, N)
 	for i := range initialLayer {
-		initialLayer[i] = randExt(t)
+		initialLayer[i] = randExt()
 	}
-	alphas := []ext.E6{randExt(t), randExt(t)}
+	alphas := []ext.E6{randExt(), randExt()}
 	layers, omegasInv, kBits := simulateFRI(initialLayer, alphas)
 
 	finalPoly := layers[numRounds] // length = N / 2^numRounds = N/D = 4
@@ -332,15 +320,15 @@ func TestEndToEndMultiDegreeFRI(t *testing.T) {
 	// Initial layer (level_0.evals) and level_1.evals.
 	layer0 := make([]ext.E6, N)
 	for i := range layer0 {
-		layer0[i] = randExt(t)
+		layer0[i] = randExt()
 	}
 	level1Evals := make([]ext.E6, N/2)
 	for i := range level1Evals {
-		level1Evals[i] = randExt(t)
+		level1Evals[i] = randExt()
 	}
 
-	alphas := []ext.E6{randExt(t), randExt(t)}
-	gamma1 := randExt(t)
+	alphas := []ext.E6{randExt(), randExt()}
+	gamma1 := randExt()
 
 	// Native commit phase:
 	domain0 := fft.NewDomain(uint64(N))
@@ -469,14 +457,14 @@ func TestEndToEndMultiDegreeFRIRejectsBadLevel(t *testing.T) {
 
 	layer0 := make([]ext.E6, N)
 	for i := range layer0 {
-		layer0[i] = randExt(t)
+		layer0[i] = randExt()
 	}
 	level1Evals := make([]ext.E6, N/2)
 	for i := range level1Evals {
-		level1Evals[i] = randExt(t)
+		level1Evals[i] = randExt()
 	}
-	alphas := []ext.E6{randExt(t), randExt(t)}
-	gamma1 := randExt(t)
+	alphas := []ext.E6{randExt(), randExt()}
+	gamma1 := randExt()
 
 	domain0 := fft.NewDomain(uint64(N))
 	layer1Unmixed := foldLayer(layer0, alphas[0], domain0)
@@ -575,4 +563,3 @@ func TestEndToEndMultiDegreeFRIRejectsBadLevel(t *testing.T) {
 
 	testutil.ExpectProveOrVerifyFailure(t, &builder, tr)
 }
-

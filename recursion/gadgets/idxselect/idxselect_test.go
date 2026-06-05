@@ -26,21 +26,9 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-func randExt(t *testing.T) ext.E6 {
-	t.Helper()
+func randExt() ext.E6 {
 	var v ext.E6
-	if _, err := v.B0.A0.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B0.A1.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B1.A0.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B1.A1.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
+	v.MustSetRandom()
 	return v
 }
 
@@ -87,7 +75,7 @@ func buildIdxSelect(t *testing.T, name string, table []ext.E6, indices []uint64)
 // TestIdxSelectGadgetTable4 exercises a 4-entry table (k=2) with two
 // different indices.
 func TestIdxSelectGadgetTable4(t *testing.T) {
-	table := []ext.E6{randExt(t), randExt(t), randExt(t), randExt(t)}
+	table := []ext.E6{randExt(), randExt(), randExt(), randExt()}
 	indices := []uint64{0, 1, 2, 3, 1, 3, 0, 2}
 
 	builder, tr, _ := buildIdxSelect(t, "sel4", table, indices)
@@ -99,7 +87,7 @@ func TestIdxSelectGadgetTable4(t *testing.T) {
 func TestIdxSelectGadgetTable16(t *testing.T) {
 	table := make([]ext.E6, 16)
 	for i := range table {
-		table[i] = randExt(t)
+		table[i] = randExt()
 	}
 	indices := []uint64{0, 1, 7, 15, 9, 4, 12, 13}
 
@@ -110,7 +98,7 @@ func TestIdxSelectGadgetTable16(t *testing.T) {
 // TestIdxSelectMatchesNative cross-checks each row's selected output limb
 // against table[index] directly.
 func TestIdxSelectMatchesNative(t *testing.T) {
-	table := []ext.E6{randExt(t), randExt(t), randExt(t), randExt(t)}
+	table := []ext.E6{randExt(), randExt(), randExt(), randExt()}
 	indices := []uint64{0, 1, 2, 3}
 
 	_, tr, cn := buildIdxSelect(t, "selmatch", table, indices)
@@ -129,7 +117,7 @@ func TestIdxSelectMatchesNative(t *testing.T) {
 // TestIdxSelectRejectsCorruption flips the output and confirms the proof
 // breaks.
 func TestIdxSelectRejectsCorruption(t *testing.T) {
-	table := []ext.E6{randExt(t), randExt(t)}
+	table := []ext.E6{randExt(), randExt()}
 	indices := []uint64{0}
 
 	builder, tr, cn := buildIdxSelect(t, "sel_corrupt", table, indices)

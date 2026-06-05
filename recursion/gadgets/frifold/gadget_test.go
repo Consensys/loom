@@ -29,27 +29,14 @@ import (
 func randomExt(t *testing.T) ext.E6 {
 	t.Helper()
 	var v ext.E6
-	if _, err := v.B0.A0.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B0.A1.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B1.A0.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B1.A1.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
+	v.MustSetRandom()
 	return v
 }
 
 func randomBase(t *testing.T) koalabear.Element {
 	t.Helper()
 	var v koalabear.Element
-	if _, err := v.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
+	v.MustSetRandom()
 	return v
 }
 

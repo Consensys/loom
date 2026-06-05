@@ -58,12 +58,12 @@ func ExpectProveOrVerifyFailure(t *testing.T, builder *board.Builder, witness tr
 		return
 	}
 
-	prf, err := prover.Prove(witness, setup.ProvingKey{}, nil, program, prover.SkipFRI())
+	prf, err := prover.Prove(witness, setup.ProvingKey{}, nil, program /*, prover.SkipFRI()*/)
 	if err != nil {
 		return
 	}
 
-	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf, verifier.SkipFRI()); err == nil {
+	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf /*, verifier.SkipFRI()*/); err == nil {
 		t.Fatalf("expected prove-or-verify to fail with corrupted witness, but it succeeded")
 	}
 }

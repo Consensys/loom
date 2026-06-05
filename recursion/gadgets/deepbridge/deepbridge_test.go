@@ -26,21 +26,9 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-func randExt(t *testing.T) ext.E6 {
-	t.Helper()
+func randExt() ext.E6 {
 	var v ext.E6
-	if _, err := v.B0.A0.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B0.A1.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B1.A0.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B1.A1.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
+	v.MustSetRandom()
 	return v
 }
 
@@ -95,9 +83,9 @@ func TestDivExtPositive(t *testing.T) {
 		name       string
 		num, denom ext.E6
 	}{
-		{"p0", randExt(t), randExt(t)},
-		{"p1", randExt(t), randExt(t)},
-		{"p2", randExt(t), randExt(t)},
+		{"p0", randExt(), randExt()},
+		{"p1", randExt(), randExt()},
+		{"p2", randExt(), randExt()},
 	}
 
 	for _, p := range pairs {
@@ -122,8 +110,8 @@ func TestDivExtPositive(t *testing.T) {
 func TestDivExtRejectsWrongQuotient(t *testing.T) {
 	const n = 4
 
-	num := randExt(t)
-	denom := randExt(t)
+	num := randExt()
+	denom := randExt()
 
 	mod := board.NewModule("divext_bad")
 	mod.N = n
@@ -157,10 +145,10 @@ func TestDivExtRejectsWrongQuotient(t *testing.T) {
 func TestSummandMatchesNative(t *testing.T) {
 	const n = 4
 
-	v := randExt(t)
-	C := randExt(t)
-	z := randExt(t)
-	X := randExt(t)
+	v := randExt()
+	C := randExt()
+	z := randExt()
+	X := randExt()
 
 	// Native expected value.
 	var num, denom, expected ext.E6
@@ -207,11 +195,11 @@ func TestSummandSum(t *testing.T) {
 	const n = 4
 
 	// Three columns at the same shift, alpha-batched.
-	alpha := randExt(t)
-	cols0 := []ext.E6{randExt(t), randExt(t), randExt(t)} // f_k(zeta)
-	cols1 := []ext.E6{randExt(t), randExt(t), randExt(t)} // f_k(X)
-	z := randExt(t)
-	X := randExt(t)
+	alpha := randExt()
+	cols0 := []ext.E6{randExt(), randExt(), randExt()} // f_k(zeta)
+	cols1 := []ext.E6{randExt(), randExt(), randExt()} // f_k(X)
+	z := randExt()
+	X := randExt()
 
 	// Native expected: DQ = sum_k alpha^k * (f_k(zeta) - f_k(X)) / (z - X)
 	var V, Cx ext.E6

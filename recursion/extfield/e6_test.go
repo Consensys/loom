@@ -42,9 +42,7 @@ func randE6(t *testing.T) ext.E6 {
 	t.Helper()
 	var v ext.E6
 	for _, p := range []*koalabear.Element{&v.B0.A0, &v.B0.A1, &v.B1.A0, &v.B1.A1, &v.B2.A0, &v.B2.A1} {
-		if _, err := p.SetRandom(); err != nil {
-			t.Fatalf("rand: %v", err)
-		}
+		p.MustSetRandom()
 	}
 	_ = rand.Reader
 	return v
@@ -155,9 +153,7 @@ func TestE6MulByBase(t *testing.T) {
 	for i := 0; i < 16; i++ {
 		a := randE6(t)
 		var s koalabear.Element
-		if _, err := s.SetRandom(); err != nil {
-			t.Fatal(err)
-		}
+		s.MustSetRandom()
 		var want ext.E6
 		want.MulByElement(&a, &s)
 

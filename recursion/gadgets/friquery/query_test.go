@@ -29,18 +29,7 @@ import (
 func randomExt(t *testing.T) ext.E6 {
 	t.Helper()
 	var v ext.E6
-	if _, err := v.B0.A0.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B0.A1.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B1.A0.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B1.A1.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
+	v.MustSetRandom()
 	return v
 }
 
@@ -98,7 +87,7 @@ func buildRounds(initialLayer []ext.E6, alphas []ext.E6, s int) []friquery.Round
 		// Determine "bit" for THIS round — meaningful for rounds j >= 1 only.
 		// bit_j = 1 iff (s mod N_j) >= N_j/2.
 		bit := uint64(0)
-		if (s%nj) >= nj/2 {
+		if (s % nj) >= nj/2 {
 			bit = 1
 		}
 

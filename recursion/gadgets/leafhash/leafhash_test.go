@@ -28,12 +28,9 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-func randExt(t *testing.T) ext.E6 {
-	t.Helper()
+func randExt() ext.E6 {
 	var v ext.E6
-	if _, err := v.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
+	v.MustSetRandom()
 	return v
 }
 
@@ -115,8 +112,8 @@ func buildOneLeafHashModule(t *testing.T, name string, n int, leaves []leafhash.
 // length (3 header + 2 ext pairs = 19 elements) exceeds one sponge
 // rate (16) — forcing two-block absorption.
 func TestFlexibleLeafHashMultiBlock(t *testing.T) {
-	ext1P, ext1Q := randExt(t), randExt(t)
-	ext2P, ext2Q := randExt(t), randExt(t)
+	ext1P, ext1Q := randExt(), randExt()
+	ext2P, ext2Q := randExt(), randExt()
 	leaf := leafhash.FlexibleLeaf{
 		ExtPairsP: [][extfield.Limbs]koalabear.Element{extfield.FromE6(ext1P), extfield.FromE6(ext2P)},
 		ExtPairsQ: [][extfield.Limbs]koalabear.Element{extfield.FromE6(ext1Q), extfield.FromE6(ext2Q)},
@@ -192,8 +189,8 @@ func TestFlexibleLeafHashMultiBlock(t *testing.T) {
 }
 
 func TestLeafHashGadgetSingle(t *testing.T) {
-	P := randExt(t)
-	Q := randExt(t)
+	P := randExt()
+	Q := randExt()
 	leaf := leafhash.ExtLeaf{
 		P: extfield.FromE6(P),
 		Q: extfield.FromE6(Q),
@@ -220,7 +217,7 @@ func TestLeafHashGadgetBatch(t *testing.T) {
 	pairs := make([][2]ext.E6, n)
 	leaves := make([]leafhash.ExtLeaf, n)
 	for i := 0; i < n; i++ {
-		pairs[i] = [2]ext.E6{randExt(t), randExt(t)}
+		pairs[i] = [2]ext.E6{randExt(), randExt()}
 		leaves[i] = leafhash.ExtLeaf{
 			P: extfield.FromE6(pairs[i][0]),
 			Q: extfield.FromE6(pairs[i][1]),
@@ -246,8 +243,8 @@ func TestLeafHashGadgetBatch(t *testing.T) {
 // confirms the leaf-hash constraints catch the inconsistency between the
 // (Sponge.In) absorbed value and the leafP witness.
 func TestLeafHashGadgetRejectsBadLeaf(t *testing.T) {
-	P := randExt(t)
-	Q := randExt(t)
+	P := randExt()
+	Q := randExt()
 	leaf := leafhash.ExtLeaf{
 		P: extfield.FromE6(P),
 		Q: extfield.FromE6(Q),
@@ -269,8 +266,8 @@ func TestLeafHashGadgetRejectsBadLeaf(t *testing.T) {
 // TestLeafHashGadgetRejectsBadDigest tampers with the sponge output
 // (which feeds the Digest view); the Poseidon2 constraints catch this.
 func TestLeafHashGadgetRejectsBadDigest(t *testing.T) {
-	P := randExt(t)
-	Q := randExt(t)
+	P := randExt()
+	Q := randExt()
 	leaf := leafhash.ExtLeaf{
 		P: extfield.FromE6(P),
 		Q: extfield.FromE6(Q),

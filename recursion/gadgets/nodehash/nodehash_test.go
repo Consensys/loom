@@ -30,9 +30,7 @@ func randDigest(t *testing.T) [nodehash.DigestLen]koalabear.Element {
 	t.Helper()
 	var d [nodehash.DigestLen]koalabear.Element
 	for i := range d {
-		if _, err := d[i].SetRandom(); err != nil {
-			t.Fatal(err)
-		}
+		d[i].MustSetRandom()
 	}
 	return d
 }

@@ -28,21 +28,9 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-func randExt(t *testing.T) ext.E6 {
-	t.Helper()
+func randExt() ext.E6 {
 	var v ext.E6
-	if _, err := v.B0.A0.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B0.A1.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B1.A0.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := v.B1.A1.SetRandom(); err != nil {
-		t.Fatal(err)
-	}
+	v.MustSetRandom()
 	return v
 }
 
@@ -110,7 +98,7 @@ func runDAGTest(t *testing.T, name string, relation expr.Expr, vals map[string]e
 // TestEvalDAGLeafIdentity covers the simplest DAG: a single leaf.
 func TestEvalDAGLeafIdentity(t *testing.T) {
 	rel := expr.Col("A")
-	vals := map[string]ext.E6{"A": randExt(t)}
+	vals := map[string]ext.E6{"A": randExt()}
 	runDAGTest(t, "leaf", rel, vals)
 }
 
@@ -119,9 +107,9 @@ func TestEvalDAGAddSubMul(t *testing.T) {
 	// (A + B) * (C - A)
 	rel := expr.Col("A").Add(expr.Col("B")).Mul(expr.Col("C").Sub(expr.Col("A")))
 	vals := map[string]ext.E6{
-		"A": randExt(t),
-		"B": randExt(t),
-		"C": randExt(t),
+		"A": randExt(),
+		"B": randExt(),
+		"C": randExt(),
 	}
 	runDAGTest(t, "addsubmul", rel, vals)
 }
@@ -130,8 +118,8 @@ func TestEvalDAGAddSubMul(t *testing.T) {
 func TestEvalDAGPow(t *testing.T) {
 	rel := expr.Col("X").Pow(5).Sub(expr.Col("Y"))
 	vals := map[string]ext.E6{
-		"X": randExt(t),
-		"Y": randExt(t),
+		"X": randExt(),
+		"Y": randExt(),
 	}
 	// Compute the native expected; XX is X^5, so we set Y = X^5 + perturbation
 	// — but for this test we just want gadget == native, regardless of vals.
@@ -144,9 +132,9 @@ func TestEvalDAGFibonacciStyle(t *testing.T) {
 	// C - A - B (the standard Fibonacci recurrence relation per row)
 	rel := expr.Col("C").Sub(expr.Col("A")).Sub(expr.Col("B"))
 	vals := map[string]ext.E6{
-		"A": randExt(t),
-		"B": randExt(t),
-		"C": randExt(t),
+		"A": randExt(),
+		"B": randExt(),
+		"C": randExt(),
 	}
 	runDAGTest(t, "fibo", rel, vals)
 }
@@ -157,8 +145,8 @@ func TestEvalDAGConstants(t *testing.T) {
 	seven.SetUint64(7)
 	rel := expr.Col("X").Mul(expr.Const(seven)).Add(expr.Col("Y"))
 	vals := map[string]ext.E6{
-		"X": randExt(t),
-		"Y": randExt(t),
+		"X": randExt(),
+		"Y": randExt(),
 	}
 	runDAGTest(t, "consts", rel, vals)
 }
@@ -168,8 +156,8 @@ func TestEvalDAGConstants(t *testing.T) {
 // them. Uses a trivial DAG V = X so we can freely choose X to match.
 func TestAIRCheckHappyPath(t *testing.T) {
 	const N = 8
-	zeta := randExt(t)
-	chunkVals := []ext.E6{randExt(t), randExt(t), randExt(t)}
+	zeta := randExt()
+	chunkVals := []ext.E6{randExt(), randExt(), randExt()}
 
 	// Compute target V = (zeta^N - 1) * sum_i chunks[i] * (zeta^N)^i
 	var zetaN ext.E6
@@ -250,8 +238,8 @@ func TestAIRCheckHappyPath(t *testing.T) {
 // and expects the equality constraint to fail.
 func TestAIRCheckRejectsBadV(t *testing.T) {
 	const N = 4
-	zeta := randExt(t)
-	chunks := []ext.E6{randExt(t)}
+	zeta := randExt()
+	chunks := []ext.E6{randExt()}
 
 	rel := expr.Col("X")
 	d := dag.ExprToDAG(rel)
@@ -284,7 +272,7 @@ func TestAIRCheckRejectsBadV(t *testing.T) {
 
 	// Set X to a random value that does NOT match (zeta^N - 1) * Q.
 	leafValues := map[string]extfield.E6Expr{
-		"X": makeE6Expr("X", randExt(t)),
+		"X": makeE6Expr("X", randExt()),
 	}
 	zetaExpr := makeE6Expr("zeta", zeta)
 	chunkExprs := []extfield.E6Expr{makeE6Expr("chunk", chunks[0])}
@@ -307,7 +295,7 @@ func TestAIRCheckRejectsBadV(t *testing.T) {
 // will need to materialize intermediate witness columns.
 func TestPowExtMatchesNative(t *testing.T) {
 	for _, n := range []int{0, 1, 2, 3, 5, 8, 13, 16} {
-		base := randExt(t)
+		base := randExt()
 		var want ext.E6
 		want.SetOne()
 		var baseCopy ext.E6
