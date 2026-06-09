@@ -1096,10 +1096,9 @@ func openQueryExt(s int, layers [][]ext.E6, trees []*merkle.Tree, numRounds int)
 	return q, nil
 }
 
-// checkLevelQueryBase checks that a level-polynomial opening uses the paired
-// leaf index derived from the FRI query. lIdx is zero-based over extra levels,
-// so level lIdx+1 is the polynomial's actual level index. domainSize is the
-// full FRI domain size before folding.
+// checkLevelQueryBase checks that an extra-level opening uses the FRI query's
+// paired leaf index. lIdx is zero-based; lIdx+1 is the actual level, and
+// domainSize is the pre-folding FRI domain size.
 func (li levelIntroductions) checkLevelQueryBase(s, lIdx, leafIdx, domainSize int) error {
 	level := lIdx + 1
 	if level >= len(li.introRounds) || li.introRounds[level] < 0 {
