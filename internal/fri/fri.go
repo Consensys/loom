@@ -1096,6 +1096,22 @@ func openQueryExt(s int, layers [][]ext.E6, trees []*merkle.Tree, numRounds int)
 	return q, nil
 }
 
+// checkLevelQueryBase checks that a level-polynomial opening uses the paired
+// leaf index derived from the FRI query. lIdx is zero-based over extra levels,
+// so level lIdx+1 is the polynomial's actual level index. domainSize is the
+// full FRI domain size before folding.
+func (li levelIntroductions) checkLevelQueryBase(s, lIdx, leafIdx, domainSize int) error {
+	level := lIdx + 1
+	if level >= len(li.introRounds) || li.introRounds[level] < 0 {
+		return fmt.Errorf("level %d: missing introduction round", level)
+	}
+	base := s % ((domainSize >> li.introRounds[level]) / 2)
+	if leafIdx != base {
+		return fmt.Errorf("level %d: Merkle proof opened leaf %d, want %d", level, leafIdx, base)
+	}
+	return nil
+}
+
 // checkQuery verifies one base-field multi-degree FRI query:
 //   - Merkle proofs for all level polynomial openings
 //   - Merkle proofs and fold consistency for the running-polynomial path
@@ -1119,15 +1135,8 @@ func checkQuery(s int, fq Query,
 		if ld.Field != field.Base {
 			return fmt.Errorf("level %d: expected base query layer, got %s", lIdx+1, ld.Field)
 		}
-		level := lIdx + 1
-		if level >= len(introductions.introRounds) || introductions.introRounds[level] < 0 {
-			return fmt.Errorf("level %d: missing introduction round", level)
-		}
-		jl := introductions.introRounds[level]
-		Nl := p.N >> jl
-		base := s % (Nl / 2)
-		if ld.Path.LeafIdx != base {
-			return fmt.Errorf("level %d: Merkle proof opened leaf %d, want %d", level, ld.Path.LeafIdx, base)
+		if err := introductions.checkLevelQueryBase(s, lIdx, ld.Path.LeafIdx, p.N); err != nil {
+			return err
 		}
 		pair := []commitment.PairBase{{ld.LeafPBase, ld.LeafQBase}}
 		leaf := p.LeafHasher.HashLeaf(pair, nil)
@@ -1222,15 +1231,8 @@ func checkQueryExt(s int, fq Query,
 		if ld.Field != field.Ext {
 			return fmt.Errorf("level %d: expected ext query layer, got %s", lIdx+1, ld.Field)
 		}
-		level := lIdx + 1
-		if level >= len(introductions.introRounds) || introductions.introRounds[level] < 0 {
-			return fmt.Errorf("level %d: missing introduction round", level)
-		}
-		jl := introductions.introRounds[level]
-		Nl := p.N >> jl
-		base := s % (Nl / 2)
-		if ld.Path.LeafIdx != base {
-			return fmt.Errorf("level %d: Merkle proof opened leaf %d, want %d", level, ld.Path.LeafIdx, base)
+		if err := introductions.checkLevelQueryBase(s, lIdx, ld.Path.LeafIdx, p.N); err != nil {
+			return err
 		}
 		pair := []commitment.PairExt{{ld.LeafPExt, ld.LeafQExt}}
 		leaf := p.LeafHasher.HashLeaf(nil, pair)
