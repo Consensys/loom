@@ -19,7 +19,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
-	"github.com/consensys/loom/internal/commitment"
+	"github.com/consensys/loom/internal/fri/commitment"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/poly"
 )

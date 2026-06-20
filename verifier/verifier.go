@@ -24,7 +24,6 @@ import (
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/field"
-	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
 	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/fri"
@@ -40,7 +39,7 @@ import (
 
 type Config struct {
 	SkipFRI     bool
-	HashBackend commitment.HashBackend
+	HashBackend fri.HashBackend
 	FriGrinding int
 	Fs          *fiatshamir.Transcript
 }
@@ -62,7 +61,7 @@ func WithTranscript(fs *fiatshamir.Transcript) Option {
 	}
 }
 
-func WithHashBackend(backend commitment.HashBackend) Option {
+func WithHashBackend(backend fri.HashBackend) Option {
 	return func(c *Config) error {
 		c.HashBackend = backend
 		return nil
@@ -97,11 +96,11 @@ type verifierRunTime struct {
 	// roots[i] aligns with proof.PointSamplings[q][i] for any query q.
 	roots []hash.Digest
 
-	hashBackend commitment.HashBackend
+	hashBackend fri.HashBackend
 }
 
 func newVerifierRuntime(program board.Program, verificationKey setup.VerificationKey, publicInputs public.Inputs, prf proof.Proof, config Config) (verifierRunTime, error) {
-	hashBackend, err := commitment.ResolveHashBackend(config.HashBackend, verificationKey.HashBackendID)
+	hashBackend, err := fri.ResolveHashBackend(config.HashBackend, verificationKey.HashBackendID)
 	if err != nil {
 		return verifierRunTime{}, err
 	}
@@ -403,7 +402,7 @@ func (vr *verifierRunTime) checkFRIProof() error {
 
 // verifyWMerkleProof checks wp opens to its leaf data under root, using the
 // same base-then-ext paired-leaf hashing as RSCommit.Commit.
-func (vr *verifierRunTime) verifyWMerkleProof(root hash.Digest, wp commitment.WMerkleProof) bool {
+func (vr *verifierRunTime) verifyWMerkleProof(root hash.Digest, wp fri.WMerkleProof) bool {
 	leaf := vr.hashBackend.LeafHasher.HashLeaf(wp.RawLeafBase, wp.RawLeafExt)
 	return merkle.Verify(root, wp.Proof, leaf, vr.hashBackend.NodeHasher)
 }

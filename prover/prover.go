@@ -27,7 +27,6 @@ import (
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/field"
-	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/dag"
 	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
@@ -44,7 +43,7 @@ import (
 
 type Config struct {
 	SkipFRI       bool
-	HashBackend   commitment.HashBackend
+	HashBackend   fri.HashBackend
 	PhaseCallback func(name string, d time.Duration)
 	FriGrinding   int
 	Fs            *fiatshamir.Transcript
@@ -77,7 +76,7 @@ func SkipFRI() Option {
 	}
 }
 
-func WithHashBackend(backend commitment.HashBackend) Option {
+func WithHashBackend(backend fri.HashBackend) Option {
 	return func(c *Config) error {
 		c.HashBackend = backend
 		return nil
@@ -109,7 +108,7 @@ type proverRuntime struct {
 	// (setup → trace per round → AIR). Setup trees are copied from `setup`
 	// at construction; trace and AIR trees are filled in as commitments
 	// happen.
-	allTrees []commitment.WMerkleTree
+	allTrees []fri.WMerkleTree
 	// openingSources[i] reconstructs raw leaves for allTrees[i] after FRI
 	// query positions are known.
 	openingSources []commitmentOpeningSource
@@ -125,12 +124,12 @@ type proverRuntime struct {
 	queryPositions []int
 	fs             *fiatshamir.Transcript
 	domainCache    poly.DomainCache
-	hashBackend    commitment.HashBackend
+	hashBackend    fri.HashBackend
 }
 
 func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs public.Inputs, program board.Program, config Config) (proverRuntime, error) {
 	var err error
-	hashBackend, err := commitment.ResolveHashBackend(config.HashBackend, provingKey.HashBackendID)
+	hashBackend, err := fri.ResolveHashBackend(config.HashBackend, provingKey.HashBackendID)
 	if err != nil {
 		return proverRuntime{}, err
 	}
@@ -162,7 +161,7 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 	// allTrees holds setup trees up front; trace and AIR slots get filled as
 	// commitments happen. proof.Commitments stores ONLY the trace+AIR roots
 	// (setup roots come from the verifier's VerificationKey input, not the proof).
-	res.allTrees = make([]commitment.WMerkleTree, res.layout.NumTrees)
+	res.allTrees = make([]fri.WMerkleTree, res.layout.NumTrees)
 	res.openingSources = make([]commitmentOpeningSource, res.layout.NumTrees)
 	for i, tree := range provingKey.Trees {
 		res.allTrees[res.layout.SetupBegin+i] = tree
@@ -375,10 +374,10 @@ func (pr *proverRuntime) commitTraceRound(roundIdx int, challengeName string) er
 	base := pr.layout.TraceBegin[roundIdx]
 	for i, N := range sizes {
 		group := polysByN[N]
-		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), pr.hashBackend.LeafHasher, pr.hashBackend.NodeHasher, &pr.domainCache)
+		committer := fri.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), pr.hashBackend.LeafHasher, pr.hashBackend.NodeHasher, &pr.domainCache)
 		tree, err := committer.Commit(
-			[]commitment.Group{{Base: group.base, Ext: group.ext}},
-			commitment.WithDomainCache(&pr.domainCache),
+			[]fri.Group{{Base: group.base, Ext: group.ext}},
+			fri.WithDomainCache(&pr.domainCache),
 		)
 		if err != nil {
 			return err
@@ -597,10 +596,10 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	}
 	for i, N := range sizes {
 		group := chunksByN[N]
-		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), pr.hashBackend.LeafHasher, pr.hashBackend.NodeHasher, &pr.domainCache)
+		committer := fri.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), pr.hashBackend.LeafHasher, pr.hashBackend.NodeHasher, &pr.domainCache)
 		tree, err := committer.Commit(
-			[]commitment.Group{{Base: group.base, Ext: group.ext}},
-			commitment.WithDomainCache(&pr.domainCache),
+			[]fri.Group{{Base: group.base, Ext: group.ext}},
+			fri.WithDomainCache(&pr.domainCache),
 		)
 		if err != nil {
 			return err
@@ -991,27 +990,27 @@ func accumulateDeepQuotient(deepQuotient poly.ExtPolynomial, bundles []deepQuoti
 // openWMerkleAt opens a WMerkleTree at the leaf index corresponding to FRI
 // query position `s`, reduced mod the tree's paired-leaf count (=
 // encoded_size/2 = RATE·N/2).
-func openWMerkleAt(tree commitment.WMerkleTree, source commitmentOpeningSource, s int, domainCache *poly.DomainCache) (commitment.WMerkleProof, error) {
+func openWMerkleAt(tree fri.WMerkleTree, source commitmentOpeningSource, s int, domainCache *poly.DomainCache) (fri.WMerkleProof, error) {
 	leafCount := tree.NumLeaves()
 	if leafCount == 0 {
-		return commitment.WMerkleProof{}, fmt.Errorf("empty WMerkleTree")
+		return fri.WMerkleProof{}, fmt.Errorf("empty WMerkleTree")
 	}
 	pos := s % leafCount
 	pth, err := tree.OpenProof(pos)
 	if err != nil {
-		return commitment.WMerkleProof{}, err
+		return fri.WMerkleProof{}, err
 	}
 	rawLeafBase, rawLeafExt, err := source.rawLeaf(pos, leafCount, domainCache)
 	if err != nil {
-		return commitment.WMerkleProof{}, err
+		return fri.WMerkleProof{}, err
 	}
 	if len(rawLeafBase) != tree.BaseWidth() {
-		return commitment.WMerkleProof{}, fmt.Errorf("base raw leaf width %d, tree expects %d", len(rawLeafBase), tree.BaseWidth())
+		return fri.WMerkleProof{}, fmt.Errorf("base raw leaf width %d, tree expects %d", len(rawLeafBase), tree.BaseWidth())
 	}
 	if len(rawLeafExt) != tree.ExtWidth() {
-		return commitment.WMerkleProof{}, fmt.Errorf("extension raw leaf width %d, tree expects %d", len(rawLeafExt), tree.ExtWidth())
+		return fri.WMerkleProof{}, fmt.Errorf("extension raw leaf width %d, tree expects %d", len(rawLeafExt), tree.ExtWidth())
 	}
-	return commitment.WMerkleProof{RawLeafBase: rawLeafBase, RawLeafExt: rawLeafExt, Proof: pth}, nil
+	return fri.WMerkleProof{RawLeafBase: rawLeafBase, RawLeafExt: rawLeafExt, Proof: pth}, nil
 }
 
 // SampleEvaluations opens every committed polynomial at every FRI query
@@ -1025,9 +1024,9 @@ func openWMerkleAt(tree commitment.WMerkleTree, source commitmentOpeningSource, 
 // flatten them into one work list and fan it out.
 func (pr *proverRuntime) SampleEvaluations() error {
 	NQ := len(pr.queryPositions)
-	pr.Proof.PointSamplings = make([][]commitment.WMerkleProof, NQ)
+	pr.Proof.PointSamplings = make([][]fri.WMerkleProof, NQ)
 	for q := range pr.Proof.PointSamplings {
-		pr.Proof.PointSamplings[q] = make([]commitment.WMerkleProof, pr.layout.NumTrees)
+		pr.Proof.PointSamplings[q] = make([]fri.WMerkleProof, pr.layout.NumTrees)
 	}
 
 	numTrees := pr.layout.NumTrees

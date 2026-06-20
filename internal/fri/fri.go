@@ -22,7 +22,8 @@ import (
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/field"
-	"github.com/consensys/loom/internal/commitment"
+
+	// "github.com/consensys/loom/internal/fri/commitment"
 	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/merkle"
@@ -41,8 +42,8 @@ type Params struct {
 	N          int // 2^n: size of the evaluation domain
 	D          int // 2^m: degree of the purported polynomial
 	NumQueries int // number of independent queries (controls soundness error ≈ (1-δ)^Q)
-	LeafHasher commitment.LeafHasher
-	NodeHasher commitment.NodeHasher
+	LeafHasher LeafHasher
+	NodeHasher NodeHasher
 
 	numRounds    int // numRounds = m
 	invTwo       koalabear.Element
@@ -77,7 +78,7 @@ func WithGrinding(nbBits int) Option {
 }
 
 // NewParams constructs and validates a Params, precomputing r+1 domains and inv(2).
-func NewParams(N, D, numQueries int, lh commitment.LeafHasher, nh commitment.NodeHasher, opts ...Option) (Params, error) {
+func NewParams(N, D, numQueries int, lh LeafHasher, nh NodeHasher, opts ...Option) (Params, error) {
 	if N <= 0 || N&(N-1) != 0 {
 		return Params{}, fmt.Errorf("fri: N must be a positive power of two, got %d", N)
 	}
@@ -921,14 +922,14 @@ func log2(n int) int {
 
 // buildTreeBase builds a Merkle tree of Nⱼ/2 leaves where
 // leaf k = LeafHasher(layer[k] || layer[k + Nⱼ/2]).
-func buildTreeBase(layer []koalabear.Element, lh commitment.LeafHasher, nh commitment.NodeHasher) (*merkle.Tree, error) {
+func buildTreeBase(layer []koalabear.Element, lh LeafHasher, nh NodeHasher) (*merkle.Tree, error) {
 	half := len(layer) / 2
 	tree, err := merkle.New(half, nh)
 	if err != nil {
 		return nil, err
 	}
 	leaves := make([]hash.Digest, half)
-	commitment.HashLeavesParallel(lh, leaves, commitment.LeafSource{
+	HashLeavesParallel(lh, leaves, LeafSource{
 		Base:       []poly.Polynomial{layer},
 		PairOffset: half,
 	})
@@ -936,14 +937,14 @@ func buildTreeBase(layer []koalabear.Element, lh commitment.LeafHasher, nh commi
 }
 
 // buildTreeExt is the extension-field counterpart of buildTreeBase.
-func buildTreeExt(layer []ext.E6, lh commitment.LeafHasher, nh commitment.NodeHasher) (*merkle.Tree, error) {
+func buildTreeExt(layer []ext.E6, lh LeafHasher, nh NodeHasher) (*merkle.Tree, error) {
 	half := len(layer) / 2
 	tree, err := merkle.New(half, nh)
 	if err != nil {
 		return nil, err
 	}
 	leaves := make([]hash.Digest, half)
-	commitment.HashLeavesParallel(lh, leaves, commitment.LeafSource{
+	HashLeavesParallel(lh, leaves, LeafSource{
 		Ext:        []poly.ExtPolynomial{layer},
 		PairOffset: half,
 	})
@@ -1098,7 +1099,7 @@ func checkQuery(s int, fq Query,
 		if ld.Field != field.Base {
 			return fmt.Errorf("level %d: expected base query layer, got %s", lIdx+1, ld.Field)
 		}
-		pair := []commitment.PairBase{{ld.LeafPBase, ld.LeafQBase}}
+		pair := []PairBase{{ld.LeafPBase, ld.LeafQBase}}
 		leaf := p.LeafHasher.HashLeaf(pair, nil)
 		if !merkle.Verify(levelRoots[lIdx], ld.Path, leaf, p.NodeHasher) {
 			return fmt.Errorf("level %d: Merkle proof invalid", lIdx+1)
@@ -1114,7 +1115,7 @@ func checkQuery(s int, fq Query,
 			return fmt.Errorf("round %d: expected base query layer, got %s", j, layer.Field)
 		}
 
-		pair := []commitment.PairBase{{layer.LeafPBase, layer.LeafQBase}}
+		pair := []PairBase{{layer.LeafPBase, layer.LeafQBase}}
 		leaf := p.LeafHasher.HashLeaf(pair, nil)
 		if !merkle.Verify(roots[j], layer.Path, leaf, p.NodeHasher) {
 			return fmt.Errorf("round %d: Merkle proof invalid (base=%d)", j, base)
@@ -1188,7 +1189,7 @@ func checkQueryExt(s int, fq Query,
 		if ld.Field != field.Ext {
 			return fmt.Errorf("level %d: expected ext query layer, got %s", lIdx+1, ld.Field)
 		}
-		pair := []commitment.PairExt{{ld.LeafPExt, ld.LeafQExt}}
+		pair := []PairExt{{ld.LeafPExt, ld.LeafQExt}}
 		leaf := p.LeafHasher.HashLeaf(nil, pair)
 		if !merkle.Verify(levelRoots[lIdx], ld.Path, leaf, p.NodeHasher) {
 			return fmt.Errorf("level %d: Merkle proof invalid", lIdx+1)
@@ -1203,7 +1204,7 @@ func checkQueryExt(s int, fq Query,
 			return fmt.Errorf("round %d: expected ext query layer, got %s", j, layer.Field)
 		}
 
-		pair := []commitment.PairExt{{layer.LeafPExt, layer.LeafQExt}}
+		pair := []PairExt{{layer.LeafPExt, layer.LeafQExt}}
 		leaf := p.LeafHasher.HashLeaf(nil, pair)
 		if !merkle.Verify(roots[j], layer.Path, leaf, p.NodeHasher) {
 			return fmt.Errorf("round %d: Merkle proof invalid (base=%d)", j, base)

@@ -17,7 +17,7 @@ import (
 	"fmt"
 
 	"github.com/consensys/loom/board"
-	"github.com/consensys/loom/internal/commitment"
+	"github.com/consensys/loom/internal/fri"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/prover"
 	"github.com/consensys/loom/public"
@@ -52,18 +52,18 @@ type VerifierOption = verifier.Option
 // SetupOption configures Setup.
 type SetupOption = setup.Option
 
-type HashBackend = commitment.HashBackend
+type HashBackend = fri.HashBackend
 
 type ProvingKey = setup.ProvingKey
 
 type VerificationKey = setup.VerificationKey
 
 func Poseidon2HashBackend() HashBackend {
-	return commitment.Poseidon2HashBackend()
+	return fri.Poseidon2HashBackend()
 }
 
 func SHA256HashBackend() HashBackend {
-	return commitment.SHA256HashBackend()
+	return fri.SHA256HashBackend()
 }
 
 func WithSetupHashBackend(backend HashBackend) SetupOption {
@@ -99,8 +99,8 @@ func Verify(statement Statement, prf proof.Proof, opts ...VerifierOption) error 
 func checkVerificationKey(statement Statement, witnessKey setup.ProvingKey) error {
 	statementKey := statement.VerificationKey
 	witnessKeyForVerifier := witnessKey.VerificationKey()
-	statementBackend := commitment.NormalizeHashBackendID(statementKey.HashBackendID)
-	witnessBackend := commitment.NormalizeHashBackendID(witnessKeyForVerifier.HashBackendID)
+	statementBackend := fri.NormalizeHashBackendID(statementKey.HashBackendID)
+	witnessBackend := fri.NormalizeHashBackendID(witnessKeyForVerifier.HashBackendID)
 	if statementBackend != witnessBackend {
 		return fmt.Errorf("loom: statement uses hash backend %q, witness uses %q", statementBackend, witnessBackend)
 	}

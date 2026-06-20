@@ -19,9 +19,9 @@ import (
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
-	"github.com/consensys/loom/internal/commitment"
 	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/fri"
+	"github.com/consensys/loom/internal/fri/commitment"
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/merkle"
 )

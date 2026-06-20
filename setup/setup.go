@@ -19,8 +19,8 @@ import (
 
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/field"
-	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/internal/fri"
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/trace"
@@ -32,7 +32,7 @@ import (
 type ProvingKey struct {
 	HashBackendID string
 	Trace         trace.Trace
-	Trees         []commitment.WMerkleTree
+	Trees         []fri.WMerkleTree
 }
 
 // VerificationKey is the verifier-side setup material.
@@ -51,12 +51,12 @@ func (pk ProvingKey) VerificationKey() VerificationKey {
 }
 
 type Config struct {
-	HashBackend commitment.HashBackend
+	HashBackend fri.HashBackend
 }
 
 type Option func(c *Config) error
 
-func WithHashBackend(backend commitment.HashBackend) Option {
+func WithHashBackend(backend fri.HashBackend) Option {
 	return func(c *Config) error {
 		c.HashBackend = backend
 		return nil
@@ -70,7 +70,7 @@ func Setup(t trace.Trace, program board.Program, opts ...Option) (ProvingKey, Ve
 			return ProvingKey{}, VerificationKey{}, err
 		}
 	}
-	hashBackend, err := commitment.ResolveHashBackend(config.HashBackend, "")
+	hashBackend, err := fri.ResolveHashBackend(config.HashBackend, "")
 	if err != nil {
 		return ProvingKey{}, VerificationKey{}, err
 	}
@@ -105,7 +105,7 @@ func Setup(t trace.Trace, program board.Program, opts ...Option) (ProvingKey, Ve
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
 
-	trees := make([]commitment.WMerkleTree, len(sizes))
+	trees := make([]fri.WMerkleTree, len(sizes))
 	var domainCache poly.DomainCache
 	for i, N := range sizes {
 		refs := colsByN[N]
@@ -130,10 +130,10 @@ func Setup(t trace.Trace, program board.Program, opts ...Option) (ProvingKey, Ve
 				extPublic = append(extPublic, p)
 			}
 		}
-		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), hashBackend.LeafHasher, hashBackend.NodeHasher, &domainCache)
+		committer := fri.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), hashBackend.LeafHasher, hashBackend.NodeHasher, &domainCache)
 		tree, err := committer.Commit(
-			[]commitment.Group{{Base: basePublic, Ext: extPublic}},
-			commitment.WithDomainCache(&domainCache),
+			[]fri.Group{{Base: basePublic, Ext: extPublic}},
+			fri.WithDomainCache(&domainCache),
 		)
 		if err != nil {
 			return ProvingKey{}, VerificationKey{}, err
