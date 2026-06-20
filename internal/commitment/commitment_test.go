@@ -38,7 +38,7 @@ func TestRSCommitDualRailProof(t *testing.T) {
 	}
 
 	committer := NewRSCommit(4, 2, DefaultLeafHasher, DefaultNodeHasher)
-	tree, err := committer.Commit(basePolys, extPolys)
+	tree, err := committer.Commit([]Group{{Base: basePolys, Ext: extPolys}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestWMerkleTreeOpenProof(t *testing.T) {
 	}
 
 	committer := NewRSCommit(4, 2, DefaultLeafHasher, DefaultNodeHasher)
-	tree, err := committer.Commit(basePolys, extPolys)
+	tree, err := committer.Commit([]Group{{Base: basePolys, Ext: extPolys}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestRSCommitWithDomainCache(t *testing.T) {
 
 	var cache poly.DomainCache
 	committer := NewRSCommitWithDomainCache(4, 2, DefaultLeafHasher, DefaultNodeHasher, &cache)
-	tree, err := committer.Commit(basePolys, nil, WithDomainCache(&cache))
+	tree, err := committer.Commit([]Group{{Base: basePolys}}, WithDomainCache(&cache))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,13 +150,13 @@ func TestRSCommitBatchLeafHasherMatchesScalarRoot(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			batchCommitter := NewRSCommit(4, 2, tt.lh, tt.nh)
-			batchTree, err := batchCommitter.Commit(basePolys, extPolys)
+			batchTree, err := batchCommitter.Commit([]Group{{Base: basePolys, Ext: extPolys}})
 			if err != nil {
 				t.Fatal(err)
 			}
 
 			scalarCommitter := NewRSCommit(4, 2, scalarOnlyLeafHasher{inner: tt.lh}, tt.nh)
-			scalarTree, err := scalarCommitter.Commit(basePolys, extPolys)
+			scalarTree, err := scalarCommitter.Commit([]Group{{Base: basePolys, Ext: extPolys}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -233,7 +233,7 @@ func TestRSCommitEmptyRails(t *testing.T) {
 		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},
 	}
 	committer := NewRSCommit(4, 2, DefaultLeafHasher, DefaultNodeHasher)
-	baseTree, err := committer.Commit(basePolys, nil)
+	baseTree, err := committer.Commit([]Group{{Base: basePolys}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestRSCommitEmptyRails(t *testing.T) {
 			extElement(13, 14, 15, 16),
 		},
 	}
-	extTree, err := committer.Commit(nil, extPolys)
+	extTree, err := committer.Commit([]Group{{Ext: extPolys}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,6 +258,108 @@ func TestRSCommitEmptyRails(t *testing.T) {
 	}
 	if got := extTree.NumLeaves(); got != 4 {
 		t.Fatalf("ext-only NumLeaves = %d, want 4", got)
+	}
+}
+
+// TestRSCommitMultiGroupOpenProof exercises the multi-size single-tree path:
+// two groups of different native sizes are committed in one Commit call, and
+// proofs for both the leaf-level group and the injection-level group are
+// verified through the merkle injection schedule.
+func TestRSCommitMultiGroupOpenProof(t *testing.T) {
+	// Top group: size 8 (the actual Merkle leaves).
+	topBase := []poly.Polynomial{
+		{baseElement(1), baseElement(2), baseElement(3), baseElement(4),
+			baseElement(5), baseElement(6), baseElement(7), baseElement(8)},
+	}
+	topExt := []poly.ExtPolynomial{
+		{
+			extElement(11, 12, 13, 14),
+			extElement(21, 22, 23, 24),
+			extElement(31, 32, 33, 34),
+			extElement(41, 42, 43, 44),
+			extElement(51, 52, 53, 54),
+			extElement(61, 62, 63, 64),
+			extElement(71, 72, 73, 74),
+			extElement(81, 82, 83, 84),
+		},
+	}
+
+	// Smaller group: size 4 (introduced as a level injection).
+	smallBase := []poly.Polynomial{
+		{baseElement(100), baseElement(200), baseElement(300), baseElement(400)},
+	}
+
+	// rate=2 ⇒ encoded domains are 16 and 8, paired leaves at widths 8 and 4.
+	committer := NewRSCommit(8, 2, DefaultLeafHasher, DefaultNodeHasher)
+	tree, err := committer.Commit([]Group{
+		{Base: topBase, Ext: topExt},
+		{Base: smallBase},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Shape sanity.
+	shapes := tree.Groups()
+	if len(shapes) != 2 {
+		t.Fatalf("Groups length = %d, want 2", len(shapes))
+	}
+	if shapes[0].PairedLeaves != 8 || shapes[0].BaseWidth != 1 || shapes[0].ExtWidth != 1 {
+		t.Fatalf("top group shape = %+v", shapes[0])
+	}
+	if shapes[1].PairedLeaves != 4 || shapes[1].BaseWidth != 1 || shapes[1].ExtWidth != 0 {
+		t.Fatalf("small group shape = %+v", shapes[1])
+	}
+	if got := tree.NumLeaves(); got != 8 {
+		t.Fatalf("NumLeaves = %d, want 8", got)
+	}
+	if widths := tree.InjectionWidths(); len(widths) != 1 || widths[0] != 4 {
+		t.Fatalf("InjectionWidths = %v, want [4]", widths)
+	}
+
+	injectionWidths := tree.InjectionWidths()
+
+	// Verify an opening for every leaf index: at each idx, the path crosses
+	// the size-4 injection level at position idx>>1, and both the top-leaf
+	// hash and the injection leaf must reconstruct the published root.
+	for leafIdx := 0; leafIdx < 8; leafIdx++ {
+		proof, err := tree.OpenProof(leafIdx)
+		if err != nil {
+			t.Fatalf("OpenProof(%d): %v", leafIdx, err)
+		}
+		if len(proof.InjectionLeaves) != 1 {
+			t.Fatalf("leaf %d: InjectionLeaves length = %d, want 1", leafIdx, len(proof.InjectionLeaves))
+		}
+
+		// Compute the top-group leaf hash that the verifier consumes.
+		baseLeaf, extLeaf := rawLeafFromPolys(committer, topBase, topExt, leafIdx)
+		leaf := DefaultLeafHasher.HashLeaf(baseLeaf, extLeaf)
+
+		if !merkle.VerifyWithInjections(tree.Root(), proof, leaf, injectionWidths, DefaultNodeHasher) {
+			t.Fatalf("leaf %d: VerifyWithInjections rejected a valid proof", leafIdx)
+		}
+
+		// Cross-check: the legacy Verify (no injection support) must reject,
+		// since the proof carries InjectionLeaves the bare path can't fold in.
+		if merkle.Verify(tree.Root(), proof, leaf, DefaultNodeHasher) {
+			t.Fatalf("leaf %d: legacy Verify unexpectedly accepted an injection-bearing proof", leafIdx)
+		}
+	}
+}
+
+// TestRSCommitDuplicateGroupSize ensures that Commit rejects two groups of
+// the same native size, since the merkle layer requires distinct LevelWidths
+// for injections.
+func TestRSCommitDuplicateGroupSize(t *testing.T) {
+	polys := []poly.Polynomial{
+		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},
+	}
+	committer := NewRSCommit(4, 2, DefaultLeafHasher, DefaultNodeHasher)
+	if _, err := committer.Commit([]Group{
+		{Base: polys},
+		{Base: polys},
+	}); err == nil {
+		t.Fatal("Commit should reject two groups with the same native size")
 	}
 }
 

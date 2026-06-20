@@ -14,6 +14,9 @@
 package commitment
 
 import (
+	"fmt"
+	"sort"
+
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
@@ -68,17 +71,46 @@ var (
 )
 
 type RSCommit struct {
+	// Encoder is the Reed-Solomon encoder built for the size N passed to
+	// NewRSCommit / NewRSCommitWithDomainCache. It is reused inside Commit
+	// whenever a group's size matches it; groups of any other size build a
+	// fresh encoder on the fly (using rate). Kept exported for back-compat
+	// with code that reads Encoder.Domain.Cardinality.
 	Encoder    reedsolomon.Encoder
 	LeafHasher LeafHasher
 	NodeHasher NodeHasher
+
+	// rate is the RS blowup factor (encoded domain size = rate * N).
+	rate uint64
+}
+
+// Group bundles base- and extension-rail polynomials that share the same
+// native size. A single Commit call accepts a slice of Groups, each with a
+// distinct size: the largest group occupies the actual Merkle leaves and
+// each smaller group becomes a per-level injection in the underlying
+// merkle.Tree (see internal/merkle/tree.go).
+type Group struct {
+	Base []poly.Polynomial
+	Ext  []poly.ExtPolynomial
+}
+
+// GroupShape records the per-group layout of a committed tree, in
+// decreasing-size order (groups[0] is the largest, hashed at the actual
+// leaves; groups[1..] are injection levels). PairedLeaves is the number of
+// paired Merkle positions at this group's level, i.e. ρ · N_native / 2.
+type GroupShape struct {
+	PairedLeaves int
+	BaseWidth    int
+	ExtWidth     int
 }
 
 type WMerkleTree struct {
 	Tree *merkle.Tree
 
-	numLeaves int
-	baseWidth int
-	extWidth  int
+	// groups in decreasing PairedLeaves order. Length 1 for the typical
+	// single-size Commit call; length > 1 when multiple sizes were committed
+	// into one tree via merkle injections.
+	groups []GroupShape
 }
 
 // PointSampling contains the pair evaluation {f(w^i),f(-w^i)} for batches of
@@ -94,22 +126,58 @@ func (wt WMerkleTree) Root() hash.Digest {
 	return wt.Tree.Root()
 }
 
+// NumLeaves returns the number of paired leaves of the top (largest) group.
+// For trees committed with several sizes, smaller groups live at higher
+// levels and their per-group widths are accessible via Groups.
 func (wt WMerkleTree) NumLeaves() int {
-	return wt.numLeaves
+	if len(wt.groups) == 0 {
+		return 0
+	}
+	return wt.groups[0].PairedLeaves
 }
 
-// BaseWidth returns the number of base-field pairs stored in each leaf.
+// BaseWidth returns the number of base-field pairs in the top group.
 func (wt WMerkleTree) BaseWidth() int {
-	return wt.baseWidth
+	if len(wt.groups) == 0 {
+		return 0
+	}
+	return wt.groups[0].BaseWidth
 }
 
-// ExtWidth returns the number of extension-field pairs stored in each leaf.
+// ExtWidth returns the number of extension-field pairs in the top group.
 func (wt WMerkleTree) ExtWidth() int {
-	return wt.extWidth
+	if len(wt.groups) == 0 {
+		return 0
+	}
+	return wt.groups[0].ExtWidth
+}
+
+// Groups returns the per-group shape descriptors in decreasing-size order
+// (groups[0] is the top / largest group). The returned slice is owned by
+// the tree; callers must not mutate it.
+func (wt WMerkleTree) Groups() []GroupShape {
+	return wt.groups
+}
+
+// InjectionWidths returns the LevelWidth of each merkle injection in the
+// same order as the tree's injection schedule (decreasing widths). It is
+// nil for single-group trees. Suitable for passing to
+// merkle.VerifyWithInjections.
+func (wt WMerkleTree) InjectionWidths() []int {
+	if len(wt.groups) <= 1 {
+		return nil
+	}
+	res := make([]int, len(wt.groups)-1)
+	for i := range res {
+		res[i] = wt.groups[i+1].PairedLeaves
+	}
+	return res
 }
 
 // OpenProof returns the Merkle proof for leaf i. Raw leaf values are
 // reconstructed by the prover from the committed polynomials when needed.
+// For multi-group trees the returned proof carries InjectionLeaves matching
+// InjectionWidths.
 func (wt WMerkleTree) OpenProof(i int) (merkle.Proof, error) {
 	return wt.Tree.OpenProof(i)
 }
@@ -122,13 +190,16 @@ func NewRSCommit(N uint64, rate uint64, leafHasher LeafHasher, nodehasher NodeHa
 }
 
 // NewRSCommitWithDomainCache constructs an RSCommit using cache for the
-// Reed-Solomon encoder domain.
+// Reed-Solomon encoder domain. N is the natural size used to seed the
+// reusable Encoder; Commit can still accept groups of other sizes by
+// building fresh encoders from rate on the fly.
 func NewRSCommitWithDomainCache(N uint64, rate uint64, leafHasher LeafHasher, nodehasher NodeHasher, cache *poly.DomainCache) RSCommit {
 	rsEncoder := reedsolomon.NewEncoder(rate*N, reedsolomon.WithCache(cache))
 	return RSCommit{
 		Encoder:    rsEncoder,
 		LeafHasher: leafHasher,
 		NodeHasher: nodehasher,
+		rate:       rate,
 	}
 }
 
@@ -201,10 +272,19 @@ func (Poseidon2NodeHasher) HashNodes(dst, left, right []hash.Digest) {
 	copy(dst, out[:])
 }
 
-// Commit commits to base and extension polynomials in one Merkle tree. Inputs
-// are assumed to be in Lagrange form and may have different sizes. Each leaf
-// hash absorbs all base pairs followed by all extension pairs.
-func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolynomial, opts ...CommitOption) (WMerkleTree, error) {
+// Commit commits to one or more Groups of polynomials into a single Merkle
+// tree. Each Group must hold polynomials sharing a single power-of-two
+// length; group sizes must be pairwise distinct. The largest group's paired
+// leaf hashes form the actual tree leaves; each smaller group is folded in
+// as a merkle.LevelInjection at the level whose width matches its number of
+// paired leaves.
+//
+// Within a group, leaf i absorbs the pair (f(ω^i), f(−ω^i)) for every base
+// polynomial in declaration order, then for every extension polynomial in
+// declaration order. The leaf-hash layout is unchanged from the legacy
+// single-group API; multi-group calls simply add injection levels above the
+// top group.
+func (rs *RSCommit) Commit(groups []Group, opts ...CommitOption) (WMerkleTree, error) {
 	var config CommitConfig
 	for _, opt := range opts {
 		if err := opt(&config); err != nil {
@@ -216,56 +296,159 @@ func (rs *RSCommit) Commit(basePolys []poly.Polynomial, extPolys []poly.ExtPolyn
 		domainCache = &poly.DomainCache{}
 	}
 
-	// 1- encode every polynomial on its rail. Each Encode is independent
-	//    (disjoint input/output slices, shared read-only domain). Each outer
-	//    worker calls 2 FFTs in Encode; cap the FFT's internal parallelism so
-	//    outer × inner ≤ NumCPU.
-	fftOuter := max(len(basePolys), len(extPolys))
-	fftOpt := fft.WithNbTasks(parallel.NbTasksPerJob(fftOuter))
+	if len(groups) == 0 {
+		return WMerkleTree{}, fmt.Errorf("commitment: Commit requires at least one Group")
+	}
 
-	encodedBase := make([]poly.Polynomial, len(basePolys))
-	parallel.Execute(len(basePolys), func(start, end int) {
-		for i := start; i < end; i++ {
-			pol := basePolys[i]
-			encodedBase[i] = rs.Encoder.Encode(pol, domainCache.Get(uint64(len(pol))), fftOpt)
+	// 1- validate every group and sort by descending native size.
+	sizes := make([]int, len(groups))
+	for k, g := range groups {
+		N, err := groupNativeSize(g)
+		if err != nil {
+			return WMerkleTree{}, fmt.Errorf("commitment: Group[%d]: %w", k, err)
 		}
-	})
-
-	encodedExt := make([]poly.ExtPolynomial, len(extPolys))
-	parallel.Execute(len(extPolys), func(start, end int) {
-		for i := start; i < end; i++ {
-			pol := extPolys[i]
-			encodedExt[i] = rs.Encoder.EncodeExt(pol, domainCache.Get(uint64(len(pol))), fftOpt)
+		sizes[k] = N
+	}
+	order := make([]int, len(groups))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return sizes[order[a]] > sizes[order[b]] })
+	for i := 1; i < len(order); i++ {
+		if sizes[order[i]] == sizes[order[i-1]] {
+			return WMerkleTree{}, fmt.Errorf("commitment: duplicate Group size %d (groups must have distinct native sizes)", sizes[order[i]])
 		}
-	})
+	}
 
-	// 2- build the merkle tree, with rs.N/2 leafs
-	// the i-th leaf is base pairs followed by extension pairs.
-	N := rs.Encoder.Domain.Cardinality
-	halfN := int(N >> 1)
-	tree, err := merkle.New(halfN, rs.NodeHasher)
+	// 2- encode each group's polynomials on its RS-encoded domain and hash
+	//    the paired leaves into one digest slice per group. The largest
+	//    group's slice is the tree's leaf layer; the rest become injections.
+	perGroupLeaves := make([][]hash.Digest, len(groups))
+	for k, gi := range order {
+		g := groups[gi]
+		N := sizes[gi]
+		encoder := rs.encoderForSize(uint64(N), domainCache)
+
+		fftOuter := max(len(g.Base), len(g.Ext))
+		var fftOpt fft.Option
+		if fftOuter > 0 {
+			fftOpt = fft.WithNbTasks(parallel.NbTasksPerJob(fftOuter))
+		}
+
+		encodedBase := make([]poly.Polynomial, len(g.Base))
+		parallel.Execute(len(g.Base), func(start, end int) {
+			for i := start; i < end; i++ {
+				pol := g.Base[i]
+				if fftOpt != nil {
+					encodedBase[i] = encoder.Encode(pol, domainCache.Get(uint64(len(pol))), fftOpt)
+				} else {
+					encodedBase[i] = encoder.Encode(pol, domainCache.Get(uint64(len(pol))))
+				}
+			}
+		})
+
+		encodedExt := make([]poly.ExtPolynomial, len(g.Ext))
+		parallel.Execute(len(g.Ext), func(start, end int) {
+			for i := start; i < end; i++ {
+				pol := g.Ext[i]
+				if fftOpt != nil {
+					encodedExt[i] = encoder.EncodeExt(pol, domainCache.Get(uint64(len(pol))), fftOpt)
+				} else {
+					encodedExt[i] = encoder.EncodeExt(pol, domainCache.Get(uint64(len(pol))))
+				}
+			}
+		})
+
+		halfN := int(encoder.Domain.Cardinality >> 1)
+		leaves := make([]hash.Digest, halfN)
+		src := LeafSource{
+			Base:       encodedBase,
+			Ext:        encodedExt,
+			PairOffset: halfN,
+		}
+		HashLeavesParallel(rs.LeafHasher, leaves, src)
+		perGroupLeaves[k] = leaves
+	}
+
+	// 3- build the underlying merkle tree. Smaller groups become injections
+	//    on the way up; their LevelWidth equals the number of paired leaves
+	//    at that group's level.
+	topLeaves := perGroupLeaves[0]
+	var injections []merkle.LevelInjection
+	if len(perGroupLeaves) > 1 {
+		injections = make([]merkle.LevelInjection, len(perGroupLeaves)-1)
+		for k := 1; k < len(perGroupLeaves); k++ {
+			injections[k-1] = merkle.LevelInjection{
+				LevelWidth: len(perGroupLeaves[k]),
+				LeafHashes: perGroupLeaves[k],
+			}
+		}
+	}
+	tree, err := merkle.NewWithInjections(len(topLeaves), rs.NodeHasher, injections)
 	if err != nil {
 		return WMerkleTree{}, err
 	}
-	wTree := WMerkleTree{
-		Tree:      tree,
-		numLeaves: halfN,
-		baseWidth: len(encodedBase),
-		extWidth:  len(encodedExt),
-	}
-	leaves := make([]hash.Digest, halfN)
-	src := LeafSource{
-		Base:       encodedBase,
-		Ext:        encodedExt,
-		PairOffset: halfN,
-	}
-	HashLeavesParallel(rs.LeafHasher, leaves, src)
-
-	if err := tree.Build(leaves); err != nil {
+	if err := tree.Build(topLeaves); err != nil {
 		return WMerkleTree{}, err
 	}
 
-	return wTree, nil
+	// 4- record the per-group shape in decreasing-size order so callers can
+	//    locate each rail's pairs within the tree.
+	shapes := make([]GroupShape, len(order))
+	for k, gi := range order {
+		shapes[k] = GroupShape{
+			PairedLeaves: len(perGroupLeaves[k]),
+			BaseWidth:    len(groups[gi].Base),
+			ExtWidth:     len(groups[gi].Ext),
+		}
+	}
+
+	return WMerkleTree{
+		Tree:   tree,
+		groups: shapes,
+	}, nil
+}
+
+// groupNativeSize validates that every polynomial in g has the same
+// power-of-two length and returns it. Empty groups are rejected.
+func groupNativeSize(g Group) (int, error) {
+	N := 0
+	for k, p := range g.Base {
+		if k == 0 {
+			N = len(p)
+			continue
+		}
+		if len(p) != N {
+			return 0, fmt.Errorf("base polynomial %d has length %d, want %d", k, len(p), N)
+		}
+	}
+	for k, p := range g.Ext {
+		if N == 0 && k == 0 {
+			N = len(p)
+			continue
+		}
+		if len(p) != N {
+			return 0, fmt.Errorf("ext polynomial %d has length %d, want %d", k, len(p), N)
+		}
+	}
+	if N == 0 {
+		return 0, fmt.Errorf("group has no polynomials")
+	}
+	if N&(N-1) != 0 {
+		return 0, fmt.Errorf("group size %d is not a power of two", N)
+	}
+	return N, nil
+}
+
+// encoderForSize returns the committer's reusable Encoder when N matches its
+// native size (typical single-group path), otherwise constructs a fresh
+// encoder for the requested size. Both paths share the same domain cache.
+func (rs *RSCommit) encoderForSize(N uint64, cache *poly.DomainCache) reedsolomon.Encoder {
+	want := rs.rate * N
+	if want == rs.Encoder.Domain.Cardinality {
+		return rs.Encoder
+	}
+	return reedsolomon.NewEncoder(want, reedsolomon.WithCache(cache))
 }
 
 // HashLeavesParallel hashes len(dst) paired leaves from src into dst, using

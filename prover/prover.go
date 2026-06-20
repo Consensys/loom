@@ -376,7 +376,10 @@ func (pr *proverRuntime) commitTraceRound(roundIdx int, challengeName string) er
 	for i, N := range sizes {
 		group := polysByN[N]
 		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), pr.hashBackend.LeafHasher, pr.hashBackend.NodeHasher, &pr.domainCache)
-		tree, err := committer.Commit(group.base, group.ext, commitment.WithDomainCache(&pr.domainCache))
+		tree, err := committer.Commit(
+			[]commitment.Group{{Base: group.base, Ext: group.ext}},
+			commitment.WithDomainCache(&pr.domainCache),
+		)
 		if err != nil {
 			return err
 		}
@@ -595,7 +598,10 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	for i, N := range sizes {
 		group := chunksByN[N]
 		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), pr.hashBackend.LeafHasher, pr.hashBackend.NodeHasher, &pr.domainCache)
-		tree, err := committer.Commit(group.base, group.ext, commitment.WithDomainCache(&pr.domainCache))
+		tree, err := committer.Commit(
+			[]commitment.Group{{Base: group.base, Ext: group.ext}},
+			commitment.WithDomainCache(&pr.domainCache),
+		)
 		if err != nil {
 			return err
 		}

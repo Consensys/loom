@@ -131,7 +131,10 @@ func Setup(t trace.Trace, program board.Program, opts ...Option) (ProvingKey, Ve
 			}
 		}
 		committer := commitment.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), hashBackend.LeafHasher, hashBackend.NodeHasher, &domainCache)
-		tree, err := committer.Commit(basePublic, extPublic, commitment.WithDomainCache(&domainCache))
+		tree, err := committer.Commit(
+			[]commitment.Group{{Base: basePublic, Ext: extPublic}},
+			commitment.WithDomainCache(&domainCache),
+		)
 		if err != nil {
 			return ProvingKey{}, VerificationKey{}, err
 		}
