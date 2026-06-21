@@ -21,6 +21,7 @@ import (
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
+	"github.com/consensys/loom/internal/reedsolomon"
 )
 
 func TestRSCommitDualRailProof(t *testing.T) {
@@ -37,11 +38,12 @@ func TestRSCommitDualRailProof(t *testing.T) {
 		},
 	}
 
-	committer := NewRSCommit(4, 2, DefaultLeafHasher, DefaultNodeHasher)
-	tree, _, err := committer.Commit([]Group{{Base: basePolys, Ext: extPolys}})
+	pcs := NewPCS(2, DefaultLeafHasher, DefaultNodeHasher)
+	committed, err := pcs.Commit([]Group{{Base: basePolys, Ext: extPolys}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	tree := committed.Tree
 	if got := tree.NumLeaves(); got != 4 {
 		t.Fatalf("NumLeaves = %d, want 4", got)
 	}
@@ -57,7 +59,7 @@ func TestRSCommitDualRailProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseLeaf, extLeaf := rawLeafFromPolys(committer, basePolys, extPolys, leafIdx)
+	baseLeaf, extLeaf := rawLeafFromPolys(2, basePolys, extPolys, leafIdx)
 	leaf := DefaultLeafHasher.HashLeaf(baseLeaf, extLeaf)
 	if !merkle.Verify(tree.Root(), proof, leaf, DefaultNodeHasher) {
 		t.Fatal("dual-rail Merkle proof did not verify")
@@ -78,11 +80,12 @@ func TestWMerkleTreeOpenProof(t *testing.T) {
 		},
 	}
 
-	committer := NewRSCommit(4, 2, DefaultLeafHasher, DefaultNodeHasher)
-	tree, _, err := committer.Commit([]Group{{Base: basePolys, Ext: extPolys}})
+	pcs := NewPCS(2, DefaultLeafHasher, DefaultNodeHasher)
+	committed, err := pcs.Commit([]Group{{Base: basePolys, Ext: extPolys}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	tree := committed.Tree
 
 	const leafIdx = 2
 	proof, err := tree.OpenProof(leafIdx)
@@ -90,7 +93,7 @@ func TestWMerkleTreeOpenProof(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	baseLeaf, extLeaf := rawLeafFromPolys(committer, basePolys, extPolys, leafIdx)
+	baseLeaf, extLeaf := rawLeafFromPolys(2, basePolys, extPolys, leafIdx)
 	leaf := DefaultLeafHasher.HashLeaf(baseLeaf, extLeaf)
 	if !merkle.Verify(tree.Root(), proof, leaf, DefaultNodeHasher) {
 		t.Fatal("opened Merkle proof did not verify")
@@ -104,11 +107,12 @@ func TestRSCommitWithDomainCache(t *testing.T) {
 	}
 
 	var cache poly.DomainCache
-	committer := NewRSCommitWithDomainCache(4, 2, DefaultLeafHasher, DefaultNodeHasher, &cache)
-	tree, _, err := committer.Commit([]Group{{Base: basePolys}}, WithDomainCache(&cache))
+	pcs := NewPCS(2, DefaultLeafHasher, DefaultNodeHasher)
+	committed, err := pcs.Commit([]Group{{Base: basePolys}}, WithDomainCache(&cache))
 	if err != nil {
 		t.Fatal(err)
 	}
+	tree := committed.Tree
 	if got := tree.NumLeaves(); got != 4 {
 		t.Fatalf("NumLeaves = %d, want 4", got)
 	}
@@ -149,20 +153,20 @@ func TestRSCommitBatchLeafHasherMatchesScalarRoot(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			batchCommitter := NewRSCommit(4, 2, tt.lh, tt.nh)
-			batchTree, _, err := batchCommitter.Commit([]Group{{Base: basePolys, Ext: extPolys}})
+			batchPCS := NewPCS(2, tt.lh, tt.nh)
+			batchCommitted, err := batchPCS.Commit([]Group{{Base: basePolys, Ext: extPolys}})
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			scalarCommitter := NewRSCommit(4, 2, scalarOnlyLeafHasher{inner: tt.lh}, tt.nh)
-			scalarTree, _, err := scalarCommitter.Commit([]Group{{Base: basePolys, Ext: extPolys}})
+			scalarPCS := NewPCS(2, scalarOnlyLeafHasher{inner: tt.lh}, tt.nh)
+			scalarCommitted, err := scalarPCS.Commit([]Group{{Base: basePolys, Ext: extPolys}})
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if batchTree.Root() != scalarTree.Root() {
-				t.Fatalf("batched root differs from scalar root: got %v, want %v", batchTree.Root(), scalarTree.Root())
+			if batchCommitted.Tree.Root() != scalarCommitted.Tree.Root() {
+				t.Fatalf("batched root differs from scalar root: got %v, want %v", batchCommitted.Tree.Root(), scalarCommitted.Tree.Root())
 			}
 		})
 	}
@@ -232,11 +236,12 @@ func TestRSCommitEmptyRails(t *testing.T) {
 	basePolys := []poly.Polynomial{
 		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},
 	}
-	committer := NewRSCommit(4, 2, DefaultLeafHasher, DefaultNodeHasher)
-	baseTree, _, err := committer.Commit([]Group{{Base: basePolys}})
+	pcs := NewPCS(2, DefaultLeafHasher, DefaultNodeHasher)
+	baseCommitted, err := pcs.Commit([]Group{{Base: basePolys}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	baseTree := baseCommitted.Tree
 	if got := baseTree.ExtWidth(); got != 0 {
 		t.Fatalf("base-only tree ext rail width = %d, want 0", got)
 	}
@@ -249,10 +254,11 @@ func TestRSCommitEmptyRails(t *testing.T) {
 			extElement(13, 14, 15, 16),
 		},
 	}
-	extTree, _, err := committer.Commit([]Group{{Ext: extPolys}})
+	extCommitted, err := pcs.Commit([]Group{{Ext: extPolys}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	extTree := extCommitted.Tree
 	if got := extTree.BaseWidth(); got != 0 {
 		t.Fatalf("ext-only tree base rail width = %d, want 0", got)
 	}
@@ -290,14 +296,16 @@ func TestRSCommitMultiGroupOpenProof(t *testing.T) {
 	}
 
 	// rate=2 ⇒ encoded domains are 16 and 8, paired leaves at widths 8 and 4.
-	committer := NewRSCommit(8, 2, DefaultLeafHasher, DefaultNodeHasher)
-	tree, sources, err := committer.Commit([]Group{
+	pcs := NewPCS(2, DefaultLeafHasher, DefaultNodeHasher)
+	committed, err := pcs.Commit([]Group{
 		{Base: topBase, Ext: topExt},
 		{Base: smallBase},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	tree := committed.Tree
+	sources := committed.Sources
 
 	// Shape sanity.
 	shapes := tree.Groups()
@@ -350,7 +358,7 @@ func TestRSCommitMultiGroupOpenProof(t *testing.T) {
 		}
 
 		// Compute the top-group leaf hash that the verifier consumes.
-		baseLeaf, extLeaf := rawLeafFromPolys(committer, topBase, topExt, leafIdx)
+		baseLeaf, extLeaf := rawLeafFromPolys(2, topBase, topExt, leafIdx)
 		leaf := DefaultLeafHasher.HashLeaf(baseLeaf, extLeaf)
 
 		if !merkle.VerifyWithInjections(tree.Root(), proof, leaf, injectionWidths, DefaultNodeHasher) {
@@ -372,8 +380,8 @@ func TestRSCommitDuplicateGroupSize(t *testing.T) {
 	polys := []poly.Polynomial{
 		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},
 	}
-	committer := NewRSCommit(4, 2, DefaultLeafHasher, DefaultNodeHasher)
-	if _, _, err := committer.Commit([]Group{
+	pcs := NewPCS(2, DefaultLeafHasher, DefaultNodeHasher)
+	if _, err := pcs.Commit([]Group{
 		{Base: polys},
 		{Base: polys},
 	}); err == nil {
@@ -448,20 +456,31 @@ func extElement(a0, a1, b0, b1 uint64, b2 ...uint64) ext.E6 {
 	return e
 }
 
-func rawLeafFromPolys(committer RSCommit, basePolys []poly.Polynomial, extPolys []poly.ExtPolynomial, leafIdx int) ([]PairBase, []PairExt) {
+// rawLeafFromPolys re-encodes basePolys/extPolys at the given rate (same
+// blowup PCS uses) and reads the paired evaluations at position leafIdx.
+// It is a test-only mirror of what RSCommit / PCS.Commit does internally,
+// used to check Merkle openings against the legacy single-group leaf hash.
+func rawLeafFromPolys(rate uint64, basePolys []poly.Polynomial, extPolys []poly.ExtPolynomial, leafIdx int) ([]PairBase, []PairExt) {
 	var cache poly.DomainCache
-	halfN := int(committer.Encoder.Domain.Cardinality >> 1)
+	N := 0
+	if len(basePolys) > 0 {
+		N = len(basePolys[0])
+	} else if len(extPolys) > 0 {
+		N = len(extPolys[0])
+	}
+	encoder := reedsolomon.NewEncoder(rate*uint64(N), reedsolomon.WithCache(&cache))
+	halfN := int(encoder.Domain.Cardinality >> 1)
 
 	baseLeaf := make([]PairBase, len(basePolys))
 	for j, p := range basePolys {
-		encoded := committer.Encoder.Encode(p, cache.Get(uint64(len(p))))
+		encoded := encoder.Encode(p, cache.Get(uint64(len(p))))
 		baseLeaf[j][0].Set(&encoded[leafIdx])
 		baseLeaf[j][1].Set(&encoded[leafIdx+halfN])
 	}
 
 	extLeaf := make([]PairExt, len(extPolys))
 	for j, p := range extPolys {
-		encoded := committer.Encoder.EncodeExt(p, cache.Get(uint64(len(p))))
+		encoded := encoder.EncodeExt(p, cache.Get(uint64(len(p))))
 		extLeaf[j][0].Set(&encoded[leafIdx])
 		extLeaf[j][1].Set(&encoded[leafIdx+halfN])
 	}

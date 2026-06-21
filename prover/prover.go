@@ -374,14 +374,15 @@ func (pr *proverRuntime) commitTraceRound(roundIdx int, challengeName string) er
 	base := pr.layout.TraceBegin[roundIdx]
 	for i, N := range sizes {
 		group := polysByN[N]
-		committer := fri.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), pr.hashBackend.LeafHasher, pr.hashBackend.NodeHasher, &pr.domainCache)
-		tree, _, err := committer.Commit(
+		pcs := fri.NewPCS(uint64(constants.RATE), pr.hashBackend.LeafHasher, pr.hashBackend.NodeHasher)
+		committed, err := pcs.Commit(
 			[]fri.Group{{Base: group.base, Ext: group.ext}},
 			fri.WithDomainCache(&pr.domainCache),
 		)
 		if err != nil {
 			return err
 		}
+		tree := committed.Tree
 		treeIdx := base + i
 		pr.allTrees[treeIdx] = tree
 		pr.openingSources[treeIdx] = newCommitmentOpeningSource(group.base, group.ext, N)
@@ -596,14 +597,15 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	}
 	for i, N := range sizes {
 		group := chunksByN[N]
-		committer := fri.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), pr.hashBackend.LeafHasher, pr.hashBackend.NodeHasher, &pr.domainCache)
-		tree, _, err := committer.Commit(
+		pcs := fri.NewPCS(uint64(constants.RATE), pr.hashBackend.LeafHasher, pr.hashBackend.NodeHasher)
+		committed, err := pcs.Commit(
 			[]fri.Group{{Base: group.base, Ext: group.ext}},
 			fri.WithDomainCache(&pr.domainCache),
 		)
 		if err != nil {
 			return err
 		}
+		tree := committed.Tree
 		treeIdx := pr.layout.AIRBegin + i
 		pr.allTrees[treeIdx] = tree
 		pr.openingSources[treeIdx] = newCommitmentOpeningSource(group.base, group.ext, N)

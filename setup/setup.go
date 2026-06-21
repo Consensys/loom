@@ -107,6 +107,7 @@ func Setup(t trace.Trace, program board.Program, opts ...Option) (ProvingKey, Ve
 
 	trees := make([]fri.WMerkleTree, len(sizes))
 	var domainCache poly.DomainCache
+	pcs := fri.NewPCS(uint64(constants.RATE), hashBackend.LeafHasher, hashBackend.NodeHasher)
 	for i, N := range sizes {
 		refs := colsByN[N]
 		sort.Slice(refs, func(i, j int) bool { return refs[i].Name < refs[j].Name })
@@ -130,15 +131,14 @@ func Setup(t trace.Trace, program board.Program, opts ...Option) (ProvingKey, Ve
 				extPublic = append(extPublic, p)
 			}
 		}
-		committer := fri.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), hashBackend.LeafHasher, hashBackend.NodeHasher, &domainCache)
-		tree, _, err := committer.Commit(
+		committed, err := pcs.Commit(
 			[]fri.Group{{Base: basePublic, Ext: extPublic}},
 			fri.WithDomainCache(&domainCache),
 		)
 		if err != nil {
 			return ProvingKey{}, VerificationKey{}, err
 		}
-		trees[i] = tree
+		trees[i] = committed.Tree
 	}
 	pk := ProvingKey{HashBackendID: hashBackend.ID, Trace: setupTrace, Trees: trees}
 	return pk, pk.VerificationKey(), nil
