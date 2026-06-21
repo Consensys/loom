@@ -23,7 +23,6 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/field"
 
-	// "github.com/consensys/loom/internal/fri/commitment"
 	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/merkle"

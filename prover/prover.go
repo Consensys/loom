@@ -375,7 +375,7 @@ func (pr *proverRuntime) commitTraceRound(roundIdx int, challengeName string) er
 	for i, N := range sizes {
 		group := polysByN[N]
 		committer := fri.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), pr.hashBackend.LeafHasher, pr.hashBackend.NodeHasher, &pr.domainCache)
-		tree, err := committer.Commit(
+		tree, _, err := committer.Commit(
 			[]fri.Group{{Base: group.base, Ext: group.ext}},
 			fri.WithDomainCache(&pr.domainCache),
 		)
@@ -597,7 +597,7 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	for i, N := range sizes {
 		group := chunksByN[N]
 		committer := fri.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), pr.hashBackend.LeafHasher, pr.hashBackend.NodeHasher, &pr.domainCache)
-		tree, err := committer.Commit(
+		tree, _, err := committer.Commit(
 			[]fri.Group{{Base: group.base, Ext: group.ext}},
 			fri.WithDomainCache(&pr.domainCache),
 		)
@@ -1010,7 +1010,15 @@ func openWMerkleAt(tree fri.WMerkleTree, source commitmentOpeningSource, s int, 
 	if len(rawLeafExt) != tree.ExtWidth() {
 		return fri.WMerkleProof{}, fmt.Errorf("extension raw leaf width %d, tree expects %d", len(rawLeafExt), tree.ExtWidth())
 	}
-	return fri.WMerkleProof{RawLeafBase: rawLeafBase, RawLeafExt: rawLeafExt, Proof: pth}, nil
+	// Today every committed WMerkleTree carries a single Group; the top
+	// group's raw pairs go at InjectionRawLeaves[0] and Proof has no
+	// injection leaves. When multi-size Commit lands, additional RawLeaf
+	// entries (one per smaller Group) will be appended here in matching
+	// decreasing-size order.
+	return fri.WMerkleProof{
+		InjectionRawLeaves: []fri.RawLeaf{{RawLeafBase: rawLeafBase, RawLeafExt: rawLeafExt}},
+		Proof:              pth,
+	}, nil
 }
 
 // SampleEvaluations opens every committed polynomial at every FRI query

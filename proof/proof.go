@@ -18,7 +18,6 @@ import (
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/gnark-crypto/field/koalabear/extensions"
-	"github.com/consensys/loom/internal/commitment"
 	"github.com/consensys/loom/internal/fri"
 	"github.com/consensys/loom/internal/hash"
 )
@@ -50,7 +49,7 @@ type Proof struct {
 	// PointSamplings[q][i] is the opening at FRI query position q of the i-th
 	// committed tree in the FULL canonical order, INCLUDING setup at the front:
 	//   setup (decreasing N) → trace-round-0 (decreasing N) → … → trace-round-{r-1} → AIR (decreasing N).
-	PointSamplings [][]commitment.WMerkleProof
+	PointSamplings [][]fri.WMerkleProof
 }
 
 func NewProof() Proof {

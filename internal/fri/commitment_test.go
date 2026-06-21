@@ -38,7 +38,7 @@ func TestRSCommitDualRailProof(t *testing.T) {
 	}
 
 	committer := NewRSCommit(4, 2, DefaultLeafHasher, DefaultNodeHasher)
-	tree, err := committer.Commit([]Group{{Base: basePolys, Ext: extPolys}})
+	tree, _, err := committer.Commit([]Group{{Base: basePolys, Ext: extPolys}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestWMerkleTreeOpenProof(t *testing.T) {
 	}
 
 	committer := NewRSCommit(4, 2, DefaultLeafHasher, DefaultNodeHasher)
-	tree, err := committer.Commit([]Group{{Base: basePolys, Ext: extPolys}})
+	tree, _, err := committer.Commit([]Group{{Base: basePolys, Ext: extPolys}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestRSCommitWithDomainCache(t *testing.T) {
 
 	var cache poly.DomainCache
 	committer := NewRSCommitWithDomainCache(4, 2, DefaultLeafHasher, DefaultNodeHasher, &cache)
-	tree, err := committer.Commit([]Group{{Base: basePolys}}, WithDomainCache(&cache))
+	tree, _, err := committer.Commit([]Group{{Base: basePolys}}, WithDomainCache(&cache))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,13 +150,13 @@ func TestRSCommitBatchLeafHasherMatchesScalarRoot(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			batchCommitter := NewRSCommit(4, 2, tt.lh, tt.nh)
-			batchTree, err := batchCommitter.Commit([]Group{{Base: basePolys, Ext: extPolys}})
+			batchTree, _, err := batchCommitter.Commit([]Group{{Base: basePolys, Ext: extPolys}})
 			if err != nil {
 				t.Fatal(err)
 			}
 
 			scalarCommitter := NewRSCommit(4, 2, scalarOnlyLeafHasher{inner: tt.lh}, tt.nh)
-			scalarTree, err := scalarCommitter.Commit([]Group{{Base: basePolys, Ext: extPolys}})
+			scalarTree, _, err := scalarCommitter.Commit([]Group{{Base: basePolys, Ext: extPolys}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -233,7 +233,7 @@ func TestRSCommitEmptyRails(t *testing.T) {
 		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},
 	}
 	committer := NewRSCommit(4, 2, DefaultLeafHasher, DefaultNodeHasher)
-	baseTree, err := committer.Commit([]Group{{Base: basePolys}})
+	baseTree, _, err := committer.Commit([]Group{{Base: basePolys}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestRSCommitEmptyRails(t *testing.T) {
 			extElement(13, 14, 15, 16),
 		},
 	}
-	extTree, err := committer.Commit([]Group{{Ext: extPolys}})
+	extTree, _, err := committer.Commit([]Group{{Ext: extPolys}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestRSCommitMultiGroupOpenProof(t *testing.T) {
 
 	// rate=2 ⇒ encoded domains are 16 and 8, paired leaves at widths 8 and 4.
 	committer := NewRSCommit(8, 2, DefaultLeafHasher, DefaultNodeHasher)
-	tree, err := committer.Commit([]Group{
+	tree, sources, err := committer.Commit([]Group{
 		{Base: topBase, Ext: topExt},
 		{Base: smallBase},
 	})
@@ -315,6 +315,24 @@ func TestRSCommitMultiGroupOpenProof(t *testing.T) {
 	}
 	if widths := tree.InjectionWidths(); len(widths) != 1 || widths[0] != 4 {
 		t.Fatalf("InjectionWidths = %v, want [4]", widths)
+	}
+
+	// Commit's returned LeafSources must be in decreasing-size order — same
+	// order as Groups() — and each source's width/PairOffset must match the
+	// corresponding GroupShape.
+	if len(sources) != 2 {
+		t.Fatalf("len(sources) = %d, want 2", len(sources))
+	}
+	for k, src := range sources {
+		if got, want := len(src.Base), shapes[k].BaseWidth; got != want {
+			t.Fatalf("sources[%d].Base width = %d, want %d", k, got, want)
+		}
+		if got, want := len(src.Ext), shapes[k].ExtWidth; got != want {
+			t.Fatalf("sources[%d].Ext width = %d, want %d", k, got, want)
+		}
+		if got, want := src.PairOffset, shapes[k].PairedLeaves; got != want {
+			t.Fatalf("sources[%d].PairOffset = %d, want %d", k, got, want)
+		}
 	}
 
 	injectionWidths := tree.InjectionWidths()
@@ -355,7 +373,7 @@ func TestRSCommitDuplicateGroupSize(t *testing.T) {
 		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},
 	}
 	committer := NewRSCommit(4, 2, DefaultLeafHasher, DefaultNodeHasher)
-	if _, err := committer.Commit([]Group{
+	if _, _, err := committer.Commit([]Group{
 		{Base: polys},
 		{Base: polys},
 	}); err == nil {

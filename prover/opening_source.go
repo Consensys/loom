@@ -19,8 +19,8 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
-	"github.com/consensys/loom/internal/fri/commitment"
 	"github.com/consensys/loom/internal/constants"
+	"github.com/consensys/loom/internal/fri"
 	"github.com/consensys/loom/internal/poly"
 )
 
@@ -56,7 +56,7 @@ func (s *commitmentOpeningSource) setExt(polyIdx int, p poly.ExtPolynomial) {
 	s.ext[polyIdx] = p
 }
 
-func (s commitmentOpeningSource) rawLeaf(pos int, leafCount int, domainCache *poly.DomainCache) ([]commitment.PairBase, []commitment.PairExt, error) {
+func (s commitmentOpeningSource) rawLeaf(pos int, leafCount int, domainCache *poly.DomainCache) ([]fri.PairBase, []fri.PairExt, error) {
 	if s.fullDomainSize == 0 {
 		return nil, nil, fmt.Errorf("missing opening source")
 	}
@@ -66,7 +66,7 @@ func (s commitmentOpeningSource) rawLeaf(pos int, leafCount int, domainCache *po
 	fullDomain := domainCache.Get(uint64(s.fullDomainSize))
 	weightCache := make(map[weightKey][]koalabear.Element)
 
-	baseLeaf := make([]commitment.PairBase, len(s.base))
+	baseLeaf := make([]fri.PairBase, len(s.base))
 	for i, p := range s.base {
 		if len(p) == 0 {
 			return nil, nil, fmt.Errorf("missing base polynomial at index %d", i)
@@ -75,7 +75,7 @@ func (s commitmentOpeningSource) rawLeaf(pos int, leafCount int, domainCache *po
 		baseLeaf[i][1] = evalBaseOnRoot(p, pos+leafCount, fullDomain, domainCache, weightCache)
 	}
 
-	extLeaf := make([]commitment.PairExt, len(s.ext))
+	extLeaf := make([]fri.PairExt, len(s.ext))
 	for i, p := range s.ext {
 		if len(p) == 0 {
 			return nil, nil, fmt.Errorf("missing extension polynomial at index %d", i)

@@ -21,7 +21,6 @@ import (
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/fri"
-	"github.com/consensys/loom/internal/fri/commitment"
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/merkle"
 )
@@ -74,7 +73,7 @@ func testParams(t *testing.T, N, D, queries int) fri.Params {
 
 func testParamsWithOptions(t *testing.T, N, D, queries int, opts ...fri.Option) fri.Params {
 	t.Helper()
-	p, err := fri.NewParams(N, D, queries, commitment.DefaultLeafHasher, commitment.DefaultNodeHasher, opts...)
+	p, err := fri.NewParams(N, D, queries, fri.DefaultLeafHasher, fri.DefaultNodeHasher, opts...)
 	if err != nil {
 		t.Fatalf("NewParams(%d,%d,%d): %v", N, D, queries, err)
 	}

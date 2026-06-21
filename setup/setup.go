@@ -131,7 +131,7 @@ func Setup(t trace.Trace, program board.Program, opts ...Option) (ProvingKey, Ve
 			}
 		}
 		committer := fri.NewRSCommitWithDomainCache(uint64(N), uint64(constants.RATE), hashBackend.LeafHasher, hashBackend.NodeHasher, &domainCache)
-		tree, err := committer.Commit(
+		tree, _, err := committer.Commit(
 			[]fri.Group{{Base: basePublic, Ext: extPublic}},
 			fri.WithDomainCache(&domainCache),
 		)

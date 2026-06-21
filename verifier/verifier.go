@@ -401,9 +401,15 @@ func (vr *verifierRunTime) checkFRIProof() error {
 }
 
 // verifyWMerkleProof checks wp opens to its leaf data under root, using the
-// same base-then-ext paired-leaf hashing as RSCommit.Commit.
+// same base-then-ext paired-leaf hashing as RSCommit.Commit. The top group's
+// raw pairs live at InjectionRawLeaves[0]; the digest computed from them is
+// the merkle leaf authenticated by wp.Proof's standard path.
 func (vr *verifierRunTime) verifyWMerkleProof(root hash.Digest, wp fri.WMerkleProof) bool {
-	leaf := vr.hashBackend.LeafHasher.HashLeaf(wp.RawLeafBase, wp.RawLeafExt)
+	if len(wp.InjectionRawLeaves) == 0 {
+		return false
+	}
+	top := wp.InjectionRawLeaves[0]
+	leaf := vr.hashBackend.LeafHasher.HashLeaf(top.RawLeafBase, top.RawLeafExt)
 	return merkle.Verify(root, wp.Proof, leaf, vr.hashBackend.NodeHasher)
 }
 
@@ -451,19 +457,27 @@ func (vr *verifierRunTime) checkFRIBridge() error {
 			return ext.E6{}, ext.E6{}, fmt.Errorf("checkFRIBridge: tree index %d out of range", slot.TreeIdx)
 		}
 		wp := vr.proof.PointSamplings[q][slot.TreeIdx]
+		// Single-group today: the slot's PolyIdx is interpreted against the
+		// top Group at InjectionRawLeaves[0]. When multi-size Commit lands,
+		// Slot will need to identify the group index too, and this lookup
+		// will pick the matching RawLeaf.
+		if len(wp.InjectionRawLeaves) == 0 {
+			return ext.E6{}, ext.E6{}, fmt.Errorf("checkFRIBridge: WMerkleProof at tree %d has no InjectionRawLeaves", slot.TreeIdx)
+		}
+		raw := wp.InjectionRawLeaves[0]
 		if slot.Field == field.Ext {
 			rawIdx := slot.PolyIdx
-			if rawIdx >= len(wp.RawLeafExt) {
-				return ext.E6{}, ext.E6{}, fmt.Errorf("checkFRIBridge: ext raw leaf index %d out of range for slot %+v (have %d)", rawIdx, slot, len(wp.RawLeafExt))
+			if rawIdx >= len(raw.RawLeafExt) {
+				return ext.E6{}, ext.E6{}, fmt.Errorf("checkFRIBridge: ext raw leaf index %d out of range for slot %+v (have %d)", rawIdx, slot, len(raw.RawLeafExt))
 			}
-			return wp.RawLeafExt[rawIdx][0], wp.RawLeafExt[rawIdx][1], nil
+			return raw.RawLeafExt[rawIdx][0], raw.RawLeafExt[rawIdx][1], nil
 		}
 
 		rawIdx := slot.PolyIdx
-		if rawIdx >= len(wp.RawLeafBase) {
-			return ext.E6{}, ext.E6{}, fmt.Errorf("checkFRIBridge: base raw leaf index %d out of range for slot %+v (have %d)", rawIdx, slot, len(wp.RawLeafBase))
+		if rawIdx >= len(raw.RawLeafBase) {
+			return ext.E6{}, ext.E6{}, fmt.Errorf("checkFRIBridge: base raw leaf index %d out of range for slot %+v (have %d)", rawIdx, slot, len(raw.RawLeafBase))
 		}
-		return liftBaseToExt(wp.RawLeafBase[rawIdx][0]), liftBaseToExt(wp.RawLeafBase[rawIdx][1]), nil
+		return liftBaseToExt(raw.RawLeafBase[rawIdx][0]), liftBaseToExt(raw.RawLeafBase[rawIdx][1]), nil
 	}
 
 	for q := 0; q < NQ; q++ {

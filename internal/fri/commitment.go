@@ -113,13 +113,37 @@ type WMerkleTree struct {
 	groups []GroupShape
 }
 
-// PointSampling contains the pair evaluation {f(w^i),f(-w^i)} for batches of
-// base and extension polynomials at a given point w^i, where i is
-// Proof.LeafIdx.
-type WMerkleProof struct {
+// RawLeaf holds the pair evaluations {f(ω^i), f(−ω^i)} for one Group of the
+// committed tree: one PairBase per base-rail polynomial and one PairExt per
+// extension-rail polynomial, in declaration order. Hashing a RawLeaf with
+// LeafHasher.HashLeaf reproduces the digest that lives at the matching
+// position in the Merkle tree (either the leaf-level digest for the top
+// group or one of merkle.Proof.InjectionLeaves for the smaller groups).
+type RawLeaf struct {
 	RawLeafBase []PairBase
 	RawLeafExt  []PairExt
-	Proof       merkle.Proof
+}
+
+// WMerkleProof is an opening proof for a WMerkleTree at one query position.
+// InjectionRawLeaves carries the raw pair evaluations needed to reconstruct
+// the digests that Proof authenticates: one RawLeaf per Group of the
+// committed tree, in the same decreasing-size order used by
+// WMerkleTree.Groups().
+//
+// Specifically:
+//   - InjectionRawLeaves[0]    is the top group; its HashLeaf digest is the
+//     leaf at position Proof.LeafIdx that starts the standard Merkle path
+//     encoded in Proof.Siblings.
+//   - InjectionRawLeaves[k>0] corresponds to the (k-1)-th smaller group;
+//     its HashLeaf digest must match Proof.InjectionLeaves[k-1].
+//
+// In the current single-group call path the slice has length 1 and Proof
+// has no InjectionLeaves. When multi-size Commit calls are wired through,
+// each smaller group contributes one additional RawLeaf and one matching
+// digest in Proof.InjectionLeaves.
+type WMerkleProof struct {
+	InjectionRawLeaves []RawLeaf
+	Proof              merkle.Proof
 }
 
 func (wt WMerkleTree) Root() hash.Digest {
@@ -272,8 +296,11 @@ func (Poseidon2NodeHasher) HashNodes(dst, left, right []hash.Digest) {
 	copy(dst, out[:])
 }
 
+// Batch list of Group, one Group = one list of polynomials of the same size
+type Batch = []Group
+
 // Commit commits to one or more Groups of polynomials into a single Merkle
-// tree. Each Group must hold polynomials sharing a single power-of-two
+// tree. Each Group in batch must hold polynomials sharing a single power-of-two
 // length; group sizes must be pairwise distinct. The largest group's paired
 // leaf hashes form the actual tree leaves; each smaller group is folded in
 // as a merkle.LevelInjection at the level whose width matches its number of
@@ -284,11 +311,19 @@ func (Poseidon2NodeHasher) HashNodes(dst, left, right []hash.Digest) {
 // declaration order. The leaf-hash layout is unchanged from the legacy
 // single-group API; multi-group calls simply add injection levels above the
 // top group.
-func (rs *RSCommit) Commit(groups []Group, opts ...CommitOption) (WMerkleTree, error) {
+//
+// In addition to the committed tree, Commit returns the per-group LeafSource
+// in the same decreasing-size order used internally to build the tree (i.e.
+// sources[0] is the top group whose RS-encoded paired evaluations form the
+// Merkle leaves; sources[k>0] corresponds to a smaller group folded in as a
+// LevelInjection at the level whose width matches that group's number of
+// paired leaves). Callers needing to reopen committed values at FRI query
+// positions can read RS-encoded evaluations directly from the LeafSource.
+func (rs *RSCommit) Commit(batch Batch, opts ...CommitOption) (WMerkleTree, []LeafSource, error) {
 	var config CommitConfig
 	for _, opt := range opts {
 		if err := opt(&config); err != nil {
-			return WMerkleTree{}, err
+			return WMerkleTree{}, nil, err
 		}
 	}
 	domainCache := config.DomainCache
@@ -296,36 +331,39 @@ func (rs *RSCommit) Commit(groups []Group, opts ...CommitOption) (WMerkleTree, e
 		domainCache = &poly.DomainCache{}
 	}
 
-	if len(groups) == 0 {
-		return WMerkleTree{}, fmt.Errorf("commitment: Commit requires at least one Group")
+	if len(batch) == 0 {
+		return WMerkleTree{}, nil, fmt.Errorf("commitment: Commit requires at least one Group")
 	}
 
 	// 1- validate every group and sort by descending native size.
-	sizes := make([]int, len(groups))
-	for k, g := range groups {
+	sizes := make([]int, len(batch))
+	for k, g := range batch {
 		N, err := groupNativeSize(g)
 		if err != nil {
-			return WMerkleTree{}, fmt.Errorf("commitment: Group[%d]: %w", k, err)
+			return WMerkleTree{}, nil, fmt.Errorf("commitment: Group[%d]: %w", k, err)
 		}
 		sizes[k] = N
 	}
-	order := make([]int, len(groups))
+	order := make([]int, len(batch))
 	for i := range order {
 		order[i] = i
 	}
 	sort.SliceStable(order, func(a, b int) bool { return sizes[order[a]] > sizes[order[b]] })
 	for i := 1; i < len(order); i++ {
 		if sizes[order[i]] == sizes[order[i-1]] {
-			return WMerkleTree{}, fmt.Errorf("commitment: duplicate Group size %d (groups must have distinct native sizes)", sizes[order[i]])
+			return WMerkleTree{}, nil, fmt.Errorf("commitment: duplicate Group size %d (groups must have distinct native sizes)", sizes[order[i]])
 		}
 	}
 
 	// 2- encode each group's polynomials on its RS-encoded domain and hash
 	//    the paired leaves into one digest slice per group. The largest
 	//    group's slice is the tree's leaf layer; the rest become injections.
-	perGroupLeaves := make([][]hash.Digest, len(groups))
+	//    The per-group LeafSource is retained and returned to the caller in
+	//    the same `order` (decreasing native size) used here.
+	perGroupLeaves := make([][]hash.Digest, len(batch))
+	sources := make([]LeafSource, len(batch))
 	for k, gi := range order {
-		g := groups[gi]
+		g := batch[gi]
 		N := sizes[gi]
 		encoder := rs.encoderForSize(uint64(N), domainCache)
 
@@ -360,14 +398,15 @@ func (rs *RSCommit) Commit(groups []Group, opts ...CommitOption) (WMerkleTree, e
 		})
 
 		halfN := int(encoder.Domain.Cardinality >> 1)
-		leaves := make([]hash.Digest, halfN)
 		src := LeafSource{
 			Base:       encodedBase,
 			Ext:        encodedExt,
 			PairOffset: halfN,
 		}
+		leaves := make([]hash.Digest, halfN)
 		HashLeavesParallel(rs.LeafHasher, leaves, src)
 		perGroupLeaves[k] = leaves
+		sources[k] = src
 	}
 
 	// 3- build the underlying merkle tree. Smaller groups become injections
@@ -386,10 +425,10 @@ func (rs *RSCommit) Commit(groups []Group, opts ...CommitOption) (WMerkleTree, e
 	}
 	tree, err := merkle.NewWithInjections(len(topLeaves), rs.NodeHasher, injections)
 	if err != nil {
-		return WMerkleTree{}, err
+		return WMerkleTree{}, nil, err
 	}
 	if err := tree.Build(topLeaves); err != nil {
-		return WMerkleTree{}, err
+		return WMerkleTree{}, nil, err
 	}
 
 	// 4- record the per-group shape in decreasing-size order so callers can
@@ -398,15 +437,15 @@ func (rs *RSCommit) Commit(groups []Group, opts ...CommitOption) (WMerkleTree, e
 	for k, gi := range order {
 		shapes[k] = GroupShape{
 			PairedLeaves: len(perGroupLeaves[k]),
-			BaseWidth:    len(groups[gi].Base),
-			ExtWidth:     len(groups[gi].Ext),
+			BaseWidth:    len(batch[gi].Base),
+			ExtWidth:     len(batch[gi].Ext),
 		}
 	}
 
 	return WMerkleTree{
 		Tree:   tree,
 		groups: shapes,
-	}, nil
+	}, sources, nil
 }
 
 // groupNativeSize validates that every polynomial in g has the same
