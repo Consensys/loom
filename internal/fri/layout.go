@@ -92,7 +92,6 @@ func canonicalLayout(batches []Batch, shifts []BatchShifts) (layout, error) {
 		return nil, fmt.Errorf("fri: shifts has %d entries, batches has %d", len(shifts), len(batches))
 	}
 
-	// 1- Validate shape alignment + per-poly shift schedules; record per-group sizes.
 	sizes := make([][]int, len(batches))
 	for b, batch := range batches {
 		if len(shifts[b]) != len(batch) {
@@ -112,18 +111,89 @@ func canonicalLayout(batches []Batch, shifts []BatchShifts) (layout, error) {
 			if len(gShifts.Ext) != len(group.Ext) {
 				return nil, fmt.Errorf("fri: shifts[%d][%d].Ext has %d entries, batches[%d][%d].Ext has %d", b, g, len(gShifts.Ext), b, g, len(group.Ext))
 			}
-			if err := validatePolyShifts(b, g, "Base", gShifts.Base); err != nil {
+		}
+	}
+	return canonicalLayoutFromSizes(sizes, shifts)
+}
+
+// canonicalLayoutFromShape is the verifier-side counterpart of
+// canonicalLayout: the verifier does not hold the polynomials themselves
+// (it only sees roots + group shapes), so the per-group native size is
+// derived from PairedLeaves = rate * N / 2 instead of from poly lengths.
+// The per-rail widths are validated against shapes.BaseWidth / ExtWidth
+// instead of len(group.Base) / len(group.Ext).
+//
+// rate must be a positive power of two -- the same one PCS was built
+// with. Prover and verifier agree on it via NewPCSWithParams.
+func canonicalLayoutFromShape(shapes [][]GroupShape, shifts []BatchShifts, rate uint64) (layout, error) {
+	if rate == 0 || rate&(rate-1) != 0 {
+		return nil, fmt.Errorf("fri: canonicalLayoutFromShape: rate %d must be a positive power of two", rate)
+	}
+	if len(shifts) != len(shapes) {
+		return nil, fmt.Errorf("fri: canonicalLayoutFromShape: shifts has %d entries, shapes has %d", len(shifts), len(shapes))
+	}
+
+	sizes := make([][]int, len(shapes))
+	for b, batchShapes := range shapes {
+		if len(shifts[b]) != len(batchShapes) {
+			return nil, fmt.Errorf("fri: canonicalLayoutFromShape: shifts[%d] has %d Groups, shapes[%d] has %d", b, len(shifts[b]), b, len(batchShapes))
+		}
+		sizes[b] = make([]int, len(batchShapes))
+		for g, gs := range batchShapes {
+			if gs.PairedLeaves <= 0 {
+				return nil, fmt.Errorf("fri: canonicalLayoutFromShape: shapes[%d][%d].PairedLeaves=%d must be positive", b, g, gs.PairedLeaves)
+			}
+			twoPL := uint64(gs.PairedLeaves) * 2
+			if twoPL%rate != 0 {
+				return nil, fmt.Errorf("fri: canonicalLayoutFromShape: shapes[%d][%d].PairedLeaves=%d not a multiple of rate/2", b, g, gs.PairedLeaves)
+			}
+			N := int(twoPL / rate)
+			if N <= 0 || N&(N-1) != 0 {
+				return nil, fmt.Errorf("fri: canonicalLayoutFromShape: shapes[%d][%d] yields N=%d (not a positive power of two)", b, g, N)
+			}
+			sizes[b][g] = N
+			gShifts := shifts[b][g]
+			if len(gShifts.Base) != gs.BaseWidth {
+				return nil, fmt.Errorf("fri: canonicalLayoutFromShape: shifts[%d][%d].Base has %d entries, shapes[%d][%d].BaseWidth=%d", b, g, len(gShifts.Base), b, g, gs.BaseWidth)
+			}
+			if len(gShifts.Ext) != gs.ExtWidth {
+				return nil, fmt.Errorf("fri: canonicalLayoutFromShape: shifts[%d][%d].Ext has %d entries, shapes[%d][%d].ExtWidth=%d", b, g, len(gShifts.Ext), b, g, gs.ExtWidth)
+			}
+		}
+	}
+	return canonicalLayoutFromSizes(sizes, shifts)
+}
+
+// canonicalLayoutFromSizes is the shared enumeration backend. It assumes
+// the caller has already validated cross-shape alignment (lengths of
+// shifts vs. its own source of widths). canonicalLayoutFromSizes
+// additionally validates per-poly shift lists (non-empty, no duplicates)
+// and per-batch distinct sizes, then enumerates entries in canonical
+// order: size desc -> shift asc -> batch decl order -> base-then-ext ->
+// per-rail decl order.
+func canonicalLayoutFromSizes(sizes [][]int, shifts []BatchShifts) (layout, error) {
+	if len(shifts) != len(sizes) {
+		return nil, fmt.Errorf("fri: canonicalLayoutFromSizes: shifts has %d entries, sizes has %d", len(shifts), len(sizes))
+	}
+	for b, batchSizes := range sizes {
+		if len(shifts[b]) != len(batchSizes) {
+			return nil, fmt.Errorf("fri: canonicalLayoutFromSizes: shifts[%d] has %d Groups, sizes[%d] has %d", b, len(shifts[b]), b, len(batchSizes))
+		}
+		seen := make(map[int]struct{}, len(batchSizes))
+		for g, N := range batchSizes {
+			if _, dup := seen[N]; dup {
+				return nil, fmt.Errorf("fri: canonicalLayoutFromSizes: batch %d has duplicate Group size %d at index %d", b, N, g)
+			}
+			seen[N] = struct{}{}
+			if err := validatePolyShifts(b, g, "Base", shifts[b][g].Base); err != nil {
 				return nil, err
 			}
-			if err := validatePolyShifts(b, g, "Ext", gShifts.Ext); err != nil {
+			if err := validatePolyShifts(b, g, "Ext", shifts[b][g].Ext); err != nil {
 				return nil, err
 			}
 		}
 	}
 
-	// 2- Helper: locate the unique size-N Group inside batch b (-1 if absent).
-	//    PCS.Commit guarantees distinct sizes per batch, so at most one g
-	//    per (b, N).
 	groupOfSize := func(b, N int) int {
 		for g, n := range sizes[b] {
 			if n == N {
@@ -133,7 +203,6 @@ func canonicalLayout(batches []Batch, shifts []BatchShifts) (layout, error) {
 		return -1
 	}
 
-	// 3- Collect distinct sizes across all batches; sort descending.
 	sizeSet := make(map[int]struct{})
 	for _, sb := range sizes {
 		for _, n := range sb {
@@ -146,13 +215,10 @@ func canonicalLayout(batches []Batch, shifts []BatchShifts) (layout, error) {
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(sizesDesc)))
 
-	// 4- For each size, collect the union of shifts that appear (across all
-	//    batches contributing a size-N group), sort ascending, then
-	//    enumerate entries in the canonical order.
 	out := make(layout, 0, len(sizesDesc))
 	for _, N := range sizesDesc {
 		shiftSet := make(map[int]struct{})
-		for b := range batches {
+		for b := range sizes {
 			g := groupOfSize(b, N)
 			if g == -1 {
 				continue
@@ -177,7 +243,7 @@ func canonicalLayout(batches []Batch, shifts []BatchShifts) (layout, error) {
 		bundles := make([]shiftBundle, 0, len(shiftsAsc))
 		for _, s := range shiftsAsc {
 			var entries []deepEntry
-			for b := range batches {
+			for b := range sizes {
 				g := groupOfSize(b, N)
 				if g == -1 {
 					continue
