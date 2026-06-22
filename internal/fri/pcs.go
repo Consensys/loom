@@ -24,30 +24,49 @@ import (
 // multi-degree FRI. It is the entry point intended to subsume direct use of
 // RSCommit and the prover-side DEEP/FRI machinery: callers Commit each
 // independent batch of polynomials, bind the returned root to their
-// transcript at the appropriate Fiat-Shamir round, and (in a later PR)
-// hand the whole list to Open at zeta to produce one OpeningProof.
+// transcript at the appropriate Fiat-Shamir round, and hand the whole list
+// to Open at zeta to produce one OpeningProof.
 //
 // PCS keeps no global state across Commit calls -- the per-batch Committed
 // blob carries the Merkle tree and the per-Group RS-encoded LeafSources
-// that Open will later consume.
+// that Open consumes.
 //
-// The current PR exposes only Commit. Later PRs will extend PCS with
-// multi-degree FRI parameters needed by Open / Verify.
+// Open requires multi-degree FRI parameters; build the PCS via
+// NewPCSWithParams when Open will be called. The minimal NewPCS
+// constructor is enough for Commit-only callers (e.g. setup-time fixed
+// column commitments).
 type PCS struct {
 	leafHasher LeafHasher
 	nodeHasher NodeHasher
 	rate       uint64
+
+	// params carries the multi-degree FRI configuration consumed by Open
+	// (and, in a later PR, Verify). nil when the PCS was constructed via
+	// NewPCS for Commit-only use; Open errors out in that case.
+	params *Params
 }
 
 // NewPCS constructs a PCS bound to a Reed-Solomon blowup factor (rate) and
-// the leaf/node hashers used at every Merkle tree level. Open / Verify
-// will be added in subsequent PRs and will need additional FRI parameters
-// supplied at that time.
+// the leaf/node hashers used at every Merkle tree level. Suitable for
+// Commit-only callers. Open requires Params -- use NewPCSWithParams when
+// the PCS will be opened.
 func NewPCS(rate uint64, leafHasher LeafHasher, nodeHasher NodeHasher) PCS {
 	return PCS{
 		leafHasher: leafHasher,
 		nodeHasher: nodeHasher,
 		rate:       rate,
+	}
+}
+
+// NewPCSWithParams constructs a PCS bound to the multi-degree FRI
+// parameters (carrying the leaf/node hashers and the rate = params.N /
+// params.D). The returned PCS supports both Commit and Open.
+func NewPCSWithParams(params Params) PCS {
+	return PCS{
+		leafHasher: params.LeafHasher,
+		nodeHasher: params.NodeHasher,
+		rate:       uint64(params.N / params.D),
+		params:     &params,
 	}
 }
 
