@@ -14,10 +14,6 @@
 package proof
 
 import (
-	"fmt"
-
-	"github.com/consensys/gnark-crypto/field/koalabear"
-	"github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/internal/fri"
 	"github.com/consensys/loom/internal/hash"
 )
@@ -27,11 +23,17 @@ type Commitment struct {
 	Columns []string
 }
 
+// Proof is the prover's output for one statement. Setup roots and per-tree
+// shapes are not stored here -- they live in the verifier's
+// VerificationKey / Statement. Likewise, claimed-value translation back
+// into a canonical-key (leaf.String()) map is the verifier's local
+// responsibility; the proof itself carries values inside Opening only.
 type Proof struct {
 	HashBackendID string
 
-	ValuesAtZeta  map[string]extensions.E6 // map string -> evaluation of the column whose String() is the key at zeta
-	ExposedValues ExposedValues            // map column name -> values exposed to the verifier
+	// ExposedValues are the prover-produced public values reconstructed by
+	// the verifier at zeta (e.g. accumulator last entries).
+	ExposedValues ExposedValues
 
 	// Commitments holds the Merkle roots of every WMerkleTree the prover
 	// commits during the protocol, in canonical order:
@@ -39,67 +41,15 @@ type Proof struct {
 	// Setup roots are NOT stored here; they live in the verifier's VerificationKey.
 	Commitments []hash.Digest
 
-	DeepQuotientFriProof fri.Proof
-
-	// DeepQuotientCommitment[l] holds the Merkle root of the FRI level-l
-	// deep-quotient polynomial (level 0 = largest size). Same ordering as
-	// the levels passed to fri.Prove.
-	DeepQuotientCommitment []hash.Digest
-
-	// PointSamplings[q][i] is the opening at FRI query position q of the i-th
-	// committed tree in the FULL canonical order, INCLUDING setup at the front:
-	//   setup (decreasing N) → trace-round-0 (decreasing N) → … → trace-round-{r-1} → AIR (decreasing N).
-	PointSamplings [][]fri.WMerkleProof
+	// Opening is the multi-degree FRI opening proof for the canonical
+	// batch order (setup → trace rounds → AIR). It bundles the claimed
+	// values at zeta + shifts, the per-size DEEP-quotient roots, the
+	// multi-degree FRI proof, and the per-query Merkle openings.
+	Opening fri.OpeningProof
 }
 
 func NewProof() Proof {
 	var res Proof
-	res.ValuesAtZeta = make(map[string]extensions.E6)
 	res.ExposedValues = make(map[string]ExposedValue)
 	return res
-}
-
-func (p *Proof) SetValueAtZetaBase(name string, v koalabear.Element) {
-	p.ValuesAtZeta[name] = hash.LiftBaseToExt(v)
-}
-
-func (p *Proof) SetValueAtZetaExt(name string, v extensions.E6) {
-	p.ValuesAtZeta[name] = v
-}
-
-func (p Proof) ValueAtZetaBase(name string) (koalabear.Element, bool, error) {
-	v, ok := p.ValuesAtZeta[name]
-	if !ok {
-		return koalabear.Element{}, false, nil
-	}
-	base, ok := hash.BaseFromExt(v)
-	if !ok {
-		return koalabear.Element{}, true, fmt.Errorf("ValuesAtZeta[%q] is not a base-field value", name)
-	}
-	return base, true, nil
-}
-
-func (p Proof) ValueAtZetaExt(name string) (extensions.E6, bool) {
-	v, ok := p.ValuesAtZeta[name]
-	return v, ok
-}
-
-func (p Proof) BaseValuesAtZeta() (map[string]koalabear.Element, error) {
-	values := make(map[string]koalabear.Element, len(p.ValuesAtZeta))
-	for name := range p.ValuesAtZeta {
-		v, _, err := p.ValueAtZetaBase(name)
-		if err != nil {
-			return nil, err
-		}
-		values[name] = v
-	}
-	return values, nil
-}
-
-func (p Proof) ExtValuesAtZeta() map[string]extensions.E6 {
-	values := make(map[string]extensions.E6, len(p.ValuesAtZeta))
-	for name, v := range p.ValuesAtZeta {
-		values[name] = v
-	}
-	return values
 }

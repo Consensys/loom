@@ -48,6 +48,38 @@ func WithOpenDomainCache(cache *poly.DomainCache) OpenOption {
 	}
 }
 
+// ClaimedValuesOnly evaluates every polynomial in batches at every shift
+// listed in shifts and returns the per-batch BatchClaimedValues. No
+// transcript activity, no DEEP-quotient construction, no FRI. Suited to
+// SkipFRI-style smoke tests where the caller wants the AIR-check-side
+// values without paying for the PCS proof.
+//
+// The output shape mirrors shifts: a value per (batch, group, base/ext
+// rail, polyIdx, kth_shift) tuple, evaluated at zeta * omega_N^shift.
+// Identical content to the OpeningProof.ClaimedValues that pcs.Open
+// would have produced for the same inputs.
+func (pcs *PCS) ClaimedValuesOnly(
+	batches []Batch,
+	shifts []BatchShifts,
+	zeta ext.E6,
+	opts ...OpenOption,
+) ([]BatchClaimedValues, error) {
+	var config OpenConfig
+	for _, opt := range opts {
+		if err := opt(&config); err != nil {
+			return nil, err
+		}
+	}
+	domainCache := config.DomainCache
+	if domainCache == nil {
+		domainCache = &poly.DomainCache{}
+	}
+	if _, err := canonicalLayout(batches, shifts); err != nil {
+		return nil, err
+	}
+	return computeClaimedValues(batches, shifts, zeta, domainCache)
+}
+
 // Open produces an OpeningProof that every polynomial in batches
 // evaluates to the listed values at zeta and at the rotation shifts in
 // shifts. committed[b] must have been returned by Commit(batches[b], ...).

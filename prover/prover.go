@@ -15,7 +15,6 @@ package prover
 
 import (
 	"fmt"
-	"math/big"
 	"sort"
 	"sync"
 	"time"
@@ -25,7 +24,6 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/gnark-crypto/utils"
 	"github.com/consensys/loom/board"
-	"github.com/consensys/loom/expr"
 	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/constants"
 	"github.com/consensys/loom/internal/dag"
@@ -34,7 +32,6 @@ import (
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/parallel"
 	"github.com/consensys/loom/internal/poly"
-	"github.com/consensys/loom/internal/reedsolomon"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/public"
 	"github.com/consensys/loom/setup"
@@ -101,30 +98,29 @@ type proverRuntime struct {
 
 	// layout is the canonical commitment layout (built from program + setup
 	// at the start of every Prove call so program.SetSize changes are
-	// reflected). It defines the order of trees in `allTrees` and the
-	// column-name → Slot mapping consumed by SampleEvaluations.
+	// reflected). It defines the order of trees in `committed` and the
+	// column-name → Slot mapping used to assemble pcs.Open's inputs.
 	layout Layout
-	// allTrees[i] is the i-th committed WMerkleTree in the canonical order
-	// (setup → trace per round → AIR). Setup trees are copied from `setup`
-	// at construction; trace and AIR trees are filled in as commitments
-	// happen.
-	allTrees []fri.WMerkleTree
-	// openingSources[i] reconstructs raw leaves for allTrees[i] after FRI
-	// query positions are known.
-	openingSources []commitmentOpeningSource
+	// schedule is the per-tree (shifts, names, canonical-keys) bundle the
+	// prover hands to pcs.Open. Built deterministically from program/layout
+	// so prover and verifier produce identical schedules.
+	schedule CanonicalSchedule
+	// committed[i] is the per-batch fri.Committed for tree i in canonical
+	// order (setup → trace per round → AIR). Setup committeds are copied
+	// from provingKey.Setup at construction; trace and AIR slots get
+	// populated by commitTraceRound and ComputeAIRQuotients.
+	committed []fri.Committed
 
-	t              trace.Trace
-	airTrace       trace.Trace
-	publicInputs   public.Inputs
-	program        board.Program
-	zeta           ext.E6 // point of evaluation to check the AIR relation with SZ
-	alpha          ext.E6 // folding challenge for N-grouped polynomials, used to build the DEEP quotient
-	mu             *sync.Mutex
-	setup          setup.ProvingKey
-	queryPositions []int
-	fs             *fiatshamir.Transcript
-	domainCache    poly.DomainCache
-	hashBackend    fri.HashBackend
+	t            trace.Trace
+	airTrace     trace.Trace
+	publicInputs public.Inputs
+	program      board.Program
+	zeta         ext.E6 // point of evaluation to check the AIR relation with SZ
+	mu           *sync.Mutex
+	setup        setup.ProvingKey
+	fs           *fiatshamir.Transcript
+	domainCache  poly.DomainCache
+	hashBackend  fri.HashBackend
 }
 
 func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs public.Inputs, program board.Program, config Config) (proverRuntime, error) {
@@ -155,19 +151,20 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 	}
 	res.Proof.HashBackendID = hashBackend.ID
 
-	// Build the canonical commitment layout for this run.
-	res.layout = BuildLayout(program, len(provingKey.Trees))
+	// Build the canonical commitment layout + parallel shift schedule.
+	// Both prover and verifier construct identical schedules from the same
+	// program; the alpha_DEEP transcript binding depends on it.
+	res.layout = BuildLayout(program, len(provingKey.Setup))
+	res.schedule = BuildCanonicalSchedule(program, res.layout)
 
-	// allTrees holds setup trees up front; trace and AIR slots get filled as
-	// commitments happen. proof.Commitments stores ONLY the trace+AIR roots
-	// (setup roots come from the verifier's VerificationKey input, not the proof).
-	res.allTrees = make([]fri.WMerkleTree, res.layout.NumTrees)
-	res.openingSources = make([]commitmentOpeningSource, res.layout.NumTrees)
-	for i, tree := range provingKey.Trees {
-		res.allTrees[res.layout.SetupBegin+i] = tree
-	}
-	if err := res.initSetupOpeningSources(); err != nil {
-		return proverRuntime{}, err
+	// committed[i] is the i-th batch's full Committed in canonical order
+	// (setup → trace per round → AIR). Setup slots are filled now; the
+	// trace and AIR slots are populated by commitTraceRound and
+	// ComputeAIRQuotients. proof.Commitments stores ONLY the trace+AIR
+	// roots; setup roots come from the verifier's VerificationKey.
+	res.committed = make([]fri.Committed, res.layout.NumTrees)
+	for i, c := range provingKey.Setup {
+		res.committed[res.layout.SetupBegin+i] = c
 	}
 	res.Proof.Commitments = make([]hash.Digest, res.layout.NumTrees-res.layout.SetupEnd)
 
@@ -188,10 +185,10 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 		return res, err
 	}
 
-	res.queryPositions = make([]int, constants.NUM_QUERIES)
-
-	// initialize FS transcript and pre-register all challenges
-	// (challenge@loom_0..n-1, zeta, and alpha_DEEP)
+	// Initialize the FS transcript and pre-register the caller-side
+	// challenge names: per-round trace challenges and zeta. alpha_DEEP and
+	// the FRI-internal challenge names are registered by fri.PCS.Open at
+	// invocation time.
 	if config.Fs != nil {
 		res.fs = config.Fs
 	} else {
@@ -202,7 +199,6 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 		res.fs.NewChallenge(constants.CanonicalChallengeName(i))
 	}
 	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
-	res.fs.NewChallenge(constants.DEEP_ALPHA)
 
 	initialChallenge := constants.InitialChallengeName(numRounds)
 	if err := res.fs.Bind(initialChallenge, hash.StringToElements(constants.HASH_BACKEND_DOMAIN_TAG, hashBackend.ID)); err != nil {
@@ -211,8 +207,8 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 
 	// Bind every setup tree's root to the first challenge (decreasing-N order,
 	// set by Setup) + public inputs.
-	for _, tree := range provingKey.Trees {
-		root := tree.Root()
+	for _, c := range provingKey.Setup {
+		root := c.Tree.Root()
 		if err := res.fs.Bind(initialChallenge, root[:]); err != nil {
 			return res, err
 		}
@@ -268,40 +264,6 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 // pr.Proof.Commitments (which excludes the setup section).
 func (pr *proverRuntime) commitIdxOf(treeIdx int) int {
 	return treeIdx - pr.layout.SetupEnd
-}
-
-func (pr *proverRuntime) initSetupOpeningSources() error {
-	for _, ref := range pr.program.SetupColumns {
-		slot, ok := pr.layout.ColSlot[ref.Name]
-		if !ok {
-			continue
-		}
-		if slot.TreeIdx < pr.layout.SetupBegin || slot.TreeIdx >= pr.layout.SetupEnd {
-			return fmt.Errorf("initSetupOpeningSources: setup column %q mapped outside setup section", ref.Name)
-		}
-		if slot.TreeIdx >= len(pr.layout.TreeSize) {
-			return fmt.Errorf("initSetupOpeningSources: setup tree index %d out of range", slot.TreeIdx)
-		}
-		source := &pr.openingSources[slot.TreeIdx]
-		source.setFullDomainSize(pr.layout.TreeSize[slot.TreeIdx])
-		switch ref.Field {
-		case field.Base:
-			p, ok := pr.setup.Trace.Base[ref.Name]
-			if !ok {
-				return fmt.Errorf("initSetupOpeningSources: base setup column %q not found", ref.Name)
-			}
-			source.setBase(slot.PolyIdx, p)
-		case field.Ext:
-			p, ok := pr.setup.Trace.Ext[ref.Name]
-			if !ok {
-				return fmt.Errorf("initSetupOpeningSources: extension setup column %q not found", ref.Name)
-			}
-			source.setExt(slot.PolyIdx, p)
-		default:
-			return fmt.Errorf("initSetupOpeningSources: unsupported field kind for setup column %q", ref.Name)
-		}
-	}
-	return nil
 }
 
 func liftBaseToExt(v koalabear.Element) ext.E6 {
@@ -382,15 +344,14 @@ func (pr *proverRuntime) commitTraceRound(roundIdx int, challengeName string) er
 		if err != nil {
 			return err
 		}
-		tree := committed.Tree
 		treeIdx := base + i
-		pr.allTrees[treeIdx] = tree
-		pr.openingSources[treeIdx] = newCommitmentOpeningSource(group.base, group.ext, N)
-		root := tree.Root()
+		pr.committed[treeIdx] = committed
+		root := committed.Tree.Root()
 		pr.Proof.Commitments[pr.commitIdxOf(treeIdx)] = root
 		if err := pr.fs.Bind(challengeName, root[:]); err != nil {
 			return err
 		}
+		_ = N
 	}
 
 	return nil
@@ -605,15 +566,14 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 		if err != nil {
 			return err
 		}
-		tree := committed.Tree
 		treeIdx := pr.layout.AIRBegin + i
-		pr.allTrees[treeIdx] = tree
-		pr.openingSources[treeIdx] = newCommitmentOpeningSource(group.base, group.ext, N)
-		root := tree.Root()
+		pr.committed[treeIdx] = committed
+		root := committed.Tree.Root()
 		pr.Proof.Commitments[pr.commitIdxOf(treeIdx)] = root
 		if err := pr.fs.Bind(constants.FINAL_EVALUATION_POINT, root[:]); err != nil {
 			return err
 		}
+		_ = N
 	}
 
 	zeta, err := pr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
@@ -625,444 +585,101 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 	return nil
 }
 
-// ComputeEvaluationsAtZeta computes the evaluations at zeta of every polynomial
-// appearing in every vanishing relation of every module.
-//
-// Each per-column evaluation is an independent FFTInverse + Horner pass, so we
-// gather every (poly, evaluation point) pair across all modules into a single
-// task list and fan it out across goroutines. Each inner FFT is capped to 1
-// goroutine (fft.WithNbTasks(1)) since the column-level fan-out already
-// saturates the CPUs.
-func (pr *proverRuntime) ComputeEvaluationsAtZeta() error {
-	config := expr.NewConfig(
-		expr.WithoutLagrangeColumns(),
-		expr.WithoutChallenges(),
-		expr.WithoutExposedColumns(),
-		expr.WithoutPublicInputsColumns(),
-	)
+// buildBatches assembles the per-tree fri.Batch slices in canonical
+// order, looking up Lagrange-form polynomials by canonical column name
+// (trace/setup polys live in pr.t, AIR chunks in pr.airTrace). Setup
+// batches come first (decreasing N, single-group), then trace-round
+// batches (single-group per (round, N)), then AIR batches. The
+// canonical layout's tree index is the batch index.
+func (pr *proverRuntime) buildBatches() ([]fri.Batch, error) {
+	n := pr.layout.NumTrees
+	batches := make([]fri.Batch, n)
+	for treeIdx := 0; treeIdx < n; treeIdx++ {
+		isAIR := treeIdx >= pr.layout.AIRBegin && treeIdx < pr.layout.AIREnd
+		names := pr.schedule.ColNamesByTree[treeIdx][0]
 
-	moduleNames := make([]string, 0, len(pr.program.Modules))
-	for name := range pr.program.Modules {
-		moduleNames = append(moduleNames, name)
-	}
-	sort.Strings(moduleNames)
-
-	lagrangesByN := make(map[int][]ext.E6)
-	for _, moduleName := range moduleNames {
-		N := pr.program.Modules[moduleName].N
-		if _, ok := lagrangesByN[N]; !ok {
-			lagrangesByN[N] = poly.LagrangesAtZeta(pr.zeta, N)
+		traceBase := pr.t.Base
+		traceExt := pr.t.Ext
+		if isAIR {
+			traceBase = pr.airTrace.Base
+			traceExt = pr.airTrace.Ext
 		}
-	}
 
-	type evalTask struct {
-		key       string
-		field     field.Kind
-		shift     int
-		lagranges []ext.E6
-		base      poly.Polynomial
-		ext       poly.ExtPolynomial
-	}
-
-	tasks := make([]evalTask, 0)
-	addBaseTask := func(key string, p poly.Polynomial, moduleN, shift int) error {
-		if len(p) != 1 && len(p) != moduleN {
-			return fmt.Errorf("ComputeEvaluationsAtZeta: base polynomial %q has size %d, module has size %d", key, len(p), moduleN)
-		}
-		tasks = append(tasks, evalTask{
-			key:       key,
-			field:     field.Base,
-			shift:     shift,
-			lagranges: lagrangesByN[moduleN],
-			base:      p,
-		})
-		return nil
-	}
-	addExtTask := func(key string, p poly.ExtPolynomial, moduleN, shift int) error {
-		if len(p) != 1 && len(p) != moduleN {
-			return fmt.Errorf("ComputeEvaluationsAtZeta: extension polynomial %q has size %d, module has size %d", key, len(p), moduleN)
-		}
-		tasks = append(tasks, evalTask{
-			key:       key,
-			field:     field.Ext,
-			shift:     shift,
-			lagranges: lagrangesByN[moduleN],
-			ext:       p,
-		})
-		return nil
-	}
-
-	for _, moduleName := range moduleNames {
-		module := pr.program.Modules[moduleName]
-		for _, leaf := range module.VanishingRelation.LeavesFull(config) {
-			shift := 0
-			if leaf.Shift != 0 {
-				shift = ((leaf.Shift % module.N) + module.N) % module.N
-			}
-			if p, ok := pr.t.Ext[leaf.Name]; ok {
-				if err := addExtTask(leaf.String(), p, module.N, shift); err != nil {
-					return err
-				}
-				continue
-			}
-			p, ok := pr.t.Base[leaf.Name]
+		basePolys := make([]poly.Polynomial, len(names.Base))
+		for i, name := range names.Base {
+			p, ok := traceBase[name]
 			if !ok {
-				return fmt.Errorf("ComputeEvaluationsAtZeta: column %q not found in trace", leaf.Name)
+				return nil, fmt.Errorf("buildBatches: tree %d base poly %q not found", treeIdx, name)
 			}
-			if err := addBaseTask(leaf.String(), p, module.N, shift); err != nil {
-				return err
-			}
+			basePolys[i] = p
 		}
-
-		for i := 0; ; i++ {
-			chunkName := constants.QuotientChunkName(moduleName, i)
-			if chunk, ok := pr.airTrace.Base[chunkName]; ok {
-				if err := addBaseTask(chunkName, chunk, module.N, 0); err != nil {
-					return err
-				}
-				continue
+		extPolys := make([]poly.ExtPolynomial, len(names.Ext))
+		for i, name := range names.Ext {
+			p, ok := traceExt[name]
+			if !ok {
+				return nil, fmt.Errorf("buildBatches: tree %d ext poly %q not found", treeIdx, name)
 			}
-			if chunk, ok := pr.airTrace.Ext[chunkName]; ok {
-				if err := addExtTask(chunkName, chunk, module.N, 0); err != nil {
-					return err
-				}
-				continue
-			}
-			break
+			extPolys[i] = p
 		}
+		batches[treeIdx] = fri.Batch{{Base: basePolys, Ext: extPolys}}
 	}
-
-	values := make([]ext.E6, len(tasks))
-	parallel.Execute(len(tasks), func(start, end int) {
-		for i := start; i < end; i++ {
-			task := tasks[i]
-			if task.field == field.Ext {
-				if len(task.ext) == 1 {
-					values[i].Set(&task.ext[0])
-				} else {
-					values[i] = poly.ExtEvaluateLagrangeAtExt(task.ext, task.lagranges, task.shift)
-				}
-				continue
-			}
-			if len(task.base) == 1 {
-				values[i] = liftBaseToExt(task.base[0])
-			} else {
-				values[i] = poly.EvaluateLagrangeAtExt(task.base, task.lagranges, task.shift)
-			}
-		}
-	})
-	for i, task := range tasks {
-		pr.Proof.SetValueAtZetaExt(task.key, values[i])
-	}
-
-	return nil
+	return batches, nil
 }
 
-// deepQuotientBundle aggregates everything needed to add one DEEP-quotient
-// shift block's contribution to deepQuotient[*]:
-//
-//	deepQuotient[x] += (vs - sum_k(scales_k * cols_k[x])) / (zs - omega^x)
-//
-// The serial alpha-power chain in the original code is unrolled into the
-// scales slices below, so the per-row loop has no cross-column data dependency
-// and can be chunked across goroutines.
-type deepQuotientBundle struct {
-	zs ext.E6 // shifted evaluation point
-	vs ext.E6 // alpha-weighted sum of evaluations at zs
-
-	// constContrib is the contribution from constant (len-1) columns, summed
-	// in advance so the per-row loop only iterates real-width columns.
-	constContrib ext.E6
-
-	extCols    []poly.ExtPolynomial
-	extScales  []ext.E6
-	baseCols   []poly.Polynomial
-	baseScales []ext.E6
-}
-
-func (pr *proverRuntime) ComputeDeepQuotient() error {
-	dqLayout := BuildDeepQuotientLayout(pr.program)
-	sizes := dqLayout.Sizes
-
-	domainBySize := make(map[int]*fft.Domain, len(sizes))
-	for _, m := range pr.program.Modules {
-		if _, ok := domainBySize[m.N]; !ok {
-			domainBySize[m.N] = m.D
-		}
+// runPCSOpen invokes fri.PCS.Open with the canonical-order
+// (batches, committed, shifts), storing the OpeningProof on the
+// in-progress proof.
+func (pr *proverRuntime) runPCSOpen() error {
+	if pr.layout.NumTrees == 0 {
+		return nil
 	}
-
-	if err := pr.deriveDeepAlpha(dqLayout); err != nil {
+	batches, err := pr.buildBatches()
+	if err != nil {
 		return err
 	}
-	deepQuotients := make(map[int]poly.ExtPolynomial, len(sizes))
 
-	for i, N := range sizes {
-		deepQuotient := make(poly.ExtPolynomial, N)
-
-		var alphaAcc ext.E6
-		alphaAcc.SetOne()
-
-		domainN := domainBySize[N]
-
-		// ---- Phase 1: vanishing-relation columns, one bundle per shift ----
-		bundles := make([]deepQuotientBundle, 0, len(dqLayout.Shifts[i])+1)
-		for j, shift := range dqLayout.Shifts[i] {
-			var omegaShift koalabear.Element
-			omegaShift.Exp(domainN.Generator, big.NewInt(int64(shift)))
-			zs := pr.zeta
-			zs.MulByElement(&zs, &omegaShift)
-
-			b, nextAlpha, err := pr.buildDeepQuotientBundle(
-				zs,
-				dqLayout.Names[i][j],
-				dqLayout.Keys[i][j],
-				pr.t.Base, pr.t.Ext,
-				alphaAcc,
-			)
-			if err != nil {
-				return err
-			}
-			bundles = append(bundles, b)
-			alphaAcc = nextAlpha
-		}
-
-		// ---- Phase 2: AIR chunks at z=zeta (no shift) ----
-		if len(dqLayout.AIRChunks[i]) > 0 {
-			b, nextAlpha, err := pr.buildDeepQuotientBundle(
-				pr.zeta,
-				dqLayout.AIRChunks[i],
-				dqLayout.AIRChunks[i], // keys == names for AIR chunks
-				pr.airTrace.Base, pr.airTrace.Ext,
-				alphaAcc,
-			)
-			if err != nil {
-				return err
-			}
-			bundles = append(bundles, b)
-			alphaAcc = nextAlpha
-		}
-
-		accumulateDeepQuotient(deepQuotient, bundles, domainN)
-
-		deepQuotients[N] = deepQuotient
-	}
-
-	// The DEEP quotients chunks are computed and grouped in decreasing size order, we can build the levels to call
-	// multi degree FRI
-	levels := make([]fri.Level, len(sizes))
-	for li, N := range sizes {
-		encoder := reedsolomon.NewEncoder(uint64(constants.RATE)*uint64(N), reedsolomon.WithCache(&pr.domainCache))
-		encoded := encoder.EncodeExt(deepQuotients[N], domainBySize[N])
-
-		tree, err := pr.friParams.BuildLevelTreeExt(encoded)
-		if err != nil {
-			return fmt.Errorf("ComputeDeepQuotient: BuildLevelTreeExt N=%d: %w", N, err)
-		}
-
-		levels[li] = fri.Level{
-			D:     N,
-			Evals: fri.LevelEvals{Ext: encoded},
-			Tree:  tree,
-		}
-	}
-
-	pr.Proof.DeepQuotientCommitment = make([]hash.Digest, len(levels))
-	for li := range levels {
-		pr.Proof.DeepQuotientCommitment[li] = levels[li].Tree.Root()
-	}
-
-	var err error
-	pr.Proof.DeepQuotientFriProof, pr.queryPositions, err = fri.Prove(pr.friParams, levels, pr.fs)
+	pcs := fri.NewPCSWithParams(pr.friParams)
+	openProof, err := pcs.Open(
+		batches,
+		pr.committed,
+		pr.schedule.Shifts,
+		pr.zeta,
+		pr.fs,
+		fri.WithOpenDomainCache(&pr.domainCache),
+	)
 	if err != nil {
-		return fmt.Errorf("fri.Prove: %v", err)
+		return fmt.Errorf("runPCSOpen: %w", err)
 	}
-
+	pr.Proof.Opening = openProof
 	return nil
 }
 
-// buildDeepQuotientBundle collects column data + per-column alpha scale factors
-// for one shift block and returns the bundle plus the next alpha accumulator.
-// Constant (len-1) columns are folded into bundle.constContrib so the per-row
-// loop only iterates real-width columns.
-//
-// names and keys are parallel: names[k] looks up the trace polynomial,
-// keys[k] looks up the value at zeta in pr.Proof (for AIR chunks the two
-// coincide).
-func (pr *proverRuntime) buildDeepQuotientBundle(
-	zs ext.E6,
-	names, keys []string,
-	traceBase map[string]poly.Polynomial,
-	traceExt map[string]poly.ExtPolynomial,
-	alphaStart ext.E6,
-) (deepQuotientBundle, ext.E6, error) {
-	b := deepQuotientBundle{zs: zs}
-	scale := alphaStart
-	for k, name := range names {
-		evalAtZ, ok := pr.Proof.ValueAtZetaExt(keys[k])
-		if !ok {
-			return deepQuotientBundle{}, ext.E6{}, fmt.Errorf("ComputeDeepQuotient: %q not found in ValuesAtZeta", keys[k])
-		}
-		colExt, hasExt := traceExt[name]
-		colBase, hasBase := traceBase[name]
-		if !hasExt && !hasBase {
-			return deepQuotientBundle{}, ext.E6{}, fmt.Errorf("ComputeDeepQuotient: column %q not found in trace", name)
-		}
-
-		var term ext.E6
-		term.Mul(&evalAtZ, &scale)
-		b.vs.Add(&b.vs, &term)
-
-		switch {
-		case hasExt && len(colExt) == 1:
-			term.Mul(&colExt[0], &scale)
-			b.constContrib.Add(&b.constContrib, &term)
-		case hasExt:
-			b.extCols = append(b.extCols, colExt)
-			b.extScales = append(b.extScales, scale)
-		case len(colBase) == 1:
-			term.MulByElement(&scale, &colBase[0])
-			b.constContrib.Add(&b.constContrib, &term)
-		default:
-			b.baseCols = append(b.baseCols, colBase)
-			b.baseScales = append(b.baseScales, scale)
-		}
-
-		scale.Mul(&scale, &pr.alpha)
-	}
-	return b, scale, nil
-}
-
-// accumulateDeepQuotient adds every bundle's DEEP-quotient contribution into
-// deepQuotient using a single row-chunked parallel pass: each chunk computes
-// (z_s - omega^x)^-1 in batch (BatchInvertE6), then sweeps every bundle to
-// fold its (vs - sum_k scale_k * col_k[x]) numerator and add to deepQuotient[x].
-// One pass amortises C_s materialisation away — only a row-sized denominator
-// buffer per chunk is allocated.
-func accumulateDeepQuotient(deepQuotient poly.ExtPolynomial, bundles []deepQuotientBundle, domain *fft.Domain) {
-	N := len(deepQuotient)
-	if N == 0 || len(bundles) == 0 {
-		return
-	}
-
-	parallel.Execute(N, func(start, end int) {
-		chunkLen := end - start
-
-		// Compute denominators (z_s - omega^x) for every bundle, batch invert.
-		denoms := make([]ext.E6, chunkLen*len(bundles))
-		var omegaX koalabear.Element
-		if start == 0 {
-			omegaX.SetOne()
-		} else {
-			omegaX.Exp(domain.Generator, big.NewInt(int64(start)))
-		}
-		for x := 0; x < chunkLen; x++ {
-			omegaExt := hash.LiftBaseToExt(omegaX)
-			for b := range bundles {
-				denoms[b*chunkLen+x].Sub(&bundles[b].zs, &omegaExt)
-			}
-			omegaX.Mul(&omegaX, &domain.Generator)
-		}
-		invs := ext.BatchInvertE6(denoms)
-
-		// Sweep bundles into deepQuotient row by row.
-		for b := range bundles {
-			bun := &bundles[b]
-			invRow := invs[b*chunkLen : (b+1)*chunkLen]
-			for x := start; x < end; x++ {
-				Cx := bun.constContrib
-				for k, col := range bun.extCols {
-					var term ext.E6
-					term.Mul(&bun.extScales[k], &col[x])
-					Cx.Add(&Cx, &term)
-				}
-				for k, col := range bun.baseCols {
-					var term ext.E6
-					term.MulByElement(&bun.baseScales[k], &col[x])
-					Cx.Add(&Cx, &term)
-				}
-				var num, dqx ext.E6
-				num.Sub(&bun.vs, &Cx)
-				dqx.Mul(&num, &invRow[x-start])
-				deepQuotient[x].Add(&deepQuotient[x], &dqx)
-			}
-		}
-	})
-}
-
-// openWMerkleAt opens a WMerkleTree at the leaf index corresponding to FRI
-// query position `s`, reduced mod the tree's paired-leaf count (=
-// encoded_size/2 = RATE·N/2).
-func openWMerkleAt(tree fri.WMerkleTree, source commitmentOpeningSource, s int, domainCache *poly.DomainCache) (fri.WMerkleProof, error) {
-	leafCount := tree.NumLeaves()
-	if leafCount == 0 {
-		return fri.WMerkleProof{}, fmt.Errorf("empty WMerkleTree")
-	}
-	pos := s % leafCount
-	pth, err := tree.OpenProof(pos)
-	if err != nil {
-		return fri.WMerkleProof{}, err
-	}
-	rawLeafBase, rawLeafExt, err := source.rawLeaf(pos, leafCount, domainCache)
-	if err != nil {
-		return fri.WMerkleProof{}, err
-	}
-	if len(rawLeafBase) != tree.BaseWidth() {
-		return fri.WMerkleProof{}, fmt.Errorf("base raw leaf width %d, tree expects %d", len(rawLeafBase), tree.BaseWidth())
-	}
-	if len(rawLeafExt) != tree.ExtWidth() {
-		return fri.WMerkleProof{}, fmt.Errorf("extension raw leaf width %d, tree expects %d", len(rawLeafExt), tree.ExtWidth())
-	}
-	// Today every committed WMerkleTree carries a single Group; the top
-	// group's raw pairs go at InjectionRawLeaves[0] and Proof has no
-	// injection leaves. When multi-size Commit lands, additional RawLeaf
-	// entries (one per smaller Group) will be appended here in matching
-	// decreasing-size order.
-	return fri.WMerkleProof{
-		InjectionRawLeaves: []fri.RawLeaf{{RawLeafBase: rawLeafBase, RawLeafExt: rawLeafExt}},
-		Proof:              pth,
-	}, nil
-}
-
-// SampleEvaluations opens every committed polynomial at every FRI query
-// position so the verifier can bridge the FRI proof back to the column
-// commitments. Trees are walked in the canonical layout order
-// (setup → trace per round → AIR), and each tree is opened at
-// `s mod tree.NumLeaves()` (= s reduced mod RATE·N/2 for the tree's size N).
-//
-// The (query, tree) opens are fully independent — disjoint output slots,
-// read-only access to allTrees / openingSources / domainCache — so we
-// flatten them into one work list and fan it out.
-func (pr *proverRuntime) SampleEvaluations() error {
-	NQ := len(pr.queryPositions)
-	pr.Proof.PointSamplings = make([][]fri.WMerkleProof, NQ)
-	for q := range pr.Proof.PointSamplings {
-		pr.Proof.PointSamplings[q] = make([]fri.WMerkleProof, pr.layout.NumTrees)
-	}
-
-	numTrees := pr.layout.NumTrees
-	total := NQ * numTrees
-	if total == 0 {
+// runPCSClaimedValuesOnly is the SkipFRI counterpart of runPCSOpen: it
+// evaluates every committed polynomial at zeta * omega^shift and stores
+// the result in Proof.Opening.ClaimedValues, skipping the DEEP-quotient
+// construction, FRI prover, and PointSamplings. The verifier still
+// needs ClaimedValues to populate ValuesAtZeta for the AIR check, so
+// SkipFRI on the prover MUST still emit them.
+func (pr *proverRuntime) runPCSClaimedValuesOnly() error {
+	if pr.layout.NumTrees == 0 {
 		return nil
 	}
-
-	errs := make([]error, total)
-	parallel.Execute(total, func(start, end int) {
-		for t := start; t < end; t++ {
-			q := t / numTrees
-			i := t % numTrees
-			wp, err := openWMerkleAt(pr.allTrees[i], pr.openingSources[i], pr.queryPositions[q], &pr.domainCache)
-			if err != nil {
-				errs[t] = fmt.Errorf("SampleEvaluations: tree %d query %d: %w", i, q, err)
-				return
-			}
-			pr.Proof.PointSamplings[q][i] = wp
-		}
-	})
-	for _, err := range errs {
-		if err != nil {
-			return err
-		}
+	batches, err := pr.buildBatches()
+	if err != nil {
+		return err
 	}
+
+	pcs := fri.NewPCSWithParams(pr.friParams)
+	values, err := pcs.ClaimedValuesOnly(
+		batches,
+		pr.schedule.Shifts,
+		pr.zeta,
+		fri.WithOpenDomainCache(&pr.domainCache),
+	)
+	if err != nil {
+		return fmt.Errorf("runPCSClaimedValuesOnly: %w", err)
+	}
+	pr.Proof.Opening.ClaimedValues = values
 	return nil
 }
 
@@ -1087,44 +704,46 @@ func Prove(t trace.Trace, provingKey setup.ProvingKey, publicInputs public.Input
 		}
 	}
 
-	// run ExecuteSteps
+	// run ExecuteSteps: commits trace per FS round, samples round challenges.
 	t0 := time.Now()
 	if err := pr.ExecuteSteps(); err != nil {
 		return proof.Proof{}, err
 	}
 	report("execute-steps", time.Since(t0))
 
-	// run ComputeAIRQuotients
+	// run ComputeAIRQuotients: commits AIR chunks, samples zeta.
 	t0 = time.Now()
 	if err := pr.ComputeAIRQuotients(); err != nil {
 		return proof.Proof{}, err
 	}
 	report("compute-air-quotients", time.Since(t0))
 
-	// run ComputeEvaluationsAtZeta
+	if config.SkipFRI {
+		// SkipFRI still needs claimed values so the (SkipFRI-side)
+		// verifier can populate its ValuesAtZeta map and run the AIR
+		// check; the rest of the OpeningProof stays zero.
+		t0 = time.Now()
+		if err := pr.runPCSClaimedValuesOnly(); err != nil {
+			return proof.Proof{}, err
+		}
+		report("pcs-claimed-values-only", time.Since(t0))
+		return pr.Proof, nil
+	}
+
+	// One PCS.Open call replaces the legacy ComputeEvaluationsAtZeta +
+	// ComputeDeepQuotient + SampleEvaluations triple. fri.PCS.Open
+	// internally:
+	//   - evaluates every committed polynomial at zeta * omega^shift,
+	//   - registers alpha_DEEP on pr.fs, binds the claimed values in
+	//     canonical-layout order, samples alpha_DEEP,
+	//   - builds one DEEP-quotient codeword per distinct native size,
+	//     commits each as a fri.Level, runs fri.Prove on the levels,
+	//   - opens every committed batch at every FRI query position.
 	t0 = time.Now()
-	if err := pr.ComputeEvaluationsAtZeta(); err != nil {
+	if err := pr.runPCSOpen(); err != nil {
 		return proof.Proof{}, err
 	}
-	report("evaluations-at-zeta", time.Since(t0))
-
-	// ------ PCS related verification ------
-
-	if !config.SkipFRI {
-		// Compute DEEP quotient and FRI-prove that it is the evaluation of a polynomial of degree N
-		t0 = time.Now()
-		if err := pr.ComputeDeepQuotient(); err != nil {
-			return proof.Proof{}, err
-		}
-		report("deep-quotient+fri-commit", time.Since(t0))
-
-		// Brige FRI <-> polynomial commitments, using sample at queryPositions
-		t0 = time.Now()
-		if err := pr.SampleEvaluations(); err != nil {
-			return proof.Proof{}, err
-		}
-		report("fri-query-open", time.Since(t0))
-	}
+	report("pcs-open", time.Since(t0))
 
 	return pr.Proof, nil
 }

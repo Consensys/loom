@@ -26,13 +26,15 @@ import (
 	"github.com/consensys/loom/trace"
 )
 
-// ProvingKey is the prover-side setup material. Trees contain the setup
-// commitments and Trace contains the fixed columns in Lagrange form, so the
-// prover can evaluate setup columns without carrying them in each witness.
+// ProvingKey is the prover-side setup material. Setup contains the per-size
+// setup commitments (Merkle tree + retained RS-encoded LeafSources) the prover
+// hands to PCS.Open at proof time. Trace contains the fixed columns in
+// Lagrange form so the prover can evaluate setup columns without carrying
+// them in each witness.
 type ProvingKey struct {
 	HashBackendID string
 	Trace         trace.Trace
-	Trees         []fri.WMerkleTree
+	Setup         []fri.Committed
 }
 
 // VerificationKey is the verifier-side setup material.
@@ -43,9 +45,9 @@ type VerificationKey struct {
 
 // VerificationKey returns the verifier-side roots corresponding to pk.
 func (pk ProvingKey) VerificationKey() VerificationKey {
-	res := make([]hash.Digest, len(pk.Trees))
-	for i, tree := range pk.Trees {
-		res[i] = tree.Root()
+	res := make([]hash.Digest, len(pk.Setup))
+	for i, c := range pk.Setup {
+		res[i] = c.Tree.Root()
 	}
 	return VerificationKey{HashBackendID: pk.HashBackendID, Roots: res}
 }
@@ -105,7 +107,7 @@ func Setup(t trace.Trace, program board.Program, opts ...Option) (ProvingKey, Ve
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
 
-	trees := make([]fri.WMerkleTree, len(sizes))
+	committed := make([]fri.Committed, len(sizes))
 	var domainCache poly.DomainCache
 	pcs := fri.NewPCS(uint64(constants.RATE), hashBackend.LeafHasher, hashBackend.NodeHasher)
 	for i, N := range sizes {
@@ -131,16 +133,17 @@ func Setup(t trace.Trace, program board.Program, opts ...Option) (ProvingKey, Ve
 				extPublic = append(extPublic, p)
 			}
 		}
-		committed, err := pcs.Commit(
+		c, err := pcs.Commit(
 			[]fri.Group{{Base: basePublic, Ext: extPublic}},
 			fri.WithDomainCache(&domainCache),
 		)
 		if err != nil {
 			return ProvingKey{}, VerificationKey{}, err
 		}
-		trees[i] = committed.Tree
+		committed[i] = c
+		_ = N
 	}
-	pk := ProvingKey{HashBackendID: hashBackend.ID, Trace: setupTrace, Trees: trees}
+	pk := ProvingKey{HashBackendID: hashBackend.ID, Trace: setupTrace, Setup: committed}
 	return pk, pk.VerificationKey(), nil
 }
 

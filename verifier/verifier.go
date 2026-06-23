@@ -16,24 +16,19 @@ package verifier
 import (
 	"fmt"
 	"math/big"
-	"sort"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
-	"github.com/consensys/gnark-crypto/field/koalabear/fft"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
-	"github.com/consensys/loom/field"
 	"github.com/consensys/loom/internal/constants"
 	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/fri"
 	"github.com/consensys/loom/internal/hash"
-	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/prover"
 	"github.com/consensys/loom/public"
-
 	"github.com/consensys/loom/setup"
 )
 
@@ -53,7 +48,7 @@ func SkipFRI() Option {
 	}
 }
 
-// WithTranscript provides a running transcript to the prover
+// WithTranscript provides a running transcript to the verifier.
 func WithTranscript(fs *fiatshamir.Transcript) Option {
 	return func(c *Config) error {
 		c.Fs = fs
@@ -82,19 +77,27 @@ type verifierRunTime struct {
 	friParams    fri.Params
 	publicInputs public.Inputs
 	program      board.Program
-	zeta         ext.E6 // point of evaluation to check the AIR relation with SZ
-	alpha        ext.E6 // folding challenge for N-grouped polynomials, used to build the DEEP quotient
+	zeta         ext.E6
 	setup        setup.VerificationKey
 	fs           *fiatshamir.Transcript
-	dqLayout     prover.DEEPquotientLayout
 
 	// layout is the canonical commitment layout, shared with the prover side
 	// (built from program + len(setup) at the start of every Verify call).
 	layout prover.Layout
+	// schedule mirrors prover.CanonicalSchedule: per-batch shifts + the
+	// reverse name table that lets us translate Opening.ClaimedValues
+	// back into a canonical-key ValuesAtZeta map for AIR-equation
+	// evaluation.
+	schedule prover.CanonicalSchedule
 	// roots is the flat sequence of Merkle roots in canonical order:
 	//   setup roots (from VerificationKey) ++ proof.Commitments
-	// roots[i] aligns with proof.PointSamplings[q][i] for any query q.
+	// roots[i] aligns with proof.Opening.PointSamplings[q][i] for any q.
 	roots []hash.Digest
+	// valuesAtZeta is the local name-keyed map of every committed
+	// polynomial's claimed value plus the verifier-reconstructed entries
+	// (Lagrange, public inputs, exposed values, round challenges).
+	// Replaces the old proof.ValuesAtZeta field, which is now transient.
+	valuesAtZeta map[string]ext.E6
 
 	hashBackend fri.HashBackend
 }
@@ -116,11 +119,14 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 		program:      program,
 		setup:        verificationKey,
 		hashBackend:  hashBackend,
+		valuesAtZeta: make(map[string]ext.E6),
 	}
 
-	// Build the layout shared with the prover.
+	// Build the canonical layout + per-batch shift schedule. Both sides
+	// must agree on these to share the alpha_DEEP transcript binding
+	// order; they're deterministic in program + |verificationKey|.
 	res.layout = prover.BuildLayout(program, len(verificationKey.Roots))
-	res.dqLayout = prover.BuildDeepQuotientLayout(program)
+	res.schedule = prover.BuildCanonicalSchedule(program, res.layout)
 
 	// Validate proof.Commitments matches layout (trace + AIR section).
 	wantCommitments := res.layout.NumTrees - res.layout.SetupEnd
@@ -128,7 +134,8 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 		return res, fmt.Errorf("verifier: proof has %d commitments, layout expects %d", len(prf.Commitments), wantCommitments)
 	}
 
-	// Flatten setup roots ++ proof.Commitments into res.roots.
+	// Flatten setup roots ++ proof.Commitments into res.roots, the per-
+	// batch root sequence pcs.Verify consumes.
 	res.roots = make([]hash.Digest, res.layout.NumTrees)
 	if len(verificationKey.Roots) != res.layout.SetupEnd-res.layout.SetupBegin {
 		return res, fmt.Errorf("verifier: setup has %d trees, layout expects %d", len(verificationKey.Roots), res.layout.SetupEnd-res.layout.SetupBegin)
@@ -140,6 +147,9 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 		res.roots[res.layout.SetupEnd+i] = root
 	}
 
+	// Initialize the FS transcript. Pre-register only the caller-side
+	// challenges (per-round + zeta); alpha_DEEP and FRI-internal names
+	// are registered by fri.PCS.Verify at invocation time.
 	if config.Fs != nil {
 		res.fs = config.Fs
 	} else {
@@ -150,7 +160,6 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 		res.fs.NewChallenge(constants.CanonicalChallengeName(i))
 	}
 	res.fs.NewChallenge(constants.FINAL_EVALUATION_POINT)
-	res.fs.NewChallenge(constants.DEEP_ALPHA)
 
 	initialChallenge := constants.InitialChallengeName(numRounds)
 	if err := res.fs.Bind(initialChallenge, hash.StringToElements(constants.HASH_BACKEND_DOMAIN_TAG, hashBackend.ID)); err != nil {
@@ -190,6 +199,19 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 	return res, nil
 }
 
+// setValueAtZetaExt records an ext-valued claimed evaluation under name.
+// Replaces the old proof.Proof.SetValueAtZetaExt accessor.
+func (vr *verifierRunTime) setValueAtZetaExt(name string, v ext.E6) {
+	vr.valuesAtZeta[name] = v
+}
+
+// valueAtZetaExt looks up the claimed evaluation registered under name.
+// Replaces the old proof.Proof.ValueAtZetaExt accessor.
+func (vr *verifierRunTime) valueAtZetaExt(name string) (ext.E6, bool) {
+	v, ok := vr.valuesAtZeta[name]
+	return v, ok
+}
+
 func liftBaseToExt(v koalabear.Element) ext.E6 {
 	return hash.LiftBaseToExt(v)
 }
@@ -211,7 +233,7 @@ func (vr *verifierRunTime) deriveChallenges() error {
 			return err
 		}
 		c := hash.OutputToExt(challenge)
-		vr.proof.SetValueAtZetaExt(challengeName, c)
+		vr.setValueAtZetaExt(challengeName, c)
 	}
 	// Bind every per-size AIR-quotient root before computing zeta.
 	for i := vr.layout.AIRBegin; i < vr.layout.AIREnd; i++ {
@@ -227,15 +249,54 @@ func (vr *verifierRunTime) deriveChallenges() error {
 	return nil
 }
 
-func (vr *verifierRunTime) deriveDeepAlpha() error {
-	if err := prover.BindDeepEvaluationClaims(vr.fs, vr.proof, vr.dqLayout); err != nil {
-		return err
+// loadClaimedValues translates Opening.ClaimedValues into the local
+// vr.valuesAtZeta map keyed by canonical leaf names (= leaf.String()).
+// Walks the canonical schedule in parallel with Opening.ClaimedValues:
+// every (batch, group, base|ext, polyIdx, kth_shift) tuple has a value
+// in ClaimedValues and a (possibly multi-entry) list of canonical keys
+// in schedule.Keys. All keys sharing one (poly, normalized shift) share
+// one value.
+func (vr *verifierRunTime) loadClaimedValues() error {
+	cv := vr.proof.Opening.ClaimedValues
+	if len(cv) != len(vr.schedule.Keys) {
+		return fmt.Errorf("loadClaimedValues: Opening.ClaimedValues has %d batches, schedule has %d", len(cv), len(vr.schedule.Keys))
 	}
-	alpha, err := vr.fs.ComputeChallenge(constants.DEEP_ALPHA)
-	if err != nil {
-		return err
+	for b, batchKeys := range vr.schedule.Keys {
+		if len(cv[b]) != len(batchKeys) {
+			return fmt.Errorf("loadClaimedValues: batch %d has %d groups, schedule has %d", b, len(cv[b]), len(batchKeys))
+		}
+		for g, groupKeys := range batchKeys {
+			gcv := cv[b][g]
+			if len(gcv.Base) != len(groupKeys.Base) {
+				return fmt.Errorf("loadClaimedValues: batch %d group %d Base width mismatch (%d vs %d)", b, g, len(gcv.Base), len(groupKeys.Base))
+			}
+			if len(gcv.Ext) != len(groupKeys.Ext) {
+				return fmt.Errorf("loadClaimedValues: batch %d group %d Ext width mismatch (%d vs %d)", b, g, len(gcv.Ext), len(groupKeys.Ext))
+			}
+			for i, perPolyKeys := range groupKeys.Base {
+				if len(gcv.Base[i]) != len(perPolyKeys) {
+					return fmt.Errorf("loadClaimedValues: batch %d group %d Base[%d] shift count mismatch (%d vs %d)", b, g, i, len(gcv.Base[i]), len(perPolyKeys))
+				}
+				for k, keys := range perPolyKeys {
+					v := gcv.Base[i][k]
+					for _, name := range keys {
+						vr.setValueAtZetaExt(name, v)
+					}
+				}
+			}
+			for i, perPolyKeys := range groupKeys.Ext {
+				if len(gcv.Ext[i]) != len(perPolyKeys) {
+					return fmt.Errorf("loadClaimedValues: batch %d group %d Ext[%d] shift count mismatch (%d vs %d)", b, g, i, len(gcv.Ext[i]), len(perPolyKeys))
+				}
+				for k, keys := range perPolyKeys {
+					v := gcv.Ext[i][k]
+					for _, name := range keys {
+						vr.setValueAtZetaExt(name, v)
+					}
+				}
+			}
+		}
 	}
-	vr.alpha = hash.OutputToExt(alpha)
 	return nil
 }
 
@@ -257,7 +318,7 @@ func (vr *verifierRunTime) computeExposedColumns() error {
 				tmp.Mul(&tmp, &value)
 				lag.Add(&lag, &tmp)
 			}
-			vr.proof.SetValueAtZetaExt(leaf, lag)
+			vr.setValueAtZetaExt(leaf, lag)
 		}
 	}
 	return nil
@@ -268,7 +329,7 @@ func (vr *verifierRunTime) computeLagrange() error {
 	for _, m := range vr.program.Modules {
 		lags := m.VanishingRelation.Leaves(expr.NewConfig(config...))
 		for _, lag := range lags {
-			if _, ok := vr.proof.ValueAtZetaExt(lag); ok {
+			if _, ok := vr.valueAtZetaExt(lag); ok {
 				continue
 			}
 			i := constants.ParseLagrangeName(lag)
@@ -276,7 +337,7 @@ func (vr *verifierRunTime) computeLagrange() error {
 				i = m.N + i
 			}
 			v := poly.LagrangeAtZetaExt(vr.zeta, m.N, i)
-			vr.proof.SetValueAtZetaExt(lag, v)
+			vr.setValueAtZetaExt(lag, v)
 		}
 	}
 	return nil
@@ -304,7 +365,7 @@ func (vr *verifierRunTime) computePublicInputsColumns() error {
 				tmp.Mul(&tmp, &value)
 				val.Add(&val, &tmp)
 			}
-			vr.proof.SetValueAtZetaExt(leaf, val)
+			vr.setValueAtZetaExt(leaf, val)
 		}
 	}
 	return nil
@@ -337,9 +398,13 @@ func (vr *verifierRunTime) checkLogupBus() error {
 	return nil
 }
 
-// checkAIRRelations checks the air relations per module
+// checkAIRRelations checks the air relations per module.
 func (vr *verifierRunTime) checkAIRRelations() error {
-	valuesAtZeta := vr.proof.ExtValuesAtZeta()
+	// EvalExt expects the full claimed-values map.
+	valuesAtZeta := make(map[string]ext.E6, len(vr.valuesAtZeta))
+	for k, v := range vr.valuesAtZeta {
+		valuesAtZeta[k] = v
+	}
 
 	for moduleName, m := range vr.program.Modules {
 		var qZeta ext.E6
@@ -349,7 +414,7 @@ func (vr *verifierRunTime) checkAIRRelations() error {
 		zetaN.Exp(vr.zeta, big.NewInt(int64(m.N)))
 		for i := 0; ; i++ {
 			chunkName := constants.QuotientChunkName(moduleName, i)
-			chunkVal, ok := vr.proof.ValueAtZetaExt(chunkName)
+			chunkVal, ok := vr.valueAtZetaExt(chunkName)
 			if !ok {
 				break
 			}
@@ -374,251 +439,26 @@ func (vr *verifierRunTime) checkAIRRelations() error {
 	return nil
 }
 
-func (vr *verifierRunTime) checkFRIProof() error {
-
-	// Build levelDs from the program's distinct module sizes (decreasing N),
-	// matching the prover's ComputeDeepQuotient grouping.
-	sizesSet := map[int]bool{}
-	for _, m := range vr.program.Modules {
-		sizesSet[m.N] = true
-	}
-	levelDs := make([]int, 0, len(sizesSet))
-	for n := range sizesSet {
-		levelDs = append(levelDs, n)
-	}
-	sort.Sort(sort.Reverse(sort.IntSlice(levelDs)))
-
-	// One root per level (single polynomial per level in the current scheme).
-	if len(vr.proof.DeepQuotientCommitment) != len(levelDs) {
-		return fmt.Errorf("checkFRIProof: proof has %d level commitments, want %d", len(vr.proof.DeepQuotientCommitment), len(levelDs))
-	}
-	levelRoots := make([]hash.Digest, len(levelDs))
-	for i := range levelDs {
-		levelRoots[i] = vr.proof.DeepQuotientCommitment[i]
+// runPCSVerify reconstructs the per-batch shapes from layout + setup
+// metadata and invokes fri.PCS.Verify on proof.Opening with the same
+// shift schedule the prover used. PCS.Verify internally registers
+// alpha_DEEP + FRI challenge names, replays the claimed-value binding
+// in canonical-layout order, runs the multi-degree FRI check, and
+// authenticates every (query, batch) Merkle path.
+func (vr *verifierRunTime) runPCSVerify() error {
+	shapes := make([][]fri.GroupShape, vr.layout.NumTrees)
+	for treeIdx := 0; treeIdx < vr.layout.NumTrees; treeIdx++ {
+		names := vr.schedule.ColNamesByTree[treeIdx][0]
+		N := vr.layout.TreeSize[treeIdx]
+		shapes[treeIdx] = []fri.GroupShape{{
+			PairedLeaves: int(constants.RATE) * N / 2,
+			BaseWidth:    len(names.Base),
+			ExtWidth:     len(names.Ext),
+		}}
 	}
 
-	return fri.Verify(vr.friParams, levelRoots, levelDs, vr.proof.DeepQuotientFriProof, vr.fs)
-}
-
-// verifyWMerkleProof checks wp opens to its leaf data under root, using the
-// same base-then-ext paired-leaf hashing as RSCommit.Commit. The top group's
-// raw pairs live at InjectionRawLeaves[0]; the digest computed from them is
-// the merkle leaf authenticated by wp.Proof's standard path.
-func (vr *verifierRunTime) verifyWMerkleProof(root hash.Digest, wp fri.WMerkleProof) bool {
-	if len(wp.InjectionRawLeaves) == 0 {
-		return false
-	}
-	top := wp.InjectionRawLeaves[0]
-	leaf := vr.hashBackend.LeafHasher.HashLeaf(top.RawLeafBase, top.RawLeafExt)
-	return merkle.Verify(root, wp.Proof, leaf, vr.hashBackend.NodeHasher)
-}
-
-// checkMerkleProofsPointSampling verifies every WMerkleProof in
-// proof.PointSamplings against the corresponding root in vr.roots
-// (= setupRoots ++ proof.Commitments).
-func (vr *verifierRunTime) checkMerkleProofsPointSampling() error {
-	NQ := constants.NUM_QUERIES
-	if len(vr.proof.PointSamplings) != NQ {
-		return fmt.Errorf("checkMerkleProofs: PointSamplings has %d queries, want %d", len(vr.proof.PointSamplings), NQ)
-	}
-	for q, samplings := range vr.proof.PointSamplings {
-		if len(samplings) != vr.layout.NumTrees {
-			return fmt.Errorf("checkMerkleProofs: PointSamplings[%d] has %d entries, want %d", q, len(samplings), vr.layout.NumTrees)
-		}
-		for i, wp := range samplings {
-			if !vr.verifyWMerkleProof(vr.roots[i], wp) {
-				return fmt.Errorf("checkMerkleProofs: query %d tree %d: invalid Merkle proof", q, i)
-			}
-		}
-	}
-	return nil
-}
-
-// checkFRIBridge verifies that the DEEP quotient (per size) evaluated at the
-// FRI sample points (using the column / AIR-chunk samples from
-// proof.PointSamplings) matches the FRI proof's level-0 layer values. It is
-// the prover-side ComputeDeepQuotient computed pointwise at the FRI query
-// positions instead of as a polynomial.
-func (vr *verifierRunTime) checkFRIBridge() error {
-	NQ := constants.NUM_QUERIES
-
-	dqLayout := vr.dqLayout
-	sizes := dqLayout.Sizes
-
-	domainBySize := make(map[int]*fft.Domain, len(sizes))
-	for _, m := range vr.program.Modules {
-		if _, ok := domainBySize[m.N]; !ok {
-			domainBySize[m.N] = m.D
-		}
-	}
-
-	samplePair := func(slot prover.Slot, q int) (ext.E6, ext.E6, error) {
-		if slot.TreeIdx >= len(vr.proof.PointSamplings[q]) {
-			return ext.E6{}, ext.E6{}, fmt.Errorf("checkFRIBridge: tree index %d out of range", slot.TreeIdx)
-		}
-		wp := vr.proof.PointSamplings[q][slot.TreeIdx]
-		// Single-group today: the slot's PolyIdx is interpreted against the
-		// top Group at InjectionRawLeaves[0]. When multi-size Commit lands,
-		// Slot will need to identify the group index too, and this lookup
-		// will pick the matching RawLeaf.
-		if len(wp.InjectionRawLeaves) == 0 {
-			return ext.E6{}, ext.E6{}, fmt.Errorf("checkFRIBridge: WMerkleProof at tree %d has no InjectionRawLeaves", slot.TreeIdx)
-		}
-		raw := wp.InjectionRawLeaves[0]
-		if slot.Field == field.Ext {
-			rawIdx := slot.PolyIdx
-			if rawIdx >= len(raw.RawLeafExt) {
-				return ext.E6{}, ext.E6{}, fmt.Errorf("checkFRIBridge: ext raw leaf index %d out of range for slot %+v (have %d)", rawIdx, slot, len(raw.RawLeafExt))
-			}
-			return raw.RawLeafExt[rawIdx][0], raw.RawLeafExt[rawIdx][1], nil
-		}
-
-		rawIdx := slot.PolyIdx
-		if rawIdx >= len(raw.RawLeafBase) {
-			return ext.E6{}, ext.E6{}, fmt.Errorf("checkFRIBridge: base raw leaf index %d out of range for slot %+v (have %d)", rawIdx, slot, len(raw.RawLeafBase))
-		}
-		return liftBaseToExt(raw.RawLeafBase[rawIdx][0]), liftBaseToExt(raw.RawLeafBase[rawIdx][1]), nil
-	}
-
-	for q := 0; q < NQ; q++ {
-		sFull := vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0].Path.LeafIdx
-
-		for i, N := range sizes {
-			domainSize := constants.RATE * N
-			halfDomain := domainSize / 2
-			sL := sFull % halfDomain
-
-			generator, err := koalabear.Generator(uint64(domainSize))
-			if err != nil {
-				return err
-			}
-			var XBase, negXBase koalabear.Element
-			XBase.Exp(generator, big.NewInt(int64(sL)))
-			negXBase.Neg(&XBase)
-			X := liftBaseToExt(XBase)
-			negX := liftBaseToExt(negXBase)
-
-			domN := domainBySize[N]
-
-			var DQ_P, DQ_Q ext.E6
-			var alphaAcc ext.E6
-			alphaAcc.SetOne()
-
-			for j, shift := range dqLayout.Shifts[i] {
-				var omegaShift koalabear.Element
-				omegaShift.Exp(domN.Generator, big.NewInt(int64(shift)))
-				z_s := vr.zeta
-				z_s.MulByElement(&z_s, &omegaShift)
-
-				var v_s, C_at_X, C_at_negX ext.E6
-				names := dqLayout.Names[i][j]
-				keys := dqLayout.Keys[i][j]
-				for k := range names {
-					evalAtZ, ok := vr.proof.ValueAtZetaExt(keys[k])
-					if !ok {
-						return fmt.Errorf("checkFRIBridge: %q not in ValuesAtZeta", keys[k])
-					}
-					slot, ok := vr.layout.ColSlot[names[k]]
-					if !ok {
-						return fmt.Errorf("checkFRIBridge: column %q not in layout.ColSlot", names[k])
-					}
-					leafP, leafQ, err := samplePair(slot, q)
-					if err != nil {
-						return err
-					}
-
-					var term ext.E6
-					term.Mul(&evalAtZ, &alphaAcc)
-					v_s.Add(&v_s, &term)
-					term.Mul(&leafP, &alphaAcc)
-					C_at_X.Add(&C_at_X, &term)
-					term.Mul(&leafQ, &alphaAcc)
-					C_at_negX.Add(&C_at_negX, &term)
-
-					alphaAcc.Mul(&alphaAcc, &vr.alpha)
-				}
-
-				var num, denom ext.E6
-				num.Sub(&v_s, &C_at_X)
-				denom.Sub(&z_s, &X)
-				denom.Inverse(&denom)
-				num.Mul(&num, &denom)
-				DQ_P.Add(&DQ_P, &num)
-
-				num.Sub(&v_s, &C_at_negX)
-				denom.Sub(&z_s, &negX)
-				denom.Inverse(&denom)
-				num.Mul(&num, &denom)
-				DQ_Q.Add(&DQ_Q, &num)
-			}
-
-			if len(dqLayout.AIRChunks[i]) > 0 {
-				var v_air, C_at_X, C_at_negX ext.E6
-				for _, chunkName := range dqLayout.AIRChunks[i] {
-					evalAtZ, ok := vr.proof.ValueAtZetaExt(chunkName)
-					if !ok {
-						return fmt.Errorf("checkFRIBridge: %q not in ValuesAtZeta", chunkName)
-					}
-					slot, ok := vr.layout.AIRChunkSlot[chunkName]
-					if !ok {
-						return fmt.Errorf("checkFRIBridge: chunk %q not in layout.AIRChunkSlot", chunkName)
-					}
-					leafP, leafQ, err := samplePair(slot, q)
-					if err != nil {
-						return err
-					}
-
-					var term ext.E6
-					term.Mul(&evalAtZ, &alphaAcc)
-					v_air.Add(&v_air, &term)
-					term.Mul(&leafP, &alphaAcc)
-					C_at_X.Add(&C_at_X, &term)
-					term.Mul(&leafQ, &alphaAcc)
-					C_at_negX.Add(&C_at_negX, &term)
-
-					alphaAcc.Mul(&alphaAcc, &vr.alpha)
-				}
-
-				var num, denom ext.E6
-				num.Sub(&v_air, &C_at_X)
-				denom.Sub(&vr.zeta, &X)
-				denom.Inverse(&denom)
-				num.Mul(&num, &denom)
-				DQ_P.Add(&DQ_P, &num)
-
-				num.Sub(&v_air, &C_at_negX)
-				denom.Sub(&vr.zeta, &negX)
-				denom.Inverse(&denom)
-				num.Mul(&num, &denom)
-				DQ_Q.Add(&DQ_Q, &num)
-			}
-
-			var actualP, actualQ ext.E6
-			if i == 0 {
-				layer := vr.proof.DeepQuotientFriProof.FRIQueries[q].Layers[0]
-				if layer.Field != field.Ext {
-					return fmt.Errorf("checkFRIBridge: expected ext FRI query layer, got %s", layer.Field)
-				}
-				actualP = layer.LeafPExt
-				actualQ = layer.LeafQExt
-			} else {
-				lq := vr.proof.DeepQuotientFriProof.LevelQueries[i-1][q]
-				if lq.Field != field.Ext {
-					return fmt.Errorf("checkFRIBridge: expected ext FRI level query, got %s", lq.Field)
-				}
-				actualP = lq.LeafPExt
-				actualQ = lq.LeafQExt
-			}
-			if !DQ_P.Equal(&actualP) {
-				return fmt.Errorf("checkFRIBridge: query %d level %d (N=%d): DQ(ω_l^s) mismatch: got %s, want %s", q, i, N, DQ_P.String(), actualP.String())
-			}
-			if !DQ_Q.Equal(&actualQ) {
-				return fmt.Errorf("checkFRIBridge: query %d level %d (N=%d): DQ(-ω_l^s) mismatch: got %s, want %s", q, i, N, DQ_Q.String(), actualQ.String())
-			}
-		}
-	}
-
-	return nil
+	pcs := fri.NewPCSWithParams(vr.friParams)
+	return pcs.Verify(vr.roots, shapes, vr.schedule.Shifts, vr.zeta, vr.proof.Opening, vr.fs)
 }
 
 func Verify(publicInputs public.Inputs, verificationKey setup.VerificationKey, program board.Program, proof proof.Proof, opts ...Option) error {
@@ -636,68 +476,42 @@ func Verify(publicInputs public.Inputs, verificationKey setup.VerificationKey, p
 		return err
 	}
 
-	// 1 - derive the challenges, and populate proof.ValuesAtZeta with those challenges
-	err = vr.deriveChallenges()
-	if err != nil {
+	// 1 - derive the per-round challenges and zeta from the transcript.
+	if err := vr.deriveChallenges(); err != nil {
 		return err
 	}
 
-	// 2 - populate proof.ValuesAtZeta with the exposed values, lagrange columns and public columns
-	err = vr.computeExposedColumns()
-	if err != nil {
+	// 2 - translate Opening.ClaimedValues into vr.valuesAtZeta keyed by
+	//     canonical leaf names, then add verifier-reconstructed entries
+	//     (Lagrange, public inputs, exposed values).
+	if err := vr.loadClaimedValues(); err != nil {
 		return err
 	}
-	err = vr.computeLagrange()
-	if err != nil {
+	if err := vr.computeExposedColumns(); err != nil {
 		return err
 	}
-	err = vr.computePublicInputsColumns()
-	if err != nil {
+	if err := vr.computeLagrange(); err != nil {
 		return err
 	}
-
-	// 3 - check bus values
-	err = vr.checkLogupBus()
-	if err != nil {
+	if err := vr.computePublicInputsColumns(); err != nil {
 		return err
 	}
 
-	// 4 - check the AIR relations
-	err = vr.checkAIRRelations()
-	if err != nil {
+	// 3 - check logup buses (multi-set equality from cumulative sums).
+	if err := vr.checkLogupBus(); err != nil {
 		return err
 	}
 
-	// ------ PCS related verification ------
-
-	if !config.SkipFRI {
-
-		// 5a - derive the DEEP batching challenge before FRI appends its own
-		// challenges to the shared transcript.
-		err = vr.deriveDeepAlpha()
-		if err != nil {
-			return err
-		}
-
-		// 5b - check FRI proof
-		err = vr.checkFRIProof()
-		if err != nil {
-			return err
-		}
-
-		// 5c - check merkle proofs of proof.PointSamplings
-		err = vr.checkMerkleProofsPointSampling()
-		if err != nil {
-			return err
-		}
-
-		// 5d - check FRI <-> PointSamplings bridge
-		err = vr.checkFRIBridge()
-		if err != nil {
-			return err
-		}
-
+	// 4 - check the AIR relations at zeta.
+	if err := vr.checkAIRRelations(); err != nil {
+		return err
 	}
 
-	return nil
+	// 5 - PCS verification: alpha_DEEP replay + FRI proof + Merkle paths
+	//     + bridge check (DQ_N(±X) recomputed from raw leaves & claimed
+	//     values, compared against the FRI level leaves).
+	if config.SkipFRI {
+		return nil
+	}
+	return vr.runPCSVerify()
 }

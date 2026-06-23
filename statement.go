@@ -108,8 +108,8 @@ func checkVerificationKey(statement Statement, witnessKey setup.ProvingKey) erro
 	if len(statementKey.Roots) != expectedRoots {
 		return fmt.Errorf("loom: statement has %d setup roots, program expects %d setup trees", len(statementKey.Roots), expectedRoots)
 	}
-	if len(witnessKey.Trees) != expectedRoots {
-		return fmt.Errorf("loom: witness has %d setup trees, program expects %d", len(witnessKey.Trees), expectedRoots)
+	if len(witnessKey.Setup) != expectedRoots {
+		return fmt.Errorf("loom: witness has %d setup trees, program expects %d", len(witnessKey.Setup), expectedRoots)
 	}
 	if len(statementKey.Roots) != len(witnessKeyForVerifier.Roots) {
 		return fmt.Errorf("loom: statement has %d setup roots, witness has %d setup trees", len(statementKey.Roots), len(witnessKeyForVerifier.Roots))
