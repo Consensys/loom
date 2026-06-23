@@ -104,13 +104,17 @@ type GroupShape struct {
 	ExtWidth     int
 }
 
+// BatchShapes gives, for every Group in a Batch (in declaration order),
+// the per-group shape list.
+type BatchShapes = []GroupShape
+
 type WMerkleTree struct {
 	Tree *merkle.Tree
 
 	// groups in decreasing PairedLeaves order. Length 1 for the typical
 	// single-size Commit call; length > 1 when multiple sizes were committed
 	// into one tree via merkle injections.
-	groups []GroupShape
+	groups BatchShapes
 }
 
 // RawLeaf holds the pair evaluations {f(ω^i), f(−ω^i)} for one Group of the
@@ -179,7 +183,7 @@ func (wt WMerkleTree) ExtWidth() int {
 // Groups returns the per-group shape descriptors in decreasing-size order
 // (groups[0] is the top / largest group). The returned slice is owned by
 // the tree; callers must not mutate it.
-func (wt WMerkleTree) Groups() []GroupShape {
+func (wt WMerkleTree) Groups() BatchShapes {
 	return wt.groups
 }
 
@@ -433,7 +437,7 @@ func (rs *RSCommit) Commit(batch Batch, opts ...CommitOption) (WMerkleTree, []Le
 
 	// 4- record the per-group shape in decreasing-size order so callers can
 	//    locate each rail's pairs within the tree.
-	shapes := make([]GroupShape, len(order))
+	shapes := make(BatchShapes, len(order))
 	for k, gi := range order {
 		shapes[k] = GroupShape{
 			PairedLeaves: len(perGroupLeaves[k]),

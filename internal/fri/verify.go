@@ -57,7 +57,7 @@ import (
 // failure mode.
 func (pcs *PCS) Verify(
 	roots []hash.Digest,
-	shapes [][]GroupShape,
+	shapes []BatchShapes,
 	shifts []BatchShifts,
 	zeta ext.E6,
 	proof OpeningProof,
@@ -144,7 +144,7 @@ func (pcs *PCS) Verify(
 // and with the canonical layout's distinct-size count.
 func validateOpeningProofShape(
 	proof *OpeningProof,
-	shapes [][]GroupShape,
+	shapes []BatchShapes,
 	shifts []BatchShifts,
 	lay layout,
 	numQueries int,
@@ -212,7 +212,7 @@ func validateOpeningProofShape(
 // indices into shapes in *decreasing PairedLeaves* order -- the same
 // order PCS.Commit places the per-Group LeafSources in Committed.Sources
 // (and consequently the same order WMerkleProof.InjectionRawLeaves uses).
-func injectionOrderForBatch(batchShapes []GroupShape) []int {
+func injectionOrderForBatch(batchShapes BatchShapes) []int {
 	order := make([]int, len(batchShapes))
 	for i := range order {
 		order[i] = i
@@ -250,7 +250,7 @@ func extractFRIQueryPositions(prf Proof, numQueries int) ([]int, error) {
 func verifyAllPointSamplings(
 	pcs *PCS,
 	roots []hash.Digest,
-	shapes [][]GroupShape,
+	shapes []BatchShapes,
 	queryPositions []int,
 	pointSamplings [][]WMerkleProof,
 ) error {
@@ -274,7 +274,7 @@ func verifyOneWMerkleProof(
 	leafHasher LeafHasher,
 	nodeHasher NodeHasher,
 	root hash.Digest,
-	batchShapes []GroupShape,
+	batchShapes BatchShapes,
 	wp WMerkleProof,
 ) error {
 	if len(wp.InjectionRawLeaves) == 0 {

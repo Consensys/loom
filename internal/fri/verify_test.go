@@ -197,12 +197,12 @@ func buildVerifyFixture(t *testing.T) (
 // from the per-batch Committed blobs the prover holds. In production
 // callers, the outer protocol assembles these (setup roots from a
 // verification key, witness roots from the proof).
-func rootsAndShapes(committed []Committed) ([]hash.Digest, [][]GroupShape) {
+func rootsAndShapes(committed []Committed) ([]hash.Digest, []BatchShapes) {
 	roots := make([]hash.Digest, len(committed))
-	shapes := make([][]GroupShape, len(committed))
+	shapes := make([]BatchShapes, len(committed))
 	for b, c := range committed {
 		roots[b] = c.Tree.Root()
-		shapes[b] = append([]GroupShape{}, c.Tree.Groups()...)
+		shapes[b] = append(BatchShapes{}, c.Tree.Groups()...)
 	}
 	return roots, shapes
 }
