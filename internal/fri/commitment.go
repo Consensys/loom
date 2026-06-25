@@ -36,16 +36,15 @@ type LeafHash = hash.Digest
 type NodeHash = hash.Digest
 
 type LeafHasher interface {
-	HashLeaf(base []PairBase, ext []PairExt) hash.Digest
+	HashLeaf(base []koalabear.Element, ext []ext.E6) hash.Digest
 }
 
-// LeafSource describes the column-oriented data used to build paired Merkle
-// leaves. Leaf i absorbs values at i and i+PairOffset for every base and
-// extension polynomial.
+// LeafSource describes the encoded column-oriented data used to build Merkle
+// leaves. Leaf i absorbs one row value at i for every base and extension
+// polynomial.
 type LeafSource struct {
-	Base       []poly.Polynomial
-	Ext        []poly.ExtPolynomial
-	PairOffset int
+	Base []poly.Polynomial
+	Ext  []poly.ExtPolynomial
 }
 
 // BatchLeafHasher hashes a consecutive range of leaves into dst. HashLeaf
@@ -117,15 +116,15 @@ type WMerkleTree struct {
 	groups BatchShapes
 }
 
-// RawLeaf holds the pair evaluations {f(ω^i), f(−ω^i)} for one Group of the
-// committed tree: one PairBase per base-rail polynomial and one PairExt per
-// extension-rail polynomial, in declaration order. Hashing a RawLeaf with
+// RawLeaf holds one encoded row for one Group of the committed tree: one base
+// value per base-rail polynomial and one extension value per extension-rail
+// polynomial, in declaration order. Hashing a RawLeaf with
 // LeafHasher.HashLeaf reproduces the digest that lives at the matching
 // position in the Merkle tree (either the leaf-level digest for the top
 // group or one of merkle.Proof.InjectionLeaves for the smaller groups).
 type RawLeaf struct {
-	RawLeafBase []PairBase
-	RawLeafExt  []PairExt
+	RawLeafBase []koalabear.Element
+	RawLeafExt  []ext.E6
 }
 
 // WMerkleProof is an opening proof for a WMerkleTree at one query position.
@@ -210,9 +209,6 @@ func (wt WMerkleTree) OpenProof(i int) (merkle.Proof, error) {
 	return wt.Tree.OpenProof(i)
 }
 
-type PairBase = [2]koalabear.Element // used to store the pairs {f_k(w^i), f_k(-w^i)}
-type PairExt = [2]ext.E6             // used to store the pairs {f_k(w^i), f_k(-w^i)}
-
 func NewRSCommit(N uint64, rate uint64, leafHasher LeafHasher, nodehasher NodeHasher) RSCommit {
 	return NewRSCommitWithDomainCache(N, rate, leafHasher, nodehasher, nil)
 }
@@ -247,20 +243,20 @@ func WithDomainCache(cache *poly.DomainCache) CommitOption {
 	}
 }
 
-func (Poseidon2LeafHasher) HashLeaf(base []PairBase, ext []PairExt) hash.Digest {
+func (Poseidon2LeafHasher) HashLeaf(base []koalabear.Element, ext []ext.E6) hash.Digest {
 	h := hash.NewPoseidon2SpongeHasher()
 	h.WriteElements(hash.NewElement(leafDomainTag), hash.NewElement(uint64(len(base))), hash.NewElement(uint64(len(ext))))
-	for _, pair := range base {
-		h.WriteElements(pair[0], pair[1])
+	for _, v := range base {
+		h.WriteElements(v)
 	}
-	for _, pair := range ext {
-		h.WriteExt(pair[0], pair[1])
+	for _, v := range ext {
+		h.WriteExt(v)
 	}
 	return h.Sum()
 }
 
 func (lh Poseidon2LeafHasher) HashLeaves(dst []hash.Digest, src LeafSource, start int) {
-	if src.PairOffset < hash.Poseidon2SpongeBatchSize || len(dst) < hash.Poseidon2SpongeBatchSize {
+	if len(dst) < hash.Poseidon2SpongeBatchSize {
 		hashLeavesScalar(lh, dst, src, start)
 		return
 	}
@@ -403,9 +399,8 @@ func (rs *RSCommit) Commit(batch Batch, opts ...CommitOption) (WMerkleTree, []Le
 
 		halfN := int(encoder.Domain.Cardinality >> 1)
 		src := LeafSource{
-			Base:       encodedBase,
-			Ext:        encodedExt,
-			PairOffset: halfN,
+			Base: encodedBase,
+			Ext:  encodedExt,
 		}
 		leaves := make([]hash.Digest, halfN)
 		HashLeavesParallel(rs.LeafHasher, leaves, src)
@@ -532,20 +527,18 @@ func hashLeavesBatchParallel(lh BatchLeafHasher, dst []hash.Digest, src LeafSour
 }
 
 func hashLeavesScalar(lh LeafHasher, dst []hash.Digest, src LeafSource, start int) {
-	baseLeaf := make([]PairBase, len(src.Base))
-	extLeaf := make([]PairExt, len(src.Ext))
+	baseLeaf := make([]koalabear.Element, len(src.Base))
+	extLeaf := make([]ext.E6, len(src.Ext))
 	for k := range dst {
 		i := start + k
 		if len(src.Base) > 0 {
 			for j := range src.Base {
-				baseLeaf[j][0].Set(&src.Base[j][i])
-				baseLeaf[j][1].Set(&src.Base[j][i+src.PairOffset])
+				baseLeaf[j].Set(&src.Base[j][i])
 			}
 		}
 		if len(src.Ext) > 0 {
 			for j := range src.Ext {
-				extLeaf[j][0].Set(&src.Ext[j][i])
-				extLeaf[j][1].Set(&src.Ext[j][i+src.PairOffset])
+				extLeaf[j].Set(&src.Ext[j][i])
 			}
 		}
 		dst[k] = lh.HashLeaf(baseLeaf, extLeaf)
@@ -559,25 +552,21 @@ func (lh Poseidon2LeafHasher) hashLeavesBatch16(dst []hash.Digest, src LeafSourc
 	sponge.WriteSameElement(hash.NewElement(uint64(len(src.Ext))))
 
 	for _, pol := range src.Base {
-		var lo, hi [hash.Poseidon2SpongeBatchSize]koalabear.Element
+		var row [hash.Poseidon2SpongeBatchSize]koalabear.Element
 		for lane := 0; lane < hash.Poseidon2SpongeBatchSize; lane++ {
 			i := start + lane
-			lo[lane].Set(&pol[i])
-			hi[lane].Set(&pol[i+src.PairOffset])
+			row[lane].Set(&pol[i])
 		}
-		sponge.WriteElementBatch(lo)
-		sponge.WriteElementBatch(hi)
+		sponge.WriteElementBatch(row)
 	}
 
 	for _, pol := range src.Ext {
-		var lo, hi [hash.Poseidon2SpongeBatchSize]ext.E6
+		var row [hash.Poseidon2SpongeBatchSize]ext.E6
 		for lane := 0; lane < hash.Poseidon2SpongeBatchSize; lane++ {
 			i := start + lane
-			lo[lane].Set(&pol[i])
-			hi[lane].Set(&pol[i+src.PairOffset])
+			row[lane].Set(&pol[i])
 		}
-		sponge.WriteExtBatch(lo)
-		sponge.WriteExtBatch(hi)
+		sponge.WriteExtBatch(row)
 	}
 
 	digests := sponge.Sum()

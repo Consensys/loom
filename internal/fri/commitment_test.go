@@ -326,7 +326,7 @@ func TestRSCommitMultiGroupOpenProof(t *testing.T) {
 	}
 
 	// Commit's returned LeafSources must be in decreasing-size order — same
-	// order as Groups() — and each source's width/PairOffset must match the
+	// order as Groups() — and each source's width must match the
 	// corresponding GroupShape.
 	if len(sources) != 2 {
 		t.Fatalf("len(sources) = %d, want 2", len(sources))
@@ -337,9 +337,6 @@ func TestRSCommitMultiGroupOpenProof(t *testing.T) {
 		}
 		if got, want := len(src.Ext), shapes[k].ExtWidth; got != want {
 			t.Fatalf("sources[%d].Ext width = %d, want %d", k, got, want)
-		}
-		if got, want := src.PairOffset, shapes[k].PairedLeaves; got != want {
-			t.Fatalf("sources[%d].PairOffset = %d, want %d", k, got, want)
 		}
 	}
 
@@ -393,24 +390,23 @@ type scalarOnlyLeafHasher struct {
 	inner LeafHasher
 }
 
-func (h scalarOnlyLeafHasher) HashLeaf(base []PairBase, ext []PairExt) hash.Digest {
+func (h scalarOnlyLeafHasher) HashLeaf(base []koalabear.Element, ext []ext.E6) hash.Digest {
 	return h.inner.HashLeaf(base, ext)
 }
 
 func testLeafSource(nLeaves, nbBase, nbExt int) LeafSource {
 	src := LeafSource{
-		Base:       make([]poly.Polynomial, nbBase),
-		Ext:        make([]poly.ExtPolynomial, nbExt),
-		PairOffset: nLeaves,
+		Base: make([]poly.Polynomial, nbBase),
+		Ext:  make([]poly.ExtPolynomial, nbExt),
 	}
 	for j := range src.Base {
-		src.Base[j] = make(poly.Polynomial, 2*nLeaves)
+		src.Base[j] = make(poly.Polynomial, nLeaves)
 		for i := range src.Base[j] {
 			src.Base[j][i] = baseElement(uint64(1000*(j+1) + i + 1))
 		}
 	}
 	for j := range src.Ext {
-		src.Ext[j] = make(poly.ExtPolynomial, 2*nLeaves)
+		src.Ext[j] = make(poly.ExtPolynomial, nLeaves)
 		for i := range src.Ext[j] {
 			v := uint64(10000*(j+1) + 10*(i+1))
 			src.Ext[j][i] = extElement(v+1, v+2, v+3, v+4)
@@ -419,17 +415,15 @@ func testLeafSource(nLeaves, nbBase, nbExt int) LeafSource {
 	return src
 }
 
-func leafFromSource(src LeafSource, i int) ([]PairBase, []PairExt) {
-	baseLeaf := make([]PairBase, len(src.Base))
+func leafFromSource(src LeafSource, i int) ([]koalabear.Element, []ext.E6) {
+	baseLeaf := make([]koalabear.Element, len(src.Base))
 	for j := range src.Base {
-		baseLeaf[j][0].Set(&src.Base[j][i])
-		baseLeaf[j][1].Set(&src.Base[j][i+src.PairOffset])
+		baseLeaf[j].Set(&src.Base[j][i])
 	}
 
-	extLeaf := make([]PairExt, len(src.Ext))
+	extLeaf := make([]ext.E6, len(src.Ext))
 	for j := range src.Ext {
-		extLeaf[j][0].Set(&src.Ext[j][i])
-		extLeaf[j][1].Set(&src.Ext[j][i+src.PairOffset])
+		extLeaf[j].Set(&src.Ext[j][i])
 	}
 
 	return baseLeaf, extLeaf
@@ -457,10 +451,10 @@ func extElement(a0, a1, b0, b1 uint64, b2 ...uint64) ext.E6 {
 }
 
 // rawLeafFromPolys re-encodes basePolys/extPolys at the given rate (same
-// blowup PCS uses) and reads the paired evaluations at position leafIdx.
-// It is a test-only mirror of what RSCommit / PCS.Commit does internally,
-// used to check Merkle openings against the legacy single-group leaf hash.
-func rawLeafFromPolys(rate uint64, basePolys []poly.Polynomial, extPolys []poly.ExtPolynomial, leafIdx int) ([]PairBase, []PairExt) {
+// blowup PCS uses) and reads the row evaluation at position leafIdx. It is a
+// test-only mirror of what RSCommit / PCS.Commit does internally, used to
+// check Merkle openings against the single-group leaf hash.
+func rawLeafFromPolys(rate uint64, basePolys []poly.Polynomial, extPolys []poly.ExtPolynomial, leafIdx int) ([]koalabear.Element, []ext.E6) {
 	var cache poly.DomainCache
 	N := 0
 	if len(basePolys) > 0 {
@@ -469,20 +463,17 @@ func rawLeafFromPolys(rate uint64, basePolys []poly.Polynomial, extPolys []poly.
 		N = len(extPolys[0])
 	}
 	encoder := reedsolomon.NewEncoder(rate*uint64(N), reedsolomon.WithCache(&cache))
-	halfN := int(encoder.Domain.Cardinality >> 1)
 
-	baseLeaf := make([]PairBase, len(basePolys))
+	baseLeaf := make([]koalabear.Element, len(basePolys))
 	for j, p := range basePolys {
 		encoded := encoder.Encode(p, cache.Get(uint64(len(p))))
-		baseLeaf[j][0].Set(&encoded[leafIdx])
-		baseLeaf[j][1].Set(&encoded[leafIdx+halfN])
+		baseLeaf[j].Set(&encoded[leafIdx])
 	}
 
-	extLeaf := make([]PairExt, len(extPolys))
+	extLeaf := make([]ext.E6, len(extPolys))
 	for j, p := range extPolys {
 		encoded := encoder.EncodeExt(p, cache.Get(uint64(len(p))))
-		extLeaf[j][0].Set(&encoded[leafIdx])
-		extLeaf[j][1].Set(&encoded[leafIdx+halfN])
+		extLeaf[j].Set(&encoded[leafIdx])
 	}
 
 	return baseLeaf, extLeaf

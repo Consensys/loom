@@ -16,6 +16,8 @@ package fri
 import (
 	"fmt"
 
+	"github.com/consensys/gnark-crypto/field/koalabear"
+	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/internal/hash"
 )
 
@@ -123,14 +125,14 @@ func normalizeHashBackendID(id string) string {
 	return id
 }
 
-func (SHA256LeafHasher) HashLeaf(base []PairBase, ext []PairExt) hash.Digest {
+func (SHA256LeafHasher) HashLeaf(base []koalabear.Element, ext []ext.E6) hash.Digest {
 	h := hash.NewSHA256FieldHasher()
 	h.WriteElements(hash.NewElement(leafDomainTag), hash.NewElement(uint64(len(base))), hash.NewElement(uint64(len(ext))))
-	for _, pair := range base {
-		h.WriteElements(pair[0], pair[1])
+	for _, v := range base {
+		h.WriteElements(v)
 	}
-	for _, pair := range ext {
-		h.WriteExt(pair[0], pair[1])
+	for _, v := range ext {
+		h.WriteExt(v)
 	}
 	return h.Sum()
 }

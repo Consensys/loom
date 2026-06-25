@@ -16,6 +16,7 @@ package fri
 import (
 	"fmt"
 
+	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/field"
 	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
@@ -276,9 +277,10 @@ func openCommittedAt(c Committed, sQ int) (WMerkleProof, error) {
 
 	rawLeaves := make([]RawLeaf, len(c.Sources))
 	for k, src := range c.Sources {
-		groupHalfN := src.PairOffset
+		groupRows := leafSourceRows(src)
+		groupHalfN := groupRows / 2
 		if groupHalfN <= 0 {
-			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d has non-positive PairOffset %d", k, groupHalfN)
+			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d has insufficient encoded rows %d", k, groupRows)
 		}
 		// Position in the group's own encoded coset. For the top group
 		// (k=0, groupHalfN == topLeafCount), bitsReduced = 0 and pos =
@@ -288,15 +290,13 @@ func openCommittedAt(c Committed, sQ int) (WMerkleProof, error) {
 		bitsReduced := log2(topLeafCount) - log2(groupHalfN)
 		pos := topPos >> bitsReduced
 
-		baseLeaf := make([]PairBase, len(src.Base))
+		baseLeaf := make([]koalabear.Element, len(src.Base))
 		for i, p := range src.Base {
-			baseLeaf[i][0].Set(&p[pos])
-			baseLeaf[i][1].Set(&p[pos+groupHalfN])
+			baseLeaf[i].Set(&p[pos])
 		}
-		extLeaf := make([]PairExt, len(src.Ext))
+		extLeaf := make([]ext.E6, len(src.Ext))
 		for i, p := range src.Ext {
-			extLeaf[i][0].Set(&p[pos])
-			extLeaf[i][1].Set(&p[pos+groupHalfN])
+			extLeaf[i].Set(&p[pos])
 		}
 		rawLeaves[k] = RawLeaf{RawLeafBase: baseLeaf, RawLeafExt: extLeaf}
 	}
@@ -305,4 +305,14 @@ func openCommittedAt(c Committed, sQ int) (WMerkleProof, error) {
 		InjectionRawLeaves: rawLeaves,
 		Proof:              pth,
 	}, nil
+}
+
+func leafSourceRows(src LeafSource) int {
+	if len(src.Base) > 0 {
+		return len(src.Base[0])
+	}
+	if len(src.Ext) > 0 {
+		return len(src.Ext[0])
+	}
+	return 0
 }

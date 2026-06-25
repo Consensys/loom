@@ -227,7 +227,7 @@ func referenceDeepQuotient(
 		for b := range batches {
 			for k := range committed[b].Sources {
 				src := &committed[b].Sources[k]
-				if src.PairOffset == ratN/2 {
+				if leafSourceRows(*src) == ratN {
 					srcForBatch[b] = src
 					break
 				}

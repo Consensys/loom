@@ -929,8 +929,7 @@ func buildTreeBase(layer []koalabear.Element, lh LeafHasher, nh NodeHasher) (*me
 	}
 	leaves := make([]hash.Digest, half)
 	HashLeavesParallel(lh, leaves, LeafSource{
-		Base:       []poly.Polynomial{layer},
-		PairOffset: half,
+		Base: []poly.Polynomial{layer},
 	})
 	return tree, tree.Build(leaves)
 }
@@ -944,8 +943,7 @@ func buildTreeExt(layer []ext.E6, lh LeafHasher, nh NodeHasher) (*merkle.Tree, e
 	}
 	leaves := make([]hash.Digest, half)
 	HashLeavesParallel(lh, leaves, LeafSource{
-		Ext:        []poly.ExtPolynomial{layer},
-		PairOffset: half,
+		Ext: []poly.ExtPolynomial{layer},
 	})
 	return tree, tree.Build(leaves)
 }
@@ -1098,8 +1096,7 @@ func checkQuery(s int, fq Query,
 		if ld.Field != field.Base {
 			return fmt.Errorf("level %d: expected base query layer, got %s", lIdx+1, ld.Field)
 		}
-		pair := []PairBase{{ld.LeafPBase, ld.LeafQBase}}
-		leaf := p.LeafHasher.HashLeaf(pair, nil)
+		leaf := p.LeafHasher.HashLeaf([]koalabear.Element{ld.LeafPBase}, nil)
 		if !merkle.Verify(levelRoots[lIdx], ld.Path, leaf, p.NodeHasher) {
 			return fmt.Errorf("level %d: Merkle proof invalid", lIdx+1)
 		}
@@ -1114,8 +1111,7 @@ func checkQuery(s int, fq Query,
 			return fmt.Errorf("round %d: expected base query layer, got %s", j, layer.Field)
 		}
 
-		pair := []PairBase{{layer.LeafPBase, layer.LeafQBase}}
-		leaf := p.LeafHasher.HashLeaf(pair, nil)
+		leaf := p.LeafHasher.HashLeaf([]koalabear.Element{layer.LeafPBase}, nil)
 		if !merkle.Verify(roots[j], layer.Path, leaf, p.NodeHasher) {
 			return fmt.Errorf("round %d: Merkle proof invalid (base=%d)", j, base)
 		}
@@ -1188,8 +1184,7 @@ func checkQueryExt(s int, fq Query,
 		if ld.Field != field.Ext {
 			return fmt.Errorf("level %d: expected ext query layer, got %s", lIdx+1, ld.Field)
 		}
-		pair := []PairExt{{ld.LeafPExt, ld.LeafQExt}}
-		leaf := p.LeafHasher.HashLeaf(nil, pair)
+		leaf := p.LeafHasher.HashLeaf(nil, []ext.E6{ld.LeafPExt})
 		if !merkle.Verify(levelRoots[lIdx], ld.Path, leaf, p.NodeHasher) {
 			return fmt.Errorf("level %d: Merkle proof invalid", lIdx+1)
 		}
@@ -1203,8 +1198,7 @@ func checkQueryExt(s int, fq Query,
 			return fmt.Errorf("round %d: expected ext query layer, got %s", j, layer.Field)
 		}
 
-		pair := []PairExt{{layer.LeafPExt, layer.LeafQExt}}
-		leaf := p.LeafHasher.HashLeaf(nil, pair)
+		leaf := p.LeafHasher.HashLeaf(nil, []ext.E6{layer.LeafPExt})
 		if !merkle.Verify(roots[j], layer.Path, leaf, p.NodeHasher) {
 			return fmt.Errorf("round %d: Merkle proof invalid (base=%d)", j, base)
 		}

@@ -87,7 +87,7 @@ func TestPCSVerifyRejectsTamperedRawLeaf(t *testing.T) {
 	_, shifts, committed, openProof, params, zeta := buildVerifyFixture(t)
 
 	// Flip the first base raw leaf of the first query, first batch.
-	openProof.PointSamplings[0][0].InjectionRawLeaves[0].RawLeafBase[0][0].SetUint64(0xdeadbeef)
+	openProof.PointSamplings[0][0].InjectionRawLeaves[0].RawLeafBase[0].SetUint64(0xdeadbeef)
 
 	roots, shapes := rootsAndShapes(committed)
 	verifierFS := buildVerifierTranscript(t, committed)

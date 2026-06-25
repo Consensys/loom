@@ -423,13 +423,11 @@ func checkFRIBridge(
 
 					var leafP, leafQ ext.E6
 					if e.Field == field.Base {
-						pair := raw.RawLeafBase[e.PolyIdx]
-						leafP = hash.LiftBaseToExt(pair[0])
-						leafQ = hash.LiftBaseToExt(pair[1])
+						leafP = hash.LiftBaseToExt(raw.RawLeafBase[e.PolyIdx])
+						leafQ.Set(&leafP)
 					} else {
-						pair := raw.RawLeafExt[e.PolyIdx]
-						leafP = pair[0]
-						leafQ = pair[1]
+						leafP.Set(&raw.RawLeafExt[e.PolyIdx])
+						leafQ.Set(&leafP)
 					}
 
 					var term ext.E6
