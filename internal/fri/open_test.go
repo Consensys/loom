@@ -33,7 +33,7 @@ import (
 //   - FRIProof is structurally populated (non-nil FinalPoly, query count
 //     matches Params.NumQueries).
 //   - PointSamplings has shape [NumQueries][len(batches)] and each
-//     WMerkleProof carries one RawLeaf per Group of its batch.
+//     WMerkleProof carries one authenticated RawRowPair per Group of its batch.
 func TestOpenShape(t *testing.T) {
 	const rate uint64 = 2
 	const numQueries = 4
@@ -117,7 +117,7 @@ func TestOpenShape(t *testing.T) {
 	}
 
 	// 4- PointSamplings has [NumQueries][len(batches)] shape; each
-	//    WMerkleProof carries one RawLeaf per Group of its batch.
+	//    WMerkleProof carries one RawRowPair per Group of its batch.
 	if got, want := len(openProof.PointSamplings), numQueries; got != want {
 		t.Fatalf("PointSamplings outer length = %d, want %d", got, want)
 	}
@@ -127,20 +127,20 @@ func TestOpenShape(t *testing.T) {
 		}
 		for b := range openProof.PointSamplings[q] {
 			wp := openProof.PointSamplings[q][b]
-			wantRawLeaves := len(committed[b].Sources)
-			if got := len(wp.InjectionRawLeaves); got != wantRawLeaves {
-				t.Fatalf("PointSamplings[%d][%d].InjectionRawLeaves = %d, want %d",
-					q, b, got, wantRawLeaves)
+			wantOpenings := len(committed[b].Sources)
+			if got := len(wp.GroupOpenings); got != wantOpenings {
+				t.Fatalf("PointSamplings[%d][%d].GroupOpenings = %d, want %d",
+					q, b, got, wantOpenings)
 			}
-			// Top-group raw leaf widths must match the batch's top Group.
-			top := wp.InjectionRawLeaves[0]
+			// Top-group row widths must match the batch's top Group.
+			top := wp.GroupOpenings[0].Rows.Lo
 			topGroup := batches[b][0] // single-group batch in this fixture
-			if got, want := len(top.RawLeafBase), len(topGroup.Base); got != want {
-				t.Fatalf("PointSamplings[%d][%d].RawLeafBase width = %d, want %d",
+			if got, want := len(top.RawRowBase), len(topGroup.Base); got != want {
+				t.Fatalf("PointSamplings[%d][%d].RawRowBase width = %d, want %d",
 					q, b, got, want)
 			}
-			if got, want := len(top.RawLeafExt), len(topGroup.Ext); got != want {
-				t.Fatalf("PointSamplings[%d][%d].RawLeafExt width = %d, want %d",
+			if got, want := len(top.RawRowExt), len(topGroup.Ext); got != want {
+				t.Fatalf("PointSamplings[%d][%d].RawRowExt width = %d, want %d",
 					q, b, got, want)
 			}
 		}

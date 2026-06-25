@@ -191,12 +191,12 @@ func (pcs *PCS) Open(
 	}
 
 	// 9- For each query position, open every committed batch's tree at
-	//    the matching folded position and package per-Group raw pairs.
+	//    the matching folded position and package per-Group row pairs.
 	pointSamplings := make([][]WMerkleProof, len(queryPositions))
 	for q, sQ := range queryPositions {
 		pointSamplings[q] = make([]WMerkleProof, len(committed))
 		for b := range committed {
-			wp, err := openCommittedAt(committed[b], sQ)
+			wp, err := openCommittedAt(committed[b], sQ, pcs.params.N)
 			if err != nil {
 				return OpeningProof{}, fmt.Errorf("fri: PCS.Open: query %d, batch %d: %w", q, b, err)
 			}
@@ -246,18 +246,10 @@ func bindClaimedValuesInLayoutOrder(
 	return nil
 }
 
-// openCommittedAt opens a Committed batch at the query position sQ. The
-// query position is reduced into the batch's top-group leaf count; from
-// there each smaller Group's raw row sits at the corresponding reduced
-// position (idx >> bitsReduced), matching merkle.Tree.OpenProof's own
-// indexing of injection leaves.
-//
-// Returns one RawLeaf per Group in decreasing-size order (same order as
-// Committed.Sources and merkle.Proof.InjectionLeaves). Today, every
-// Committed carries exactly one Group, so InjectionRawLeaves has length
-// 1; the multi-group code path is fully wired and will activate when the
-// outer prover starts batching multiple sizes per Commit.
-func openCommittedAt(c Committed, sQ int) (WMerkleProof, error) {
+// openCommittedAt opens a Committed batch at the full FRI query row sQ. For
+// each committed group, sQ is projected by right shifts into the group's row
+// domain, then the adjacent lo/hi rows are returned and authenticated.
+func openCommittedAt(c Committed, sQ int, maxRows int) (WMerkleProof, error) {
 	if c.Tree.Tree == nil {
 		return WMerkleProof{}, fmt.Errorf("openCommittedAt: WMerkleTree is uninitialised")
 	}
@@ -268,40 +260,68 @@ func openCommittedAt(c Committed, sQ int) (WMerkleProof, error) {
 	if len(c.Sources) == 0 {
 		return WMerkleProof{}, fmt.Errorf("openCommittedAt: no LeafSources retained")
 	}
-
-	topPos := sQ % topLeafCount
-	pth, err := c.Tree.OpenProof(topPos)
-	if err != nil {
-		return WMerkleProof{}, err
+	if maxRows <= 0 || maxRows&(maxRows-1) != 0 {
+		return WMerkleProof{}, fmt.Errorf("openCommittedAt: maxRows=%d must be a positive power of two", maxRows)
+	}
+	if topLeafCount > maxRows {
+		return WMerkleProof{}, fmt.Errorf("openCommittedAt: top rows %d exceeds maxRows %d", topLeafCount, maxRows)
 	}
 
-	rawLeaves := make([]RawLeaf, len(c.Sources))
+	openings := make([]WMerkleGroupOpening, len(c.Sources))
+	topRows := leafSourceRows(c.Sources[0])
+	if topRows != topLeafCount {
+		return WMerkleProof{}, fmt.Errorf("openCommittedAt: top source rows %d != tree leaves %d", topRows, topLeafCount)
+	}
+
 	for k, src := range c.Sources {
 		groupRows := leafSourceRows(src)
 		if groupRows <= 0 {
 			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d has insufficient encoded rows %d", k, groupRows)
 		}
-		// Position in the group's own encoded row domain. For the top group
-		// (k=0, groupRows == topLeafCount), bitsReduced = 0 and pos = topPos.
-		// For smaller groups, pos = topPos >> bitsReduced, the same projection
-		// merkle.Tree.OpenProof uses for injection-leaf lookups.
-		bitsReduced := log2(topLeafCount) - log2(groupRows)
-		pos := topPos >> bitsReduced
+		if groupRows > maxRows {
+			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d rows %d exceeds maxRows %d", k, groupRows, maxRows)
+		}
+		if groupRows&(groupRows-1) != 0 {
+			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d rows %d is not a power of two", k, groupRows)
+		}
 
-		baseLeaf := make([]koalabear.Element, len(src.Base))
-		for i, p := range src.Base {
-			baseLeaf[i].Set(&p[pos])
+		globalReduction := log2(maxRows) - log2(groupRows)
+		row := sQ >> globalReduction
+		lo, hi := siblingRows(row)
+		rows, err := rawRowPairFromSource(src, lo, hi)
+		if err != nil {
+			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d rows: %w", k, err)
 		}
-		extLeaf := make([]ext.E6, len(src.Ext))
-		for i, p := range src.Ext {
-			extLeaf[i].Set(&p[pos])
+
+		topReduction := log2(topRows) - log2(groupRows)
+		if topReduction < 0 {
+			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d rows %d exceeds top rows %d", k, groupRows, topRows)
 		}
-		rawLeaves[k] = RawLeaf{RawLeafBase: baseLeaf, RawLeafExt: extLeaf}
+		proofLoIdx := lo << topReduction
+		proofHiIdx := hi << topReduction
+		proofLo, err := c.Tree.OpenProof(proofLoIdx)
+		if err != nil {
+			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d lo proof row=%d: %w", k, proofLoIdx, err)
+		}
+		proofHi, err := c.Tree.OpenProof(proofHiIdx)
+		if err != nil {
+			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d hi proof row=%d: %w", k, proofHiIdx, err)
+		}
+		topRowPair, err := rawRowPairFromSource(c.Sources[0], proofLoIdx, proofHiIdx)
+		if err != nil {
+			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d top rows: %w", k, err)
+		}
+
+		openings[k] = WMerkleGroupOpening{
+			Rows:    rows,
+			TopRows: topRowPair,
+			ProofLo: proofLo,
+			ProofHi: proofHi,
+		}
 	}
 
 	return WMerkleProof{
-		InjectionRawLeaves: rawLeaves,
-		Proof:              pth,
+		GroupOpenings: openings,
 	}, nil
 }
 
@@ -313,4 +333,32 @@ func leafSourceRows(src LeafSource) int {
 		return len(src.Ext[0])
 	}
 	return 0
+}
+
+func rawRowPairFromSource(src LeafSource, lo int, hi int) (RawRowPair, error) {
+	loRow, err := rawRowFromSource(src, lo)
+	if err != nil {
+		return RawRowPair{}, fmt.Errorf("lo row %d: %w", lo, err)
+	}
+	hiRow, err := rawRowFromSource(src, hi)
+	if err != nil {
+		return RawRowPair{}, fmt.Errorf("hi row %d: %w", hi, err)
+	}
+	return RawRowPair{Lo: loRow, Hi: hiRow}, nil
+}
+
+func rawRowFromSource(src LeafSource, row int) (RawRow, error) {
+	rows := leafSourceRows(src)
+	if row < 0 || row >= rows {
+		return RawRow{}, fmt.Errorf("row out of range [0, %d)", rows)
+	}
+	baseRow := make([]koalabear.Element, len(src.Base))
+	for i, p := range src.Base {
+		baseRow[i].Set(&p[row])
+	}
+	extRow := make([]ext.E6, len(src.Ext))
+	for i, p := range src.Ext {
+		extRow[i].Set(&p[row])
+	}
+	return RawRow{RawRowBase: baseRow, RawRowExt: extRow}, nil
 }

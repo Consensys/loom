@@ -50,7 +50,7 @@ import (
 //  3. Multi-degree FRI verification on the DEEP-quotient roots.
 //  4. The bridge: for every FRI query position and every distinct
 //     native size, recompute DQ_N(omega^x) and DQ_N(-omega^x) from the
-//     opened raw leaves and the claimed values, then compare to the
+//     opened raw rows and the claimed values, then compare to the
 //     FRI proof's level leaves at that query.
 //
 // Any of the checks failing yields a non-nil error explaining the
@@ -124,13 +124,13 @@ func (pcs *PCS) Verify(
 
 	// 6- Authenticate every (query, batch) Merkle opening against the
 	//    declared roots. For multi-group batches this also re-hashes the
-	//    per-injection-level raw leaves and matches them against
-	//    Proof.InjectionLeaves before running merkle.VerifyWithInjections.
+	//    per-injection-level raw rows and matches them against the
+	//    Proof.InjectionLeaves crossed by each complete path.
 	if err := verifyAllPointSamplings(pcs, roots, shapes, queryPositions, proof.PointSamplings); err != nil {
 		return err
 	}
 
-	// 7- Bridge: recompute DQ_N(X), DQ_N(-X) from raw leaves + claimed
+	// 7- Bridge: recompute DQ_N(X), DQ_N(-X) from raw rows + claimed
 	//    values in canonical order, compare to FRI level leaves.
 	if err := checkFRIBridge(pcs, &proof, lay, shapes, shifts, alpha, zeta, queryPositions); err != nil {
 		return err
@@ -186,21 +186,27 @@ func validateOpeningProofShape(
 			return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d] has %d batches, expected %d", q, len(qSamples), len(shapes))
 		}
 		for b, wp := range qSamples {
-			if len(wp.InjectionRawLeaves) != len(shapes[b]) {
-				return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d] has %d InjectionRawLeaves, expected %d", q, b, len(wp.InjectionRawLeaves), len(shapes[b]))
+			if len(wp.GroupOpenings) != len(shapes[b]) {
+				return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d] has %d GroupOpenings, expected %d", q, b, len(wp.GroupOpenings), len(shapes[b]))
 			}
-			// InjectionRawLeaves is in decreasing-size order; match each
-			// raw-leaf entry's widths against the matching shape sorted
-			// by size.
+			// GroupOpenings is in decreasing-size order; match each
+			// raw-row entry's widths against the matching shape sorted by size.
 			injOrder := injectionOrderForBatch(shapes[b])
 			for k, declIdx := range injOrder {
 				gs := shapes[b][declIdx]
-				raw := wp.InjectionRawLeaves[k]
-				if len(raw.RawLeafBase) != gs.BaseWidth {
-					return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d].InjectionRawLeaves[%d].RawLeafBase width %d != %d", q, b, k, len(raw.RawLeafBase), gs.BaseWidth)
+				rows := wp.GroupOpenings[k].Rows
+				if err := checkRawRowWidth(rows.Lo, gs); err != nil {
+					return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d].GroupOpenings[%d].Rows.Lo: %w", q, b, k, err)
 				}
-				if len(raw.RawLeafExt) != gs.ExtWidth {
-					return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d].InjectionRawLeaves[%d].RawLeafExt width %d != %d", q, b, k, len(raw.RawLeafExt), gs.ExtWidth)
+				if err := checkRawRowWidth(rows.Hi, gs); err != nil {
+					return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d].GroupOpenings[%d].Rows.Hi: %w", q, b, k, err)
+				}
+				topShape := shapes[b][injOrder[0]]
+				if err := checkRawRowWidth(wp.GroupOpenings[k].TopRows.Lo, topShape); err != nil {
+					return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d].GroupOpenings[%d].TopRows.Lo: %w", q, b, k, err)
+				}
+				if err := checkRawRowWidth(wp.GroupOpenings[k].TopRows.Hi, topShape); err != nil {
+					return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d].GroupOpenings[%d].TopRows.Hi: %w", q, b, k, err)
 				}
 			}
 		}
@@ -211,7 +217,7 @@ func validateOpeningProofShape(
 // injectionOrderForBatch returns, for one batch's GroupShape slice, the
 // indices into shapes in *decreasing row-count* order -- the same
 // order PCS.Commit places the per-Group LeafSources in Committed.Sources
-// (and consequently the same order WMerkleProof.InjectionRawLeaves uses).
+// (and consequently the same order WMerkleProof.GroupOpenings uses).
 func injectionOrderForBatch(batchShapes BatchShapes) []int {
 	order := make([]int, len(batchShapes))
 	for i := range order {
@@ -244,7 +250,7 @@ func extractFRIQueryPositions(prf Proof, numQueries int) ([]int, error) {
 
 // verifyAllPointSamplings authenticates every (query, batch) Merkle
 // opening in proof.PointSamplings against the corresponding batch root.
-// For multi-group batches, also re-hashes each injection-level RawLeaf
+// For multi-group batches, also re-hashes each injection-level RawRow
 // and matches it against Proof.InjectionLeaves before running
 // merkle.VerifyWithInjections.
 func verifyAllPointSamplings(
@@ -255,9 +261,8 @@ func verifyAllPointSamplings(
 	pointSamplings [][]WMerkleProof,
 ) error {
 	for q, sQ := range queryPositions {
-		_ = sQ // pointSamplings already carries the folded position via Proof.LeafIdx
 		for b, wp := range pointSamplings[q] {
-			if err := verifyOneWMerkleProof(pcs.leafHasher, pcs.nodeHasher, roots[b], shapes[b], wp); err != nil {
+			if err := verifyOneWMerkleProof(pcs.leafHasher, pcs.nodeHasher, roots[b], shapes[b], wp, sQ, pcs.params.N); err != nil {
 				return fmt.Errorf("fri: PCS.Verify: query %d, batch %d: %w", q, b, err)
 			}
 		}
@@ -266,50 +271,113 @@ func verifyAllPointSamplings(
 }
 
 // verifyOneWMerkleProof checks one WMerkleProof against the batch's
-// Merkle root using the batch's per-Group shapes for size routing. The
-// top group's HashLeaf result is the bottom-of-tree leaf; each smaller
-// group's HashLeaf result must match the matching merkle.Proof.InjectionLeaves
-// entry before the path is checked via merkle.VerifyWithInjections.
+// Merkle root using the batch's per-Group shapes for size routing.
 func verifyOneWMerkleProof(
 	leafHasher LeafHasher,
 	nodeHasher NodeHasher,
 	root hash.Digest,
 	batchShapes BatchShapes,
 	wp WMerkleProof,
+	sFull int,
+	maxRows int,
 ) error {
-	if len(wp.InjectionRawLeaves) == 0 {
-		return fmt.Errorf("WMerkleProof has no InjectionRawLeaves")
+	if len(wp.GroupOpenings) == 0 {
+		return fmt.Errorf("WMerkleProof has no GroupOpenings")
+	}
+	if maxRows <= 0 || maxRows&(maxRows-1) != 0 {
+		return fmt.Errorf("maxRows=%d must be a positive power of two", maxRows)
 	}
 
-	// Re-order the GroupShape entries to match wp.InjectionRawLeaves'
+	// Re-order the GroupShape entries to match wp.GroupOpenings'
 	// decreasing-size convention.
 	injOrder := injectionOrderForBatch(batchShapes)
-	if len(injOrder) != len(wp.InjectionRawLeaves) {
-		return fmt.Errorf("shapes-vs-WMerkleProof group count mismatch (%d vs %d)", len(injOrder), len(wp.InjectionRawLeaves))
+	if len(injOrder) != len(wp.GroupOpenings) {
+		return fmt.Errorf("shapes-vs-WMerkleProof group count mismatch (%d vs %d)", len(injOrder), len(wp.GroupOpenings))
+	}
+	topRows := batchShapes[injOrder[0]].Rows
+	if topRows <= 0 || topRows&(topRows-1) != 0 {
+		return fmt.Errorf("top rows %d must be a positive power of two", topRows)
+	}
+	if topRows > maxRows {
+		return fmt.Errorf("top rows %d exceeds maxRows %d", topRows, maxRows)
 	}
 
-	// Top group: its HashLeaf is the merkle leaf at the bottom of the tree.
-	topRaw := wp.InjectionRawLeaves[0]
-	leaf := leafHasher.HashLeaf(topRaw.RawLeafBase, topRaw.RawLeafExt)
-
-	// Smaller groups: each carries an injection level. Their HashLeaf
-	// values must match the path's pre-bound InjectionLeaves entries.
-	expectedInj := len(wp.InjectionRawLeaves) - 1
-	if len(wp.Proof.InjectionLeaves) != expectedInj {
-		return fmt.Errorf("Proof.InjectionLeaves has %d entries, expected %d (one per injection group)", len(wp.Proof.InjectionLeaves), expectedInj)
-	}
-
-	injectionWidths := make([]int, expectedInj)
-	for k := 1; k < len(wp.InjectionRawLeaves); k++ {
-		raw := wp.InjectionRawLeaves[k]
-		computed := leafHasher.HashLeaf(raw.RawLeafBase, raw.RawLeafExt)
-		if computed != wp.Proof.InjectionLeaves[k-1] {
-			return fmt.Errorf("injection-leaf hash mismatch at level %d", k)
-		}
+	injectionWidths := make([]int, len(injOrder)-1)
+	for k := 1; k < len(injOrder); k++ {
 		injectionWidths[k-1] = batchShapes[injOrder[k]].Rows
 	}
 
-	if !merkle.VerifyWithInjections(root, wp.Proof, leaf, injectionWidths, nodeHasher) {
+	for k, declIdx := range injOrder {
+		gs := batchShapes[declIdx]
+		globalReduction := log2(maxRows) - log2(gs.Rows)
+		if globalReduction < 0 {
+			return fmt.Errorf("group %d rows %d exceeds maxRows %d", k, gs.Rows, maxRows)
+		}
+		row := sFull >> globalReduction
+		lo, hi := siblingRows(row)
+
+		topReduction := log2(topRows) - log2(gs.Rows)
+		if topReduction < 0 {
+			return fmt.Errorf("group %d rows %d exceeds top rows %d", k, gs.Rows, topRows)
+		}
+		wantLoIdx := lo << topReduction
+		wantHiIdx := hi << topReduction
+
+		opening := wp.GroupOpenings[k]
+		if opening.ProofLo.LeafIdx != wantLoIdx {
+			return fmt.Errorf("group %d ProofLo.LeafIdx = %d, want %d", k, opening.ProofLo.LeafIdx, wantLoIdx)
+		}
+		if opening.ProofHi.LeafIdx != wantHiIdx {
+			return fmt.Errorf("group %d ProofHi.LeafIdx = %d, want %d", k, opening.ProofHi.LeafIdx, wantHiIdx)
+		}
+
+		if err := verifyOneRowPath(leafHasher, nodeHasher, root, injectionWidths, opening.TopRows.Lo, opening.ProofLo); err != nil {
+			return fmt.Errorf("group %d lo path: %w", k, err)
+		}
+		if err := verifyOneRowPath(leafHasher, nodeHasher, root, injectionWidths, opening.TopRows.Hi, opening.ProofHi); err != nil {
+			return fmt.Errorf("group %d hi path: %w", k, err)
+		}
+
+		if k == 0 {
+			continue
+		}
+		rowLoDigest := hashRawRow(leafHasher, opening.Rows.Lo)
+		if rowLoDigest != opening.ProofLo.InjectionLeaves[k-1] {
+			return fmt.Errorf("group %d lo injection-row hash mismatch", k)
+		}
+		rowHiDigest := hashRawRow(leafHasher, opening.Rows.Hi)
+		if rowHiDigest != opening.ProofHi.InjectionLeaves[k-1] {
+			return fmt.Errorf("group %d hi injection-row hash mismatch", k)
+		}
+	}
+
+	return nil
+}
+
+func checkRawRowWidth(row RawRow, shape GroupShape) error {
+	if len(row.RawRowBase) != shape.BaseWidth {
+		return fmt.Errorf("RawRowBase width %d != %d", len(row.RawRowBase), shape.BaseWidth)
+	}
+	if len(row.RawRowExt) != shape.ExtWidth {
+		return fmt.Errorf("RawRowExt width %d != %d", len(row.RawRowExt), shape.ExtWidth)
+	}
+	return nil
+}
+
+func hashRawRow(leafHasher LeafHasher, row RawRow) hash.Digest {
+	return leafHasher.HashLeaf(row.RawRowBase, row.RawRowExt)
+}
+
+func verifyOneRowPath(
+	leafHasher LeafHasher,
+	nodeHasher NodeHasher,
+	root hash.Digest,
+	injectionWidths []int,
+	topRow RawRow,
+	proof merkle.Proof,
+) error {
+	topLeaf := hashRawRow(leafHasher, topRow)
+	if !merkle.VerifyWithInjections(root, proof, topLeaf, injectionWidths, nodeHasher) {
 		return fmt.Errorf("Merkle path does not authenticate under the given root")
 	}
 	return nil
@@ -320,8 +388,11 @@ func verifyOneWMerkleProof(
 // query position sFull and each distinct native size N in lay (largest
 // first, i.e. level 0 of the multi-degree FRI):
 //
-//	sL = sFull mod (rate*N/2)
-//	X = omega_{rate*N}^sL,    -X = -X    (lifted to ext)
+//	row = sFull >> (log2(maxRows) - log2(rate*N))
+//	lo  = row &^ 1
+//	hi  = lo + 1
+//	X   = omega_{rate*N}^bitrev(lo)
+//	-X  = omega_{rate*N}^bitrev(hi)
 //	DQ_P, DQ_Q := 0, 0
 //	for shift s in ascending order at this size:
 //	  z_s = zeta * omega_N^s
@@ -367,17 +438,26 @@ func checkFRIBridge(
 		for sizeIdx, sb := range lay {
 			N := sb.N
 			ratN := int(pcs.rate) * N
-			halfRatN := ratN / 2
-			sL := sFull % halfRatN
+			bitsReduced := log2(pcs.params.N) - log2(ratN)
+			if bitsReduced < 0 {
+				return fmt.Errorf("fri: PCS.Verify: bridge size %d has ratN=%d larger than max rows %d", N, ratN, pcs.params.N)
+			}
+			row := sFull >> bitsReduced
+			lo, hi := siblingRows(row)
 
-			// X = omega_{rate*N}^sL (base), lifted; -X.
+			// X = omega_{rate*N}^bitrev(lo) (base), lifted; -X is the
+			// companion row hi under bit-reversed row ordering.
 			gen, err := koalabear.Generator(uint64(ratN))
 			if err != nil {
 				return fmt.Errorf("fri: PCS.Verify: koalabear.Generator(%d): %w", ratN, err)
 			}
-			var XBase, negXBase koalabear.Element
-			XBase.Exp(gen, big.NewInt(int64(sL)))
+			var XBase, negXBase, hiBase koalabear.Element
+			XBase.ExpInt64(gen, int64(bitReverseIndex(lo, ratN)))
+			hiBase.ExpInt64(gen, int64(bitReverseIndex(hi, ratN)))
 			negXBase.Neg(&XBase)
+			if !hiBase.Equal(&negXBase) {
+				return fmt.Errorf("fri: PCS.Verify: bridge row companion mismatch for ratN=%d lo=%d hi=%d", ratN, lo, hi)
+			}
 			X := hash.LiftBaseToExt(XBase)
 			negX := hash.LiftBaseToExt(negXBase)
 
@@ -414,20 +494,23 @@ func checkFRIBridge(
 						v = gValues.Ext[e.PolyIdx][kth]
 					}
 
-					// Look up the raw paired evals at this query position.
+					// Look up the authenticated raw row pair at this query position.
 					injIdx := declToInjIdx(e.BatchIdx, e.GroupIdx)
 					if injIdx < 0 {
-						return fmt.Errorf("fri: PCS.Verify: cannot map (batch=%d, group=%d) to InjectionRawLeaves index", e.BatchIdx, e.GroupIdx)
+						return fmt.Errorf("fri: PCS.Verify: cannot map (batch=%d, group=%d) to GroupOpenings index", e.BatchIdx, e.GroupIdx)
 					}
-					raw := proof.PointSamplings[q][e.BatchIdx].InjectionRawLeaves[injIdx]
+					if injIdx >= len(proof.PointSamplings[q][e.BatchIdx].GroupOpenings) {
+						return fmt.Errorf("fri: PCS.Verify: GroupOpenings index %d out of range", injIdx)
+					}
+					raw := proof.PointSamplings[q][e.BatchIdx].GroupOpenings[injIdx].Rows
 
 					var leafP, leafQ ext.E6
 					if e.Field == field.Base {
-						leafP = hash.LiftBaseToExt(raw.RawLeafBase[e.PolyIdx])
-						leafQ.Set(&leafP)
+						leafP = hash.LiftBaseToExt(raw.Lo.RawRowBase[e.PolyIdx])
+						leafQ = hash.LiftBaseToExt(raw.Hi.RawRowBase[e.PolyIdx])
 					} else {
-						leafP.Set(&raw.RawLeafExt[e.PolyIdx])
-						leafQ.Set(&leafP)
+						leafP.Set(&raw.Lo.RawRowExt[e.PolyIdx])
+						leafQ.Set(&raw.Hi.RawRowExt[e.PolyIdx])
 					}
 
 					var term ext.E6

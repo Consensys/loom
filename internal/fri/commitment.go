@@ -116,37 +116,39 @@ type WMerkleTree struct {
 	groups BatchShapes
 }
 
-// RawLeaf holds one encoded row for one Group of the committed tree: one base
+// RawRow holds one encoded row for one Group of the committed tree: one base
 // value per base-rail polynomial and one extension value per extension-rail
-// polynomial, in declaration order. Hashing a RawLeaf with
-// LeafHasher.HashLeaf reproduces the digest that lives at the matching
-// position in the Merkle tree (either the leaf-level digest for the top
-// group or one of merkle.Proof.InjectionLeaves for the smaller groups).
-type RawLeaf struct {
-	RawLeafBase []koalabear.Element
-	RawLeafExt  []ext.E6
+// polynomial, in declaration order. Hashing a RawRow with LeafHasher.HashLeaf
+// reproduces the digest that lives at the matching position in the Merkle tree
+// for that group.
+type RawRow struct {
+	RawRowBase []koalabear.Element
+	RawRowExt  []ext.E6
+}
+
+// RawRowPair holds the two adjacent rows needed by the DEEP bridge.
+type RawRowPair struct {
+	Lo RawRow
+	Hi RawRow
+}
+
+// WMerkleGroupOpening authenticates one Group's adjacent row pair. Rows is the
+// target group row pair. TopRows is the top-group row pair used as the leaf
+// preimage for ProofLo/ProofHi; for the top group, TopRows == Rows. For
+// injected smaller groups, ProofLo/ProofHi are complete Merkle proofs whose
+// paths cross the target injection rows.
+type WMerkleGroupOpening struct {
+	Rows    RawRowPair
+	TopRows RawRowPair
+	ProofLo merkle.Proof
+	ProofHi merkle.Proof
 }
 
 // WMerkleProof is an opening proof for a WMerkleTree at one query position.
-// InjectionRawLeaves carries the raw pair evaluations needed to reconstruct
-// the digests that Proof authenticates: one RawLeaf per Group of the
-// committed tree, in the same decreasing-size order used by
-// WMerkleTree.Groups().
-//
-// Specifically:
-//   - InjectionRawLeaves[0]    is the top group; its HashLeaf digest is the
-//     leaf at position Proof.LeafIdx that starts the standard Merkle path
-//     encoded in Proof.Siblings.
-//   - InjectionRawLeaves[k>0] corresponds to the (k-1)-th smaller group;
-//     its HashLeaf digest must match Proof.InjectionLeaves[k-1].
-//
-// In the current single-group call path the slice has length 1 and Proof
-// has no InjectionLeaves. When multi-size Commit calls are wired through,
-// each smaller group contributes one additional RawLeaf and one matching
-// digest in Proof.InjectionLeaves.
+// GroupOpenings carries one authenticated lo/hi row pair per Group of the
+// committed tree, in the same decreasing-size order used by WMerkleTree.Groups().
 type WMerkleProof struct {
-	InjectionRawLeaves []RawLeaf
-	Proof              merkle.Proof
+	GroupOpenings []WMerkleGroupOpening
 }
 
 func (wt WMerkleTree) Root() hash.Digest {

@@ -42,6 +42,87 @@ func TestPCSVerifyRoundtrip(t *testing.T) {
 	_ = batches // exercised via openProof
 }
 
+func TestPCSVerifyRoundtripMultiSizeBatch(t *testing.T) {
+	const rate uint64 = 2
+	const numQueries = 4
+
+	batches := []Batch{{
+		{
+			Base: []poly.Polynomial{
+				{baseElement(2), baseElement(3), baseElement(5), baseElement(7),
+					baseElement(11), baseElement(13), baseElement(17), baseElement(19)},
+			},
+			Ext: []poly.ExtPolynomial{
+				{
+					extElement(101, 102, 103, 104),
+					extElement(201, 202, 203, 204),
+					extElement(301, 302, 303, 304),
+					extElement(401, 402, 403, 404),
+					extElement(501, 502, 503, 504),
+					extElement(601, 602, 603, 604),
+					extElement(701, 702, 703, 704),
+					extElement(801, 802, 803, 804),
+				},
+			},
+		},
+		{
+			Base: []poly.Polynomial{
+				{baseElement(21), baseElement(23), baseElement(29), baseElement(31)},
+			},
+		},
+	}}
+	shifts := []BatchShifts{{
+		{Base: [][]int{{0, 1}}, Ext: [][]int{{0}}},
+		{Base: [][]int{{0}}},
+	}}
+
+	committed, openProof, params, zeta := runOpenFixture(t, batches, shifts, rate, numQueries)
+	roots, shapes := rootsAndShapes(committed)
+	verifierFS := buildVerifierTranscript(t, committed)
+
+	pcs := NewPCSWithParams(params)
+	if err := pcs.Verify(roots, shapes, shifts, zeta, openProof, verifierFS); err != nil {
+		t.Fatalf("PCS.Verify rejected a valid multi-size OpeningProof: %v", err)
+	}
+
+	for q, query := range openProof.FRIProof.FRIQueries {
+		if len(query.Layers) == 0 {
+			t.Fatalf("query %d has no FRI layers", q)
+		}
+		sFull := query.Layers[0].Row
+		wp := openProof.PointSamplings[q][0]
+		if got, want := len(wp.GroupOpenings), 2; got != want {
+			t.Fatalf("query %d GroupOpenings = %d, want %d", q, got, want)
+		}
+
+		smallRows := leafSourceRows(committed[0].Sources[1])
+		rowSmall := sFull >> (log2(params.N) - log2(smallRows))
+		lo, hi := siblingRows(rowSmall)
+		smallOpening := wp.GroupOpenings[1]
+		if !smallOpening.Rows.Lo.RawRowBase[0].Equal(&committed[0].Sources[1].Base[0][lo]) {
+			t.Fatalf("query %d small lo row mismatch", q)
+		}
+		if !smallOpening.Rows.Hi.RawRowBase[0].Equal(&committed[0].Sources[1].Base[0][hi]) {
+			t.Fatalf("query %d small hi row mismatch", q)
+		}
+
+		topRows := committed[0].Tree.NumLeaves()
+		topReduction := log2(topRows) - log2(smallRows)
+		if got, want := smallOpening.ProofLo.LeafIdx, lo<<topReduction; got != want {
+			t.Fatalf("query %d small ProofLo.LeafIdx = %d, want %d", q, got, want)
+		}
+		if got, want := smallOpening.ProofHi.LeafIdx, hi<<topReduction; got != want {
+			t.Fatalf("query %d small ProofHi.LeafIdx = %d, want %d", q, got, want)
+		}
+	}
+
+	openProof.PointSamplings[0][0].GroupOpenings[1].Rows.Hi.RawRowBase[0].SetUint64(0xdeadbeef)
+	verifierFS = buildVerifierTranscript(t, committed)
+	if err := pcs.Verify(roots, shapes, shifts, zeta, openProof, verifierFS); err == nil {
+		t.Fatal("PCS.Verify accepted a multi-size proof with a tampered small hi row")
+	}
+}
+
 // TestPCSVerifyRejectsTamperedClaimedValue confirms Verify fails when
 // any claimed value is flipped after Open. The break can manifest as
 // either the FRI proof failing (because alpha_DEEP changes) or the
@@ -80,21 +161,35 @@ func TestPCSVerifyRejectsTamperedRoot(t *testing.T) {
 	}
 }
 
-// TestPCSVerifyRejectsTamperedRawLeaf confirms Verify fails when one of
-// the raw leaves in PointSamplings is flipped. The break manifests as
+// TestPCSVerifyRejectsTamperedRawRow confirms Verify fails when one of
+// the raw rows in PointSamplings is flipped. The break manifests as
 // the Merkle-path authentication failing for that (query, batch).
-func TestPCSVerifyRejectsTamperedRawLeaf(t *testing.T) {
+func TestPCSVerifyRejectsTamperedRawRow(t *testing.T) {
 	_, shifts, committed, openProof, params, zeta := buildVerifyFixture(t)
 
-	// Flip the first base raw leaf of the first query, first batch.
-	openProof.PointSamplings[0][0].InjectionRawLeaves[0].RawLeafBase[0].SetUint64(0xdeadbeef)
+	// Flip the first base raw lo row of the first query, first batch.
+	openProof.PointSamplings[0][0].GroupOpenings[0].Rows.Lo.RawRowBase[0].SetUint64(0xdeadbeef)
 
 	roots, shapes := rootsAndShapes(committed)
 	verifierFS := buildVerifierTranscript(t, committed)
 
 	pcs := NewPCSWithParams(params)
 	if err := pcs.Verify(roots, shapes, shifts, zeta, openProof, verifierFS); err == nil {
-		t.Fatal("PCS.Verify accepted a proof with a tampered raw leaf")
+		t.Fatal("PCS.Verify accepted a proof with a tampered raw row")
+	}
+}
+
+func TestPCSVerifyRejectsTamperedRawHiRow(t *testing.T) {
+	_, shifts, committed, openProof, params, zeta := buildVerifyFixture(t)
+
+	openProof.PointSamplings[0][0].GroupOpenings[0].Rows.Hi.RawRowBase[0].SetUint64(0xdeadbeef)
+
+	roots, shapes := rootsAndShapes(committed)
+	verifierFS := buildVerifierTranscript(t, committed)
+
+	pcs := NewPCSWithParams(params)
+	if err := pcs.Verify(roots, shapes, shifts, zeta, openProof, verifierFS); err == nil {
+		t.Fatal("PCS.Verify accepted a proof with a tampered raw hi row")
 	}
 }
 

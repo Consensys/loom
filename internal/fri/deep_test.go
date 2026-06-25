@@ -199,10 +199,12 @@ func TestComputeDeepQuotientCodewordsShapeMismatch(t *testing.T) {
 //
 //	alpha^e * (v - p_encoded[k]) / (z_s - omega_RatN^k)
 //
-// row by row and add into deep[N][k]. No batching, no parallelism, no
-// pre-grouped column scales -- everything is laid out the way the spec
-// says, so any drift between this and computeDeepQuotientCodewords
-// signals an arithmetic or ordering bug in the optimized version.
+// row by row and add into deep[N][row]. Encoded columns and DEEP codewords are
+// stored in bit-reversed row order, so row k corresponds to the normal-domain
+// point omega_RatN^bitrev(k). No batching, no parallelism, no pre-grouped
+// column scales -- everything is laid out the way the spec says, so any drift
+// between this and computeDeepQuotientCodewords signals an arithmetic or
+// ordering bug in the optimized version.
 func referenceDeepQuotient(
 	batches []Batch,
 	committed []Committed,
@@ -256,10 +258,11 @@ func referenceDeepQuotient(
 					alphaE.Mul(&alphaE, &alpha)
 				}
 
-				// Per-row update: deep[k] += alpha^e * (v - p[k]) / (zs - omega_RatN^k).
-				var omegaX koalabear.Element
-				omegaX.SetOne()
+				// Per-row update: deep[k] += alpha^e * (v - p[k]) /
+				// (zs - omega_RatN^bitrev(k)).
 				for k := 0; k < ratN; k++ {
+					var omegaX koalabear.Element
+					omegaX.ExpInt64(encDomain.Generator, int64(bitReverseIndex(k, ratN)))
 					xExt := hash.LiftBaseToExt(omegaX)
 
 					var num ext.E6
@@ -283,8 +286,6 @@ func referenceDeepQuotient(
 					term.Mul(&term, &alphaE)
 
 					deep[k].Add(&deep[k], &term)
-
-					omegaX.Mul(&omegaX, &encDomain.Generator)
 				}
 
 				alphaPow++
