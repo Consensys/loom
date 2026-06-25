@@ -113,10 +113,9 @@ func (pcs *PCS) Verify(
 		return fmt.Errorf("fri: PCS.Verify: FRI proof: %w", err)
 	}
 
-	// 5- Extract per-query FRI positions from the proof (the FRI prover
-	//    embeds the query positions in the first FRI layer's path leaf
-	//    index). These are the sample points used by both the Merkle-
-	//    path check and the bridge.
+	// 5- Extract per-query FRI positions from the proof. The FRI prover
+	//    records each full-domain query row in the first FRI layer; these
+	//    rows drive both committed-tree sampling and the DEEP bridge.
 	queryPositions, err := extractFRIQueryPositions(proof.FRIProof, pcs.params.NumQueries)
 	if err != nil {
 		return fmt.Errorf("fri: PCS.Verify: %w", err)
@@ -399,8 +398,8 @@ func verifyOneRowPath(
 //	  v_s, C_at_X, C_at_negX := 0, 0, 0
 //	  for entry in canonical order at (size, shift):
 //	    v_s       += alpha^e * claimed_value(entry, s)
-//	    C_at_X    += alpha^e * raw_leaf_P(entry)
-//	    C_at_negX += alpha^e * raw_leaf_Q(entry)
+//	    C_at_X    += alpha^e * raw_row_lo(entry)
+//	    C_at_negX += alpha^e * raw_row_hi(entry)
 //	    alpha^e   *= alpha   (alpha counter is per-size, monotonic)
 //	  DQ_P += (v_s - C_at_X) / (z_s - X)
 //	  DQ_Q += (v_s - C_at_negX) / (z_s - -X)

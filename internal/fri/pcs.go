@@ -72,7 +72,7 @@ func NewPCSWithParams(params Params) PCS {
 
 // Committed is the per-batch prover-side blob returned by Commit. Tree
 // carries the Merkle root the caller binds to its transcript; Sources
-// retains, per Group in decreasing-size order, the RS-encoded paired
+// retains, per Group in decreasing-size order, the RS-encoded row
 // evaluations Open will need to build the DEEP quotient and to open the
 // committed polynomials at FRI query positions.
 type Committed struct {

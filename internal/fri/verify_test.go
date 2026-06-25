@@ -84,12 +84,24 @@ func TestPCSVerifyRoundtripMultiSizeBatch(t *testing.T) {
 	if err := pcs.Verify(roots, shapes, shifts, zeta, openProof, verifierFS); err != nil {
 		t.Fatalf("PCS.Verify rejected a valid multi-size OpeningProof: %v", err)
 	}
+	if got, want := len(openProof.DeepQuotientRoots), 2; got != want {
+		t.Fatalf("DeepQuotientRoots = %d, want %d", got, want)
+	}
+	if got, want := len(openProof.FRIProof.LevelQueries), 1; got != want {
+		t.Fatalf("FRIProof.LevelQueries = %d, want %d", got, want)
+	}
+	if got, want := len(openProof.FRIProof.LevelQueries[0]), numQueries; got != want {
+		t.Fatalf("FRIProof.LevelQueries[0] = %d, want %d", got, want)
+	}
 
 	for q, query := range openProof.FRIProof.FRIQueries {
 		if len(query.Layers) == 0 {
 			t.Fatalf("query %d has no FRI layers", q)
 		}
 		sFull := query.Layers[0].Row
+		if got, want := openProof.FRIProof.LevelQueries[0][q].Row, sFull>>1; got != want {
+			t.Fatalf("query %d extra FRI level row = %d, want %d", q, got, want)
+		}
 		wp := openProof.PointSamplings[q][0]
 		if got, want := len(wp.GroupOpenings), 2; got != want {
 			t.Fatalf("query %d GroupOpenings = %d, want %d", q, got, want)

@@ -139,10 +139,10 @@ type domainLight struct {
 	generator   koalabear.Element
 }
 
-// QueryLayer holds the two opened values and two Merkle proofs for one
-// folding level. Exactly one rail is populated, selected by Field. Row is the
-// sampled row at this FRI level, LeafP opens row Row&^1, and LeafQ opens row
-// (Row&^1)+1.
+// QueryLayer holds the adjacent row openings and Merkle proofs for one FRI
+// level. Exactly one rail is populated, selected by Field. Row is the sampled
+// full-domain row projected to this level; LeafP opens row Row&^1 and LeafQ
+// opens row (Row&^1)+1.
 type QueryLayer struct {
 	Field     field.Kind
 	Row       int
@@ -154,7 +154,8 @@ type QueryLayer struct {
 	PathQ     merkle.Proof // authenticates LeafQ
 }
 
-// Query holds the opening data for one full query path across all r levels.
+// Query holds the opening data for one full query path across all folding
+// levels of the running FRI polynomial.
 type Query struct {
 	Layers []QueryLayer // len = numRounds
 }
@@ -216,15 +217,17 @@ type Level struct {
 // are NOT stored here — they are passed externally to Verify (the caller
 // commits to those polynomials before invoking FRI).
 type Proof struct {
-	// LevelQueries[l-1][k] = opening for levels[l].Evals at outer query k.
+	// LevelQueries[l-1][k] is the adjacent row opening for levels[l].Evals at
+	// outer query k. The stored Row is the full query row shifted to the round
+	// where that level is introduced.
 	LevelQueries [][]QueryLayer
 
-	// Running-polynomial FRI path
+	// Running-polynomial FRI path.
 	FRIRoots      []hash.Digest // Merkle roots for running poly T_1..T_{r-1}
 	FinalField    field.Kind
 	FinalPolyBase []koalabear.Element               // populated when FinalField == field.Base
 	FinalPolyExt  []ext.E6                          // populated when FinalField == field.Ext
-	FRIQueries    []Query                           // len = NumQueries
+	FRIQueries    []Query                           // one full-row query path per FRI query
 	PoW           map[string]fiatshamir.ProofOfWork // proof of work in case grinding has nbBits > 0
 }
 
