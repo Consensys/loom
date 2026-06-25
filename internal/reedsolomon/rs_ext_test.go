@@ -19,6 +19,7 @@ import (
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
+	"github.com/consensys/gnark-crypto/utils"
 	"github.com/consensys/loom/internal/poly"
 )
 
@@ -67,7 +68,7 @@ func TestEncodeExt(t *testing.T) {
 	p := make(poly.ExtPolynomial, len(coeffs))
 	copy(p, coeffs)
 	domainD.FFTExt6(p, fft.DIF)
-	fft.BitReverse(p)
+	utils.BitReverse(p)
 
 	encoder := NewEncoder(8)
 	encoded := encoder.EncodeExt(p, domainD)
@@ -79,8 +80,9 @@ func TestEncodeExt(t *testing.T) {
 	for j := range encoded {
 		x := liftE6(omegaJ)
 		want := canonicalEvalExt(coeffs, x)
-		if !encoded[j].Equal(&want) {
-			t.Fatalf("encoded[%d] = %s, want %s", j, encoded[j].String(), want.String())
+		row := bitReverseIndex(j, len(encoded))
+		if !encoded[row].Equal(&want) {
+			t.Fatalf("encoded[bitrev(%d)=%d] = %s, want %s", j, row, encoded[row].String(), want.String())
 		}
 		omegaJ.Mul(&omegaJ, &omega)
 	}

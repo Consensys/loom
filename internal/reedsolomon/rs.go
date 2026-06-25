@@ -14,9 +14,8 @@
 package reedsolomon
 
 import (
-	"math/bits"
-
 	"github.com/consensys/gnark-crypto/field/koalabear/fft"
+	"github.com/consensys/gnark-crypto/utils"
 	"github.com/consensys/loom/internal/poly"
 )
 
@@ -44,31 +43,9 @@ type Encoder struct {
 	Domain *fft.Domain
 }
 
-// scatterBitReversedCoeffs expands n-bit-reversed coefficients into the
-// matching N-bit-reversed zero-padded slots, in place.
-func scatterBitReversedCoeffs[T any](p []T, n, N int) {
-	if n <= 1 {
-		return
-	}
-	shift := bits.TrailingZeros64(uint64(N)) - bits.TrailingZeros64(uint64(n))
-	stride := 1 << shift
-	for i := n - 1; i >= 0; i-- {
-		p[i<<shift] = p[i]
-	}
-	if stride == 1 {
-		return
-	}
-	var zero T
-	for i := 1; i < n; i++ {
-		if i&(stride-1) != 0 {
-			p[i] = zero
-		}
-	}
-}
-
-// RSEncode evalutes p on the N-th roots of unity (N must be > len(p))
+// RSEncode evaluates p on the N-th roots of unity (N must be > len(p)).
 // p is in Lagrange form
-// it returns a copy of p
+// it returns a copy of p in bit-reversed evaluation order.
 // Optional fftOpts are forwarded to both internal FFTs (e.g. to cap inner
 // parallelism with fft.WithNbTasks when Encode is itself called inside a
 // parallel.Execute loop).
@@ -82,12 +59,11 @@ func (encoder *Encoder) Encode(p poly.Polynomial, d *fft.Domain, fftOpts ...fft.
 	_p := make(poly.Polynomial, N)
 	copy(_p, p)
 
-	// Lagrange normal to canonical bit-reversed (w.r.t. n). We place those
-	// coefficients directly in N-bit-reversed order and use a DIT FFT, avoiding
-	// the two explicit BitReverse passes previously needed for normal order.
+	// Lagrange normal to canonical normal, then canonical normal to
+	// bit-reversed evaluations on the larger domain.
 	d.FFTInverse(_p[:n], fft.DIF, fftOpts...)
-	scatterBitReversedCoeffs(_p, n, int(N))
-	encoder.Domain.FFT(_p, fft.DIT, fftOpts...)
+	utils.BitReverse(_p[:n])
+	encoder.Domain.FFT(_p, fft.DIF, fftOpts...)
 
 	// return _p
 	return _p
@@ -95,7 +71,7 @@ func (encoder *Encoder) Encode(p poly.Polynomial, d *fft.Domain, fftOpts ...fft.
 
 // EncodeExt evaluates an extension-field polynomial on the encoder domain.
 // The input p is in Lagrange normal form over d; the output is a fresh
-// extension polynomial in Lagrange normal form over encoder.Domain.
+// extension polynomial in bit-reversed Lagrange form over encoder.Domain.
 func (encoder *Encoder) EncodeExt(p poly.ExtPolynomial, d *fft.Domain, fftOpts ...fft.Option) poly.ExtPolynomial {
 	n := len(p)
 
@@ -104,8 +80,8 @@ func (encoder *Encoder) EncodeExt(p poly.ExtPolynomial, d *fft.Domain, fftOpts .
 	copy(_p, p)
 
 	d.FFTInverseExt6(_p[:n], fft.DIF, fftOpts...)
-	scatterBitReversedCoeffs(_p, n, int(N))
-	encoder.Domain.FFTExt6(_p, fft.DIT, fftOpts...)
+	utils.BitReverse(_p[:n])
+	encoder.Domain.FFTExt6(_p, fft.DIF, fftOpts...)
 
 	return _p
 }

@@ -14,6 +14,7 @@
 package reedsolomon
 
 import (
+	"math/bits"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -35,8 +36,9 @@ func TestEvaluateOnExtendedDomainRootMatchesEncode(t *testing.T) {
 
 	for j := range encoded {
 		got := poly.EvaluateOnExtendedDomainRoot(p, domainD, encoder.Domain, j)
-		if !got.Equal(&encoded[j]) {
-			t.Fatalf("evaluation[%d] = %s, want %s", j, got.String(), encoded[j].String())
+		row := bitReverseIndex(j, len(encoded))
+		if !got.Equal(&encoded[row]) {
+			t.Fatalf("evaluation[%d] = %s, want encoded[bitrev(%d)=%d] = %s", j, got.String(), j, row, encoded[row].String())
 		}
 	}
 }
@@ -55,8 +57,9 @@ func TestExtEvaluateOnExtendedDomainRootMatchesEncodeExt(t *testing.T) {
 
 	for j := range encoded {
 		got := poly.ExtEvaluateOnExtendedDomainRoot(p, domainD, encoder.Domain, j)
-		if !got.Equal(&encoded[j]) {
-			t.Fatalf("evaluation[%d] = %s, want %s", j, got.String(), encoded[j].String())
+		row := bitReverseIndex(j, len(encoded))
+		if !got.Equal(&encoded[row]) {
+			t.Fatalf("evaluation[%d] = %s, want encoded[bitrev(%d)=%d] = %s", j, got.String(), j, row, encoded[row].String())
 		}
 	}
 }
@@ -65,4 +68,12 @@ func rsBaseElement(v uint64) koalabear.Element {
 	var e koalabear.Element
 	e.SetUint64(v)
 	return e
+}
+
+func bitReverseIndex(i, n int) int {
+	if n <= 1 {
+		return 0
+	}
+	width := bits.TrailingZeros(uint(n))
+	return int(bits.Reverse(uint(i)) >> (bits.UintSize - width))
 }
