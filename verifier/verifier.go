@@ -451,9 +451,9 @@ func (vr *verifierRunTime) runPCSVerify() error {
 		names := vr.schedule.ColNamesByTree[treeIdx][0]
 		N := vr.layout.TreeSize[treeIdx]
 		shapes[treeIdx] = []fri.GroupShape{{
-			PairedLeaves: int(constants.RATE) * N / 2,
-			BaseWidth:    len(names.Base),
-			ExtWidth:     len(names.Ext),
+			Rows:      int(constants.RATE) * N,
+			BaseWidth: len(names.Base),
+			ExtWidth:  len(names.Ext),
 		}}
 	}
 

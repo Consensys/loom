@@ -46,10 +46,10 @@ type BatchNodeHasher interface {
 
 // LevelInjection adds an extra leaf-hash payload at an internal level of the
 // tree. It is the mechanism that lets a single Tree commit to several
-// polynomials whose paired-leaf domains have different sizes: the largest
+// polynomials whose row domains have different sizes: the largest
 // polynomial occupies the actual leaves, and each smaller polynomial is
 // introduced as an injection at the level whose node count matches its
-// number of paired leaves.
+// number of encoded rows.
 //
 // Semantics: at the level whose width equals LevelWidth, each running-hash
 // node j (j in 0..LevelWidth-1) is replaced by HashNode(running, LeafHashes[j])

@@ -119,7 +119,7 @@ func canonicalLayout(batches []Batch, shifts []BatchShifts) (layout, error) {
 // canonicalLayoutFromShape is the verifier-side counterpart of
 // canonicalLayout: the verifier does not hold the polynomials themselves
 // (it only sees roots + group shapes), so the per-group native size is
-// derived from PairedLeaves = rate * N / 2 instead of from poly lengths.
+// derived from Rows = rate * N instead of from poly lengths.
 // The per-rail widths are validated against shapes.BaseWidth / ExtWidth
 // instead of len(group.Base) / len(group.Ext).
 //
@@ -140,14 +140,14 @@ func canonicalLayoutFromShape(shapes [][]GroupShape, shifts []BatchShifts, rate 
 		}
 		sizes[b] = make([]int, len(batchShapes))
 		for g, gs := range batchShapes {
-			if gs.PairedLeaves <= 0 {
-				return nil, fmt.Errorf("fri: canonicalLayoutFromShape: shapes[%d][%d].PairedLeaves=%d must be positive", b, g, gs.PairedLeaves)
+			if gs.Rows <= 0 {
+				return nil, fmt.Errorf("fri: canonicalLayoutFromShape: shapes[%d][%d].Rows=%d must be positive", b, g, gs.Rows)
 			}
-			twoPL := uint64(gs.PairedLeaves) * 2
-			if twoPL%rate != 0 {
-				return nil, fmt.Errorf("fri: canonicalLayoutFromShape: shapes[%d][%d].PairedLeaves=%d not a multiple of rate/2", b, g, gs.PairedLeaves)
+			rows := uint64(gs.Rows)
+			if rows%rate != 0 {
+				return nil, fmt.Errorf("fri: canonicalLayoutFromShape: shapes[%d][%d].Rows=%d not a multiple of rate", b, g, gs.Rows)
 			}
-			N := int(twoPL / rate)
+			N := int(rows / rate)
 			if N <= 0 || N&(N-1) != 0 {
 				return nil, fmt.Errorf("fri: canonicalLayoutFromShape: shapes[%d][%d] yields N=%d (not a positive power of two)", b, g, N)
 			}

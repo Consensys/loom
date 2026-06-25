@@ -32,9 +32,9 @@ import (
 //     prover handed to Open). The caller is responsible for assembling
 //     setup roots (from a verification key) and witness roots (from the
 //     outer proof) into the right slice.
-//   - shapes: the per-Batch / per-Group shape descriptor (PairedLeaves,
+//   - shapes: the per-Batch / per-Group shape descriptor (Rows,
 //     BaseWidth, ExtWidth). The verifier reconstructs every Group's
-//     native size from PairedLeaves and the PCS's rate.
+//     native size from Rows and the PCS's rate.
 //   - shifts: the same per-poly shift schedule the prover used.
 //   - zeta: the out-of-domain evaluation point.
 //   - fs: a transcript already in the same state the prover's transcript
@@ -209,7 +209,7 @@ func validateOpeningProofShape(
 }
 
 // injectionOrderForBatch returns, for one batch's GroupShape slice, the
-// indices into shapes in *decreasing PairedLeaves* order -- the same
+// indices into shapes in *decreasing row-count* order -- the same
 // order PCS.Commit places the per-Group LeafSources in Committed.Sources
 // (and consequently the same order WMerkleProof.InjectionRawLeaves uses).
 func injectionOrderForBatch(batchShapes BatchShapes) []int {
@@ -218,7 +218,7 @@ func injectionOrderForBatch(batchShapes BatchShapes) []int {
 		order[i] = i
 	}
 	sort.SliceStable(order, func(a, b int) bool {
-		return batchShapes[order[a]].PairedLeaves > batchShapes[order[b]].PairedLeaves
+		return batchShapes[order[a]].Rows > batchShapes[order[b]].Rows
 	})
 	return order
 }
@@ -306,7 +306,7 @@ func verifyOneWMerkleProof(
 		if computed != wp.Proof.InjectionLeaves[k-1] {
 			return fmt.Errorf("injection-leaf hash mismatch at level %d", k)
 		}
-		injectionWidths[k-1] = batchShapes[injOrder[k]].PairedLeaves
+		injectionWidths[k-1] = batchShapes[injOrder[k]].Rows
 	}
 
 	if !merkle.VerifyWithInjections(root, wp.Proof, leaf, injectionWidths, nodeHasher) {

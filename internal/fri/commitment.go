@@ -95,12 +95,12 @@ type Group struct {
 
 // GroupShape records the per-group layout of a committed tree, in
 // decreasing-size order (groups[0] is the largest, hashed at the actual
-// leaves; groups[1..] are injection levels). PairedLeaves is the number of
-// paired Merkle positions at this group's level, i.e. ρ · N_native / 2.
+// leaves; groups[1..] are injection levels). Rows is the number of encoded
+// Merkle rows at this group's level, i.e. ρ · N_native.
 type GroupShape struct {
-	PairedLeaves int
-	BaseWidth    int
-	ExtWidth     int
+	Rows      int
+	BaseWidth int
+	ExtWidth  int
 }
 
 // BatchShapes gives, for every Group in a Batch (in declaration order),
@@ -110,7 +110,7 @@ type BatchShapes = []GroupShape
 type WMerkleTree struct {
 	Tree *merkle.Tree
 
-	// groups in decreasing PairedLeaves order. Length 1 for the typical
+	// groups in decreasing row-count order. Length 1 for the typical
 	// single-size Commit call; length > 1 when multiple sizes were committed
 	// into one tree via merkle injections.
 	groups BatchShapes
@@ -153,17 +153,17 @@ func (wt WMerkleTree) Root() hash.Digest {
 	return wt.Tree.Root()
 }
 
-// NumLeaves returns the number of paired leaves of the top (largest) group.
+// NumLeaves returns the number of encoded rows of the top (largest) group.
 // For trees committed with several sizes, smaller groups live at higher
 // levels and their per-group widths are accessible via Groups.
 func (wt WMerkleTree) NumLeaves() int {
 	if len(wt.groups) == 0 {
 		return 0
 	}
-	return wt.groups[0].PairedLeaves
+	return wt.groups[0].Rows
 }
 
-// BaseWidth returns the number of base-field pairs in the top group.
+// BaseWidth returns the number of base-field values in the top group row.
 func (wt WMerkleTree) BaseWidth() int {
 	if len(wt.groups) == 0 {
 		return 0
@@ -171,7 +171,7 @@ func (wt WMerkleTree) BaseWidth() int {
 	return wt.groups[0].BaseWidth
 }
 
-// ExtWidth returns the number of extension-field pairs in the top group.
+// ExtWidth returns the number of extension-field values in the top group row.
 func (wt WMerkleTree) ExtWidth() int {
 	if len(wt.groups) == 0 {
 		return 0
@@ -196,7 +196,7 @@ func (wt WMerkleTree) InjectionWidths() []int {
 	}
 	res := make([]int, len(wt.groups)-1)
 	for i := range res {
-		res[i] = wt.groups[i+1].PairedLeaves
+		res[i] = wt.groups[i+1].Rows
 	}
 	return res
 }
@@ -301,23 +301,22 @@ type Batch = []Group
 
 // Commit commits to one or more Groups of polynomials into a single Merkle
 // tree. Each Group in batch must hold polynomials sharing a single power-of-two
-// length; group sizes must be pairwise distinct. The largest group's paired
-// leaf hashes form the actual tree leaves; each smaller group is folded in
+// length; group sizes must be pairwise distinct. The largest group's encoded
+// row hashes form the actual tree leaves; each smaller group is folded in
 // as a merkle.LevelInjection at the level whose width matches its number of
-// paired leaves.
+// encoded rows.
 //
-// Within a group, leaf i absorbs the pair (f(ω^i), f(−ω^i)) for every base
+// Within a group, leaf i absorbs the row {f_k(ω^i)}_k for every base
 // polynomial in declaration order, then for every extension polynomial in
-// declaration order. The leaf-hash layout is unchanged from the legacy
-// single-group API; multi-group calls simply add injection levels above the
-// top group.
+// declaration order. Multi-group calls add injection levels above the top
+// group.
 //
 // In addition to the committed tree, Commit returns the per-group LeafSource
 // in the same decreasing-size order used internally to build the tree (i.e.
-// sources[0] is the top group whose RS-encoded paired evaluations form the
+// sources[0] is the top group whose RS-encoded rows form the
 // Merkle leaves; sources[k>0] corresponds to a smaller group folded in as a
 // LevelInjection at the level whose width matches that group's number of
-// paired leaves). Callers needing to reopen committed values at FRI query
+// encoded rows). Callers needing to reopen committed values at FRI query
 // positions can read RS-encoded evaluations directly from the LeafSource.
 func (rs *RSCommit) Commit(batch Batch, opts ...CommitOption) (WMerkleTree, []LeafSource, error) {
 	var config CommitConfig
@@ -356,7 +355,7 @@ func (rs *RSCommit) Commit(batch Batch, opts ...CommitOption) (WMerkleTree, []Le
 	}
 
 	// 2- encode each group's polynomials on its RS-encoded domain and hash
-	//    the paired leaves into one digest slice per group. The largest
+	//    one encoded row into one digest per group. The largest
 	//    group's slice is the tree's leaf layer; the rest become injections.
 	//    The per-group LeafSource is retained and returned to the caller in
 	//    the same `order` (decreasing native size) used here.
@@ -397,19 +396,19 @@ func (rs *RSCommit) Commit(batch Batch, opts ...CommitOption) (WMerkleTree, []Le
 			}
 		})
 
-		halfN := int(encoder.Domain.Cardinality >> 1)
+		rows := int(encoder.Domain.Cardinality)
 		src := LeafSource{
 			Base: encodedBase,
 			Ext:  encodedExt,
 		}
-		leaves := make([]hash.Digest, halfN)
+		leaves := make([]hash.Digest, rows)
 		HashLeavesParallel(rs.LeafHasher, leaves, src)
 		perGroupLeaves[k] = leaves
 		sources[k] = src
 	}
 
 	// 3- build the underlying merkle tree. Smaller groups become injections
-	//    on the way up; their LevelWidth equals the number of paired leaves
+	//    on the way up; their LevelWidth equals the number of encoded rows
 	//    at that group's level.
 	topLeaves := perGroupLeaves[0]
 	var injections []merkle.LevelInjection
@@ -431,13 +430,13 @@ func (rs *RSCommit) Commit(batch Batch, opts ...CommitOption) (WMerkleTree, []Le
 	}
 
 	// 4- record the per-group shape in decreasing-size order so callers can
-	//    locate each rail's pairs within the tree.
+	//    locate each rail's rows within the tree.
 	shapes := make(BatchShapes, len(order))
 	for k, gi := range order {
 		shapes[k] = GroupShape{
-			PairedLeaves: len(perGroupLeaves[k]),
-			BaseWidth:    len(batch[gi].Base),
-			ExtWidth:     len(batch[gi].Ext),
+			Rows:      len(perGroupLeaves[k]),
+			BaseWidth: len(batch[gi].Base),
+			ExtWidth:  len(batch[gi].Ext),
 		}
 	}
 
@@ -489,7 +488,7 @@ func (rs *RSCommit) encoderForSize(N uint64, cache *poly.DomainCache) reedsolomo
 	return reedsolomon.NewEncoder(want, reedsolomon.WithCache(cache))
 }
 
-// HashLeavesParallel hashes len(dst) paired leaves from src into dst, using
+// HashLeavesParallel hashes len(dst) row leaves from src into dst, using
 // the batched leaf hasher when available (rate-16 Poseidon2 sponge) and
 // fanning the work out across goroutines.
 func HashLeavesParallel(lh LeafHasher, dst []hash.Digest, src LeafSource) {

@@ -44,8 +44,8 @@ func TestRSCommitDualRailProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	tree := committed.Tree
-	if got := tree.NumLeaves(); got != 4 {
-		t.Fatalf("NumLeaves = %d, want 4", got)
+	if got := tree.NumLeaves(); got != 8 {
+		t.Fatalf("NumLeaves = %d, want 8", got)
 	}
 	if got := tree.BaseWidth(); got != len(basePolys) {
 		t.Fatalf("base rail width = %d, want %d", got, len(basePolys))
@@ -113,8 +113,8 @@ func TestRSCommitWithDomainCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	tree := committed.Tree
-	if got := tree.NumLeaves(); got != 4 {
-		t.Fatalf("NumLeaves = %d, want 4", got)
+	if got := tree.NumLeaves(); got != 8 {
+		t.Fatalf("NumLeaves = %d, want 8", got)
 	}
 	if got := cache.Get(4); got != cache.Get(4) {
 		t.Fatalf("DomainCache did not reuse input domain: %p vs %p", got, cache.Get(4))
@@ -262,8 +262,8 @@ func TestRSCommitEmptyRails(t *testing.T) {
 	if got := extTree.BaseWidth(); got != 0 {
 		t.Fatalf("ext-only tree base rail width = %d, want 0", got)
 	}
-	if got := extTree.NumLeaves(); got != 4 {
-		t.Fatalf("ext-only NumLeaves = %d, want 4", got)
+	if got := extTree.NumLeaves(); got != 8 {
+		t.Fatalf("ext-only NumLeaves = %d, want 8", got)
 	}
 }
 
@@ -295,7 +295,7 @@ func TestRSCommitMultiGroupOpenProof(t *testing.T) {
 		{baseElement(100), baseElement(200), baseElement(300), baseElement(400)},
 	}
 
-	// rate=2 ⇒ encoded domains are 16 and 8, paired leaves at widths 8 and 4.
+	// rate=2 ⇒ encoded row domains are 16 and 8.
 	pcs := NewPCS(2, DefaultLeafHasher, DefaultNodeHasher)
 	committed, err := pcs.Commit([]Group{
 		{Base: topBase, Ext: topExt},
@@ -312,17 +312,17 @@ func TestRSCommitMultiGroupOpenProof(t *testing.T) {
 	if len(shapes) != 2 {
 		t.Fatalf("Groups length = %d, want 2", len(shapes))
 	}
-	if shapes[0].PairedLeaves != 8 || shapes[0].BaseWidth != 1 || shapes[0].ExtWidth != 1 {
+	if shapes[0].Rows != 16 || shapes[0].BaseWidth != 1 || shapes[0].ExtWidth != 1 {
 		t.Fatalf("top group shape = %+v", shapes[0])
 	}
-	if shapes[1].PairedLeaves != 4 || shapes[1].BaseWidth != 1 || shapes[1].ExtWidth != 0 {
+	if shapes[1].Rows != 8 || shapes[1].BaseWidth != 1 || shapes[1].ExtWidth != 0 {
 		t.Fatalf("small group shape = %+v", shapes[1])
 	}
-	if got := tree.NumLeaves(); got != 8 {
-		t.Fatalf("NumLeaves = %d, want 8", got)
+	if got := tree.NumLeaves(); got != 16 {
+		t.Fatalf("NumLeaves = %d, want 16", got)
 	}
-	if widths := tree.InjectionWidths(); len(widths) != 1 || widths[0] != 4 {
-		t.Fatalf("InjectionWidths = %v, want [4]", widths)
+	if widths := tree.InjectionWidths(); len(widths) != 1 || widths[0] != 8 {
+		t.Fatalf("InjectionWidths = %v, want [8]", widths)
 	}
 
 	// Commit's returned LeafSources must be in decreasing-size order — same
@@ -342,10 +342,10 @@ func TestRSCommitMultiGroupOpenProof(t *testing.T) {
 
 	injectionWidths := tree.InjectionWidths()
 
-	// Verify an opening for every leaf index: at each idx, the path crosses
-	// the size-4 injection level at position idx>>1, and both the top-leaf
+	// Verify an opening for every row index: at each idx, the path crosses
+	// the size-4 injection level at position idx>>1, and both the top-row
 	// hash and the injection leaf must reconstruct the published root.
-	for leafIdx := 0; leafIdx < 8; leafIdx++ {
+	for leafIdx := 0; leafIdx < 16; leafIdx++ {
 		proof, err := tree.OpenProof(leafIdx)
 		if err != nil {
 			t.Fatalf("OpenProof(%d): %v", leafIdx, err)

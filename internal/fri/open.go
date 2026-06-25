@@ -248,7 +248,7 @@ func bindClaimedValuesInLayoutOrder(
 
 // openCommittedAt opens a Committed batch at the query position sQ. The
 // query position is reduced into the batch's top-group leaf count; from
-// there each smaller Group's raw pairs sit at the corresponding folded
+// there each smaller Group's raw row sits at the corresponding reduced
 // position (idx >> bitsReduced), matching merkle.Tree.OpenProof's own
 // indexing of injection leaves.
 //
@@ -278,16 +278,14 @@ func openCommittedAt(c Committed, sQ int) (WMerkleProof, error) {
 	rawLeaves := make([]RawLeaf, len(c.Sources))
 	for k, src := range c.Sources {
 		groupRows := leafSourceRows(src)
-		groupHalfN := groupRows / 2
-		if groupHalfN <= 0 {
+		if groupRows <= 0 {
 			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d has insufficient encoded rows %d", k, groupRows)
 		}
-		// Position in the group's own encoded coset. For the top group
-		// (k=0, groupHalfN == topLeafCount), bitsReduced = 0 and pos =
-		// topPos. For smaller groups, pos = topPos >> bitsReduced, the
-		// same projection merkle.Tree.OpenProof uses for injection-leaf
-		// lookups.
-		bitsReduced := log2(topLeafCount) - log2(groupHalfN)
+		// Position in the group's own encoded row domain. For the top group
+		// (k=0, groupRows == topLeafCount), bitsReduced = 0 and pos = topPos.
+		// For smaller groups, pos = topPos >> bitsReduced, the same projection
+		// merkle.Tree.OpenProof uses for injection-leaf lookups.
+		bitsReduced := log2(topLeafCount) - log2(groupRows)
 		pos := topPos >> bitsReduced
 
 		baseLeaf := make([]koalabear.Element, len(src.Base))
