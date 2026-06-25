@@ -15,7 +15,7 @@ package fri
 
 import (
 	"fmt"
-	"math/big"
+	"math/bits"
 	"sort"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
@@ -938,6 +938,21 @@ func siblingRows(row int) (int, int) {
 	return lo, lo + 1
 }
 
+func bitReverseIndex(i, n int) int {
+	if n <= 1 {
+		return 0
+	}
+	width := bits.TrailingZeros(uint(n))
+	return int(bits.Reverse(uint(i)) >> (bits.UintSize - width))
+}
+
+func bitReversedFoldXInv(generatorInv koalabear.Element, parentRow, half int) koalabear.Element {
+	exponent := bitReverseIndex(parentRow, half)
+	var xInv koalabear.Element
+	xInv.ExpInt64(generatorInv, int64(exponent))
+	return xInv
+}
+
 // buildTreeBase builds a Merkle tree of N_j row leaves where
 // leaf k = LeafHasher(layer[k]).
 func buildTreeBase(layer []koalabear.Element, lh LeafHasher, nh NodeHasher) (*merkle.Tree, error) {
@@ -966,18 +981,14 @@ func buildTreeExt(layer []ext.E6, lh LeafHasher, nh NodeHasher) (*merkle.Tree, e
 }
 
 // foldLayerBase folds a base-field layer of size Nⱼ into a layer of size Nⱼ/2.
-//
-// The naive loop carries a serial dependency on xInv = GeneratorInv^i; each
-// parallel chunk seeds xInv with GeneratorInv^chunkStart so chunks run
-// independently.
 func foldLayerBase(layer []koalabear.Element, alpha koalabear.Element, domain *fft.Domain, invTwo koalabear.Element) []koalabear.Element {
 	half := len(layer) / 2
 	next := make([]koalabear.Element, half)
 	parallel.ExecuteWithThreshold(half, foldParallelThreshold, func(start, end int) {
-		xInv := poly.PowUint64(domain.GeneratorInv, uint64(start))
 		var sum, diff koalabear.Element
 		for i := start; i < end; i++ {
-			p, q := layer[i], layer[i+half]
+			p, q := layer[2*i], layer[2*i+1]
+			xInv := bitReversedFoldXInv(domain.GeneratorInv, i, half)
 
 			sum.Add(&p, &q)
 			sum.Mul(&sum, &invTwo)
@@ -988,7 +999,6 @@ func foldLayerBase(layer []koalabear.Element, alpha koalabear.Element, domain *f
 			diff.Mul(&diff, &alpha)
 
 			next[i].Add(&sum, &diff)
-			xInv.Mul(&xInv, &domain.GeneratorInv)
 		}
 	})
 	return next
@@ -1000,9 +1010,9 @@ func foldLayerExt(layer []ext.E6, alpha ext.E6, domain *fft.Domain, invTwo koala
 	half := len(layer) / 2
 	next := make([]ext.E6, half)
 	parallel.ExecuteWithThreshold(half, foldParallelThreshold, func(start, end int) {
-		xInv := poly.PowUint64(domain.GeneratorInv, uint64(start))
 		for i := start; i < end; i++ {
-			p, q := layer[i], layer[i+half]
+			p, q := layer[2*i], layer[2*i+1]
+			xInv := bitReversedFoldXInv(domain.GeneratorInv, i, half)
 
 			var sum, diff ext.E6
 			sum.Add(&p, &q)
@@ -1014,7 +1024,6 @@ func foldLayerExt(layer []ext.E6, alpha ext.E6, domain *fft.Domain, invTwo koala
 			diff.Mul(&diff, &alpha)
 
 			next[i].Add(&sum, &diff)
-			xInv.Mul(&xInv, &domain.GeneratorInv)
 		}
 	})
 	return next
@@ -1170,9 +1179,12 @@ func checkQuery(s int, fq Query,
 			return fmt.Errorf("round %d: Merkle proof invalid for LeafQ (row=%d)", j, row)
 		}
 
-		// Fold: expected = (LeafP+LeafQ)/2 + α*(LeafP-LeafQ)/(2·ωⱼ^lo).
+		// Fold: expected = (LeafP+LeafQ)/2 + α*(LeafP-LeafQ)/(2·X),
+		// with X = ωⱼ^bitrev(row/2) for adjacent bit-reversed rows.
 		var xInv, sum, diff, expected koalabear.Element
-		xInv.Exp(p.domainsLight[j].generator, big.NewInt(int64(Nj-lo)))
+		generatorInv := p.domainsLight[j].generator
+		generatorInv.Inverse(&generatorInv)
+		xInv = bitReversedFoldXInv(generatorInv, lo>>1, Nj>>1)
 		sum.Add(&layer.LeafPBase, &layer.LeafQBase)
 		sum.Mul(&sum, &p.invTwo)
 		diff.Sub(&layer.LeafPBase, &layer.LeafQBase)
@@ -1285,8 +1297,9 @@ func checkQueryExt(s int, fq Query,
 			return fmt.Errorf("round %d: Merkle proof invalid for LeafQ (row=%d)", j, row)
 		}
 
-		var xInv koalabear.Element
-		xInv.Exp(p.domainsLight[j].generator, big.NewInt(int64(Nj-lo)))
+		generatorInv := p.domainsLight[j].generator
+		generatorInv.Inverse(&generatorInv)
+		xInv := bitReversedFoldXInv(generatorInv, lo>>1, Nj>>1)
 
 		var sum, diff, expected ext.E6
 		sum.Add(&layer.LeafPExt, &layer.LeafQExt)
