@@ -46,7 +46,7 @@ func randomExtPoly(n int) []ext.E6 {
 	return elems
 }
 
-// buildLevelTree builds the paired-leaf Merkle tree expected by FRI for a
+// buildLevelTree builds the row-leaf Merkle tree expected by FRI for a
 // single-poly level (helper around p.BuildLevelTree).
 func buildLevelTree(t *testing.T, p fri.Params, layer []koalabear.Element) *merkle.Tree {
 	t.Helper()
@@ -315,6 +315,29 @@ func TestVerifyRejectsFlippedLeaf(t *testing.T) {
 	}
 }
 
+func TestVerifyRejectsFlippedLeafQ(t *testing.T) {
+	p := testParams(t, 64, 4, 4)
+	evals, _ := p.Encode(randomPoly(p.D))
+	tree := buildLevelTree(t, p, evals)
+
+	tsP := freshTS()
+	prf, _, err := fri.Prove(p, []fri.Level{{
+		D:     p.D,
+		Evals: fri.LevelEvals{Base: evals},
+		Tree:  tree,
+	}}, tsP)
+	if err != nil {
+		t.Fatalf("Prove: %v", err)
+	}
+
+	prf.FRIQueries[0].Layers[0].LeafQBase.SetRandom()
+
+	tsV := freshTS()
+	if err := fri.Verify(p, []hash.Digest{tree.Root()}, []int{p.D}, prf, tsV); err == nil {
+		t.Fatal("Verify accepted a proof with a corrupted second leaf")
+	}
+}
+
 func TestVerifyRejectsFlippedExtLeaf(t *testing.T) {
 	p := testParams(t, 64, 4, 4)
 	evals, _ := p.EncodeExt(randomExtPoly(p.D))
@@ -335,6 +358,29 @@ func TestVerifyRejectsFlippedExtLeaf(t *testing.T) {
 	tsV := freshTS()
 	if err := fri.Verify(p, []hash.Digest{tree.Root()}, []int{p.D}, prf, tsV); err == nil {
 		t.Fatal("Verify accepted a proof with a corrupted ext leaf")
+	}
+}
+
+func TestVerifyRejectsFlippedExtLeafQ(t *testing.T) {
+	p := testParams(t, 64, 4, 4)
+	evals, _ := p.EncodeExt(randomExtPoly(p.D))
+	tree := buildLevelTreeExt(t, p, evals)
+
+	tsP := freshTS()
+	prf, _, err := fri.Prove(p, []fri.Level{{
+		D:     p.D,
+		Evals: fri.LevelEvals{Ext: evals},
+		Tree:  tree,
+	}}, tsP)
+	if err != nil {
+		t.Fatalf("Prove: %v", err)
+	}
+
+	prf.FRIQueries[0].Layers[0].LeafQExt.MustSetRandom()
+
+	tsV := freshTS()
+	if err := fri.Verify(p, []hash.Digest{tree.Root()}, []int{p.D}, prf, tsV); err == nil {
+		t.Fatal("Verify accepted a proof with a corrupted second ext leaf")
 	}
 }
 

@@ -224,10 +224,10 @@ func injectionOrderForBatch(batchShapes BatchShapes) []int {
 }
 
 // extractFRIQueryPositions reads the per-query positions out of the FRI
-// proof. The query position for query q is the LeafIdx of the first
-// layer of FRIQueries[q] (a property the FRI prover establishes; the
-// verifier re-derives the same s via the transcript inside fri.Verify
-// but does not expose it, so we read it back from the proof).
+// proof. The query position for query q is the Row of the first layer of
+// FRIQueries[q] (a property the FRI prover establishes; the verifier
+// re-derives the same s via the transcript inside fri.Verify but does not
+// expose it, so we read it back from the proof).
 func extractFRIQueryPositions(prf Proof, numQueries int) ([]int, error) {
 	if len(prf.FRIQueries) != numQueries {
 		return nil, fmt.Errorf("FRIQueries has %d entries, expected %d", len(prf.FRIQueries), numQueries)
@@ -237,7 +237,7 @@ func extractFRIQueryPositions(prf Proof, numQueries int) ([]int, error) {
 		if len(prf.FRIQueries[q].Layers) == 0 {
 			return nil, fmt.Errorf("FRIQueries[%d].Layers is empty", q)
 		}
-		out[q] = prf.FRIQueries[q].Layers[0].Path.LeafIdx
+		out[q] = prf.FRIQueries[q].Layers[0].Row
 	}
 	return out, nil
 }
