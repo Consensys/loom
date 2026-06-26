@@ -144,10 +144,32 @@ type WMerkleGroupOpening struct {
 	ProofHi merkle.Proof
 }
 
+// WMerkleInjectionOpening is the compact opening payload for one injected
+// smaller group. Rows is the canonical lo/hi row pair at that group's row
+// domain. SiblingRunning is the pre-injection running digest of the companion
+// row at this injection level; the path-side running digest is reconstructed
+// while verifying the main Merkle path.
+type WMerkleInjectionOpening struct {
+	Rows           RawRowPair
+	SiblingRunning hash.Digest
+}
+
 // WMerkleProof is an opening proof for a WMerkleTree at one query position.
-// GroupOpenings carries one authenticated lo/hi row pair per Group of the
-// committed tree, in the same decreasing-size order used by WMerkleTree.Groups().
+//
+// Compact shape:
+//   - TopRows is the canonical lo/hi row pair for the top group.
+//   - Path authenticates TopRows.Lo; Path.Siblings[0] authenticates TopRows.Hi.
+//   - Injections carries one compact opening per injected smaller group, in the
+//     same decreasing-size order as WMerkleTree.InjectionWidths().
+//
+// GroupOpenings is the legacy per-group full-path shape. It remains populated
+// until openCommittedAt, PCS.Verify, and the DEEP bridge are migrated in the
+// follow-up compact-proof PRs.
 type WMerkleProof struct {
+	TopRows    RawRowPair
+	Path       merkle.Proof
+	Injections []WMerkleInjectionOpening
+
 	GroupOpenings []WMerkleGroupOpening
 }
 

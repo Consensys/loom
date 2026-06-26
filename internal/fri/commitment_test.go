@@ -403,6 +403,149 @@ func TestRSCommitMultiGroupOpenProof(t *testing.T) {
 	}
 }
 
+func TestWMerkleProofCompactShapeSingleSize(t *testing.T) {
+	basePolys := []poly.Polynomial{
+		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},
+	}
+
+	pcs := NewPCS(2, DefaultLeafHasher, DefaultNodeHasher)
+	committed, err := pcs.Commit([]Group{{Base: basePolys}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const sFull = 5
+	topRows := committed.Tree.NumLeaves()
+	topRow := sFull
+	lo, hi := siblingRows(topRow)
+	topRowPair, err := rawRowPairFromSource(committed.Sources[0], lo, hi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := committed.Tree.OpenProof(lo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	proof := WMerkleProof{
+		TopRows: topRowPair,
+		Path:    path,
+	}
+
+	if got, want := proof.Path.LeafIdx, lo; got != want {
+		t.Fatalf("Path.LeafIdx = %d, want %d", got, want)
+	}
+	if got := len(proof.Injections); got != 0 {
+		t.Fatalf("len(Injections) = %d, want 0", got)
+	}
+	if got := len(proof.GroupOpenings); got != 0 {
+		t.Fatalf("len(GroupOpenings) = %d, want 0 for compact shape", got)
+	}
+	if !proof.TopRows.Lo.RawRowBase[0].Equal(&committed.Sources[0].Base[0][lo]) {
+		t.Fatal("TopRows.Lo mismatch")
+	}
+	if !proof.TopRows.Hi.RawRowBase[0].Equal(&committed.Sources[0].Base[0][hi]) {
+		t.Fatal("TopRows.Hi mismatch")
+	}
+	if got, want := proof.Path.Siblings[0], hashRawRow(DefaultLeafHasher, proof.TopRows.Hi); got != want {
+		t.Fatalf("top companion digest mismatch: got %v, want %v", got, want)
+	}
+	if topRows != 8 {
+		t.Fatalf("top rows = %d, want 8", topRows)
+	}
+}
+
+func TestWMerkleProofCompactShapeTwoSizeInjection(t *testing.T) {
+	topBase := []poly.Polynomial{
+		{baseElement(1), baseElement(2), baseElement(3), baseElement(4),
+			baseElement(5), baseElement(6), baseElement(7), baseElement(8)},
+	}
+	smallBase := []poly.Polynomial{
+		{baseElement(100), baseElement(200), baseElement(300), baseElement(400)},
+	}
+
+	pcs := NewPCS(2, DefaultLeafHasher, DefaultNodeHasher)
+	committed, err := pcs.Commit([]Group{
+		{Base: smallBase},
+		{Base: topBase},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const sFull = 11
+	topRows := committed.Tree.NumLeaves()
+	topRow := sFull
+	topLo, topHi := siblingRows(topRow)
+	topRowPair, err := rawRowPairFromSource(committed.Sources[0], topLo, topHi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := committed.Tree.OpenProof(topLo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	smallRows := leafSourceRows(committed.Sources[1])
+	smallRow := sFull >> (log2(topRows) - log2(smallRows))
+	smallLo, smallHi := siblingRows(smallRow)
+	smallRowPair, err := rawRowPairFromSource(committed.Sources[1], smallLo, smallHi)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	topReduction := log2(topRows) - log2(smallRows)
+	pathRowAtWidth := topLo >> topReduction
+	siblingRunning, err := committed.Tree.Tree.PreInjectionSibling(smallRows, pathRowAtWidth)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	proof := WMerkleProof{
+		TopRows: topRowPair,
+		Path:    path,
+		Injections: []WMerkleInjectionOpening{{
+			Rows:           smallRowPair,
+			SiblingRunning: siblingRunning,
+		}},
+	}
+
+	if got, want := proof.Path.LeafIdx, topLo; got != want {
+		t.Fatalf("Path.LeafIdx = %d, want %d", got, want)
+	}
+	if got, want := len(proof.Injections), 1; got != want {
+		t.Fatalf("len(Injections) = %d, want %d", got, want)
+	}
+	if got := len(proof.GroupOpenings); got != 0 {
+		t.Fatalf("len(GroupOpenings) = %d, want 0 for compact shape", got)
+	}
+	if !proof.Injections[0].Rows.Lo.RawRowBase[0].Equal(&committed.Sources[1].Base[0][smallLo]) {
+		t.Fatal("injected Rows.Lo mismatch")
+	}
+	if !proof.Injections[0].Rows.Hi.RawRowBase[0].Equal(&committed.Sources[1].Base[0][smallHi]) {
+		t.Fatal("injected Rows.Hi mismatch")
+	}
+
+	if got, want := proof.Path.Siblings[0], hashRawRow(DefaultLeafHasher, proof.TopRows.Hi); got != want {
+		t.Fatalf("top companion digest mismatch: got %v, want %v", got, want)
+	}
+
+	injectionDepth := topReduction
+	var companionRow RawRow
+	if pathRowAtWidth == smallLo {
+		companionRow = proof.Injections[0].Rows.Hi
+	} else {
+		companionRow = proof.Injections[0].Rows.Lo
+	}
+	companionPost := DefaultNodeHasher.HashNode(
+		proof.Injections[0].SiblingRunning,
+		hashRawRow(DefaultLeafHasher, companionRow),
+	)
+	if got, want := proof.Path.Siblings[injectionDepth], companionPost; got != want {
+		t.Fatalf("injection companion post digest mismatch: got %v, want %v", got, want)
+	}
+}
+
 // TestRSCommitDuplicateGroupSize ensures that Commit rejects two groups of
 // the same native size, since the merkle layer requires distinct LevelWidths
 // for injections.
