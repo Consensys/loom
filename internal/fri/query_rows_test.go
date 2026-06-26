@@ -39,17 +39,18 @@ func TestOpenQueryBaseUsesFullRows(t *testing.T) {
 			if got.Row != row {
 				t.Fatalf("s=%d layer=%d: row = %d, want %d", s, j, got.Row, row)
 			}
-			if got.PathP.LeafIdx != lo {
-				t.Fatalf("s=%d layer=%d: PathP row = %d, want %d", s, j, got.PathP.LeafIdx, lo)
-			}
-			if got.PathQ.LeafIdx != hi {
-				t.Fatalf("s=%d layer=%d: PathQ row = %d, want %d", s, j, got.PathQ.LeafIdx, hi)
+			if got.Path.LeafIdx != lo {
+				t.Fatalf("s=%d layer=%d: Path row = %d, want %d", s, j, got.Path.LeafIdx, lo)
 			}
 			if !got.LeafPBase.Equal(&layer[lo]) {
 				t.Fatalf("s=%d layer=%d: LeafP mismatch", s, j)
 			}
 			if !got.LeafQBase.Equal(&layer[hi]) {
 				t.Fatalf("s=%d layer=%d: LeafQ mismatch", s, j)
+			}
+			leafQ := DefaultLeafHasher.HashLeaf([]koalabear.Element{got.LeafQBase}, nil)
+			if len(got.Path.Siblings) == 0 || got.Path.Siblings[0] != leafQ {
+				t.Fatalf("s=%d layer=%d: companion sibling mismatch", s, j)
 			}
 		}
 	}
@@ -85,17 +86,18 @@ func TestOpenQueryExtUsesFullRows(t *testing.T) {
 			if got.Row != row {
 				t.Fatalf("s=%d layer=%d: row = %d, want %d", s, j, got.Row, row)
 			}
-			if got.PathP.LeafIdx != lo {
-				t.Fatalf("s=%d layer=%d: PathP row = %d, want %d", s, j, got.PathP.LeafIdx, lo)
-			}
-			if got.PathQ.LeafIdx != hi {
-				t.Fatalf("s=%d layer=%d: PathQ row = %d, want %d", s, j, got.PathQ.LeafIdx, hi)
+			if got.Path.LeafIdx != lo {
+				t.Fatalf("s=%d layer=%d: Path row = %d, want %d", s, j, got.Path.LeafIdx, lo)
 			}
 			if !got.LeafPExt.Equal(&layer[lo]) {
 				t.Fatalf("s=%d layer=%d: LeafP mismatch", s, j)
 			}
 			if !got.LeafQExt.Equal(&layer[hi]) {
 				t.Fatalf("s=%d layer=%d: LeafQ mismatch", s, j)
+			}
+			leafQ := DefaultLeafHasher.HashLeaf(nil, []ext.E6{got.LeafQExt})
+			if len(got.Path.Siblings) == 0 || got.Path.Siblings[0] != leafQ {
+				t.Fatalf("s=%d layer=%d: companion sibling mismatch", s, j)
 			}
 		}
 	}

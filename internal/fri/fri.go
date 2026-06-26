@@ -139,10 +139,18 @@ type domainLight struct {
 	generator   koalabear.Element
 }
 
-// QueryLayer holds the adjacent row openings and Merkle proofs for one FRI
-// level. Exactly one rail is populated, selected by Field. Row is the sampled
-// full-domain row projected to this level; LeafP opens row Row&^1 and LeafQ
-// opens row (Row&^1)+1.
+// Bit-reversed row convention: every RS-encoded vector committed by FRI is
+// stored in bit-reversed evaluation order. If a layer has N rows, row r stores
+// the evaluation at omega_N^bitrev_log2(N)(r). The FRI companion row is r^1,
+// the oriented pair is lo = r&^1 and hi = lo+1, and the next folded-layer row
+// is r>>1.
+//
+// QueryLayer holds the adjacent row openings for one FRI level. Exactly one
+// rail is populated, selected by Field. Row is the sampled full-domain row
+// projected to this level; LeafP is the value at row Row&^1 and LeafQ is the
+// value at row (Row&^1)+1. Path authenticates LeafP; its first sibling must be
+// the hash of LeafQ, which authenticates the companion row without storing a
+// second complete Merkle path.
 type QueryLayer struct {
 	Field     field.Kind
 	Row       int
@@ -150,8 +158,7 @@ type QueryLayer struct {
 	LeafQBase koalabear.Element
 	LeafPExt  ext.E6 // populated when Field == field.Ext
 	LeafQExt  ext.E6
-	PathP     merkle.Proof // authenticates LeafP
-	PathQ     merkle.Proof // authenticates LeafQ
+	Path      merkle.Proof // authenticates LeafP; Siblings[0] authenticates LeafQ
 }
 
 // Query holds the opening data for one full query path across all folding
@@ -489,21 +496,16 @@ func proveBase(p Params, levels []Level, plan provePlan, ts *fiatshamir.Transcri
 			row := s >> jl
 			lo, hi := siblingRows(row)
 
-			pathP, err := levels[l].Tree.OpenProof(lo)
+			path, err := levels[l].Tree.OpenProof(lo)
 			if err != nil {
 				return Proof{}, nil, fmt.Errorf("fri: Prove: open level query l=%d k=%d row=%d: %w", l, k, lo, err)
-			}
-			pathQ, err := levels[l].Tree.OpenProof(hi)
-			if err != nil {
-				return Proof{}, nil, fmt.Errorf("fri: Prove: open level query l=%d k=%d row=%d: %w", l, k, hi, err)
 			}
 			prf.LevelQueries[l-1][k] = QueryLayer{
 				Field:     field.Base,
 				Row:       row,
 				LeafPBase: levels[l].Evals.Base[lo],
 				LeafQBase: levels[l].Evals.Base[hi],
-				PathP:     pathP,
-				PathQ:     pathQ,
+				Path:      path,
 			}
 		}
 	}
@@ -623,21 +625,16 @@ func proveExt(p Params, levels []Level, plan provePlan, ts *fiatshamir.Transcrip
 			row := s >> jl
 			lo, hi := siblingRows(row)
 
-			pathP, err := levels[l].Tree.OpenProof(lo)
+			path, err := levels[l].Tree.OpenProof(lo)
 			if err != nil {
 				return Proof{}, nil, fmt.Errorf("fri: Prove: open level query l=%d k=%d row=%d: %w", l, k, lo, err)
-			}
-			pathQ, err := levels[l].Tree.OpenProof(hi)
-			if err != nil {
-				return Proof{}, nil, fmt.Errorf("fri: Prove: open level query l=%d k=%d row=%d: %w", l, k, hi, err)
 			}
 			prf.LevelQueries[l-1][k] = QueryLayer{
 				Field:    field.Ext,
 				Row:      row,
 				LeafPExt: levels[l].Evals.Ext[lo],
 				LeafQExt: levels[l].Evals.Ext[hi],
-				PathP:    pathP,
-				PathQ:    pathQ,
+				Path:     path,
 			}
 		}
 	}
@@ -1064,13 +1061,9 @@ func openQueryBase(s int, layers [][]koalabear.Element, trees []*merkle.Tree, nu
 		row := s >> j
 		lo, hi := siblingRows(row)
 
-		pathP, err := trees[j].OpenProof(lo)
+		path, err := trees[j].OpenProof(lo)
 		if err != nil {
 			return Query{}, fmt.Errorf("layer %d OpenProof row=%d: %w", j, lo, err)
-		}
-		pathQ, err := trees[j].OpenProof(hi)
-		if err != nil {
-			return Query{}, fmt.Errorf("layer %d OpenProof row=%d: %w", j, hi, err)
 		}
 
 		q.Layers[j] = QueryLayer{
@@ -1078,8 +1071,7 @@ func openQueryBase(s int, layers [][]koalabear.Element, trees []*merkle.Tree, nu
 			Row:       row,
 			LeafPBase: layers[j][lo],
 			LeafQBase: layers[j][hi],
-			PathP:     pathP,
-			PathQ:     pathQ,
+			Path:      path,
 		}
 	}
 	return q, nil
@@ -1093,13 +1085,9 @@ func openQueryExt(s int, layers [][]ext.E6, trees []*merkle.Tree, numRounds int)
 		row := s >> j
 		lo, hi := siblingRows(row)
 
-		pathP, err := trees[j].OpenProof(lo)
+		path, err := trees[j].OpenProof(lo)
 		if err != nil {
 			return Query{}, fmt.Errorf("layer %d OpenProof row=%d: %w", j, lo, err)
-		}
-		pathQ, err := trees[j].OpenProof(hi)
-		if err != nil {
-			return Query{}, fmt.Errorf("layer %d OpenProof row=%d: %w", j, hi, err)
 		}
 
 		q.Layers[j] = QueryLayer{
@@ -1107,11 +1095,56 @@ func openQueryExt(s int, layers [][]ext.E6, trees []*merkle.Tree, numRounds int)
 			Row:      row,
 			LeafPExt: layers[j][lo],
 			LeafQExt: layers[j][hi],
-			PathP:    pathP,
-			PathQ:    pathQ,
+			Path:     path,
 		}
 	}
 	return q, nil
+}
+
+func verifyAdjacentBaseOpening(root hash.Digest, layer QueryLayer, context string, p Params) error {
+	if layer.Field != field.Base {
+		return fmt.Errorf("%s: expected base query layer, got %s", context, layer.Field)
+	}
+	lo, hi := siblingRows(layer.Row)
+	if layer.Path.LeafIdx != lo {
+		return fmt.Errorf("%s: proof row = %d, want %d", context, layer.Path.LeafIdx, lo)
+	}
+
+	leafP := p.LeafHasher.HashLeaf([]koalabear.Element{layer.LeafPBase}, nil)
+	leafQ := p.LeafHasher.HashLeaf([]koalabear.Element{layer.LeafQBase}, nil)
+	if len(layer.Path.Siblings) == 0 {
+		return fmt.Errorf("%s: proof for row %d has no companion sibling", context, lo)
+	}
+	if layer.Path.Siblings[0] != leafQ {
+		return fmt.Errorf("%s: companion row %d digest mismatch", context, hi)
+	}
+	if !merkle.Verify(root, layer.Path, leafP, p.NodeHasher) {
+		return fmt.Errorf("%s: Merkle proof invalid for row %d", context, lo)
+	}
+	return nil
+}
+
+func verifyAdjacentExtOpening(root hash.Digest, layer QueryLayer, context string, p Params) error {
+	if layer.Field != field.Ext {
+		return fmt.Errorf("%s: expected ext query layer, got %s", context, layer.Field)
+	}
+	lo, hi := siblingRows(layer.Row)
+	if layer.Path.LeafIdx != lo {
+		return fmt.Errorf("%s: proof row = %d, want %d", context, layer.Path.LeafIdx, lo)
+	}
+
+	leafP := p.LeafHasher.HashLeaf(nil, []ext.E6{layer.LeafPExt})
+	leafQ := p.LeafHasher.HashLeaf(nil, []ext.E6{layer.LeafQExt})
+	if len(layer.Path.Siblings) == 0 {
+		return fmt.Errorf("%s: proof for row %d has no companion sibling", context, lo)
+	}
+	if layer.Path.Siblings[0] != leafQ {
+		return fmt.Errorf("%s: companion row %d digest mismatch", context, hi)
+	}
+	if !merkle.Verify(root, layer.Path, leafP, p.NodeHasher) {
+		return fmt.Errorf("%s: Merkle proof invalid for row %d", context, lo)
+	}
+	return nil
 }
 
 // checkQuery verifies one base-field multi-degree FRI query:
@@ -1134,23 +1167,8 @@ func checkQuery(s int, fq Query,
 
 	// Verify Merkle proofs for all level polynomial openings.
 	for lIdx, ld := range levelQueriesForQuery {
-		if ld.Field != field.Base {
-			return fmt.Errorf("level %d: expected base query layer, got %s", lIdx+1, ld.Field)
-		}
-		lo, hi := siblingRows(ld.Row)
-		if ld.PathP.LeafIdx != lo {
-			return fmt.Errorf("level %d: LeafP proof row = %d, want %d", lIdx+1, ld.PathP.LeafIdx, lo)
-		}
-		if ld.PathQ.LeafIdx != hi {
-			return fmt.Errorf("level %d: LeafQ proof row = %d, want %d", lIdx+1, ld.PathQ.LeafIdx, hi)
-		}
-		leafP := p.LeafHasher.HashLeaf([]koalabear.Element{ld.LeafPBase}, nil)
-		if !merkle.Verify(levelRoots[lIdx], ld.PathP, leafP, p.NodeHasher) {
-			return fmt.Errorf("level %d: Merkle proof invalid for LeafP", lIdx+1)
-		}
-		leafQ := p.LeafHasher.HashLeaf([]koalabear.Element{ld.LeafQBase}, nil)
-		if !merkle.Verify(levelRoots[lIdx], ld.PathQ, leafQ, p.NodeHasher) {
-			return fmt.Errorf("level %d: Merkle proof invalid for LeafQ", lIdx+1)
+		if err := verifyAdjacentBaseOpening(levelRoots[lIdx], ld, fmt.Sprintf("level %d", lIdx+1), p); err != nil {
+			return err
 		}
 	}
 
@@ -1158,7 +1176,7 @@ func checkQuery(s int, fq Query,
 	for j := 0; j < p.numRounds; j++ {
 		Nj := int(p.domainsLight[j].cardinality)
 		row := s >> j
-		lo, hi := siblingRows(row)
+		lo, _ := siblingRows(row)
 		layer := fq.Layers[j]
 		if layer.Field != field.Base {
 			return fmt.Errorf("round %d: expected base query layer, got %s", j, layer.Field)
@@ -1166,20 +1184,8 @@ func checkQuery(s int, fq Query,
 		if layer.Row != row {
 			return fmt.Errorf("round %d: query row = %d, want %d", j, layer.Row, row)
 		}
-		if layer.PathP.LeafIdx != lo {
-			return fmt.Errorf("round %d: LeafP proof row = %d, want %d", j, layer.PathP.LeafIdx, lo)
-		}
-		if layer.PathQ.LeafIdx != hi {
-			return fmt.Errorf("round %d: LeafQ proof row = %d, want %d", j, layer.PathQ.LeafIdx, hi)
-		}
-
-		leafP := p.LeafHasher.HashLeaf([]koalabear.Element{layer.LeafPBase}, nil)
-		if !merkle.Verify(roots[j], layer.PathP, leafP, p.NodeHasher) {
-			return fmt.Errorf("round %d: Merkle proof invalid for LeafP (row=%d)", j, row)
-		}
-		leafQ := p.LeafHasher.HashLeaf([]koalabear.Element{layer.LeafQBase}, nil)
-		if !merkle.Verify(roots[j], layer.PathQ, leafQ, p.NodeHasher) {
-			return fmt.Errorf("round %d: Merkle proof invalid for LeafQ (row=%d)", j, row)
+		if err := verifyAdjacentBaseOpening(roots[j], layer, fmt.Sprintf("round %d", j), p); err != nil {
+			return err
 		}
 
 		// Fold: expected = (LeafP+LeafQ)/2 + α*(LeafP-LeafQ)/(2·X),
@@ -1253,30 +1259,15 @@ func checkQueryExt(s int, fq Query,
 	p Params) error {
 
 	for lIdx, ld := range levelQueriesForQuery {
-		if ld.Field != field.Ext {
-			return fmt.Errorf("level %d: expected ext query layer, got %s", lIdx+1, ld.Field)
-		}
-		lo, hi := siblingRows(ld.Row)
-		if ld.PathP.LeafIdx != lo {
-			return fmt.Errorf("level %d: LeafP proof row = %d, want %d", lIdx+1, ld.PathP.LeafIdx, lo)
-		}
-		if ld.PathQ.LeafIdx != hi {
-			return fmt.Errorf("level %d: LeafQ proof row = %d, want %d", lIdx+1, ld.PathQ.LeafIdx, hi)
-		}
-		leafP := p.LeafHasher.HashLeaf(nil, []ext.E6{ld.LeafPExt})
-		if !merkle.Verify(levelRoots[lIdx], ld.PathP, leafP, p.NodeHasher) {
-			return fmt.Errorf("level %d: Merkle proof invalid for LeafP", lIdx+1)
-		}
-		leafQ := p.LeafHasher.HashLeaf(nil, []ext.E6{ld.LeafQExt})
-		if !merkle.Verify(levelRoots[lIdx], ld.PathQ, leafQ, p.NodeHasher) {
-			return fmt.Errorf("level %d: Merkle proof invalid for LeafQ", lIdx+1)
+		if err := verifyAdjacentExtOpening(levelRoots[lIdx], ld, fmt.Sprintf("level %d", lIdx+1), p); err != nil {
+			return err
 		}
 	}
 
 	for j := 0; j < p.numRounds; j++ {
 		Nj := int(p.domainsLight[j].cardinality)
 		row := s >> j
-		lo, hi := siblingRows(row)
+		lo, _ := siblingRows(row)
 		layer := fq.Layers[j]
 		if layer.Field != field.Ext {
 			return fmt.Errorf("round %d: expected ext query layer, got %s", j, layer.Field)
@@ -1284,20 +1275,8 @@ func checkQueryExt(s int, fq Query,
 		if layer.Row != row {
 			return fmt.Errorf("round %d: query row = %d, want %d", j, layer.Row, row)
 		}
-		if layer.PathP.LeafIdx != lo {
-			return fmt.Errorf("round %d: LeafP proof row = %d, want %d", j, layer.PathP.LeafIdx, lo)
-		}
-		if layer.PathQ.LeafIdx != hi {
-			return fmt.Errorf("round %d: LeafQ proof row = %d, want %d", j, layer.PathQ.LeafIdx, hi)
-		}
-
-		leafP := p.LeafHasher.HashLeaf(nil, []ext.E6{layer.LeafPExt})
-		if !merkle.Verify(roots[j], layer.PathP, leafP, p.NodeHasher) {
-			return fmt.Errorf("round %d: Merkle proof invalid for LeafP (row=%d)", j, row)
-		}
-		leafQ := p.LeafHasher.HashLeaf(nil, []ext.E6{layer.LeafQExt})
-		if !merkle.Verify(roots[j], layer.PathQ, leafQ, p.NodeHasher) {
-			return fmt.Errorf("round %d: Merkle proof invalid for LeafQ (row=%d)", j, row)
+		if err := verifyAdjacentExtOpening(roots[j], layer, fmt.Sprintf("round %d", j), p); err != nil {
+			return err
 		}
 
 		generatorInv := p.domainsLight[j].generator
