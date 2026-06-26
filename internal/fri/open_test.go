@@ -33,7 +33,7 @@ import (
 //   - FRIProof is structurally populated (non-nil FinalPoly, query count
 //     matches Params.NumQueries).
 //   - PointSamplings has shape [NumQueries][len(batches)] and each
-//     WMerkleProof carries one authenticated RawRowPair per Group of its batch.
+//     WMerkleProof carries one compact top-row opening plus any injected rows.
 func TestOpenShape(t *testing.T) {
 	const rate uint64 = 2
 	const numQueries = 4
@@ -117,7 +117,7 @@ func TestOpenShape(t *testing.T) {
 	}
 
 	// 4- PointSamplings has [NumQueries][len(batches)] shape; each
-	//    WMerkleProof carries one RawRowPair per Group of its batch.
+	//    WMerkleProof carries one compact top-row opening plus any injected rows.
 	if got, want := len(openProof.PointSamplings), numQueries; got != want {
 		t.Fatalf("PointSamplings outer length = %d, want %d", got, want)
 	}
@@ -127,13 +127,16 @@ func TestOpenShape(t *testing.T) {
 		}
 		for b := range openProof.PointSamplings[q] {
 			wp := openProof.PointSamplings[q][b]
-			wantOpenings := len(committed[b].Sources)
-			if got := len(wp.GroupOpenings); got != wantOpenings {
-				t.Fatalf("PointSamplings[%d][%d].GroupOpenings = %d, want %d",
-					q, b, got, wantOpenings)
+			if got := len(wp.Injections); got != len(committed[b].Sources)-1 {
+				t.Fatalf("PointSamplings[%d][%d].Injections = %d, want %d",
+					q, b, got, len(committed[b].Sources)-1)
+			}
+			if got := len(wp.GroupOpenings); got != 0 {
+				t.Fatalf("PointSamplings[%d][%d].GroupOpenings = %d, want 0",
+					q, b, got)
 			}
 			// Top-group row widths must match the batch's top Group.
-			top := wp.GroupOpenings[0].Rows.Lo
+			top := wp.TopRows.Lo
 			topGroup := batches[b][0] // single-group batch in this fixture
 			if got, want := len(top.RawRowBase), len(topGroup.Base); got != want {
 				t.Fatalf("PointSamplings[%d][%d].RawRowBase width = %d, want %d",
@@ -144,6 +147,95 @@ func TestOpenShape(t *testing.T) {
 					q, b, got, want)
 			}
 		}
+	}
+}
+
+func TestOpenCommittedAtCompactTwoSizeBranches(t *testing.T) {
+	topBase := []poly.Polynomial{
+		{baseElement(1), baseElement(2), baseElement(3), baseElement(4),
+			baseElement(5), baseElement(6), baseElement(7), baseElement(8)},
+	}
+	smallBase := []poly.Polynomial{
+		{baseElement(100), baseElement(200), baseElement(300), baseElement(400)},
+	}
+
+	pcs := NewPCS(2, DefaultLeafHasher, DefaultNodeHasher)
+	committed, err := pcs.Commit([]Group{
+		{Base: smallBase},
+		{Base: topBase},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	maxRows := committed.Tree.NumLeaves()
+	smallRows := leafSourceRows(committed.Sources[1])
+	topReduction := log2(maxRows) - log2(smallRows)
+
+	for _, tc := range []struct {
+		name         string
+		sFull        int
+		wantPathIsLo bool
+	}{
+		{name: "path-side-lo", sFull: 1, wantPathIsLo: true},
+		{name: "path-side-hi", sFull: 2, wantPathIsLo: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wp, err := openCommittedAt(committed, tc.sFull, maxRows)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyOneWMerkleProof(DefaultLeafHasher, DefaultNodeHasher, committed.Tree.Root(), committed.Shapes, wp, tc.sFull, maxRows); err != nil {
+				t.Fatalf("verifyOneWMerkleProof rejected compact opening: %v", err)
+			}
+			if got, want := len(wp.Injections), 1; got != want {
+				t.Fatalf("len(Injections) = %d, want %d", got, want)
+			}
+			if got := len(wp.GroupOpenings); got != 0 {
+				t.Fatalf("len(GroupOpenings) = %d, want 0", got)
+			}
+
+			topLo, topHi := siblingRows(tc.sFull)
+			if got, want := wp.Path.LeafIdx, topLo; got != want {
+				t.Fatalf("Path.LeafIdx = %d, want %d", got, want)
+			}
+			if !wp.TopRows.Lo.RawRowBase[0].Equal(&committed.Sources[0].Base[0][topLo]) {
+				t.Fatal("TopRows.Lo mismatch")
+			}
+			if !wp.TopRows.Hi.RawRowBase[0].Equal(&committed.Sources[0].Base[0][topHi]) {
+				t.Fatal("TopRows.Hi mismatch")
+			}
+
+			smallRow := tc.sFull >> topReduction
+			smallLo, smallHi := siblingRows(smallRow)
+			inj := wp.Injections[0]
+			if !inj.Rows.Lo.RawRowBase[0].Equal(&committed.Sources[1].Base[0][smallLo]) {
+				t.Fatal("injected Rows.Lo mismatch")
+			}
+			if !inj.Rows.Hi.RawRowBase[0].Equal(&committed.Sources[1].Base[0][smallHi]) {
+				t.Fatal("injected Rows.Hi mismatch")
+			}
+
+			pathRowAtWidth := topLo >> topReduction
+			pathIsLo := pathRowAtWidth == smallLo
+			if pathIsLo != tc.wantPathIsLo {
+				t.Fatalf("path side is lo = %t, want %t", pathIsLo, tc.wantPathIsLo)
+			}
+
+			pathRow := inj.Rows.Hi
+			companionRow := inj.Rows.Lo
+			if pathIsLo {
+				pathRow = inj.Rows.Lo
+				companionRow = inj.Rows.Hi
+			}
+			if got, want := wp.Path.InjectionLeaves[0], hashRawRow(DefaultLeafHasher, pathRow); got != want {
+				t.Fatalf("path-side injection leaf mismatch")
+			}
+			companionPost := DefaultNodeHasher.HashNode(inj.SiblingRunning, hashRawRow(DefaultLeafHasher, companionRow))
+			if got, want := wp.Path.Siblings[topReduction], companionPost; got != want {
+				t.Fatalf("companion injected sibling mismatch")
+			}
+		})
 	}
 }
 

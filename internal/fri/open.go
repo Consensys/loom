@@ -191,7 +191,7 @@ func (pcs *PCS) Open(
 	}
 
 	// 9- For each query position, open every committed batch's tree at
-	//    the matching folded position and package per-Group row pairs.
+	//    the matching folded position and package one compact Merkle proof.
 	pointSamplings := make([][]WMerkleProof, len(queryPositions))
 	for q, sQ := range queryPositions {
 		pointSamplings[q] = make([]WMerkleProof, len(committed))
@@ -246,9 +246,9 @@ func bindClaimedValuesInLayoutOrder(
 	return nil
 }
 
-// openCommittedAt opens a Committed batch at the full FRI query row sQ. For
-// each committed group, sQ is projected by right shifts into the group's row
-// domain, then the adjacent lo/hi rows are returned and authenticated.
+// openCommittedAt opens a Committed batch at the full FRI query row sQ. It
+// builds the compact proof shape: one top-level row pair, one Merkle path from
+// the top lo row, and one raw row pair per injected smaller group.
 func openCommittedAt(c Committed, sQ int, maxRows int) (WMerkleProof, error) {
 	if c.Tree.Tree == nil {
 		return WMerkleProof{}, fmt.Errorf("openCommittedAt: WMerkleTree is uninitialised")
@@ -267,22 +267,38 @@ func openCommittedAt(c Committed, sQ int, maxRows int) (WMerkleProof, error) {
 		return WMerkleProof{}, fmt.Errorf("openCommittedAt: top rows %d exceeds maxRows %d", topLeafCount, maxRows)
 	}
 
-	openings := make([]WMerkleGroupOpening, len(c.Sources))
 	topRows := leafSourceRows(c.Sources[0])
 	if topRows != topLeafCount {
 		return WMerkleProof{}, fmt.Errorf("openCommittedAt: top source rows %d != tree leaves %d", topRows, topLeafCount)
 	}
 
-	for k, src := range c.Sources {
+	topGlobalReduction := log2(maxRows) - log2(topRows)
+	if topGlobalReduction < 0 {
+		return WMerkleProof{}, fmt.Errorf("openCommittedAt: top rows %d exceeds maxRows %d", topRows, maxRows)
+	}
+	topRow := sQ >> topGlobalReduction
+	topLo, topHi := siblingRows(topRow)
+	topRowPair, err := rawRowPairFromSource(c.Sources[0], topLo, topHi)
+	if err != nil {
+		return WMerkleProof{}, fmt.Errorf("openCommittedAt: top rows: %w", err)
+	}
+	path, err := c.Tree.OpenProof(topLo)
+	if err != nil {
+		return WMerkleProof{}, fmt.Errorf("openCommittedAt: top proof row=%d: %w", topLo, err)
+	}
+
+	injections := make([]WMerkleInjectionOpening, 0, len(c.Sources)-1)
+	for k, src := range c.Sources[1:] {
+		sourceIdx := k + 1
 		groupRows := leafSourceRows(src)
 		if groupRows <= 0 {
-			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d has insufficient encoded rows %d", k, groupRows)
+			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d has insufficient encoded rows %d", sourceIdx, groupRows)
 		}
 		if groupRows > maxRows {
-			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d rows %d exceeds maxRows %d", k, groupRows, maxRows)
+			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d rows %d exceeds maxRows %d", sourceIdx, groupRows, maxRows)
 		}
 		if groupRows&(groupRows-1) != 0 {
-			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d rows %d is not a power of two", k, groupRows)
+			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d rows %d is not a power of two", sourceIdx, groupRows)
 		}
 
 		globalReduction := log2(maxRows) - log2(groupRows)
@@ -290,38 +306,29 @@ func openCommittedAt(c Committed, sQ int, maxRows int) (WMerkleProof, error) {
 		lo, hi := siblingRows(row)
 		rows, err := rawRowPairFromSource(src, lo, hi)
 		if err != nil {
-			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d rows: %w", k, err)
+			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d rows: %w", sourceIdx, err)
 		}
 
 		topReduction := log2(topRows) - log2(groupRows)
 		if topReduction < 0 {
-			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d rows %d exceeds top rows %d", k, groupRows, topRows)
+			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d rows %d exceeds top rows %d", sourceIdx, groupRows, topRows)
 		}
-		proofLoIdx := lo << topReduction
-		proofHiIdx := hi << topReduction
-		proofLo, err := c.Tree.OpenProof(proofLoIdx)
+		pathRowAtWidth := topLo >> topReduction
+		siblingRunning, err := c.Tree.Tree.PreInjectionSibling(groupRows, pathRowAtWidth)
 		if err != nil {
-			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d lo proof row=%d: %w", k, proofLoIdx, err)
-		}
-		proofHi, err := c.Tree.OpenProof(proofHiIdx)
-		if err != nil {
-			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d hi proof row=%d: %w", k, proofHiIdx, err)
-		}
-		topRowPair, err := rawRowPairFromSource(c.Sources[0], proofLoIdx, proofHiIdx)
-		if err != nil {
-			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d top rows: %w", k, err)
+			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d pre-injection sibling: %w", sourceIdx, err)
 		}
 
-		openings[k] = WMerkleGroupOpening{
-			Rows:    rows,
-			TopRows: topRowPair,
-			ProofLo: proofLo,
-			ProofHi: proofHi,
-		}
+		injections = append(injections, WMerkleInjectionOpening{
+			Rows:           rows,
+			SiblingRunning: siblingRunning,
+		})
 	}
 
 	return WMerkleProof{
-		GroupOpenings: openings,
+		TopRows:    topRowPair,
+		Path:       path,
+		Injections: injections,
 	}, nil
 }
 

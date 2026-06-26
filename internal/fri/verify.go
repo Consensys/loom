@@ -185,27 +185,28 @@ func validateOpeningProofShape(
 			return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d] has %d batches, expected %d", q, len(qSamples), len(shapes))
 		}
 		for b, wp := range qSamples {
-			if len(wp.GroupOpenings) != len(shapes[b]) {
-				return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d] has %d GroupOpenings, expected %d", q, b, len(wp.GroupOpenings), len(shapes[b]))
-			}
-			// GroupOpenings is in decreasing-size order; match each
-			// raw-row entry's widths against the matching shape sorted by size.
 			injOrder := injectionOrderForBatch(shapes[b])
-			for k, declIdx := range injOrder {
+			if len(injOrder) == 0 {
+				return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d] has no group shapes", q, b)
+			}
+			if len(wp.Injections) != len(injOrder)-1 {
+				return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d] has %d Injections, expected %d", q, b, len(wp.Injections), len(injOrder)-1)
+			}
+			topShape := shapes[b][injOrder[0]]
+			if err := checkRawRowWidth(wp.TopRows.Lo, topShape); err != nil {
+				return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d].TopRows.Lo: %w", q, b, err)
+			}
+			if err := checkRawRowWidth(wp.TopRows.Hi, topShape); err != nil {
+				return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d].TopRows.Hi: %w", q, b, err)
+			}
+			for k, declIdx := range injOrder[1:] {
 				gs := shapes[b][declIdx]
-				rows := wp.GroupOpenings[k].Rows
+				rows := wp.Injections[k].Rows
 				if err := checkRawRowWidth(rows.Lo, gs); err != nil {
-					return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d].GroupOpenings[%d].Rows.Lo: %w", q, b, k, err)
+					return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d].Injections[%d].Rows.Lo: %w", q, b, k, err)
 				}
 				if err := checkRawRowWidth(rows.Hi, gs); err != nil {
-					return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d].GroupOpenings[%d].Rows.Hi: %w", q, b, k, err)
-				}
-				topShape := shapes[b][injOrder[0]]
-				if err := checkRawRowWidth(wp.GroupOpenings[k].TopRows.Lo, topShape); err != nil {
-					return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d].GroupOpenings[%d].TopRows.Lo: %w", q, b, k, err)
-				}
-				if err := checkRawRowWidth(wp.GroupOpenings[k].TopRows.Hi, topShape); err != nil {
-					return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d].GroupOpenings[%d].TopRows.Hi: %w", q, b, k, err)
+					return fmt.Errorf("fri: PCS.Verify: PointSamplings[%d][%d].Injections[%d].Rows.Hi: %w", q, b, k, err)
 				}
 			}
 		}
@@ -215,8 +216,8 @@ func validateOpeningProofShape(
 
 // injectionOrderForBatch returns, for one batch's GroupShape slice, the
 // indices into shapes in *decreasing row-count* order -- the same
-// order PCS.Commit places the per-Group LeafSources in Committed.Sources
-// (and consequently the same order WMerkleProof.GroupOpenings uses).
+// order PCS.Commit places the per-Group LeafSources in Committed.Sources.
+// WMerkleProof stores order[0] in TopRows and order[1:] in Injections.
 func injectionOrderForBatch(batchShapes BatchShapes) []int {
 	order := make([]int, len(batchShapes))
 	for i := range order {
@@ -280,18 +281,15 @@ func verifyOneWMerkleProof(
 	sFull int,
 	maxRows int,
 ) error {
-	if len(wp.GroupOpenings) == 0 {
-		return fmt.Errorf("WMerkleProof has no GroupOpenings")
-	}
 	if maxRows <= 0 || maxRows&(maxRows-1) != 0 {
 		return fmt.Errorf("maxRows=%d must be a positive power of two", maxRows)
 	}
 
-	// Re-order the GroupShape entries to match wp.GroupOpenings'
+	// Re-order the GroupShape entries to match the compact proof's
 	// decreasing-size convention.
 	injOrder := injectionOrderForBatch(batchShapes)
-	if len(injOrder) != len(wp.GroupOpenings) {
-		return fmt.Errorf("shapes-vs-WMerkleProof group count mismatch (%d vs %d)", len(injOrder), len(wp.GroupOpenings))
+	if len(injOrder) == 0 {
+		return fmt.Errorf("WMerkleProof has no group shapes")
 	}
 	topRows := batchShapes[injOrder[0]].Rows
 	if topRows <= 0 || topRows&(topRows-1) != 0 {
@@ -306,47 +304,78 @@ func verifyOneWMerkleProof(
 		injectionWidths[k-1] = batchShapes[injOrder[k]].Rows
 	}
 
-	for k, declIdx := range injOrder {
+	if len(wp.Injections) != len(injectionWidths) {
+		return fmt.Errorf("WMerkleProof has %d injections, expected %d", len(wp.Injections), len(injectionWidths))
+	}
+
+	topReductionGlobal := log2(maxRows) - log2(topRows)
+	if topReductionGlobal < 0 {
+		return fmt.Errorf("top rows %d exceeds maxRows %d", topRows, maxRows)
+	}
+	topRow := sFull >> topReductionGlobal
+	topLo, topHi := siblingRows(topRow)
+	if wp.Path.LeafIdx != topLo {
+		return fmt.Errorf("top Path.LeafIdx = %d, want %d", wp.Path.LeafIdx, topLo)
+	}
+	if len(wp.Path.Siblings) == 0 {
+		return fmt.Errorf("top path has no sibling for companion row %d", topHi)
+	}
+
+	topHiDigest := hashRawRow(leafHasher, wp.TopRows.Hi)
+	if wp.Path.Siblings[0] != topHiDigest {
+		return fmt.Errorf("top companion row hash mismatch")
+	}
+	if err := verifyOneRowPath(leafHasher, nodeHasher, root, injectionWidths, wp.TopRows.Lo, wp.Path); err != nil {
+		return fmt.Errorf("top row path: %w", err)
+	}
+
+	for k, declIdx := range injOrder[1:] {
+		groupIdx := k + 1
 		gs := batchShapes[declIdx]
 		globalReduction := log2(maxRows) - log2(gs.Rows)
 		if globalReduction < 0 {
-			return fmt.Errorf("group %d rows %d exceeds maxRows %d", k, gs.Rows, maxRows)
+			return fmt.Errorf("group %d rows %d exceeds maxRows %d", groupIdx, gs.Rows, maxRows)
 		}
 		row := sFull >> globalReduction
 		lo, hi := siblingRows(row)
 
 		topReduction := log2(topRows) - log2(gs.Rows)
 		if topReduction < 0 {
-			return fmt.Errorf("group %d rows %d exceeds top rows %d", k, gs.Rows, topRows)
-		}
-		wantLoIdx := lo << topReduction
-		wantHiIdx := hi << topReduction
-
-		opening := wp.GroupOpenings[k]
-		if opening.ProofLo.LeafIdx != wantLoIdx {
-			return fmt.Errorf("group %d ProofLo.LeafIdx = %d, want %d", k, opening.ProofLo.LeafIdx, wantLoIdx)
-		}
-		if opening.ProofHi.LeafIdx != wantHiIdx {
-			return fmt.Errorf("group %d ProofHi.LeafIdx = %d, want %d", k, opening.ProofHi.LeafIdx, wantHiIdx)
+			return fmt.Errorf("group %d rows %d exceeds top rows %d", groupIdx, gs.Rows, topRows)
 		}
 
-		if err := verifyOneRowPath(leafHasher, nodeHasher, root, injectionWidths, opening.TopRows.Lo, opening.ProofLo); err != nil {
-			return fmt.Errorf("group %d lo path: %w", k, err)
-		}
-		if err := verifyOneRowPath(leafHasher, nodeHasher, root, injectionWidths, opening.TopRows.Hi, opening.ProofHi); err != nil {
-			return fmt.Errorf("group %d hi path: %w", k, err)
+		inj := wp.Injections[k]
+		pathRowAtWidth := topLo >> topReduction
+		if pathRowAtWidth != row {
+			return fmt.Errorf("group %d path row at width = %d, want %d", groupIdx, pathRowAtWidth, row)
 		}
 
-		if k == 0 {
-			continue
+		var pathRow, companionRow RawRow
+		switch pathRowAtWidth {
+		case lo:
+			pathRow = inj.Rows.Lo
+			companionRow = inj.Rows.Hi
+		case hi:
+			pathRow = inj.Rows.Hi
+			companionRow = inj.Rows.Lo
+		default:
+			return fmt.Errorf("group %d path row %d is not adjacent pair (%d,%d)", groupIdx, pathRowAtWidth, lo, hi)
 		}
-		rowLoDigest := hashRawRow(leafHasher, opening.Rows.Lo)
-		if rowLoDigest != opening.ProofLo.InjectionLeaves[k-1] {
-			return fmt.Errorf("group %d lo injection-row hash mismatch", k)
+
+		if len(wp.Path.InjectionLeaves) <= k {
+			return fmt.Errorf("group %d missing path-side injection leaf", groupIdx)
 		}
-		rowHiDigest := hashRawRow(leafHasher, opening.Rows.Hi)
-		if rowHiDigest != opening.ProofHi.InjectionLeaves[k-1] {
-			return fmt.Errorf("group %d hi injection-row hash mismatch", k)
+		pathRowDigest := hashRawRow(leafHasher, pathRow)
+		if pathRowDigest != wp.Path.InjectionLeaves[k] {
+			return fmt.Errorf("group %d path-side injection-row hash mismatch", groupIdx)
+		}
+
+		companionPost := nodeHasher.HashNode(inj.SiblingRunning, hashRawRow(leafHasher, companionRow))
+		if len(wp.Path.Siblings) <= topReduction {
+			return fmt.Errorf("group %d path has no sibling at injection depth %d", groupIdx, topReduction)
+		}
+		if companionPost != wp.Path.Siblings[topReduction] {
+			return fmt.Errorf("group %d companion injection-row hash mismatch", groupIdx)
 		}
 	}
 
@@ -365,6 +394,17 @@ func checkRawRowWidth(row RawRow, shape GroupShape) error {
 
 func hashRawRow(leafHasher LeafHasher, row RawRow) hash.Digest {
 	return leafHasher.HashLeaf(row.RawRowBase, row.RawRowExt)
+}
+
+func rawRowsForGroup(wp WMerkleProof, groupIdx int) (RawRowPair, error) {
+	if groupIdx == 0 {
+		return wp.TopRows, nil
+	}
+	injIdx := groupIdx - 1
+	if injIdx < 0 || injIdx >= len(wp.Injections) {
+		return RawRowPair{}, fmt.Errorf("group index %d out of compact proof range", groupIdx)
+	}
+	return wp.Injections[injIdx].Rows, nil
 }
 
 func verifyOneRowPath(
@@ -496,12 +536,12 @@ func checkFRIBridge(
 					// Look up the authenticated raw row pair at this query position.
 					injIdx := declToInjIdx(e.BatchIdx, e.GroupIdx)
 					if injIdx < 0 {
-						return fmt.Errorf("fri: PCS.Verify: cannot map (batch=%d, group=%d) to GroupOpenings index", e.BatchIdx, e.GroupIdx)
+						return fmt.Errorf("fri: PCS.Verify: cannot map (batch=%d, group=%d) to compact proof group index", e.BatchIdx, e.GroupIdx)
 					}
-					if injIdx >= len(proof.PointSamplings[q][e.BatchIdx].GroupOpenings) {
-						return fmt.Errorf("fri: PCS.Verify: GroupOpenings index %d out of range", injIdx)
+					raw, err := rawRowsForGroup(proof.PointSamplings[q][e.BatchIdx], injIdx)
+					if err != nil {
+						return fmt.Errorf("fri: PCS.Verify: compact proof group %d: %w", injIdx, err)
 					}
-					raw := proof.PointSamplings[q][e.BatchIdx].GroupOpenings[injIdx].Rows
 
 					var leafP, leafQ ext.E6
 					if e.Field == field.Base {

@@ -162,9 +162,9 @@ type WMerkleInjectionOpening struct {
 //   - Injections carries one compact opening per injected smaller group, in the
 //     same decreasing-size order as WMerkleTree.InjectionWidths().
 //
-// GroupOpenings is the legacy per-group full-path shape. It remains populated
-// until openCommittedAt, PCS.Verify, and the DEEP bridge are migrated in the
-// follow-up compact-proof PRs.
+// GroupOpenings is the legacy per-group full-path shape. openCommittedAt no
+// longer populates it; it stays temporarily so later compact-proof PRs can
+// remove the field as a separate compatibility cleanup.
 type WMerkleProof struct {
 	TopRows    RawRowPair
 	Path       merkle.Proof

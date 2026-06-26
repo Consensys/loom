@@ -103,25 +103,36 @@ func TestPCSVerifyRoundtripMultiSizeBatch(t *testing.T) {
 			t.Fatalf("query %d extra FRI level row = %d, want %d", q, got, want)
 		}
 		wp := openProof.PointSamplings[q][0]
-		if got, want := len(wp.GroupOpenings), 2; got != want {
-			t.Fatalf("query %d GroupOpenings = %d, want %d", q, got, want)
+		if got, want := len(wp.Injections), 1; got != want {
+			t.Fatalf("query %d Injections = %d, want %d", q, got, want)
+		}
+		if got := len(wp.GroupOpenings); got != 0 {
+			t.Fatalf("query %d GroupOpenings = %d, want 0", q, got)
 		}
 
 		topSourceRows := leafSourceRows(committed[0].Sources[0])
 		rowTop := sFull >> (log2(params.N) - log2(topSourceRows))
 		topLo, topHi := siblingRows(rowTop)
-		topOpening := wp.GroupOpenings[0]
-		if !topOpening.Rows.Lo.RawRowBase[0].Equal(&committed[0].Sources[0].Base[0][topLo]) {
+		if got, want := wp.Path.LeafIdx, topLo; got != want {
+			t.Fatalf("query %d top Path.LeafIdx = %d, want %d", q, got, want)
+		}
+		if len(wp.Path.Siblings) == 0 {
+			t.Fatalf("query %d top path has no siblings", q)
+		}
+		if got, want := wp.Path.Siblings[0], hashRawRow(DefaultLeafHasher, wp.TopRows.Hi); got != want {
+			t.Fatalf("query %d top companion sibling mismatch", q)
+		}
+		if !wp.TopRows.Lo.RawRowBase[0].Equal(&committed[0].Sources[0].Base[0][topLo]) {
 			t.Fatalf("query %d top lo row mismatch", q)
 		}
-		if !topOpening.Rows.Hi.RawRowBase[0].Equal(&committed[0].Sources[0].Base[0][topHi]) {
+		if !wp.TopRows.Hi.RawRowBase[0].Equal(&committed[0].Sources[0].Base[0][topHi]) {
 			t.Fatalf("query %d top hi row mismatch", q)
 		}
 
 		smallRows := leafSourceRows(committed[0].Sources[1])
 		rowSmall := sFull >> (log2(params.N) - log2(smallRows))
 		lo, hi := siblingRows(rowSmall)
-		smallOpening := wp.GroupOpenings[1]
+		smallOpening := wp.Injections[0]
 		if !smallOpening.Rows.Lo.RawRowBase[0].Equal(&committed[0].Sources[1].Base[0][lo]) {
 			t.Fatalf("query %d small lo row mismatch", q)
 		}
@@ -131,11 +142,30 @@ func TestPCSVerifyRoundtripMultiSizeBatch(t *testing.T) {
 
 		topRows := committed[0].Tree.NumLeaves()
 		topReduction := log2(topRows) - log2(smallRows)
-		if got, want := smallOpening.ProofLo.LeafIdx, lo<<topReduction; got != want {
-			t.Fatalf("query %d small ProofLo.LeafIdx = %d, want %d", q, got, want)
+		pathRowAtWidth := topLo >> topReduction
+		if got, want := pathRowAtWidth, rowSmall; got != want {
+			t.Fatalf("query %d small path row at width = %d, want %d", q, got, want)
 		}
-		if got, want := smallOpening.ProofHi.LeafIdx, hi<<topReduction; got != want {
-			t.Fatalf("query %d small ProofHi.LeafIdx = %d, want %d", q, got, want)
+		if len(wp.Path.InjectionLeaves) == 0 {
+			t.Fatalf("query %d path has no injection leaves", q)
+		}
+		var pathRow, companionRow RawRow
+		if pathRowAtWidth == lo {
+			pathRow = smallOpening.Rows.Lo
+			companionRow = smallOpening.Rows.Hi
+		} else {
+			pathRow = smallOpening.Rows.Hi
+			companionRow = smallOpening.Rows.Lo
+		}
+		if got, want := wp.Path.InjectionLeaves[0], hashRawRow(DefaultLeafHasher, pathRow); got != want {
+			t.Fatalf("query %d small path-side injection hash mismatch", q)
+		}
+		if len(wp.Path.Siblings) <= topReduction {
+			t.Fatalf("query %d path has no sibling at injection depth %d", q, topReduction)
+		}
+		companionPost := DefaultNodeHasher.HashNode(smallOpening.SiblingRunning, hashRawRow(DefaultLeafHasher, companionRow))
+		if got, want := wp.Path.Siblings[topReduction], companionPost; got != want {
+			t.Fatalf("query %d small companion injection hash mismatch", q)
 		}
 	}
 
@@ -143,7 +173,7 @@ func TestPCSVerifyRoundtripMultiSizeBatch(t *testing.T) {
 		committed, tampered, params, zeta := runOpenFixture(t, batches, shifts, rate, numQueries)
 		roots, shapes := rootsAndShapes(committed)
 		pcs := NewPCSWithParams(params)
-		tampered.PointSamplings[0][0].GroupOpenings[0].Rows.Lo.RawRowBase[0].SetUint64(0xdeadbeef)
+		tampered.PointSamplings[0][0].TopRows.Lo.RawRowBase[0].SetUint64(0xdeadbeef)
 		verifierFS := buildVerifierTranscript(t, committed)
 		if err := pcs.Verify(roots, shapes, shifts, zeta, tampered, verifierFS); err == nil {
 			t.Fatal("PCS.Verify accepted a multi-size proof with a tampered largest-group row")
@@ -154,7 +184,7 @@ func TestPCSVerifyRoundtripMultiSizeBatch(t *testing.T) {
 		committed, tampered, params, zeta := runOpenFixture(t, batches, shifts, rate, numQueries)
 		roots, shapes := rootsAndShapes(committed)
 		pcs := NewPCSWithParams(params)
-		tampered.PointSamplings[0][0].GroupOpenings[1].Rows.Hi.RawRowBase[0].SetUint64(0xdeadbeef)
+		tampered.PointSamplings[0][0].Injections[0].Rows.Hi.RawRowBase[0].SetUint64(0xdeadbeef)
 		verifierFS := buildVerifierTranscript(t, committed)
 		if err := pcs.Verify(roots, shapes, shifts, zeta, tampered, verifierFS); err == nil {
 			t.Fatal("PCS.Verify accepted a multi-size proof with a tampered injected-group row")
@@ -207,7 +237,7 @@ func TestPCSVerifyRejectsTamperedRawRow(t *testing.T) {
 	_, shifts, committed, openProof, params, zeta := buildVerifyFixture(t)
 
 	// Flip the first base raw lo row of the first query, first batch.
-	openProof.PointSamplings[0][0].GroupOpenings[0].Rows.Lo.RawRowBase[0].SetUint64(0xdeadbeef)
+	openProof.PointSamplings[0][0].TopRows.Lo.RawRowBase[0].SetUint64(0xdeadbeef)
 
 	roots, shapes := rootsAndShapes(committed)
 	verifierFS := buildVerifierTranscript(t, committed)
@@ -221,7 +251,7 @@ func TestPCSVerifyRejectsTamperedRawRow(t *testing.T) {
 func TestPCSVerifyRejectsTamperedRawHiRow(t *testing.T) {
 	_, shifts, committed, openProof, params, zeta := buildVerifyFixture(t)
 
-	openProof.PointSamplings[0][0].GroupOpenings[0].Rows.Hi.RawRowBase[0].SetUint64(0xdeadbeef)
+	openProof.PointSamplings[0][0].TopRows.Hi.RawRowBase[0].SetUint64(0xdeadbeef)
 
 	roots, shapes := rootsAndShapes(committed)
 	verifierFS := buildVerifierTranscript(t, committed)

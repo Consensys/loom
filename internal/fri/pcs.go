@@ -127,9 +127,9 @@ type BatchClaimedValues = []GroupClaimedValues
 //   - FRIProof is the multi-degree FRI proof on the DEEP-quotient
 //     codewords.
 //   - PointSamplings[q][b] is the WMerkleProof opening batches[b] at the
-//     q-th FRI query position. Each WMerkleProof carries one authenticated
-//     lo/hi RawRowPair per Group of the batch in decreasing-size order
-//     (matches the tree's injection schedule).
+//     q-th FRI query position. Each WMerkleProof carries one top lo/hi
+//     RawRowPair, one top Merkle path, and one compact injected row pair
+//     per smaller Group in decreasing-size order.
 type OpeningProof struct {
 	ClaimedValues     []BatchClaimedValues
 	DeepQuotientRoots []hash.Digest
