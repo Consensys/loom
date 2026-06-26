@@ -297,9 +297,12 @@ func TestRSCommitMultiGroupOpenProof(t *testing.T) {
 
 	// rate=2 ⇒ encoded row domains are 16 and 8.
 	pcs := NewPCS(2, DefaultLeafHasher, DefaultNodeHasher)
+	// Deliberately declare the smaller group first: PCS verifier metadata
+	// must stay in declaration order, while the Merkle tree internally sorts
+	// groups by decreasing row count for injections.
 	committed, err := pcs.Commit([]Group{
-		{Base: topBase, Ext: topExt},
 		{Base: smallBase},
+		{Base: topBase, Ext: topExt},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -323,6 +326,17 @@ func TestRSCommitMultiGroupOpenProof(t *testing.T) {
 	}
 	if widths := tree.InjectionWidths(); len(widths) != 1 || widths[0] != 8 {
 		t.Fatalf("InjectionWidths = %v, want [8]", widths)
+	}
+
+	// Public PCS shapes stay in declaration order, unlike tree.Groups().
+	if len(committed.Shapes) != 2 {
+		t.Fatalf("Committed.Shapes length = %d, want 2", len(committed.Shapes))
+	}
+	if committed.Shapes[0].Rows != 8 || committed.Shapes[0].BaseWidth != 1 || committed.Shapes[0].ExtWidth != 0 {
+		t.Fatalf("declared small group shape = %+v", committed.Shapes[0])
+	}
+	if committed.Shapes[1].Rows != 16 || committed.Shapes[1].BaseWidth != 1 || committed.Shapes[1].ExtWidth != 1 {
+		t.Fatalf("declared top group shape = %+v", committed.Shapes[1])
 	}
 
 	// Commit's returned LeafSources must be in decreasing-size order — same
@@ -357,6 +371,12 @@ func TestRSCommitMultiGroupOpenProof(t *testing.T) {
 		// Compute the top-group leaf hash that the verifier consumes.
 		baseLeaf, extLeaf := rawLeafFromPolys(2, topBase, topExt, leafIdx)
 		leaf := DefaultLeafHasher.HashLeaf(baseLeaf, extLeaf)
+		smallRow := leafIdx >> 1
+		smallBaseLeaf, smallExtLeaf := leafFromSource(sources[1], smallRow)
+		injectionLeaf := DefaultLeafHasher.HashLeaf(smallBaseLeaf, smallExtLeaf)
+		if proof.InjectionLeaves[0] != injectionLeaf {
+			t.Fatalf("leaf %d: injection leaf digest mismatch at small row %d", leafIdx, smallRow)
+		}
 
 		if !merkle.VerifyWithInjections(tree.Root(), proof, leaf, injectionWidths, DefaultNodeHasher) {
 			t.Fatalf("leaf %d: VerifyWithInjections rejected a valid proof", leafIdx)
@@ -366,6 +386,19 @@ func TestRSCommitMultiGroupOpenProof(t *testing.T) {
 		// since the proof carries InjectionLeaves the bare path can't fold in.
 		if merkle.Verify(tree.Root(), proof, leaf, DefaultNodeHasher) {
 			t.Fatalf("leaf %d: legacy Verify unexpectedly accepted an injection-bearing proof", leafIdx)
+		}
+
+		badLeaf := leaf
+		badLeaf[0].SetUint64(0xdeadbeef)
+		if merkle.VerifyWithInjections(tree.Root(), proof, badLeaf, injectionWidths, DefaultNodeHasher) {
+			t.Fatalf("leaf %d: VerifyWithInjections accepted a tampered top row", leafIdx)
+		}
+
+		badProof := proof
+		badProof.InjectionLeaves = append([]hash.Digest{}, proof.InjectionLeaves...)
+		badProof.InjectionLeaves[0][0].SetUint64(0xdeadbeef)
+		if merkle.VerifyWithInjections(tree.Root(), badProof, leaf, injectionWidths, DefaultNodeHasher) {
+			t.Fatalf("leaf %d: VerifyWithInjections accepted a tampered injected row", leafIdx)
 		}
 	}
 }

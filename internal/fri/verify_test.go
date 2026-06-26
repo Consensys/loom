@@ -49,6 +49,11 @@ func TestPCSVerifyRoundtripMultiSizeBatch(t *testing.T) {
 	batches := []Batch{{
 		{
 			Base: []poly.Polynomial{
+				{baseElement(21), baseElement(23), baseElement(29), baseElement(31)},
+			},
+		},
+		{
+			Base: []poly.Polynomial{
 				{baseElement(2), baseElement(3), baseElement(5), baseElement(7),
 					baseElement(11), baseElement(13), baseElement(17), baseElement(19)},
 			},
@@ -65,15 +70,10 @@ func TestPCSVerifyRoundtripMultiSizeBatch(t *testing.T) {
 				},
 			},
 		},
-		{
-			Base: []poly.Polynomial{
-				{baseElement(21), baseElement(23), baseElement(29), baseElement(31)},
-			},
-		},
 	}}
 	shifts := []BatchShifts{{
-		{Base: [][]int{{0, 1}}, Ext: [][]int{{0}}},
 		{Base: [][]int{{0}}},
+		{Base: [][]int{{0, 1}}, Ext: [][]int{{0}}},
 	}}
 
 	committed, openProof, params, zeta := runOpenFixture(t, batches, shifts, rate, numQueries)
@@ -107,6 +107,17 @@ func TestPCSVerifyRoundtripMultiSizeBatch(t *testing.T) {
 			t.Fatalf("query %d GroupOpenings = %d, want %d", q, got, want)
 		}
 
+		topSourceRows := leafSourceRows(committed[0].Sources[0])
+		rowTop := sFull >> (log2(params.N) - log2(topSourceRows))
+		topLo, topHi := siblingRows(rowTop)
+		topOpening := wp.GroupOpenings[0]
+		if !topOpening.Rows.Lo.RawRowBase[0].Equal(&committed[0].Sources[0].Base[0][topLo]) {
+			t.Fatalf("query %d top lo row mismatch", q)
+		}
+		if !topOpening.Rows.Hi.RawRowBase[0].Equal(&committed[0].Sources[0].Base[0][topHi]) {
+			t.Fatalf("query %d top hi row mismatch", q)
+		}
+
 		smallRows := leafSourceRows(committed[0].Sources[1])
 		rowSmall := sFull >> (log2(params.N) - log2(smallRows))
 		lo, hi := siblingRows(rowSmall)
@@ -128,11 +139,27 @@ func TestPCSVerifyRoundtripMultiSizeBatch(t *testing.T) {
 		}
 	}
 
-	openProof.PointSamplings[0][0].GroupOpenings[1].Rows.Hi.RawRowBase[0].SetUint64(0xdeadbeef)
-	verifierFS = buildVerifierTranscript(t, committed)
-	if err := pcs.Verify(roots, shapes, shifts, zeta, openProof, verifierFS); err == nil {
-		t.Fatal("PCS.Verify accepted a multi-size proof with a tampered small hi row")
-	}
+	t.Run("rejects tampered largest group row", func(t *testing.T) {
+		committed, tampered, params, zeta := runOpenFixture(t, batches, shifts, rate, numQueries)
+		roots, shapes := rootsAndShapes(committed)
+		pcs := NewPCSWithParams(params)
+		tampered.PointSamplings[0][0].GroupOpenings[0].Rows.Lo.RawRowBase[0].SetUint64(0xdeadbeef)
+		verifierFS := buildVerifierTranscript(t, committed)
+		if err := pcs.Verify(roots, shapes, shifts, zeta, tampered, verifierFS); err == nil {
+			t.Fatal("PCS.Verify accepted a multi-size proof with a tampered largest-group row")
+		}
+	})
+
+	t.Run("rejects tampered injected group row", func(t *testing.T) {
+		committed, tampered, params, zeta := runOpenFixture(t, batches, shifts, rate, numQueries)
+		roots, shapes := rootsAndShapes(committed)
+		pcs := NewPCSWithParams(params)
+		tampered.PointSamplings[0][0].GroupOpenings[1].Rows.Hi.RawRowBase[0].SetUint64(0xdeadbeef)
+		verifierFS := buildVerifierTranscript(t, committed)
+		if err := pcs.Verify(roots, shapes, shifts, zeta, tampered, verifierFS); err == nil {
+			t.Fatal("PCS.Verify accepted a multi-size proof with a tampered injected-group row")
+		}
+	})
 }
 
 // TestPCSVerifyRejectsTamperedClaimedValue confirms Verify fails when
@@ -309,7 +336,11 @@ func rootsAndShapes(committed []Committed) ([]hash.Digest, []BatchShapes) {
 	shapes := make([]BatchShapes, len(committed))
 	for b, c := range committed {
 		roots[b] = c.Tree.Root()
-		shapes[b] = append(BatchShapes{}, c.Tree.Groups()...)
+		if len(c.Shapes) > 0 {
+			shapes[b] = append(BatchShapes{}, c.Shapes...)
+		} else {
+			shapes[b] = append(BatchShapes{}, c.Tree.Groups()...)
+		}
 	}
 	return roots, shapes
 }

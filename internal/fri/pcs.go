@@ -74,10 +74,13 @@ func NewPCSWithParams(params Params) PCS {
 // carries the Merkle root the caller binds to its transcript; Sources
 // retains, per Group in decreasing-size order, the RS-encoded row
 // evaluations Open will need to build the DEEP quotient and to open the
-// committed polynomials at FRI query positions.
+// committed polynomials at FRI query positions. Shapes is in Batch
+// declaration order, so it lines up with the caller's BatchShifts and is
+// the verifier-side shape metadata to pass to PCS.Verify.
 type Committed struct {
 	Tree    WMerkleTree
 	Sources []LeafSource
+	Shapes  BatchShapes
 }
 
 // GroupShifts assigns a list of rotation shifts to each polynomial of a
@@ -147,6 +150,10 @@ func (pcs *PCS) Commit(batch Batch, opts ...CommitOption) (Committed, error) {
 	if len(batch) == 0 {
 		return Committed{}, fmt.Errorf("PCS.Commit: empty batch")
 	}
+	shapes, err := batchShapesInDeclarationOrder(batch, pcs.rate)
+	if err != nil {
+		return Committed{}, err
+	}
 	// The transient RSCommit's primary Encoder is just a fast path for
 	// whichever Group happens to share its size; encoderForSize handles
 	// every other size on the fly. We seed it with the first Group's
@@ -161,5 +168,24 @@ func (pcs *PCS) Commit(batch Batch, opts ...CommitOption) (Committed, error) {
 	if err != nil {
 		return Committed{}, err
 	}
-	return Committed{Tree: tree, Sources: sources}, nil
+	return Committed{Tree: tree, Sources: sources, Shapes: shapes}, nil
+}
+
+func batchShapesInDeclarationOrder(batch Batch, rate uint64) (BatchShapes, error) {
+	if rate == 0 {
+		return nil, fmt.Errorf("PCS.Commit: rate must be positive")
+	}
+	shapes := make(BatchShapes, len(batch))
+	for g, group := range batch {
+		N, err := groupNativeSize(group)
+		if err != nil {
+			return nil, fmt.Errorf("PCS.Commit: batch[%d]: %w", g, err)
+		}
+		shapes[g] = GroupShape{
+			Rows:      int(rate) * N,
+			BaseWidth: len(group.Base),
+			ExtWidth:  len(group.Ext),
+		}
+	}
+	return shapes, nil
 }
