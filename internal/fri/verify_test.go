@@ -192,6 +192,109 @@ func TestPCSVerifyRoundtripMultiSizeBatch(t *testing.T) {
 	})
 }
 
+func TestVerifyOneWMerkleProofRejectsCompactTampering(t *testing.T) {
+	committed := buildCompactVerifyCommitted(t)
+	maxRows := committed.Tree.NumLeaves()
+	smallRows := leafSourceRows(committed.Sources[1])
+	topReduction := log2(maxRows) - log2(smallRows)
+
+	for _, tc := range []struct {
+		name   string
+		sFull  int
+		tamper func(t *testing.T, wp *WMerkleProof)
+	}{
+		{
+			name:  "top lo row",
+			sFull: 1,
+			tamper: func(_ *testing.T, wp *WMerkleProof) {
+				wp.TopRows.Lo.RawRowBase[0].SetUint64(0xdeadbeef)
+			},
+		},
+		{
+			name:  "top hi row",
+			sFull: 1,
+			tamper: func(_ *testing.T, wp *WMerkleProof) {
+				wp.TopRows.Hi.RawRowBase[0].SetUint64(0xdeadbeef)
+			},
+		},
+		{
+			name:  "injected path-side lo row",
+			sFull: 1,
+			tamper: func(_ *testing.T, wp *WMerkleProof) {
+				wp.Injections[0].Rows.Lo.RawRowBase[0].SetUint64(0xdeadbeef)
+			},
+		},
+		{
+			name:  "injected path-side hi row",
+			sFull: 2,
+			tamper: func(_ *testing.T, wp *WMerkleProof) {
+				wp.Injections[0].Rows.Hi.RawRowBase[0].SetUint64(0xdeadbeef)
+			},
+		},
+		{
+			name:  "injected companion row",
+			sFull: 1,
+			tamper: func(_ *testing.T, wp *WMerkleProof) {
+				wp.Injections[0].Rows.Hi.RawRowBase[0].SetUint64(0xdeadbeef)
+			},
+		},
+		{
+			name:  "sibling running digest",
+			sFull: 1,
+			tamper: func(_ *testing.T, wp *WMerkleProof) {
+				wp.Injections[0].SiblingRunning[0].SetUint64(0xdeadbeef)
+			},
+		},
+		{
+			name:  "normal sibling above injection",
+			sFull: 1,
+			tamper: func(t *testing.T, wp *WMerkleProof) {
+				siblingIdx := topReduction + 1
+				if siblingIdx >= len(wp.Path.Siblings) {
+					t.Fatalf("test fixture has no normal sibling above injection: idx=%d siblings=%d", siblingIdx, len(wp.Path.Siblings))
+				}
+				wp.Path.Siblings[siblingIdx][0].SetUint64(0xdeadbeef)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wp, err := openCommittedAt(committed, tc.sFull, maxRows)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyOneWMerkleProof(DefaultLeafHasher, DefaultNodeHasher, committed.Tree.Root(), committed.Shapes, wp, tc.sFull, maxRows); err != nil {
+				t.Fatalf("valid compact opening rejected before tampering: %v", err)
+			}
+
+			tc.tamper(t, &wp)
+			if err := verifyOneWMerkleProof(DefaultLeafHasher, DefaultNodeHasher, committed.Tree.Root(), committed.Shapes, wp, tc.sFull, maxRows); err == nil {
+				t.Fatal("verifyOneWMerkleProof accepted a tampered compact opening")
+			}
+		})
+	}
+}
+
+func buildCompactVerifyCommitted(t *testing.T) Committed {
+	t.Helper()
+	topBase := []poly.Polynomial{
+		{baseElement(1), baseElement(2), baseElement(3), baseElement(4),
+			baseElement(5), baseElement(6), baseElement(7), baseElement(8)},
+	}
+	smallBase := []poly.Polynomial{
+		{baseElement(100), baseElement(200), baseElement(300), baseElement(400)},
+	}
+
+	pcs := NewPCS(2, DefaultLeafHasher, DefaultNodeHasher)
+	committed, err := pcs.Commit([]Group{
+		{Base: smallBase},
+		{Base: topBase},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return committed
+}
+
 // TestPCSVerifyRejectsTamperedClaimedValue confirms Verify fails when
 // any claimed value is flipped after Open. The break can manifest as
 // either the FRI proof failing (because alpha_DEEP changes) or the

@@ -23,7 +23,6 @@ import (
 	"github.com/consensys/loom/field"
 	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/hash"
-	"github.com/consensys/loom/internal/merkle"
 )
 
 // PCS.Verify checks an OpeningProof produced by PCS.Open against:
@@ -248,11 +247,11 @@ func extractFRIQueryPositions(prf Proof, numQueries int) ([]int, error) {
 	return out, nil
 }
 
-// verifyAllPointSamplings authenticates every (query, batch) Merkle
+// verifyAllPointSamplings authenticates every (query, batch) compact Merkle
 // opening in proof.PointSamplings against the corresponding batch root.
-// For multi-group batches, also re-hashes each injection-level RawRow
-// and matches it against Proof.InjectionLeaves before running
-// merkle.VerifyWithInjections.
+// For multi-group batches, the compact verifier folds path-side injected rows
+// directly and checks companion injected rows against the sibling digest on the
+// shared top Merkle path.
 func verifyAllPointSamplings(
 	pcs *PCS,
 	roots []hash.Digest,
@@ -281,6 +280,9 @@ func verifyOneWMerkleProof(
 	sFull int,
 	maxRows int,
 ) error {
+	if sFull < 0 {
+		return fmt.Errorf("query row %d must be non-negative", sFull)
+	}
 	if maxRows <= 0 || maxRows&(maxRows-1) != 0 {
 		return fmt.Errorf("maxRows=%d must be a positive power of two", maxRows)
 	}
@@ -295,17 +297,38 @@ func verifyOneWMerkleProof(
 	if topRows <= 0 || topRows&(topRows-1) != 0 {
 		return fmt.Errorf("top rows %d must be a positive power of two", topRows)
 	}
+	if topRows < 2 {
+		return fmt.Errorf("top rows %d must be at least 2", topRows)
+	}
 	if topRows > maxRows {
 		return fmt.Errorf("top rows %d exceeds maxRows %d", topRows, maxRows)
 	}
 
 	injectionWidths := make([]int, len(injOrder)-1)
+	injectionByWidth := make(map[int]int, len(injOrder)-1)
+	prevWidth := topRows
 	for k := 1; k < len(injOrder); k++ {
-		injectionWidths[k-1] = batchShapes[injOrder[k]].Rows
+		width := batchShapes[injOrder[k]].Rows
+		if width <= 0 || width&(width-1) != 0 {
+			return fmt.Errorf("injection %d rows %d must be a positive power of two", k-1, width)
+		}
+		if width < 2 {
+			return fmt.Errorf("injection %d rows %d must be at least 2", k-1, width)
+		}
+		if width >= prevWidth {
+			return fmt.Errorf("injection rows must be strictly decreasing (got %d after %d)", width, prevWidth)
+		}
+		injIdx := k - 1
+		injectionWidths[injIdx] = width
+		injectionByWidth[width] = injIdx
+		prevWidth = width
 	}
 
 	if len(wp.Injections) != len(injectionWidths) {
 		return fmt.Errorf("WMerkleProof has %d injections, expected %d", len(wp.Injections), len(injectionWidths))
+	}
+	if len(wp.Path.InjectionLeaves) != 0 && len(wp.Path.InjectionLeaves) != len(injectionWidths) {
+		return fmt.Errorf("top path has %d injection leaves, expected 0 or %d", len(wp.Path.InjectionLeaves), len(injectionWidths))
 	}
 
 	topReductionGlobal := log2(maxRows) - log2(topRows)
@@ -314,38 +337,53 @@ func verifyOneWMerkleProof(
 	}
 	topRow := sFull >> topReductionGlobal
 	topLo, topHi := siblingRows(topRow)
+	if topHi >= topRows {
+		return fmt.Errorf("top row pair (%d,%d) out of range [0,%d)", topLo, topHi, topRows)
+	}
 	if wp.Path.LeafIdx != topLo {
 		return fmt.Errorf("top Path.LeafIdx = %d, want %d", wp.Path.LeafIdx, topLo)
 	}
-	if len(wp.Path.Siblings) == 0 {
-		return fmt.Errorf("top path has no sibling for companion row %d", topHi)
+	depth := log2(topRows)
+	if len(wp.Path.Siblings) != depth {
+		return fmt.Errorf("top path has %d siblings, expected %d", len(wp.Path.Siblings), depth)
 	}
 
 	topHiDigest := hashRawRow(leafHasher, wp.TopRows.Hi)
 	if wp.Path.Siblings[0] != topHiDigest {
 		return fmt.Errorf("top companion row hash mismatch")
 	}
-	if err := verifyOneRowPath(leafHasher, nodeHasher, root, injectionWidths, wp.TopRows.Lo, wp.Path); err != nil {
-		return fmt.Errorf("top row path: %w", err)
-	}
 
-	for k, declIdx := range injOrder[1:] {
-		groupIdx := k + 1
-		gs := batchShapes[declIdx]
-		globalReduction := log2(maxRows) - log2(gs.Rows)
+	h := hashRawRow(leafHasher, wp.TopRows.Lo)
+	pathIdx := wp.Path.LeafIdx
+	for k, sibling := range wp.Path.Siblings {
+		if pathIdx&1 == 0 {
+			h = nodeHasher.HashNode(h, sibling)
+		} else {
+			h = nodeHasher.HashNode(sibling, h)
+		}
+		pathIdx >>= 1
+
+		width := 1 << (depth - k - 1)
+		injIdx, ok := injectionByWidth[width]
+		if !ok {
+			continue
+		}
+
+		rows, err := rawRowsForInjection(wp, injIdx)
+		if err != nil {
+			return err
+		}
+		groupIdx := injIdx + 1
+		globalReduction := log2(maxRows) - log2(width)
 		if globalReduction < 0 {
-			return fmt.Errorf("group %d rows %d exceeds maxRows %d", groupIdx, gs.Rows, maxRows)
+			return fmt.Errorf("group %d rows %d exceeds maxRows %d", groupIdx, width, maxRows)
 		}
 		row := sFull >> globalReduction
 		lo, hi := siblingRows(row)
-
-		topReduction := log2(topRows) - log2(gs.Rows)
-		if topReduction < 0 {
-			return fmt.Errorf("group %d rows %d exceeds top rows %d", groupIdx, gs.Rows, topRows)
+		if hi >= width {
+			return fmt.Errorf("group %d row pair (%d,%d) out of range [0,%d)", groupIdx, lo, hi, width)
 		}
-
-		inj := wp.Injections[k]
-		pathRowAtWidth := topLo >> topReduction
+		pathRowAtWidth := pathIdx
 		if pathRowAtWidth != row {
 			return fmt.Errorf("group %d path row at width = %d, want %d", groupIdx, pathRowAtWidth, row)
 		}
@@ -353,30 +391,33 @@ func verifyOneWMerkleProof(
 		var pathRow, companionRow RawRow
 		switch pathRowAtWidth {
 		case lo:
-			pathRow = inj.Rows.Lo
-			companionRow = inj.Rows.Hi
+			pathRow = rows.Lo
+			companionRow = rows.Hi
 		case hi:
-			pathRow = inj.Rows.Hi
-			companionRow = inj.Rows.Lo
+			pathRow = rows.Hi
+			companionRow = rows.Lo
 		default:
 			return fmt.Errorf("group %d path row %d is not adjacent pair (%d,%d)", groupIdx, pathRowAtWidth, lo, hi)
 		}
 
-		if len(wp.Path.InjectionLeaves) <= k {
-			return fmt.Errorf("group %d missing path-side injection leaf", groupIdx)
-		}
 		pathRowDigest := hashRawRow(leafHasher, pathRow)
-		if pathRowDigest != wp.Path.InjectionLeaves[k] {
+		if len(wp.Path.InjectionLeaves) != 0 && pathRowDigest != wp.Path.InjectionLeaves[injIdx] {
 			return fmt.Errorf("group %d path-side injection-row hash mismatch", groupIdx)
 		}
+		h = nodeHasher.HashNode(h, pathRowDigest)
 
-		companionPost := nodeHasher.HashNode(inj.SiblingRunning, hashRawRow(leafHasher, companionRow))
-		if len(wp.Path.Siblings) <= topReduction {
-			return fmt.Errorf("group %d path has no sibling at injection depth %d", groupIdx, topReduction)
+		companionPost := nodeHasher.HashNode(wp.Injections[injIdx].SiblingRunning, hashRawRow(leafHasher, companionRow))
+		companionSiblingIdx := k + 1
+		if companionSiblingIdx >= len(wp.Path.Siblings) {
+			return fmt.Errorf("group %d path has no sibling above injection width %d", groupIdx, width)
 		}
-		if companionPost != wp.Path.Siblings[topReduction] {
+		if companionPost != wp.Path.Siblings[companionSiblingIdx] {
 			return fmt.Errorf("group %d companion injection-row hash mismatch", groupIdx)
 		}
+	}
+
+	if h != root {
+		return fmt.Errorf("Merkle path does not authenticate under the given root")
 	}
 
 	return nil
@@ -396,30 +437,22 @@ func hashRawRow(leafHasher LeafHasher, row RawRow) hash.Digest {
 	return leafHasher.HashLeaf(row.RawRowBase, row.RawRowExt)
 }
 
-func rawRowsForGroup(wp WMerkleProof, groupIdx int) (RawRowPair, error) {
-	if groupIdx == 0 {
-		return wp.TopRows, nil
-	}
-	injIdx := groupIdx - 1
+func rawRowsForInjection(wp WMerkleProof, injIdx int) (RawRowPair, error) {
 	if injIdx < 0 || injIdx >= len(wp.Injections) {
-		return RawRowPair{}, fmt.Errorf("group index %d out of compact proof range", groupIdx)
+		return RawRowPair{}, fmt.Errorf("injection index %d out of compact proof range", injIdx)
 	}
 	return wp.Injections[injIdx].Rows, nil
 }
 
-func verifyOneRowPath(
-	leafHasher LeafHasher,
-	nodeHasher NodeHasher,
-	root hash.Digest,
-	injectionWidths []int,
-	topRow RawRow,
-	proof merkle.Proof,
-) error {
-	topLeaf := hashRawRow(leafHasher, topRow)
-	if !merkle.VerifyWithInjections(root, proof, topLeaf, injectionWidths, nodeHasher) {
-		return fmt.Errorf("Merkle path does not authenticate under the given root")
+func rawRowsForGroup(wp WMerkleProof, groupIdx int) (RawRowPair, error) {
+	if groupIdx == 0 {
+		return wp.TopRows, nil
 	}
-	return nil
+	rows, err := rawRowsForInjection(wp, groupIdx-1)
+	if err != nil {
+		return RawRowPair{}, fmt.Errorf("group index %d: %w", groupIdx, err)
+	}
+	return rows, nil
 }
 
 // checkFRIBridge is the verifier-side counterpart of
