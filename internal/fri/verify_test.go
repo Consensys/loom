@@ -46,37 +46,7 @@ func TestPCSVerifyRoundtripMultiSizeBatch(t *testing.T) {
 	const rate uint64 = 2
 	const numQueries = 4
 
-	batches := []Batch{{
-		{
-			Base: []poly.Polynomial{
-				{baseElement(21), baseElement(23), baseElement(29), baseElement(31)},
-			},
-		},
-		{
-			Base: []poly.Polynomial{
-				{baseElement(2), baseElement(3), baseElement(5), baseElement(7),
-					baseElement(11), baseElement(13), baseElement(17), baseElement(19)},
-			},
-			Ext: []poly.ExtPolynomial{
-				{
-					extElement(101, 102, 103, 104),
-					extElement(201, 202, 203, 204),
-					extElement(301, 302, 303, 304),
-					extElement(401, 402, 403, 404),
-					extElement(501, 502, 503, 504),
-					extElement(601, 602, 603, 604),
-					extElement(701, 702, 703, 704),
-					extElement(801, 802, 803, 804),
-				},
-			},
-		},
-	}}
-	shifts := []BatchShifts{{
-		{Base: [][]int{{0}}},
-		{Base: [][]int{{0, 1}}, Ext: [][]int{{0}}},
-	}}
-
-	committed, openProof, params, zeta := runOpenFixture(t, batches, shifts, rate, numQueries)
+	batches, shifts, committed, openProof, params, zeta := buildMultiSizeBatchVerifyFixture(t, rate, numQueries)
 	roots, shapes := rootsAndShapes(committed)
 	verifierFS := buildVerifierTranscript(t, committed)
 
@@ -192,6 +162,37 @@ func TestPCSVerifyRoundtripMultiSizeBatch(t *testing.T) {
 	})
 }
 
+func TestCheckFRIBridgeUsesCompactRows(t *testing.T) {
+	const rate uint64 = 2
+	const numQueries = 4
+
+	_, shifts, committed, openProof, params, zeta := buildMultiSizeBatchVerifyFixture(t, rate, numQueries)
+	_, shapes := rootsAndShapes(committed)
+	pcs, lay, alpha, queryPositions := bridgeInputsForTest(t, committed, openProof, params, shapes, shifts)
+
+	if err := checkFRIBridge(&pcs, &openProof, lay, shapes, shifts, alpha, zeta, queryPositions); err != nil {
+		t.Fatalf("checkFRIBridge rejected valid compact rows: %v", err)
+	}
+
+	t.Run("largest group row", func(t *testing.T) {
+		tampered := openProof
+		tampered.PointSamplings = clonePointSamplings(openProof.PointSamplings)
+		tampered.PointSamplings[0][0].TopRows.Lo.RawRowBase[0].SetUint64(0xdeadbeef)
+		if err := checkFRIBridge(&pcs, &tampered, lay, shapes, shifts, alpha, zeta, queryPositions); err == nil {
+			t.Fatal("checkFRIBridge accepted a tampered largest-group compact row")
+		}
+	})
+
+	t.Run("injected group row", func(t *testing.T) {
+		tampered := openProof
+		tampered.PointSamplings = clonePointSamplings(openProof.PointSamplings)
+		tampered.PointSamplings[0][0].Injections[0].Rows.Hi.RawRowBase[0].SetUint64(0xdeadbeef)
+		if err := checkFRIBridge(&pcs, &tampered, lay, shapes, shifts, alpha, zeta, queryPositions); err == nil {
+			t.Fatal("checkFRIBridge accepted a tampered injected compact row")
+		}
+	})
+}
+
 func TestVerifyOneWMerkleProofRejectsCompactTampering(t *testing.T) {
 	committed := buildCompactVerifyCommitted(t)
 	maxRows := committed.Tree.NumLeaves()
@@ -293,6 +294,116 @@ func buildCompactVerifyCommitted(t *testing.T) Committed {
 		t.Fatal(err)
 	}
 	return committed
+}
+
+func buildMultiSizeBatchVerifyFixture(
+	t *testing.T,
+	rate uint64,
+	numQueries int,
+) ([]Batch, []BatchShifts, []Committed, OpeningProof, Params, ext.E6) {
+	t.Helper()
+
+	batches := []Batch{{
+		{
+			Base: []poly.Polynomial{
+				{baseElement(21), baseElement(23), baseElement(29), baseElement(31)},
+			},
+		},
+		{
+			Base: []poly.Polynomial{
+				{baseElement(2), baseElement(3), baseElement(5), baseElement(7),
+					baseElement(11), baseElement(13), baseElement(17), baseElement(19)},
+			},
+			Ext: []poly.ExtPolynomial{
+				{
+					extElement(101, 102, 103, 104),
+					extElement(201, 202, 203, 204),
+					extElement(301, 302, 303, 304),
+					extElement(401, 402, 403, 404),
+					extElement(501, 502, 503, 504),
+					extElement(601, 602, 603, 604),
+					extElement(701, 702, 703, 704),
+					extElement(801, 802, 803, 804),
+				},
+			},
+		},
+	}}
+	shifts := []BatchShifts{{
+		{Base: [][]int{{0}}},
+		{Base: [][]int{{0, 1}}, Ext: [][]int{{0}}},
+	}}
+
+	committed, openProof, params, zeta := runOpenFixture(t, batches, shifts, rate, numQueries)
+	return batches, shifts, committed, openProof, params, zeta
+}
+
+func bridgeInputsForTest(
+	t *testing.T,
+	committed []Committed,
+	openProof OpeningProof,
+	params Params,
+	shapes []BatchShapes,
+	shifts []BatchShifts,
+) (PCS, layout, ext.E6, []int) {
+	t.Helper()
+
+	pcs := NewPCSWithParams(params)
+	lay, err := canonicalLayoutFromShape(shapes, shifts, pcs.rate)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fs := buildVerifierTranscript(t, committed)
+	if err := fs.NewChallenge(deepAlphaName); err != nil {
+		t.Fatal(err)
+	}
+	if err := bindClaimedValuesInLayoutOrder(fs, openProof.ClaimedValues, shifts, lay); err != nil {
+		t.Fatal(err)
+	}
+	alphaOut, err := fs.ComputeChallenge(deepAlphaName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alpha := hash.OutputToExt(alphaOut)
+
+	queryPositions, err := extractFRIQueryPositions(openProof.FRIProof, params.NumQueries)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return pcs, lay, alpha, queryPositions
+}
+
+func clonePointSamplings(in [][]WMerkleProof) [][]WMerkleProof {
+	out := make([][]WMerkleProof, len(in))
+	for q := range in {
+		out[q] = make([]WMerkleProof, len(in[q]))
+		for b, wp := range in[q] {
+			out[q][b] = wp
+			out[q][b].TopRows = cloneRawRowPair(wp.TopRows)
+			out[q][b].Path.Siblings = append(wp.Path.Siblings[:0:0], wp.Path.Siblings...)
+			out[q][b].Path.InjectionLeaves = append(wp.Path.InjectionLeaves[:0:0], wp.Path.InjectionLeaves...)
+			out[q][b].Injections = append(wp.Injections[:0:0], wp.Injections...)
+			for i := range out[q][b].Injections {
+				out[q][b].Injections[i].Rows = cloneRawRowPair(wp.Injections[i].Rows)
+			}
+		}
+	}
+	return out
+}
+
+func cloneRawRowPair(in RawRowPair) RawRowPair {
+	return RawRowPair{
+		Lo: cloneRawRow(in.Lo),
+		Hi: cloneRawRow(in.Hi),
+	}
+}
+
+func cloneRawRow(in RawRow) RawRow {
+	return RawRow{
+		RawRowBase: append(in.RawRowBase[:0:0], in.RawRowBase...),
+		RawRowExt:  append(in.RawRowExt[:0:0], in.RawRowExt...),
+	}
 }
 
 // TestPCSVerifyRejectsTamperedClaimedValue confirms Verify fails when
