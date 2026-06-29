@@ -172,26 +172,11 @@ func canonicalLayoutFromShape(shapes [][]GroupShape, shifts []BatchShifts, rate 
 // order: size desc -> shift asc -> batch decl order -> base-then-ext ->
 // per-rail decl order.
 func canonicalLayoutFromSizes(sizes [][]int, shifts []BatchShifts) (layout, error) {
-	if len(shifts) != len(sizes) {
-		return nil, fmt.Errorf("fri: canonicalLayoutFromSizes: shifts has %d entries, sizes has %d", len(shifts), len(sizes))
+	if err := ensureDistinctSizesPerBatch(sizes); err != nil {
+		return nil, err
 	}
-	for b, batchSizes := range sizes {
-		if len(shifts[b]) != len(batchSizes) {
-			return nil, fmt.Errorf("fri: canonicalLayoutFromSizes: shifts[%d] has %d Groups, sizes[%d] has %d", b, len(shifts[b]), b, len(batchSizes))
-		}
-		seen := make(map[int]struct{}, len(batchSizes))
-		for g, N := range batchSizes {
-			if _, dup := seen[N]; dup {
-				return nil, fmt.Errorf("fri: canonicalLayoutFromSizes: batch %d has duplicate Group size %d at index %d", b, N, g)
-			}
-			seen[N] = struct{}{}
-			if err := validatePolyShifts(b, g, "Base", shifts[b][g].Base); err != nil {
-				return nil, err
-			}
-			if err := validatePolyShifts(b, g, "Ext", shifts[b][g].Ext); err != nil {
-				return nil, err
-			}
-		}
+	if err := validateBatchShiftsFromSizes(sizes, shifts); err != nil {
+		return nil, err
 	}
 
 	groupOfSize := func(b, N int) int {
@@ -203,17 +188,7 @@ func canonicalLayoutFromSizes(sizes [][]int, shifts []BatchShifts) (layout, erro
 		return -1
 	}
 
-	sizeSet := make(map[int]struct{})
-	for _, sb := range sizes {
-		for _, n := range sb {
-			sizeSet[n] = struct{}{}
-		}
-	}
-	sizesDesc := make([]int, 0, len(sizeSet))
-	for n := range sizeSet {
-		sizesDesc = append(sizesDesc, n)
-	}
-	sort.Sort(sort.Reverse(sort.IntSlice(sizesDesc)))
+	sizesDesc := sizesDescFromSizes(sizes)
 
 	out := make(layout, 0, len(sizesDesc))
 	for _, N := range sizesDesc {
@@ -270,20 +245,22 @@ func canonicalLayoutFromSizes(sizes [][]int, shifts []BatchShifts) (layout, erro
 	return out, nil
 }
 
-// validatePolyShifts enforces the per-poly invariants on one rail's
-// shift schedule: every shift list non-empty, no duplicate shifts inside
-// a single list. Returns descriptive errors for both failure modes.
-func validatePolyShifts(b, g int, rail string, polyShifts [][]int) error {
+// validatePolyShifts enforces the per-poly invariants on one rail's shift
+// schedule: every shift list non-empty, no duplicate opening points modulo the
+// native size N inside a single list. Returns descriptive errors for both
+// failure modes.
+func validatePolyShifts(b, g int, rail string, N int, polyShifts [][]int) error {
 	for i, ss := range polyShifts {
 		if len(ss) == 0 {
 			return fmt.Errorf("fri: shifts[%d][%d].%s[%d] is empty (every committed polynomial must be opened at least once)", b, g, rail, i)
 		}
-		seen := make(map[int]struct{}, len(ss))
+		seen := make(map[int]int, len(ss))
 		for _, s := range ss {
-			if _, dup := seen[s]; dup {
-				return fmt.Errorf("fri: shifts[%d][%d].%s[%d] contains duplicate shift %d", b, g, rail, i, s)
+			normalized := normalizeShift(s, N)
+			if previous, dup := seen[normalized]; dup {
+				return fmt.Errorf("fri: shifts[%d][%d].%s[%d] contains duplicate shift %d modulo size %d (same opening point as shift %d)", b, g, rail, i, s, N, previous)
 			}
-			seen[s] = struct{}{}
+			seen[normalized] = s
 		}
 	}
 	return nil

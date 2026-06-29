@@ -197,6 +197,24 @@ func TestCanonicalLayoutDuplicateShiftErrors(t *testing.T) {
 	}
 }
 
+// TestCanonicalLayoutDuplicateModuloShiftErrors rejects distinct integer shifts
+// that address the same opening point on the size-N subgroup.
+func TestCanonicalLayoutDuplicateModuloShiftErrors(t *testing.T) {
+	batches := []Batch{
+		{{Base: []poly.Polynomial{makeBasePoly(4)}}},
+	}
+	shifts := []BatchShifts{
+		{{Base: [][]int{{0, 4}}}},
+	}
+	_, err := canonicalLayout(batches, shifts)
+	if err == nil {
+		t.Fatal("expected error for duplicate modulo shift")
+	}
+	if !strings.Contains(err.Error(), "duplicate") || !strings.Contains(err.Error(), "modulo") {
+		t.Fatalf("error message should mention duplicate modulo shift, got %q", err.Error())
+	}
+}
+
 // TestCanonicalLayoutShapeMismatchErrors covers the three shape-alignment
 // failures: shifts length, per-batch group count, per-group rail width.
 func TestCanonicalLayoutShapeMismatchErrors(t *testing.T) {
