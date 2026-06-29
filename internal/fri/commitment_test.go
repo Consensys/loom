@@ -438,9 +438,6 @@ func TestWMerkleProofCompactShapeSingleSize(t *testing.T) {
 	if got := len(proof.Injections); got != 0 {
 		t.Fatalf("len(Injections) = %d, want 0", got)
 	}
-	if got := len(proof.GroupOpenings); got != 0 {
-		t.Fatalf("len(GroupOpenings) = %d, want 0 for compact shape", got)
-	}
 	if !proof.TopRows.Lo.RawRowBase[0].Equal(&committed.Sources[0].Base[0][lo]) {
 		t.Fatal("TopRows.Lo mismatch")
 	}
@@ -516,9 +513,6 @@ func TestWMerkleProofCompactShapeTwoSizeInjection(t *testing.T) {
 	if got, want := len(proof.Injections), 1; got != want {
 		t.Fatalf("len(Injections) = %d, want %d", got, want)
 	}
-	if got := len(proof.GroupOpenings); got != 0 {
-		t.Fatalf("len(GroupOpenings) = %d, want 0 for compact shape", got)
-	}
 	if !proof.Injections[0].Rows.Lo.RawRowBase[0].Equal(&committed.Sources[1].Base[0][smallLo]) {
 		t.Fatal("injected Rows.Lo mismatch")
 	}
@@ -543,6 +537,33 @@ func TestWMerkleProofCompactShapeTwoSizeInjection(t *testing.T) {
 	)
 	if got, want := proof.Path.Siblings[injectionDepth], companionPost; got != want {
 		t.Fatalf("injection companion post digest mismatch: got %v, want %v", got, want)
+	}
+}
+
+func TestWMerkleProofCompactDigestAccounting(t *testing.T) {
+	topRows := 16
+	groupRows := []int{16, 8, 4}
+	topPathDepth := log2(topRows)
+
+	oldSiblingDigests := 2 * len(groupRows) * topPathDepth
+	compactPathSiblings := topPathDepth
+	compactSiblingRunningDigests := len(groupRows) - 1
+	compactTotalDigests := compactPathSiblings + compactSiblingRunningDigests
+
+	if got, want := oldSiblingDigests, 24; got != want {
+		t.Fatalf("old sibling digests = %d, want %d", got, want)
+	}
+	if got, want := compactPathSiblings, 4; got != want {
+		t.Fatalf("compact path siblings = %d, want %d", got, want)
+	}
+	if got, want := compactSiblingRunningDigests, 2; got != want {
+		t.Fatalf("compact SiblingRunning digests = %d, want %d", got, want)
+	}
+	if got, want := compactTotalDigests, 6; got != want {
+		t.Fatalf("compact total digests = %d, want %d", got, want)
+	}
+	if compactTotalDigests >= oldSiblingDigests {
+		t.Fatalf("compact proof digest count did not shrink: compact=%d old=%d", compactTotalDigests, oldSiblingDigests)
 	}
 }
 

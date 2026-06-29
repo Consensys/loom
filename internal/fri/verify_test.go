@@ -76,9 +76,6 @@ func TestPCSVerifyRoundtripMultiSizeBatch(t *testing.T) {
 		if got, want := len(wp.Injections), 1; got != want {
 			t.Fatalf("query %d Injections = %d, want %d", q, got, want)
 		}
-		if got := len(wp.GroupOpenings); got != 0 {
-			t.Fatalf("query %d GroupOpenings = %d, want 0", q, got)
-		}
 
 		topSourceRows := leafSourceRows(committed[0].Sources[0])
 		rowTop := sFull >> (log2(params.N) - log2(topSourceRows))

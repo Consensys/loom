@@ -131,10 +131,6 @@ func TestOpenShape(t *testing.T) {
 				t.Fatalf("PointSamplings[%d][%d].Injections = %d, want %d",
 					q, b, got, len(committed[b].Sources)-1)
 			}
-			if got := len(wp.GroupOpenings); got != 0 {
-				t.Fatalf("PointSamplings[%d][%d].GroupOpenings = %d, want 0",
-					q, b, got)
-			}
 			// Top-group row widths must match the batch's top Group.
 			top := wp.TopRows.Lo
 			topGroup := batches[b][0] // single-group batch in this fixture
@@ -190,9 +186,6 @@ func TestOpenCommittedAtCompactTwoSizeBranches(t *testing.T) {
 			}
 			if got, want := len(wp.Injections), 1; got != want {
 				t.Fatalf("len(Injections) = %d, want %d", got, want)
-			}
-			if got := len(wp.GroupOpenings); got != 0 {
-				t.Fatalf("len(GroupOpenings) = %d, want 0", got)
 			}
 
 			topLo, topHi := siblingRows(tc.sFull)

@@ -132,18 +132,6 @@ type RawRowPair struct {
 	Hi RawRow
 }
 
-// WMerkleGroupOpening authenticates one Group's adjacent row pair. Rows is the
-// target group row pair. TopRows is the top-group row pair used as the leaf
-// preimage for ProofLo/ProofHi; for the top group, TopRows == Rows. For
-// injected smaller groups, ProofLo/ProofHi are complete Merkle proofs whose
-// paths cross the target injection rows.
-type WMerkleGroupOpening struct {
-	Rows    RawRowPair
-	TopRows RawRowPair
-	ProofLo merkle.Proof
-	ProofHi merkle.Proof
-}
-
 // WMerkleInjectionOpening is the compact opening payload for one injected
 // smaller group. Rows is the canonical lo/hi row pair at that group's row
 // domain. SiblingRunning is the pre-injection running digest of the companion
@@ -156,21 +144,16 @@ type WMerkleInjectionOpening struct {
 
 // WMerkleProof is an opening proof for a WMerkleTree at one query position.
 //
-// Compact shape:
-//   - TopRows is the canonical lo/hi row pair for the top group.
-//   - Path authenticates TopRows.Lo; Path.Siblings[0] authenticates TopRows.Hi.
-//   - Injections carries one compact opening per injected smaller group, in the
-//     same decreasing-size order as WMerkleTree.InjectionWidths().
-//
-// GroupOpenings is the legacy per-group full-path shape. openCommittedAt no
-// longer populates it; it stays temporarily so later compact-proof PRs can
-// remove the field as a separate compatibility cleanup.
+// One top Merkle path authenticates the top row pair and every injected raw row
+// pair crossed by that path. TopRows is the canonical lo/hi row pair for the
+// top group. Path authenticates TopRows.Lo, and Path.Siblings[0] authenticates
+// TopRows.Hi. Injections carries one compact opening per injected smaller group,
+// in the same decreasing-size order as WMerkleTree.InjectionWidths().
+// Companion injected rows are bound by SiblingRunning digests.
 type WMerkleProof struct {
 	TopRows    RawRowPair
 	Path       merkle.Proof
 	Injections []WMerkleInjectionOpening
-
-	GroupOpenings []WMerkleGroupOpening
 }
 
 func (wt WMerkleTree) Root() hash.Digest {
