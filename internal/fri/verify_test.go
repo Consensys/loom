@@ -42,6 +42,52 @@ func TestPCSVerifyRoundtrip(t *testing.T) {
 	_ = batches // exercised via openProof
 }
 
+func TestPCSVerifyRoundtripSingleSizeBaseExtMultiShift(t *testing.T) {
+	const rate uint64 = 2
+	const numQueries = 4
+
+	batches := []Batch{
+		{{
+			Base: []poly.Polynomial{
+				{baseElement(2), baseElement(3), baseElement(5), baseElement(7),
+					baseElement(11), baseElement(13), baseElement(17), baseElement(19)},
+				{baseElement(23), baseElement(29), baseElement(31), baseElement(37),
+					baseElement(41), baseElement(43), baseElement(47), baseElement(53)},
+			},
+			Ext: []poly.ExtPolynomial{
+				{
+					extElement(101, 102, 103, 104),
+					extElement(201, 202, 203, 204),
+					extElement(301, 302, 303, 304),
+					extElement(401, 402, 403, 404),
+					extElement(501, 502, 503, 504),
+					extElement(601, 602, 603, 604),
+					extElement(701, 702, 703, 704),
+					extElement(801, 802, 803, 804),
+				},
+			},
+		}},
+	}
+	shifts := []BatchShifts{
+		{{Base: [][]int{{0, 2}, {1}}, Ext: [][]int{{0, 3}}}},
+	}
+
+	committed, openProof, params, zeta := runOpenFixture(t, batches, shifts, rate, numQueries)
+	roots, shapes := rootsAndShapes(committed)
+	verifierFS := buildVerifierTranscript(t, committed)
+
+	pcs := NewPCSWithParams(params)
+	if err := pcs.Verify(roots, shapes, shifts, zeta, openProof, verifierFS); err != nil {
+		t.Fatalf("PCS.Verify rejected a valid single-size OpeningProof: %v", err)
+	}
+	if got, want := len(openProof.DeepQuotientRoots), 1; got != want {
+		t.Fatalf("DeepQuotientRoots = %d, want %d", got, want)
+	}
+	if got, want := len(openProof.FRIProof.LevelQueries), 0; got != want {
+		t.Fatalf("FRIProof.LevelQueries = %d, want %d", got, want)
+	}
+}
+
 func TestPCSVerifyRoundtripMultiSizeBatch(t *testing.T) {
 	const rate uint64 = 2
 	const numQueries = 4
@@ -489,7 +535,7 @@ func TestPCSVerifyRejectsCommitOnlyPCS(t *testing.T) {
 
 // TestPCSVerifyShapeMismatch exercises the top-level length-alignment
 // rejections. Per-poly invariants (empty / duplicate shift lists) are
-// covered by layout_test.go.
+// covered by the shape-helper tests.
 func TestPCSVerifyShapeMismatch(t *testing.T) {
 	_, shifts, committed, openProof, params, zeta := buildVerifyFixture(t)
 	roots, shapes := rootsAndShapes(committed)
@@ -521,6 +567,15 @@ func TestPCSVerifyShapeMismatch(t *testing.T) {
 		tampered.ClaimedValues = append(tampered.ClaimedValues, nil)
 		if err := pcs.Verify(roots, shapes, shifts, zeta, tampered, fs); err == nil {
 			t.Fatal("expected ClaimedValues-length mismatch error")
+		}
+	})
+
+	t.Run("DeepQuotientRoots length mismatch", func(t *testing.T) {
+		fs := buildVerifierTranscript(t, committed)
+		tampered := openProof
+		tampered.DeepQuotientRoots = append([]hash.Digest{}, openProof.DeepQuotientRoots[:len(openProof.DeepQuotientRoots)-1]...)
+		if err := pcs.Verify(roots, shapes, shifts, zeta, tampered, fs); err == nil {
+			t.Fatal("expected DeepQuotientRoots-length mismatch error")
 		}
 	})
 }

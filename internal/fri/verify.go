@@ -78,9 +78,8 @@ func (pcs *PCS) Verify(
 		return fmt.Errorf("fri: PCS.Verify: ClaimedValues has %d entries, shapes has %d", len(proof.ClaimedValues), len(shapes))
 	}
 
-	// 1- Canonical layout from shapes; validates the shift schedule.
-	lay, err := canonicalLayoutFromShape(shapes, shifts, pcs.rate)
-	if err != nil {
+	// 1- Validate verifier-side shape metadata and the shift schedule.
+	if err := validateBatchShiftsFromShapes(shapes, shifts, pcs.rate); err != nil {
 		return err
 	}
 	sizes, err := groupNativeSizesFromShapes(shapes, pcs.rate)
@@ -88,8 +87,8 @@ func (pcs *PCS) Verify(
 		return err
 	}
 
-	// 2- Validate the OpeningProof's nested shapes against shapes/shifts/layout.
-	if err := validateOpeningProofShape(&proof, shapes, shifts, lay, pcs.params.NumQueries); err != nil {
+	// 2- Validate the OpeningProof's nested shapes against shapes/shifts/sizes.
+	if err := validateOpeningProofShape(&proof, shapes, shifts, sizes, pcs.params.NumQueries); err != nil {
 		return err
 	}
 
@@ -140,12 +139,12 @@ func (pcs *PCS) Verify(
 
 // validateOpeningProofShape checks that the nested ClaimedValues /
 // PointSamplings / DeepQuotientRoots shapes line up with shapes/shifts
-// and with the canonical layout's distinct-size count.
+// and with the distinct-size count derived from verifier-side shapes.
 func validateOpeningProofShape(
 	proof *OpeningProof,
 	shapes []BatchShapes,
 	shifts []BatchShifts,
-	lay layout,
+	sizes [][]int,
 	numQueries int,
 ) error {
 	for b, batchSh := range shifts {
@@ -173,8 +172,9 @@ func validateOpeningProofShape(
 		}
 	}
 
-	if len(proof.DeepQuotientRoots) != len(lay) {
-		return fmt.Errorf("fri: PCS.Verify: DeepQuotientRoots has %d entries, expected %d (distinct sizes)", len(proof.DeepQuotientRoots), len(lay))
+	sizesDesc := sizesDescFromSizes(sizes)
+	if len(proof.DeepQuotientRoots) != len(sizesDesc) {
+		return fmt.Errorf("fri: PCS.Verify: DeepQuotientRoots has %d entries, expected %d (distinct sizes)", len(proof.DeepQuotientRoots), len(sizesDesc))
 	}
 
 	if len(proof.PointSamplings) != numQueries {
