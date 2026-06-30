@@ -165,9 +165,9 @@ func TestCheckFRIBridgeUsesCompactRows(t *testing.T) {
 
 	_, shifts, committed, openProof, params, zeta := buildMultiSizeBatchVerifyFixture(t, rate, numQueries)
 	_, shapes := rootsAndShapes(committed)
-	pcs, lay, alpha, queryPositions := bridgeInputsForTest(t, committed, openProof, params, shapes, shifts)
+	pcs, sizes, alpha, queryPositions := bridgeInputsForTest(t, committed, openProof, params, shapes, shifts)
 
-	if err := checkFRIBridge(&pcs, &openProof, lay, shapes, shifts, alpha, zeta, queryPositions); err != nil {
+	if err := checkFRIBridgeByPolynomial(&pcs, &openProof, sizes, shapes, shifts, alpha, zeta, queryPositions); err != nil {
 		t.Fatalf("checkFRIBridge rejected valid compact rows: %v", err)
 	}
 
@@ -175,7 +175,7 @@ func TestCheckFRIBridgeUsesCompactRows(t *testing.T) {
 		tampered := openProof
 		tampered.PointSamplings = clonePointSamplings(openProof.PointSamplings)
 		tampered.PointSamplings[0][0].TopRows.Lo.RawRowBase[0].SetUint64(0xdeadbeef)
-		if err := checkFRIBridge(&pcs, &tampered, lay, shapes, shifts, alpha, zeta, queryPositions); err == nil {
+		if err := checkFRIBridgeByPolynomial(&pcs, &tampered, sizes, shapes, shifts, alpha, zeta, queryPositions); err == nil {
 			t.Fatal("checkFRIBridge accepted a tampered largest-group compact row")
 		}
 	})
@@ -184,7 +184,7 @@ func TestCheckFRIBridgeUsesCompactRows(t *testing.T) {
 		tampered := openProof
 		tampered.PointSamplings = clonePointSamplings(openProof.PointSamplings)
 		tampered.PointSamplings[0][0].Injections[0].Rows.Hi.RawRowBase[0].SetUint64(0xdeadbeef)
-		if err := checkFRIBridge(&pcs, &tampered, lay, shapes, shifts, alpha, zeta, queryPositions); err == nil {
+		if err := checkFRIBridgeByPolynomial(&pcs, &tampered, sizes, shapes, shifts, alpha, zeta, queryPositions); err == nil {
 			t.Fatal("checkFRIBridge accepted a tampered injected compact row")
 		}
 	})
@@ -341,11 +341,11 @@ func bridgeInputsForTest(
 	params Params,
 	shapes []BatchShapes,
 	shifts []BatchShifts,
-) (PCS, layout, ext.E6, []int) {
+) (PCS, [][]int, ext.E6, []int) {
 	t.Helper()
 
 	pcs := NewPCSWithParams(params)
-	lay, err := canonicalLayoutFromShape(shapes, shifts, pcs.rate)
+	sizes, err := groupNativeSizesFromShapes(shapes, pcs.rate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ func bridgeInputsForTest(
 	if err := fs.NewChallenge(deepAlphaName); err != nil {
 		t.Fatal(err)
 	}
-	if err := bindClaimedValuesInLayoutOrder(fs, openProof.ClaimedValues, shifts, lay); err != nil {
+	if err := bindClaimedValuesByPolynomialOrder(fs, openProof.ClaimedValues, shifts, sizes); err != nil {
 		t.Fatal(err)
 	}
 	alphaOut, err := fs.ComputeChallenge(deepAlphaName)
@@ -368,7 +368,7 @@ func bridgeInputsForTest(
 		t.Fatal(err)
 	}
 
-	return pcs, lay, alpha, queryPositions
+	return pcs, sizes, alpha, queryPositions
 }
 
 func clonePointSamplings(in [][]WMerkleProof) [][]WMerkleProof {

@@ -25,8 +25,8 @@ import (
 )
 
 // deepAlphaName is the transcript challenge name under which Open binds
-// the canonical-layout-ordered claimed evaluations and from which the
-// DEEP batching challenge alpha_DEEP is sampled. Kept as a private
+// the per-polynomial claimed evaluations and from which the DEEP batching
+// challenge alpha_DEEP is sampled. Kept as a private
 // constant so the existing outer-prover code (which uses
 // constants.DEEP_ALPHA with the same string value) remains source-
 // compatible until the migration PR rewires it.
@@ -75,7 +75,7 @@ func (pcs *PCS) ClaimedValuesOnly(
 	if domainCache == nil {
 		domainCache = &poly.DomainCache{}
 	}
-	if _, err := canonicalLayout(batches, shifts); err != nil {
+	if err := validateBatchShifts(batches, shifts); err != nil {
 		return nil, err
 	}
 	return computeClaimedValues(batches, shifts, zeta, domainCache)
@@ -90,7 +90,7 @@ func (pcs *PCS) ClaimedValuesOnly(
 //
 // Open registers alpha_DEEP and FRI-internal challenge names on fs
 // itself; the caller MUST NOT pre-register any of those names. Open is
-// responsible for binding claimed values in canonical layout order,
+// responsible for binding claimed values in per-polynomial DEEP order,
 // sampling alpha_DEEP, building per-size DEEP-quotient codewords,
 // committing them as multi-degree FRI levels, running fri.Prove, and
 // packaging per-query / per-batch Merkle openings.
@@ -123,12 +123,17 @@ func (pcs *PCS) Open(
 		domainCache = &poly.DomainCache{}
 	}
 
-	// 1- Canonical layout: validates shape alignment + per-poly shift
-	//    invariants (non-empty, no duplicates).
-	lay, err := canonicalLayout(batches, shifts)
+	// 1- Validate shape alignment + per-poly shift invariants (non-empty,
+	//    no duplicates), then derive the size order used for both
+	//    alpha_DEEP bindings and multi-degree FRI levels.
+	if err := validateBatchShifts(batches, shifts); err != nil {
+		return OpeningProof{}, err
+	}
+	sizes, err := groupNativeSizesFromBatches(batches)
 	if err != nil {
 		return OpeningProof{}, err
 	}
+	sizesDesc := sizesDescFromSizes(sizes)
 
 	// 2- Claimed values at zeta * omega_N^s for every (b, g, i, s) in
 	//    the schedule.
@@ -143,10 +148,10 @@ func (pcs *PCS) Open(
 		return OpeningProof{}, fmt.Errorf("fri: PCS.Open: register alpha_DEEP: %w", err)
 	}
 
-	// 4- Bind every claimed value to alpha_DEEP in canonical layout
-	//    order (size desc, shift asc, batch decl order, base-then-ext,
-	//    per-rail decl order).
-	if err := bindClaimedValuesInLayoutOrder(fs, claimedValues, shifts, lay); err != nil {
+	// 4- Bind every claimed value to alpha_DEEP in the D3 order: size desc,
+	//    batch declaration order, group declaration order, base polys then
+	//    ext polys, and shifts in the user's declared order.
+	if err := bindClaimedValuesByPolynomialOrder(fs, claimedValues, shifts, sizes); err != nil {
 		return OpeningProof{}, err
 	}
 
@@ -159,11 +164,19 @@ func (pcs *PCS) Open(
 
 	// 6- Build one DEEP-quotient codeword per distinct native size, on
 	//    the RS-encoded subgroup of size rate*N.
-	deepEvalsBySize, sizesDesc, err := computeDeepQuotientCodewords(
-		batches, shifts, claimedValues, lay, alpha, zeta, pcs.rate, domainCache,
+	deepEvalsBySize, deepSizesDesc, err := computeDeepQuotientCodewordsByPolynomial(
+		batches, shifts, claimedValues, alpha, zeta, pcs.rate, domainCache,
 	)
 	if err != nil {
 		return OpeningProof{}, err
+	}
+	if len(deepSizesDesc) != len(sizesDesc) {
+		return OpeningProof{}, fmt.Errorf("fri: PCS.Open: deep quotient sizes %v do not match batch sizes %v", deepSizesDesc, sizesDesc)
+	}
+	for i := range sizesDesc {
+		if deepSizesDesc[i] != sizesDesc[i] {
+			return OpeningProof{}, fmt.Errorf("fri: PCS.Open: deep quotient sizes %v do not match batch sizes %v", deepSizesDesc, sizesDesc)
+		}
 	}
 
 	// 7- Commit each DQ_N as a fresh FRI level. Largest size becomes
@@ -210,6 +223,76 @@ func (pcs *PCS) Open(
 		FRIProof:          friProof,
 		PointSamplings:    pointSamplings,
 	}, nil
+}
+
+// bindClaimedValuesByPolynomialOrder binds every claimed value using the D3
+// per-polynomial order. The order matches computeDeepQuotientCodewordsByPolynomial:
+// size descending, batch declaration order, group declaration order, base rail
+// then extension rail. Inside one polynomial, all requested shifts are bound in
+// the user's declared order, while the DEEP quotient consumes only one alpha
+// power for that polynomial.
+func bindClaimedValuesByPolynomialOrder(
+	fs *fiatshamir.Transcript,
+	claimedValues []BatchClaimedValues,
+	shifts []BatchShifts,
+	sizes [][]int,
+) error {
+	if len(claimedValues) != len(sizes) {
+		return fmt.Errorf("fri: bind claimed values: claimedValues has %d entries, sizes has %d", len(claimedValues), len(sizes))
+	}
+	if len(shifts) != len(sizes) {
+		return fmt.Errorf("fri: bind claimed values: shifts has %d entries, sizes has %d", len(shifts), len(sizes))
+	}
+
+	for _, N := range sizesDescFromSizes(sizes) {
+		for b, batchSizes := range sizes {
+			if len(claimedValues[b]) != len(batchSizes) {
+				return fmt.Errorf("fri: bind claimed values: claimedValues[%d] has %d groups, sizes[%d] has %d", b, len(claimedValues[b]), b, len(batchSizes))
+			}
+			if len(shifts[b]) != len(batchSizes) {
+				return fmt.Errorf("fri: bind claimed values: shifts[%d] has %d groups, sizes[%d] has %d", b, len(shifts[b]), b, len(batchSizes))
+			}
+			for g, groupSize := range batchSizes {
+				if groupSize != N {
+					continue
+				}
+				gValues := claimedValues[b][g]
+				gShifts := shifts[b][g]
+				if len(gValues.Base) != len(gShifts.Base) {
+					return fmt.Errorf("fri: bind claimed values: claimedValues[%d][%d].Base has %d polys, shifts has %d", b, g, len(gValues.Base), len(gShifts.Base))
+				}
+				if len(gValues.Ext) != len(gShifts.Ext) {
+					return fmt.Errorf("fri: bind claimed values: claimedValues[%d][%d].Ext has %d polys, shifts has %d", b, g, len(gValues.Ext), len(gShifts.Ext))
+				}
+
+				for i, ss := range gShifts.Base {
+					if len(gValues.Base[i]) != len(ss) {
+						return fmt.Errorf("fri: bind claimed values: claimedValues[%d][%d].Base[%d] has %d values, shifts has %d", b, g, i, len(gValues.Base[i]), len(ss))
+					}
+					for k, s := range ss {
+						v := gValues.Base[i][k]
+						if err := fs.Bind(deepAlphaName, hash.ExtToElements(v)); err != nil {
+							return fmt.Errorf("fri: bind claimed value (size=%d batch=%d group=%d field=base poly=%d shift=%d): %w",
+								N, b, g, i, s, err)
+						}
+					}
+				}
+				for i, ss := range gShifts.Ext {
+					if len(gValues.Ext[i]) != len(ss) {
+						return fmt.Errorf("fri: bind claimed values: claimedValues[%d][%d].Ext[%d] has %d values, shifts has %d", b, g, i, len(gValues.Ext[i]), len(ss))
+					}
+					for k, s := range ss {
+						v := gValues.Ext[i][k]
+						if err := fs.Bind(deepAlphaName, hash.ExtToElements(v)); err != nil {
+							return fmt.Errorf("fri: bind claimed value (size=%d batch=%d group=%d field=ext poly=%d shift=%d): %w",
+								N, b, g, i, s, err)
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // bindClaimedValuesInLayoutOrder walks lay in canonical order and binds

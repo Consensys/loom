@@ -44,8 +44,8 @@ import (
 // Verify performs four checks in sequence:
 //
 //  1. Shape validation against the proof.
-//  2. Re-derives alpha_DEEP by replaying the same canonical-layout
-//     binding sequence Open used.
+//  2. Re-derives alpha_DEEP by replaying the same per-polynomial binding
+//     sequence Open used.
 //  3. Multi-degree FRI verification on the DEEP-quotient roots.
 //  4. The bridge: for every FRI query position and every distinct
 //     native size, recompute DQ_N(omega^x) and DQ_N(-omega^x) from the
@@ -83,6 +83,10 @@ func (pcs *PCS) Verify(
 	if err != nil {
 		return err
 	}
+	sizes, err := groupNativeSizesFromShapes(shapes, pcs.rate)
+	if err != nil {
+		return err
+	}
 
 	// 2- Validate the OpeningProof's nested shapes against shapes/shifts/layout.
 	if err := validateOpeningProofShape(&proof, shapes, shifts, lay, pcs.params.NumQueries); err != nil {
@@ -94,7 +98,7 @@ func (pcs *PCS) Verify(
 	if err := fs.NewChallenge(deepAlphaName); err != nil {
 		return fmt.Errorf("fri: PCS.Verify: register alpha_DEEP: %w", err)
 	}
-	if err := bindClaimedValuesInLayoutOrder(fs, proof.ClaimedValues, shifts, lay); err != nil {
+	if err := bindClaimedValuesByPolynomialOrder(fs, proof.ClaimedValues, shifts, sizes); err != nil {
 		return err
 	}
 	alphaOut, err := fs.ComputeChallenge(deepAlphaName)
@@ -104,10 +108,7 @@ func (pcs *PCS) Verify(
 	alpha := hash.OutputToExt(alphaOut)
 
 	// 4- Verify the multi-degree FRI proof on the declared DEEP roots.
-	sizesDesc := make([]int, len(lay))
-	for i, sb := range lay {
-		sizesDesc[i] = sb.N
-	}
+	sizesDesc := sizesDescFromSizes(sizes)
 	if err := Verify(*pcs.params, proof.DeepQuotientRoots, sizesDesc, proof.FRIProof, fs); err != nil {
 		return fmt.Errorf("fri: PCS.Verify: FRI proof: %w", err)
 	}
@@ -129,8 +130,8 @@ func (pcs *PCS) Verify(
 	}
 
 	// 7- Bridge: recompute DQ_N(X), DQ_N(-X) from raw rows + claimed
-	//    values in canonical order, compare to FRI level leaves.
-	if err := checkFRIBridge(pcs, &proof, lay, shapes, shifts, alpha, zeta, queryPositions); err != nil {
+	//    values in per-polynomial order, compare to FRI level leaves.
+	if err := checkFRIBridgeByPolynomial(pcs, &proof, sizes, shapes, shifts, alpha, zeta, queryPositions); err != nil {
 		return err
 	}
 
@@ -455,37 +456,15 @@ func rawRowsForGroup(wp WMerkleProof, groupIdx int) (RawRowPair, error) {
 	return rows, nil
 }
 
-// checkFRIBridge is the verifier-side counterpart of
-// computeDeepQuotientCodewords' per-(size, shift) bundle walk. For each
-// query position sFull and each distinct native size N in lay (largest
-// first, i.e. level 0 of the multi-degree FRI):
-//
-//	row = sFull >> (log2(maxRows) - log2(rate*N))
-//	lo  = row &^ 1
-//	hi  = lo + 1
-//	X   = omega_{rate*N}^bitrev(lo)
-//	-X  = omega_{rate*N}^bitrev(hi)
-//	DQ_P, DQ_Q := 0, 0
-//	for shift s in ascending order at this size:
-//	  z_s = zeta * omega_N^s
-//	  v_s, C_at_X, C_at_negX := 0, 0, 0
-//	  for entry in canonical order at (size, shift):
-//	    v_s       += alpha^e * claimed_value(entry, s)
-//	    C_at_X    += alpha^e * raw_row_lo(entry)
-//	    C_at_negX += alpha^e * raw_row_hi(entry)
-//	    alpha^e   *= alpha   (alpha counter is per-size, monotonic)
-//	  DQ_P += (v_s - C_at_X) / (z_s - X)
-//	  DQ_Q += (v_s - C_at_negX) / (z_s - -X)
-//	check DQ_P == FRI level-i leaf P at this query
-//	check DQ_Q == FRI level-i leaf Q at this query
-//
-// where level i = layout size index (0 = largest), the largest size
-// reads from FRIQueries[q].Layers[0], and smaller sizes from
-// LevelQueries[i-1][q].
-func checkFRIBridge(
+// checkFRIBridgeByPolynomial is the verifier-side counterpart of
+// computeDeepQuotientCodewordsByPolynomial. For each native size N, alpha
+// powers are consumed once per polynomial in batch/group declaration order.
+// Multiple shifts of the same polynomial are summed before applying the
+// polynomial's alpha power.
+func checkFRIBridgeByPolynomial(
 	pcs *PCS,
 	proof *OpeningProof,
-	lay layout,
+	sizes [][]int,
 	shapes [][]GroupShape,
 	shifts []BatchShifts,
 	alpha ext.E6,
@@ -506,9 +485,9 @@ func checkFRIBridge(
 		return -1
 	}
 
+	sizesDesc := sizesDescFromSizes(sizes)
 	for q, sFull := range queryPositions {
-		for sizeIdx, sb := range lay {
-			N := sb.N
+		for sizeIdx, N := range sizesDesc {
 			ratN := int(pcs.rate) * N
 			bitsReduced := log2(pcs.params.N) - log2(ratN)
 			if bitsReduced < 0 {
@@ -533,7 +512,6 @@ func checkFRIBridge(
 			X := hash.LiftBaseToExt(XBase)
 			negX := hash.LiftBaseToExt(negXBase)
 
-			// omega_N: trace-domain generator at this size.
 			traceGen, err := koalabear.Generator(uint64(N))
 			if err != nil {
 				return fmt.Errorf("fri: PCS.Verify: koalabear.Generator(%d): %w", N, err)
@@ -543,76 +521,38 @@ func checkFRIBridge(
 			var alphaRunning ext.E6
 			alphaRunning.SetOne()
 
-			for _, shB := range sb.Bundles {
-				// z_s = zeta * omega_N^s
-				var omegaShift koalabear.Element
-				omegaShift.Exp(traceGen, big.NewInt(int64(shB.Shift)))
-				zs := zeta
-				zs.MulByElement(&zs, &omegaShift)
-
-				var v_s, C_at_X, C_at_negX ext.E6
-
-				for _, e := range shB.Entries {
-					// Look up the claimed value.
-					gShifts := shifts[e.BatchIdx][e.GroupIdx]
-					gValues := proof.ClaimedValues[e.BatchIdx][e.GroupIdx]
-
-					var v ext.E6
-					if e.Field == field.Base {
-						kth := containsIntIndex(gShifts.Base[e.PolyIdx], shB.Shift)
-						v = gValues.Base[e.PolyIdx][kth]
-					} else {
-						kth := containsIntIndex(gShifts.Ext[e.PolyIdx], shB.Shift)
-						v = gValues.Ext[e.PolyIdx][kth]
+			for b, batchSizes := range sizes {
+				for g, groupSize := range batchSizes {
+					if groupSize != N {
+						continue
 					}
-
-					// Look up the authenticated raw row pair at this query position.
-					injIdx := declToInjIdx(e.BatchIdx, e.GroupIdx)
+					injIdx := declToInjIdx(b, g)
 					if injIdx < 0 {
-						return fmt.Errorf("fri: PCS.Verify: cannot map (batch=%d, group=%d) to compact proof group index", e.BatchIdx, e.GroupIdx)
+						return fmt.Errorf("fri: PCS.Verify: cannot map (batch=%d, group=%d) to compact proof group index", b, g)
 					}
-					raw, err := rawRowsForGroup(proof.PointSamplings[q][e.BatchIdx], injIdx)
+					raw, err := rawRowsForGroup(proof.PointSamplings[q][b], injIdx)
 					if err != nil {
 						return fmt.Errorf("fri: PCS.Verify: compact proof group %d: %w", injIdx, err)
 					}
 
-					var leafP, leafQ ext.E6
-					if e.Field == field.Base {
-						leafP = hash.LiftBaseToExt(raw.Lo.RawRowBase[e.PolyIdx])
-						leafQ = hash.LiftBaseToExt(raw.Hi.RawRowBase[e.PolyIdx])
-					} else {
-						leafP.Set(&raw.Lo.RawRowExt[e.PolyIdx])
-						leafQ.Set(&raw.Hi.RawRowExt[e.PolyIdx])
+					gShifts := shifts[b][g]
+					gValues := proof.ClaimedValues[b][g]
+					for i, ss := range gShifts.Base {
+						leafP := hash.LiftBaseToExt(raw.Lo.RawRowBase[i])
+						leafQ := hash.LiftBaseToExt(raw.Hi.RawRowBase[i])
+						addBridgePolynomialBundle(&DQ_P, &DQ_Q, ss, gValues.Base[i], alphaRunning, zeta, traceGen, N, leafP, leafQ, X, negX)
+						alphaRunning.Mul(&alphaRunning, &alpha)
 					}
-
-					var term ext.E6
-					term.Mul(&v, &alphaRunning)
-					v_s.Add(&v_s, &term)
-					term.Mul(&leafP, &alphaRunning)
-					C_at_X.Add(&C_at_X, &term)
-					term.Mul(&leafQ, &alphaRunning)
-					C_at_negX.Add(&C_at_negX, &term)
-
-					alphaRunning.Mul(&alphaRunning, &alpha)
+					for i, ss := range gShifts.Ext {
+						var leafP, leafQ ext.E6
+						leafP.Set(&raw.Lo.RawRowExt[i])
+						leafQ.Set(&raw.Hi.RawRowExt[i])
+						addBridgePolynomialBundle(&DQ_P, &DQ_Q, ss, gValues.Ext[i], alphaRunning, zeta, traceGen, N, leafP, leafQ, X, negX)
+						alphaRunning.Mul(&alphaRunning, &alpha)
+					}
 				}
-
-				// DQ_P += (v_s - C_at_X) / (z_s - X)
-				var num, denom ext.E6
-				num.Sub(&v_s, &C_at_X)
-				denom.Sub(&zs, &X)
-				denom.Inverse(&denom)
-				num.Mul(&num, &denom)
-				DQ_P.Add(&DQ_P, &num)
-
-				// DQ_Q += (v_s - C_at_negX) / (z_s - -X)
-				num.Sub(&v_s, &C_at_negX)
-				denom.Sub(&zs, &negX)
-				denom.Inverse(&denom)
-				num.Mul(&num, &denom)
-				DQ_Q.Add(&DQ_Q, &num)
 			}
 
-			// Read the FRI level-sizeIdx leaf at query q and compare.
 			var actualP, actualQ ext.E6
 			if sizeIdx == 0 {
 				layer := proof.FRIProof.FRIQueries[q].Layers[0]
@@ -643,4 +583,45 @@ func checkFRIBridge(
 	}
 
 	return nil
+}
+
+func addBridgePolynomialBundle(
+	DQ_P *ext.E6,
+	DQ_Q *ext.E6,
+	shifts []int,
+	values []ext.E6,
+	scale ext.E6,
+	zeta ext.E6,
+	traceGen koalabear.Element,
+	N int,
+	leafP ext.E6,
+	leafQ ext.E6,
+	X ext.E6,
+	negX ext.E6,
+) {
+	var bundleP, bundleQ ext.E6
+	for k, s := range shifts {
+		var omegaShift koalabear.Element
+		omegaShift.Exp(traceGen, big.NewInt(int64(normalizeShift(s, N))))
+		zs := zeta
+		zs.MulByElement(&zs, &omegaShift)
+
+		var num, denom ext.E6
+		num.Sub(&values[k], &leafP)
+		denom.Sub(&zs, &X)
+		denom.Inverse(&denom)
+		num.Mul(&num, &denom)
+		bundleP.Add(&bundleP, &num)
+
+		num.Sub(&values[k], &leafQ)
+		denom.Sub(&zs, &negX)
+		denom.Inverse(&denom)
+		num.Mul(&num, &denom)
+		bundleQ.Add(&bundleQ, &num)
+	}
+
+	bundleP.Mul(&bundleP, &scale)
+	DQ_P.Add(DQ_P, &bundleP)
+	bundleQ.Mul(&bundleQ, &scale)
+	DQ_Q.Add(DQ_Q, &bundleQ)
 }

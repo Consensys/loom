@@ -285,15 +285,15 @@ func TestOpenFRIVerifyRoundtrip(t *testing.T) {
 	}
 
 	// Replay Open's internal bindings: alpha_DEEP registration, claimed
-	// values bound in canonical order, sample alpha_DEEP.
+	// values bound in the D3 per-polynomial order, sample alpha_DEEP.
 	if err := verifierFS.NewChallenge(deepAlphaName); err != nil {
 		t.Fatal(err)
 	}
-	lay, err := canonicalLayout(batches, shifts)
+	sizes, err := groupNativeSizesFromBatches(batches)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := bindClaimedValuesInLayoutOrder(verifierFS, openProof.ClaimedValues, shifts, lay); err != nil {
+	if err := bindClaimedValuesByPolynomialOrder(verifierFS, openProof.ClaimedValues, shifts, sizes); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := verifierFS.ComputeChallenge(deepAlphaName); err != nil {
@@ -302,7 +302,7 @@ func TestOpenFRIVerifyRoundtrip(t *testing.T) {
 
 	// sizesDesc is just the set of distinct group sizes in descending
 	// order -- the same enumeration Open used to build FRI levels.
-	sizesDesc := distinctSizesDescending(batches)
+	sizesDesc := sizesDescFromSizes(sizes)
 	if got := len(openProof.DeepQuotientRoots); got != len(sizesDesc) {
 		t.Fatalf("DeepQuotientRoots = %d, sizesDesc = %d", got, len(sizesDesc))
 	}
@@ -431,32 +431,6 @@ func runOpenFixture(
 		t.Fatalf("Open: %v", err)
 	}
 	return committed, openProof, params, zeta
-}
-
-// distinctSizesDescending mirrors what computeDeepQuotientCodewords
-// returns as sizesDesc -- needed by the caller of fri.Verify, which
-// must know the level Ds independently of the proof.
-func distinctSizesDescending(batches []Batch) []int {
-	seen := map[int]struct{}{}
-	for _, b := range batches {
-		for _, g := range b {
-			N, _ := groupNativeSize(g)
-			seen[N] = struct{}{}
-		}
-	}
-	out := make([]int, 0, len(seen))
-	for n := range seen {
-		out = append(out, n)
-	}
-	// Insertion sort descending; tiny n.
-	for i := 1; i < len(out); i++ {
-		j := i
-		for j > 0 && out[j] > out[j-1] {
-			out[j], out[j-1] = out[j-1], out[j]
-			j--
-		}
-	}
-	return out
 }
 
 // Test-only constants and helpers shared between Open tests.
