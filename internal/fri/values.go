@@ -39,10 +39,10 @@ import (
 // arithmetic (uses Go's `%`) stays in bounds for negative and
 // large-positive shifts alike.
 //
-// computeClaimedValues only enforces shape alignment (lengths match
-// across batches/shifts and per-rail widths match). The empty-list /
-// duplicate-shift validation is delegated to canonicalLayout, which the
-// caller is expected to invoke alongside this helper.
+// computeClaimedValues only enforces shape alignment (lengths match across
+// batches/shifts and per-rail widths match). The empty-list and duplicate-shift
+// invariants are enforced by validateBatchShifts / validateBatchShiftsFromShapes,
+// which Open and Verify call before deriving alpha_DEEP.
 func computeClaimedValues(batches []Batch, shifts []BatchShifts, zeta ext.E6, domainCache *poly.DomainCache) ([]BatchClaimedValues, error) {
 	_ = domainCache // reserved for forward compatibility
 

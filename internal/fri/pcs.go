@@ -40,16 +40,15 @@ type PCS struct {
 	nodeHasher NodeHasher
 	rate       uint64
 
-	// params carries the multi-degree FRI configuration consumed by Open
-	// (and, in a later PR, Verify). nil when the PCS was constructed via
-	// NewPCS for Commit-only use; Open errors out in that case.
+	// params carries the multi-degree FRI configuration consumed by Open and
+	// Verify. nil when the PCS was constructed via NewPCS for Commit-only use.
 	params *Params
 }
 
 // NewPCS constructs a PCS bound to a Reed-Solomon blowup factor (rate) and
 // the leaf/node hashers used at every Merkle tree level. Suitable for
-// Commit-only callers. Open requires Params -- use NewPCSWithParams when
-// the PCS will be opened.
+// Commit-only callers. Open and Verify require Params -- use NewPCSWithParams
+// when the PCS will be opened or verified.
 func NewPCS(rate uint64, leafHasher LeafHasher, nodeHasher NodeHasher) PCS {
 	return PCS{
 		leafHasher: leafHasher,
@@ -60,7 +59,7 @@ func NewPCS(rate uint64, leafHasher LeafHasher, nodeHasher NodeHasher) PCS {
 
 // NewPCSWithParams constructs a PCS bound to the multi-degree FRI
 // parameters (carrying the leaf/node hashers and the rate = params.N /
-// params.D). The returned PCS supports both Commit and Open.
+// params.D). The returned PCS supports Commit, Open, and Verify.
 func NewPCSWithParams(params Params) PCS {
 	return PCS{
 		leafHasher: params.LeafHasher,
@@ -89,8 +88,8 @@ type Committed struct {
 //
 // A shift s means the polynomial is opened at zeta * omega_N^s where
 // omega_N is the generator of the polynomial's native size-N domain (the
-// Group's size). Shift lists must be non-empty and contain no duplicates;
-// the future Open / Verify will reject inputs violating either rule.
+// Group's size). Shift lists must be non-empty and contain no duplicate
+// opening points modulo N; Open and Verify reject inputs violating either rule.
 type GroupShifts struct {
 	Base [][]int
 	Ext  [][]int
@@ -123,7 +122,8 @@ type BatchClaimedValues = []GroupClaimedValues
 //   - ClaimedValues[b] is the GroupClaimedValues slice for batches[b], in
 //     the same order Open / Verify received batches and shifts.
 //   - DeepQuotientRoots is one Merkle root per distinct native size in
-//     decreasing size order (same order as the FRI levels).
+//     decreasing size order (same order as the per-polynomial DEEP quotient
+//     FRI levels).
 //   - FRIProof is the multi-degree FRI proof on the DEEP-quotient
 //     codewords.
 //   - PointSamplings[q][b] is the WMerkleProof opening batches[b] at the
@@ -140,8 +140,7 @@ type OpeningProof struct {
 // Commit commits to one Batch of polynomials and returns the per-batch
 // prover-side blob. The current implementation is a thin wrapper over
 // RSCommit; PCS keeps no state across Commit calls -- callers stash one
-// Committed per Commit invocation and (in a later PR) hand the whole
-// slice to Open.
+// Committed per Commit invocation and hand the whole slice to Open.
 //
 // The caller is responsible for binding committed.Tree.Root() to the
 // shared Fiat-Shamir transcript at the appropriate round before invoking

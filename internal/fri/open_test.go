@@ -285,7 +285,7 @@ func TestOpenFRIVerifyRoundtrip(t *testing.T) {
 	}
 
 	// Replay Open's internal bindings: alpha_DEEP registration, claimed
-	// values bound in the D3 per-polynomial order, sample alpha_DEEP.
+	// values bound in per-polynomial order, sample alpha_DEEP.
 	if err := verifierFS.NewChallenge(deepAlphaName); err != nil {
 		t.Fatal(err)
 	}
@@ -338,10 +338,8 @@ func TestOpenRejectsCommitOnlyPCS(t *testing.T) {
 	}
 }
 
-// TestOpenRejectsShapeMismatch confirms Open propagates the canonical-
-// layout shape-mismatch errors from PR2 (top-level batches/shifts length
-// mismatch in this case; per-poly invariants are exhaustively tested in
-// layout_test.go / values_test.go).
+// TestOpenRejectsShapeMismatch confirms Open propagates shape-helper
+// mismatches before computing claimed values.
 func TestOpenRejectsShapeMismatch(t *testing.T) {
 	batches := []Batch{
 		{{Base: []poly.Polynomial{{baseElement(1), baseElement(2), baseElement(3), baseElement(4)}}}},
@@ -440,7 +438,3 @@ func freshTranscriptForTest() *fiatshamir.Transcript {
 	hasher := hash.NewPoseidon2SpongeHasher()
 	return fiatshamir.NewTranscript(&hasher)
 }
-
-// Silence unused import warning when only a subset of tests references
-// field.Kind via canonicalLayout indirection.
-var _ = field.Base

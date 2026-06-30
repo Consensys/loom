@@ -18,7 +18,6 @@ import (
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
-	"github.com/consensys/loom/field"
 	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/poly"
@@ -148,7 +147,7 @@ func (pcs *PCS) Open(
 		return OpeningProof{}, fmt.Errorf("fri: PCS.Open: register alpha_DEEP: %w", err)
 	}
 
-	// 4- Bind every claimed value to alpha_DEEP in the D3 order: size desc,
+	// 4- Bind every claimed value to alpha_DEEP in per-polynomial order: size desc,
 	//    batch declaration order, group declaration order, base polys then
 	//    ext polys, and shifts in the user's declared order.
 	if err := bindClaimedValuesByPolynomialOrder(fs, claimedValues, shifts, sizes); err != nil {
@@ -225,7 +224,7 @@ func (pcs *PCS) Open(
 	}, nil
 }
 
-// bindClaimedValuesByPolynomialOrder binds every claimed value using the D3
+// bindClaimedValuesByPolynomialOrder binds every claimed value using the
 // per-polynomial order. The order matches computeDeepQuotientCodewordsByPolynomial:
 // size descending, batch declaration order, group declaration order, base rail
 // then extension rail. Inside one polynomial, all requested shifts are bound in
@@ -288,40 +287,6 @@ func bindClaimedValuesByPolynomialOrder(
 								N, b, g, i, s, err)
 						}
 					}
-				}
-			}
-		}
-	}
-	return nil
-}
-
-// bindClaimedValuesInLayoutOrder walks lay in canonical order and binds
-// each entry's claimed value to alpha_DEEP. The order MUST match the
-// order in which computeDeepQuotientCodewords consumes alpha-powers,
-// otherwise the prover and verifier disagree on the binding sequence and
-// reject each other's transcript.
-func bindClaimedValuesInLayoutOrder(
-	fs *fiatshamir.Transcript,
-	claimedValues []BatchClaimedValues,
-	shifts []BatchShifts,
-	lay layout,
-) error {
-	for _, sb := range lay {
-		for _, shB := range sb.Bundles {
-			for _, e := range shB.Entries {
-				gShifts := shifts[e.BatchIdx][e.GroupIdx]
-				gValues := claimedValues[e.BatchIdx][e.GroupIdx]
-				var v ext.E6
-				if e.Field == field.Base {
-					kth := containsIntIndex(gShifts.Base[e.PolyIdx], shB.Shift)
-					v = gValues.Base[e.PolyIdx][kth]
-				} else {
-					kth := containsIntIndex(gShifts.Ext[e.PolyIdx], shB.Shift)
-					v = gValues.Ext[e.PolyIdx][kth]
-				}
-				if err := fs.Bind(deepAlphaName, hash.ExtToElements(v)); err != nil {
-					return fmt.Errorf("fri: bind claimed value (batch=%d group=%d poly=%d field=%s shift=%d): %w",
-						e.BatchIdx, e.GroupIdx, e.PolyIdx, e.Field, shB.Shift, err)
 				}
 			}
 		}

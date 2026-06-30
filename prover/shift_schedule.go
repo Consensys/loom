@@ -138,7 +138,8 @@ func BuildCanonicalSchedule(program board.Program, layout Layout) CanonicalSched
 
 	// 2- Invert layout.ColSlot / layout.AIRChunkSlot into per-tree rail
 	//    lists ordered by Slot.PolyIdx -- the same order the prover commits
-	//    polynomials in (and that fri.canonicalLayout enumerates).
+	//    polynomials in and that PCS.Open / PCS.Verify use for per-polynomial
+	//    DEEP quotient traversal.
 	type railList struct {
 		base []string
 		ext  []string

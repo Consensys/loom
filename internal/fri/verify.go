@@ -93,7 +93,7 @@ func (pcs *PCS) Verify(
 	}
 
 	// 3- Replay the prover's alpha_DEEP derivation: register, bind values
-	//    in canonical order, sample.
+	//    in per-polynomial order, sample.
 	if err := fs.NewChallenge(deepAlphaName); err != nil {
 		return fmt.Errorf("fri: PCS.Verify: register alpha_DEEP: %w", err)
 	}

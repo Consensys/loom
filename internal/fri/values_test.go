@@ -213,7 +213,8 @@ func TestComputeClaimedValuesShiftWraparound(t *testing.T) {
 
 // TestComputeClaimedValuesShapeMismatchErrors covers the shape-alignment
 // failure paths. Per-poly validation (empty / duplicate shift list) is
-// the responsibility of canonicalLayout and is exercised in layout_test.go.
+// the responsibility of validateBatchShifts and is exercised in the
+// shape-helper tests.
 func TestComputeClaimedValuesShapeMismatchErrors(t *testing.T) {
 	t.Run("len(shifts) != len(batches)", func(t *testing.T) {
 		batches := []Batch{

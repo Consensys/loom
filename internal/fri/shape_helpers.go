@@ -157,6 +157,26 @@ func validateBatchShiftsFromSizes(sizes [][]int, shifts []BatchShifts) error {
 	return nil
 }
 
+func validatePolyShifts(batchIdx, groupIdx int, rail string, N int, polyShifts [][]int) error {
+	for polyIdx, ss := range polyShifts {
+		if len(ss) == 0 {
+			return fmt.Errorf("fri: shifts[%d][%d].%s[%d] has empty shift list", batchIdx, groupIdx, rail, polyIdx)
+		}
+		seen := make(map[int]int, len(ss))
+		for _, s := range ss {
+			normalized := normalizeShift(s, N)
+			if prev, ok := seen[normalized]; ok {
+				if prev == s {
+					return fmt.Errorf("fri: shifts[%d][%d].%s[%d] has duplicate shift %d", batchIdx, groupIdx, rail, polyIdx, s)
+				}
+				return fmt.Errorf("fri: shifts[%d][%d].%s[%d] has duplicate shift modulo %d: %d and %d", batchIdx, groupIdx, rail, polyIdx, N, prev, s)
+			}
+			seen[normalized] = s
+		}
+	}
+	return nil
+}
+
 func sizesDescFromSizes(sizes [][]int) []int {
 	sizeSet := make(map[int]struct{})
 	for _, batchSizes := range sizes {
