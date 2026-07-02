@@ -46,7 +46,7 @@ func randomExtPoly(n int) []ext.E6 {
 	return elems
 }
 
-// buildLevelTree builds the row-leaf Merkle tree expected by FRI for a
+// buildLevelTree builds the pair-leaf Merkle tree expected by FRI for a
 // single-poly level (helper around p.BuildLevelTree).
 func buildLevelTree(t *testing.T, p fri.Params, layer []koalabear.Element) *merkle.Tree {
 	t.Helper()

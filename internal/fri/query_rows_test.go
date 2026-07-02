@@ -39,8 +39,12 @@ func TestOpenQueryBaseUsesFullRows(t *testing.T) {
 			if got.Row != row {
 				t.Fatalf("s=%d layer=%d: row = %d, want %d", s, j, got.Row, row)
 			}
-			if got.Path.LeafIdx != lo {
-				t.Fatalf("s=%d layer=%d: Path row = %d, want %d", s, j, got.Path.LeafIdx, lo)
+			pairIdx := lo / 2
+			if got.Path.LeafIdx != pairIdx {
+				t.Fatalf("s=%d layer=%d: Path pair = %d, want %d", s, j, got.Path.LeafIdx, pairIdx)
+			}
+			if got, want := len(got.Path.Siblings), log2(len(layer)/2); got != want {
+				t.Fatalf("s=%d layer=%d: path depth = %d, want %d", s, j, got, want)
 			}
 			if !got.LeafPBase.Equal(&layer[lo]) {
 				t.Fatalf("s=%d layer=%d: LeafP mismatch", s, j)
@@ -48,9 +52,9 @@ func TestOpenQueryBaseUsesFullRows(t *testing.T) {
 			if !got.LeafQBase.Equal(&layer[hi]) {
 				t.Fatalf("s=%d layer=%d: LeafQ mismatch", s, j)
 			}
-			leafQ := DefaultLeafHasher.HashLeaf([]koalabear.Element{got.LeafQBase}, nil)
-			if len(got.Path.Siblings) == 0 || got.Path.Siblings[0] != leafQ {
-				t.Fatalf("s=%d layer=%d: companion sibling mismatch", s, j)
+			pairLeaf := DefaultLeafHasher.HashLeaf([]koalabear.Element{got.LeafPBase, got.LeafQBase}, nil)
+			if !merkle.Verify(trees[j].Root(), got.Path, pairLeaf, DefaultNodeHasher) {
+				t.Fatalf("s=%d layer=%d: pair-leaf Merkle proof rejected", s, j)
 			}
 		}
 	}
@@ -86,8 +90,12 @@ func TestOpenQueryExtUsesFullRows(t *testing.T) {
 			if got.Row != row {
 				t.Fatalf("s=%d layer=%d: row = %d, want %d", s, j, got.Row, row)
 			}
-			if got.Path.LeafIdx != lo {
-				t.Fatalf("s=%d layer=%d: Path row = %d, want %d", s, j, got.Path.LeafIdx, lo)
+			pairIdx := lo / 2
+			if got.Path.LeafIdx != pairIdx {
+				t.Fatalf("s=%d layer=%d: Path pair = %d, want %d", s, j, got.Path.LeafIdx, pairIdx)
+			}
+			if got, want := len(got.Path.Siblings), log2(len(layer)/2); got != want {
+				t.Fatalf("s=%d layer=%d: path depth = %d, want %d", s, j, got, want)
 			}
 			if !got.LeafPExt.Equal(&layer[lo]) {
 				t.Fatalf("s=%d layer=%d: LeafP mismatch", s, j)
@@ -95,9 +103,9 @@ func TestOpenQueryExtUsesFullRows(t *testing.T) {
 			if !got.LeafQExt.Equal(&layer[hi]) {
 				t.Fatalf("s=%d layer=%d: LeafQ mismatch", s, j)
 			}
-			leafQ := DefaultLeafHasher.HashLeaf(nil, []ext.E6{got.LeafQExt})
-			if len(got.Path.Siblings) == 0 || got.Path.Siblings[0] != leafQ {
-				t.Fatalf("s=%d layer=%d: companion sibling mismatch", s, j)
+			pairLeaf := DefaultLeafHasher.HashLeaf(nil, []ext.E6{got.LeafPExt, got.LeafQExt})
+			if !merkle.Verify(trees[j].Root(), got.Path, pairLeaf, DefaultNodeHasher) {
+				t.Fatalf("s=%d layer=%d: pair-leaf Merkle proof rejected", s, j)
 			}
 		}
 	}
