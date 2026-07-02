@@ -218,9 +218,9 @@ func liftBaseToExt(v koalabear.Element) ext.E6 {
 
 func (vr *verifierRunTime) deriveChallenges() error {
 
-	// For each FS round, bind every per-size trace root (decreasing N order,
-	// matching the prover) before computing the round challenge. Setup roots
-	// were already bound to challenge_0 in newVerifierRuntime.
+	// For each FS round, bind every trace root for that round before computing
+	// the round challenge. A non-empty round normally has one mixed-size root.
+	// Setup roots were already bound to challenge_0 in newVerifierRuntime.
 	numRounds := len(vr.program.FScolumnsDependencies)
 	for r := 0; r < numRounds; r++ {
 		challengeName := constants.CanonicalChallengeName(r)

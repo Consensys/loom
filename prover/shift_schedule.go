@@ -31,9 +31,9 @@ import (
 // alpha_DEEP binding order depends on it.
 type CanonicalSchedule struct {
 	// Shifts[b] is the fri.BatchShifts for the b-th batch in the canonical
-	// commitment-tree order: setup batches (decreasing N) → trace-round-r
-	// batches (decreasing N) → AIR batches (decreasing N). Each batch may
-	// contain one or more declaration-order groups.
+	// commitment-tree order: setup batches (decreasing N) → trace-round
+	// batches → AIR batches (decreasing N). Each trace batch may contain
+	// several declaration-order groups in decreasing native size.
 	Shifts []fri.BatchShifts
 
 	// Keys is parallel to Shifts. Keys[b][g].Base[i][k] is the list of

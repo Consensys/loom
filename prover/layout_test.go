@@ -174,6 +174,50 @@ func TestBuildLayoutRailRelativePolyIdx(t *testing.T) {
 	}
 }
 
+func TestBuildLayoutMixedSizeTraceRoundUsesSingleTree(t *testing.T) {
+	program := board.Program{
+		Modules: map[string]board.CompiledModule{
+			"big":   {Name: "big", N: 8},
+			"small": {Name: "small", N: 4},
+		},
+		FScolumnsDependencies: [][]board.ColumnRef{
+			{
+				{Name: "small_0", Module: "small", Field: field.Base},
+				{Name: "big_0", Module: "big", Field: field.Base},
+				{Name: "small_ext", Module: "small", Field: field.Ext},
+				{Name: "big_1", Module: "big", Field: field.Base},
+			},
+		},
+	}
+
+	layout := BuildLayout(program, 0)
+
+	if got := layout.NumTrees; got != 1 {
+		t.Fatalf("NumTrees = %d, want 1", got)
+	}
+	if got := layout.TraceEnd[0] - layout.TraceBegin[0]; got != 1 {
+		t.Fatalf("trace round 0 has %d trees, want 1", got)
+	}
+	if wantTreeSize := []int{8}; !reflect.DeepEqual(layout.TreeSize, wantTreeSize) {
+		t.Errorf("TreeSize = %v, want %v", layout.TreeSize, wantTreeSize)
+	}
+	if wantTreeGroups := [][]TreeGroup{{{N: 8}, {N: 4}}}; !reflect.DeepEqual(layout.TreeGroups, wantTreeGroups) {
+		t.Errorf("TreeGroups = %v, want %v", layout.TreeGroups, wantTreeGroups)
+	}
+
+	wantColSlot := map[string]Slot{
+		"big_0":     {TreeIdx: 0, GroupIdx: 0, PolyIdx: 0, Field: field.Base},
+		"big_1":     {TreeIdx: 0, GroupIdx: 0, PolyIdx: 1, Field: field.Base},
+		"small_0":   {TreeIdx: 0, GroupIdx: 1, PolyIdx: 0, Field: field.Base},
+		"small_ext": {TreeIdx: 0, GroupIdx: 1, PolyIdx: 0, Field: field.Ext},
+	}
+	for name, want := range wantColSlot {
+		if got := layout.ColSlot[name]; got != want {
+			t.Errorf("ColSlot[%q] = %+v, want %+v", name, got, want)
+		}
+	}
+}
+
 func TestBuildCanonicalScheduleSupportsMultipleGroupsPerTree(t *testing.T) {
 	layout := Layout{
 		NumTrees:   1,

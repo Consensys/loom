@@ -106,9 +106,9 @@ type proverRuntime struct {
 	// so prover and verifier produce identical schedules.
 	schedule CanonicalSchedule
 	// committed[i] is the per-batch fri.Committed for tree i in canonical
-	// order (setup → trace per round → AIR). Setup committeds are copied
-	// from provingKey.Setup at construction; trace and AIR slots get
-	// populated by commitTraceRound and ComputeAIRQuotients.
+	// order (setup → trace rounds → AIR). Setup committeds are copied from
+	// provingKey.Setup at construction; trace and AIR slots get populated by
+	// commitTraceRound and ComputeAIRQuotients.
 	committed []fri.Committed
 
 	t            trace.Trace
@@ -158,7 +158,7 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 	res.schedule = BuildCanonicalSchedule(program, res.layout)
 
 	// committed[i] is the i-th batch's full Committed in canonical order
-	// (setup → trace per round → AIR). Setup slots are filled now; the
+	// (setup → trace rounds → AIR). Setup slots are filled now; the
 	// trace and AIR slots are populated by commitTraceRound and
 	// ComputeAIRQuotients. proof.Commitments stores ONLY the trace+AIR
 	// roots; setup roots come from the verifier's VerificationKey.
@@ -283,75 +283,70 @@ type mixedCommitGroup struct {
 	ext  []poly.ExtPolynomial
 }
 
-func traceColumnAsExt(t trace.Trace, name string) (poly.ExtPolynomial, bool) {
-	if p, ok := t.Ext[name]; ok {
-		return p, true
+func buildBatchFromNames(batchNames BatchNames, base map[string]poly.Polynomial, ext map[string]poly.ExtPolynomial, errPrefix string, liftExtFromBase bool) (fri.Batch, error) {
+	batch := make(fri.Batch, len(batchNames))
+	for groupIdx, names := range batchNames {
+		basePolys := make([]poly.Polynomial, len(names.Base))
+		for i, name := range names.Base {
+			p, ok := base[name]
+			if !ok {
+				return nil, fmt.Errorf("%s: group %d base poly %q not found", errPrefix, groupIdx, name)
+			}
+			basePolys[i] = p
+		}
+		extPolys := make([]poly.ExtPolynomial, len(names.Ext))
+		for i, name := range names.Ext {
+			p, ok := ext[name]
+			if !ok && liftExtFromBase {
+				if basePoly, ok := base[name]; ok {
+					p = liftPolynomialToExt(basePoly)
+					ok = true
+				}
+			}
+			if !ok {
+				return nil, fmt.Errorf("%s: group %d ext poly %q not found", errPrefix, groupIdx, name)
+			}
+			extPolys[i] = p
+		}
+		batch[groupIdx] = fri.Group{Base: basePolys, Ext: extPolys}
 	}
-	if p, ok := t.Base[name]; ok {
-		return liftPolynomialToExt(p), true
-	}
-	return nil, false
+	return batch, nil
 }
 
 func (pr *proverRuntime) commitTraceRound(roundIdx int, challengeName string) error {
-	deps := pr.program.FScolumnsDependencies[roundIdx]
-	polysByN := map[int]*mixedCommitGroup{}
+	begin := pr.layout.TraceBegin[roundIdx]
+	end := pr.layout.TraceEnd[roundIdx]
+	if begin == end {
+		return nil
+	}
+	if end != begin+1 {
+		return fmt.Errorf("commitTraceRound: round %d: expected one trace tree, got %d", roundIdx, end-begin)
+	}
 
+	treeIdx := begin
 	pr.mu.Lock()
-	for _, dep := range deps {
-		m, ok := pr.program.Modules[dep.Module]
-		if !ok {
-			pr.mu.Unlock()
-			return fmt.Errorf("ExecuteSteps: column %q references unknown module %q", dep.Name, dep.Module)
-		}
-		group := polysByN[m.N]
-		if group == nil {
-			group = &mixedCommitGroup{}
-			polysByN[m.N] = group
-		}
-		if dep.Field == field.Ext {
-			p, ok := traceColumnAsExt(pr.t, dep.Name)
-			if !ok {
-				pr.mu.Unlock()
-				return fmt.Errorf("ExecuteSteps: extension column %q not found in trace", dep.Name)
-			}
-			group.ext = append(group.ext, p)
-			continue
-		}
-		p, ok := pr.t.Base[dep.Name]
-		if !ok {
-			pr.mu.Unlock()
-			return fmt.Errorf("ExecuteSteps: base column %q not found in trace", dep.Name)
-		}
-		group.base = append(group.base, p)
-	}
+	batch, err := buildBatchFromNames(
+		pr.schedule.ColNamesByTree[treeIdx],
+		pr.t.Base,
+		pr.t.Ext,
+		fmt.Sprintf("commitTraceRound: round %d tree %d", roundIdx, treeIdx),
+		true,
+	)
 	pr.mu.Unlock()
-
-	sizes := make([]int, 0, len(polysByN))
-	for n := range polysByN {
-		sizes = append(sizes, n)
+	if err != nil {
+		return err
 	}
-	sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
 
-	base := pr.layout.TraceBegin[roundIdx]
-	for i, N := range sizes {
-		group := polysByN[N]
-		pcs := fri.NewPCS(uint64(constants.RATE), pr.hashBackend.LeafHasher, pr.hashBackend.NodeHasher)
-		committed, err := pcs.Commit(
-			[]fri.Group{{Base: group.base, Ext: group.ext}},
-			fri.WithDomainCache(&pr.domainCache),
-		)
-		if err != nil {
-			return err
-		}
-		treeIdx := base + i
-		pr.committed[treeIdx] = committed
-		root := committed.Tree.Root()
-		pr.Proof.Commitments[pr.commitIdxOf(treeIdx)] = root
-		if err := pr.fs.Bind(challengeName, root[:]); err != nil {
-			return err
-		}
-		_ = N
+	pcs := fri.NewPCS(uint64(constants.RATE), pr.hashBackend.LeafHasher, pr.hashBackend.NodeHasher)
+	committed, err := pcs.Commit(batch, fri.WithDomainCache(&pr.domainCache))
+	if err != nil {
+		return err
+	}
+	pr.committed[treeIdx] = committed
+	root := committed.Tree.Root()
+	pr.Proof.Commitments[pr.commitIdxOf(treeIdx)] = root
+	if err := pr.fs.Bind(challengeName, root[:]); err != nil {
+		return err
 	}
 
 	return nil
@@ -604,26 +599,15 @@ func (pr *proverRuntime) buildBatches() ([]fri.Batch, error) {
 			traceExt = pr.airTrace.Ext
 		}
 
-		batchNames := pr.schedule.ColNamesByTree[treeIdx]
-		batch := make(fri.Batch, len(batchNames))
-		for groupIdx, names := range batchNames {
-			basePolys := make([]poly.Polynomial, len(names.Base))
-			for i, name := range names.Base {
-				p, ok := traceBase[name]
-				if !ok {
-					return nil, fmt.Errorf("buildBatches: tree %d group %d base poly %q not found", treeIdx, groupIdx, name)
-				}
-				basePolys[i] = p
-			}
-			extPolys := make([]poly.ExtPolynomial, len(names.Ext))
-			for i, name := range names.Ext {
-				p, ok := traceExt[name]
-				if !ok {
-					return nil, fmt.Errorf("buildBatches: tree %d group %d ext poly %q not found", treeIdx, groupIdx, name)
-				}
-				extPolys[i] = p
-			}
-			batch[groupIdx] = fri.Group{Base: basePolys, Ext: extPolys}
+		batch, err := buildBatchFromNames(
+			pr.schedule.ColNamesByTree[treeIdx],
+			traceBase,
+			traceExt,
+			fmt.Sprintf("buildBatches: tree %d", treeIdx),
+			!isAIR,
+		)
+		if err != nil {
+			return nil, err
 		}
 		batches[treeIdx] = batch
 	}

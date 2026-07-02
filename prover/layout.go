@@ -51,7 +51,10 @@ type TreeGroup struct {
 //
 // Tree order (flat):
 //
-//	[setup, decreasing N] [trace-round-0, decreasing N] … [trace-round-{r-1}] [AIR, decreasing N]
+//	[setup, decreasing N] [trace-round-0] … [trace-round-{r-1}] [AIR, decreasing N]
+//
+// Each non-empty trace round occupies one tree whose groups are ordered by
+// decreasing native size. Setup and AIR sections still use one tree per size.
 //
 // The setup section length is given by the proving/verification key (i.e. the
 // number of distinct sizes among program.SetupColumns).
@@ -67,13 +70,12 @@ type Layout struct {
 	AIRBegin   int
 	AIREnd     int // = NumTrees
 
-	// Per-tree polynomial size N (the encoded tree has 2·N·RATE/2 leaves).
-	// Base and extension polynomial rails share the same tree for a given N.
+	// Per-tree top polynomial size N. For mixed trace trees this is the
+	// largest group size; for setup and AIR trees it is the tree's only size.
 	TreeSize []int
 
-	// Per-tree group metadata. PR1 keeps every tree single-group, so
-	// TreeGroups[t][0].N == TreeSize[t]; later trace-round compaction can
-	// add several groups to one tree without changing the schedule shape.
+	// Per-tree group metadata. Trace trees can contain several groups in
+	// decreasing N; setup and AIR trees remain single-group.
 	TreeGroups [][]TreeGroup
 
 	// Column-name → Slot for trace columns and setup public columns.
@@ -135,8 +137,9 @@ func BuildLayout(program board.Program, numSetupSizes int) Layout {
 	for r, deps := range program.FScolumnsDependencies {
 		layout.TraceBegin[r] = treeIdx
 
-		// Group dependencies by size, decreasing N. Stable order within a
-		// size group (matches prover's commit order).
+		// Group dependencies by size, decreasing N. Every non-empty round is
+		// committed as a single mixed-size tree, with one group per size.
+		// Stable order within a size group matches the dependency order.
 		depsByN := map[int][]board.ColumnRef{}
 		for _, dep := range deps {
 			m, ok := program.Modules[dep.Module]
@@ -146,18 +149,24 @@ func BuildLayout(program board.Program, numSetupSizes int) Layout {
 			depsByN[m.N] = append(depsByN[m.N], dep)
 		}
 		sizes := sortedSizesDesc(depsByN)
-		for _, N := range sizes {
-			group := depsByN[N]
-			// Preserve iteration order of FScolumnsDependencies[r] within a
-			// size by NOT re-sorting here — matches prover's polysByN append
-			// order in ExecuteSteps.
-			railIdx := map[field.Kind]int{}
-			for _, dep := range group {
-				polyIdx := nextRailPolyIdx(railIdx, dep.Field)
-				layout.ColSlot[dep.Name] = Slot{TreeIdx: treeIdx, GroupIdx: 0, PolyIdx: polyIdx, Field: dep.Field}
+		if len(sizes) > 0 {
+			roundTreeIdx := treeIdx
+			groups := make([]TreeGroup, len(sizes))
+			layout.TreeSize = append(layout.TreeSize, sizes[0])
+			for groupIdx, N := range sizes {
+				groups[groupIdx] = TreeGroup{N: N}
 			}
-			layout.TreeSize = append(layout.TreeSize, N)
-			layout.TreeGroups = append(layout.TreeGroups, []TreeGroup{{N: N}})
+			layout.TreeGroups = append(layout.TreeGroups, groups)
+			for groupIdx, N := range sizes {
+				group := depsByN[N]
+				// Preserve iteration order of FScolumnsDependencies[r] within
+				// a size by NOT re-sorting here.
+				railIdx := map[field.Kind]int{}
+				for _, dep := range group {
+					polyIdx := nextRailPolyIdx(railIdx, dep.Field)
+					layout.ColSlot[dep.Name] = Slot{TreeIdx: roundTreeIdx, GroupIdx: groupIdx, PolyIdx: polyIdx, Field: dep.Field}
+				}
+			}
 			treeIdx++
 		}
 
