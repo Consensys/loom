@@ -210,6 +210,172 @@ func TestPoseidon2BatchLeafHasherMatchesScalarLeaves(t *testing.T) {
 	}
 }
 
+func TestPairLeafHelpers(t *testing.T) {
+	for _, tc := range []struct {
+		rows int
+		want int
+	}{
+		{rows: 2, want: 1},
+		{rows: 4, want: 2},
+		{rows: 16, want: 8},
+	} {
+		got, err := pairLeafCount(tc.rows)
+		if err != nil {
+			t.Fatalf("pairLeafCount(%d): %v", tc.rows, err)
+		}
+		if got != tc.want {
+			t.Fatalf("pairLeafCount(%d) = %d, want %d", tc.rows, got, tc.want)
+		}
+	}
+
+	for _, rows := range []int{-2, 0, 1, 3, 6} {
+		if _, err := pairLeafCount(rows); err == nil {
+			t.Fatalf("pairLeafCount(%d) should reject invalid row count", rows)
+		}
+	}
+
+	for row := 0; row < 16; row++ {
+		pairIdx := pairLeafIndexForRow(row)
+		lo, hi := pairRowsForIndex(pairIdx)
+		wantLo, wantHi := siblingRows(row)
+		if lo != wantLo || hi != wantHi {
+			t.Fatalf("row %d maps to pair rows (%d,%d), want (%d,%d)", row, lo, hi, wantLo, wantHi)
+		}
+	}
+}
+
+func TestRawRowPairFlattening(t *testing.T) {
+	pair := RawRowPair{
+		Lo: RawRow{
+			RawRowBase: []koalabear.Element{baseElement(1), baseElement(2)},
+			RawRowExt:  []ext.E6{extElement(10, 11, 12, 13)},
+		},
+		Hi: RawRow{
+			RawRowBase: []koalabear.Element{baseElement(3), baseElement(4)},
+			RawRowExt:  []ext.E6{extElement(20, 21, 22, 23)},
+		},
+	}
+
+	baseLeaf, extLeaf := flattenRawRowPair(pair, nil, nil)
+	if got, want := len(baseLeaf), 4; got != want {
+		t.Fatalf("flattened base length = %d, want %d", got, want)
+	}
+	if got, want := len(extLeaf), 2; got != want {
+		t.Fatalf("flattened ext length = %d, want %d", got, want)
+	}
+	for i, want := range []koalabear.Element{
+		pair.Lo.RawRowBase[0],
+		pair.Lo.RawRowBase[1],
+		pair.Hi.RawRowBase[0],
+		pair.Hi.RawRowBase[1],
+	} {
+		if baseLeaf[i] != want {
+			t.Fatalf("baseLeaf[%d] = %v, want %v", i, baseLeaf[i], want)
+		}
+	}
+	if extLeaf[0] != pair.Lo.RawRowExt[0] || extLeaf[1] != pair.Hi.RawRowExt[0] {
+		t.Fatalf("flattened ext leaf order mismatch")
+	}
+
+	for _, tc := range []struct {
+		name string
+		lh   LeafHasher
+	}{
+		{name: "poseidon2", lh: DefaultLeafHasher},
+		{name: "sha256", lh: SHA256LeafHasher{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := hashRawRowPair(tc.lh, pair)
+			want := tc.lh.HashLeaf(baseLeaf, extLeaf)
+			if got != want {
+				t.Fatalf("hashRawRowPair digest mismatch")
+			}
+		})
+	}
+
+	if _, _, err := rawRowPairWidths(RawRowPair{
+		Lo: RawRow{RawRowBase: []koalabear.Element{baseElement(1)}},
+		Hi: RawRow{RawRowBase: []koalabear.Element{baseElement(2), baseElement(3)}},
+	}); err == nil {
+		t.Fatal("rawRowPairWidths should reject mismatched base widths")
+	}
+	if _, _, err := rawRowPairWidths(RawRowPair{
+		Lo: RawRow{RawRowExt: []ext.E6{extElement(1, 2, 3, 4)}},
+		Hi: RawRow{},
+	}); err == nil {
+		t.Fatal("rawRowPairWidths should reject mismatched ext widths")
+	}
+}
+
+func TestPoseidon2BatchPairLeafHasherMatchesScalarPairs(t *testing.T) {
+	tests := []struct {
+		name       string
+		totalPairs int
+		startPair  int
+		count      int
+		nbBase     int
+		nbExt      int
+	}{
+		{name: "small mixed fallback", totalPairs: 8, count: 8, nbBase: 2, nbExt: 1},
+		{name: "exact base only", totalPairs: hash.Poseidon2SpongeBatchSize, count: hash.Poseidon2SpongeBatchSize, nbBase: 3},
+		{name: "tail ext only", totalPairs: hash.Poseidon2SpongeBatchSize + 1, count: hash.Poseidon2SpongeBatchSize + 1, nbExt: 2},
+		{name: "multiple batches mixed", totalPairs: 2*hash.Poseidon2SpongeBatchSize + 1, count: 2*hash.Poseidon2SpongeBatchSize + 1, nbBase: 4, nbExt: 2},
+		{name: "subrange", totalPairs: 3 * hash.Poseidon2SpongeBatchSize, startPair: 3, count: hash.Poseidon2SpongeBatchSize + 5, nbBase: 2, nbExt: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := testLeafSource(2*tt.totalPairs, tt.nbBase, tt.nbExt)
+			got := make([]hash.Digest, tt.count)
+			DefaultLeafHasher.HashLeafPairs(got, src, tt.startPair)
+
+			for k := range got {
+				pairIdx := tt.startPair + k
+				lo, hi := pairRowsForIndex(pairIdx)
+				pair, err := rawRowPairFromSource(src, lo, hi)
+				if err != nil {
+					t.Fatalf("pair %d: %v", pairIdx, err)
+				}
+				if want := hashRawRowPair(DefaultLeafHasher, pair); got[k] != want {
+					t.Fatalf("pair %d: batched digest differs from scalar digest", pairIdx)
+				}
+			}
+		})
+	}
+}
+
+func TestHashLeafPairsParallelScalarFallback(t *testing.T) {
+	const pairs = hash.Poseidon2SpongeBatchSize + 3
+	src := testLeafSource(2*pairs, 2, 1)
+
+	gotPoseidon2 := make([]hash.Digest, pairs)
+	HashLeafPairsParallel(DefaultLeafHasher, gotPoseidon2, src)
+	for pairIdx := range gotPoseidon2 {
+		lo, hi := pairRowsForIndex(pairIdx)
+		pair, err := rawRowPairFromSource(src, lo, hi)
+		if err != nil {
+			t.Fatalf("pair %d: %v", pairIdx, err)
+		}
+		if want := hashRawRowPair(DefaultLeafHasher, pair); gotPoseidon2[pairIdx] != want {
+			t.Fatalf("pair %d: Poseidon2 parallel digest differs from direct pair hash", pairIdx)
+		}
+	}
+
+	got := make([]hash.Digest, pairs)
+	HashLeafPairsParallel(SHA256LeafHasher{}, got, src)
+
+	for pairIdx := range got {
+		lo, hi := pairRowsForIndex(pairIdx)
+		pair, err := rawRowPairFromSource(src, lo, hi)
+		if err != nil {
+			t.Fatalf("pair %d: %v", pairIdx, err)
+		}
+		if want := hashRawRowPair(SHA256LeafHasher{}, pair); got[pairIdx] != want {
+			t.Fatalf("pair %d: scalar fallback digest differs from direct pair hash", pairIdx)
+		}
+	}
+}
+
 func TestPoseidon2BatchNodeHasherMatchesScalarHash(t *testing.T) {
 	const n = hash.Poseidon2SpongeBatchSize
 	left := make([]hash.Digest, n)

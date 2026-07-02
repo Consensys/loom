@@ -56,6 +56,18 @@ type BatchLeafHasher interface {
 	HashLeaves(dst []hash.Digest, src LeafSource, start int)
 }
 
+// BatchPairLeafHasher hashes consecutive adjacent row pairs into dst.
+// Pair k absorbs rows 2*k and 2*k+1 as
+//
+//	base(lo) || base(hi) || ext(lo) || ext(hi)
+//
+// through the same LeafHasher.HashLeaf interface used by row leaves.
+type BatchPairLeafHasher interface {
+	LeafHasher
+	BatchSize() int
+	HashLeafPairs(dst []hash.Digest, src LeafSource, startPair int)
+}
+
 type NodeHasher interface {
 	HashNode(left, right hash.Digest) hash.Digest
 }
@@ -278,6 +290,22 @@ func (lh Poseidon2LeafHasher) HashLeaves(dst []hash.Digest, src LeafSource, star
 	}
 }
 
+func (lh Poseidon2LeafHasher) HashLeafPairs(dst []hash.Digest, src LeafSource, startPair int) {
+	if len(dst) < hash.Poseidon2SpongeBatchSize {
+		hashLeafPairsScalar(lh, dst, src, startPair)
+		return
+	}
+
+	fullBatches := len(dst) / hash.Poseidon2SpongeBatchSize
+	for batch := 0; batch < fullBatches; batch++ {
+		offset := batch * hash.Poseidon2SpongeBatchSize
+		lh.hashLeafPairsBatch16(dst[offset:offset+hash.Poseidon2SpongeBatchSize], src, startPair+offset)
+	}
+	if tail := fullBatches * hash.Poseidon2SpongeBatchSize; tail < len(dst) {
+		hashLeafPairsScalar(lh, dst[tail:], src, startPair+tail)
+	}
+}
+
 func (Poseidon2LeafHasher) BatchSize() int {
 	return hash.Poseidon2SpongeBatchSize
 }
@@ -495,6 +523,68 @@ func (rs *RSCommit) encoderForSize(N uint64, cache *poly.DomainCache) reedsolomo
 	return reedsolomon.NewEncoder(want, reedsolomon.WithCache(cache))
 }
 
+func pairLeafCount(rows int) (int, error) {
+	if rows <= 0 {
+		return 0, fmt.Errorf("pair leaf rows must be positive, got %d", rows)
+	}
+	if rows&1 != 0 {
+		return 0, fmt.Errorf("pair leaf rows must be even, got %d", rows)
+	}
+	if rows&(rows-1) != 0 {
+		return 0, fmt.Errorf("pair leaf rows must be a power of two, got %d", rows)
+	}
+	return rows / 2, nil
+}
+
+func pairLeafIndexForRow(row int) int {
+	lo, _ := siblingRows(row)
+	return lo / 2
+}
+
+func pairRowsForIndex(pairIdx int) (int, int) {
+	lo := 2 * pairIdx
+	return lo, lo + 1
+}
+
+func rawRowPairWidths(pair RawRowPair) (int, int, error) {
+	baseWidth := len(pair.Lo.RawRowBase)
+	if got := len(pair.Hi.RawRowBase); got != baseWidth {
+		return 0, 0, fmt.Errorf("raw row pair base widths differ: lo=%d hi=%d", baseWidth, got)
+	}
+	extWidth := len(pair.Lo.RawRowExt)
+	if got := len(pair.Hi.RawRowExt); got != extWidth {
+		return 0, 0, fmt.Errorf("raw row pair ext widths differ: lo=%d hi=%d", extWidth, got)
+	}
+	return baseWidth, extWidth, nil
+}
+
+func flattenRawRowPair(pair RawRowPair, base []koalabear.Element, extLeaf []ext.E6) ([]koalabear.Element, []ext.E6) {
+	baseWidth, extWidth, err := rawRowPairWidths(pair)
+	if err != nil {
+		panic(err)
+	}
+
+	base = base[:0]
+	if cap(base) < 2*baseWidth {
+		base = make([]koalabear.Element, 0, 2*baseWidth)
+	}
+	base = append(base, pair.Lo.RawRowBase...)
+	base = append(base, pair.Hi.RawRowBase...)
+
+	extLeaf = extLeaf[:0]
+	if cap(extLeaf) < 2*extWidth {
+		extLeaf = make([]ext.E6, 0, 2*extWidth)
+	}
+	extLeaf = append(extLeaf, pair.Lo.RawRowExt...)
+	extLeaf = append(extLeaf, pair.Hi.RawRowExt...)
+	return base, extLeaf
+}
+
+func hashRawRowPair(leafHasher LeafHasher, pair RawRowPair) hash.Digest {
+	base, ext := flattenRawRowPair(pair, nil, nil)
+	return leafHasher.HashLeaf(base, ext)
+}
+
 // HashLeavesParallel hashes len(dst) row leaves from src into dst, using
 // the batched leaf hasher when available (rate-16 Poseidon2 sponge) and
 // fanning the work out across goroutines.
@@ -505,6 +595,18 @@ func HashLeavesParallel(lh LeafHasher, dst []hash.Digest, src LeafSource) {
 	}
 	parallel.Execute(len(dst), func(start, end int) {
 		hashLeavesScalar(lh, dst[start:end], src, start)
+	})
+}
+
+// HashLeafPairsParallel hashes len(dst) adjacent row-pair leaves from src.
+// Pair k absorbs rows 2*k and 2*k+1.
+func HashLeafPairsParallel(lh LeafHasher, dst []hash.Digest, src LeafSource) {
+	if batchHasher, ok := lh.(BatchPairLeafHasher); ok {
+		hashLeafPairsBatchParallel(batchHasher, dst, src)
+		return
+	}
+	parallel.Execute(len(dst), func(start, end int) {
+		hashLeafPairsScalar(lh, dst[start:end], src, start)
 	})
 }
 
@@ -532,6 +634,30 @@ func hashLeavesBatchParallel(lh BatchLeafHasher, dst []hash.Digest, src LeafSour
 	}
 }
 
+func hashLeafPairsBatchParallel(lh BatchPairLeafHasher, dst []hash.Digest, src LeafSource) {
+	batchSize := lh.BatchSize()
+	if batchSize <= 0 {
+		batchSize = 1
+	}
+
+	if batchSize == 1 || len(dst) < batchSize {
+		parallel.Execute(len(dst), func(start, end int) {
+			lh.HashLeafPairs(dst[start:end], src, start)
+		})
+		return
+	}
+
+	full := (len(dst) / batchSize) * batchSize
+	parallel.Execute(full/batchSize, func(startBatch, endBatch int) {
+		start := startBatch * batchSize
+		end := endBatch * batchSize
+		lh.HashLeafPairs(dst[start:end], src, start)
+	})
+	if full < len(dst) {
+		lh.HashLeafPairs(dst[full:], src, full)
+	}
+}
+
 func hashLeavesScalar(lh LeafHasher, dst []hash.Digest, src LeafSource, start int) {
 	baseLeaf := make([]koalabear.Element, len(src.Base))
 	extLeaf := make([]ext.E6, len(src.Ext))
@@ -546,6 +672,23 @@ func hashLeavesScalar(lh LeafHasher, dst []hash.Digest, src LeafSource, start in
 			for j := range src.Ext {
 				extLeaf[j].Set(&src.Ext[j][i])
 			}
+		}
+		dst[k] = lh.HashLeaf(baseLeaf, extLeaf)
+	}
+}
+
+func hashLeafPairsScalar(lh LeafHasher, dst []hash.Digest, src LeafSource, startPair int) {
+	baseLeaf := make([]koalabear.Element, 2*len(src.Base))
+	extLeaf := make([]ext.E6, 2*len(src.Ext))
+	for k := range dst {
+		lo, hi := pairRowsForIndex(startPair + k)
+		for j := range src.Base {
+			baseLeaf[j].Set(&src.Base[j][lo])
+			baseLeaf[len(src.Base)+j].Set(&src.Base[j][hi])
+		}
+		for j := range src.Ext {
+			extLeaf[j].Set(&src.Ext[j][lo])
+			extLeaf[len(src.Ext)+j].Set(&src.Ext[j][hi])
 		}
 		dst[k] = lh.HashLeaf(baseLeaf, extLeaf)
 	}
@@ -571,6 +714,49 @@ func (lh Poseidon2LeafHasher) hashLeavesBatch16(dst []hash.Digest, src LeafSourc
 		for lane := 0; lane < hash.Poseidon2SpongeBatchSize; lane++ {
 			i := start + lane
 			row[lane].Set(&pol[i])
+		}
+		sponge.WriteExtBatch(row)
+	}
+
+	sponge.SumInto(dst)
+}
+
+func (lh Poseidon2LeafHasher) hashLeafPairsBatch16(dst []hash.Digest, src LeafSource, startPair int) {
+	sponge := hash.NewPoseidon2SpongeBatch16()
+	sponge.WriteSameElement(hash.NewElement(leafDomainTag))
+	sponge.WriteSameElement(hash.NewElement(uint64(2 * len(src.Base))))
+	sponge.WriteSameElement(hash.NewElement(uint64(2 * len(src.Ext))))
+
+	for _, pol := range src.Base {
+		var row [hash.Poseidon2SpongeBatchSize]koalabear.Element
+		for lane := 0; lane < hash.Poseidon2SpongeBatchSize; lane++ {
+			lo, _ := pairRowsForIndex(startPair + lane)
+			row[lane].Set(&pol[lo])
+		}
+		sponge.WriteElementBatch(row)
+	}
+	for _, pol := range src.Base {
+		var row [hash.Poseidon2SpongeBatchSize]koalabear.Element
+		for lane := 0; lane < hash.Poseidon2SpongeBatchSize; lane++ {
+			_, hi := pairRowsForIndex(startPair + lane)
+			row[lane].Set(&pol[hi])
+		}
+		sponge.WriteElementBatch(row)
+	}
+
+	for _, pol := range src.Ext {
+		var row [hash.Poseidon2SpongeBatchSize]ext.E6
+		for lane := 0; lane < hash.Poseidon2SpongeBatchSize; lane++ {
+			lo, _ := pairRowsForIndex(startPair + lane)
+			row[lane].Set(&pol[lo])
+		}
+		sponge.WriteExtBatch(row)
+	}
+	for _, pol := range src.Ext {
+		var row [hash.Poseidon2SpongeBatchSize]ext.E6
+		for lane := 0; lane < hash.Poseidon2SpongeBatchSize; lane++ {
+			_, hi := pairRowsForIndex(startPair + lane)
+			row[lane].Set(&pol[hi])
 		}
 		sponge.WriteExtBatch(row)
 	}
