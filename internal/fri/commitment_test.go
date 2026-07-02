@@ -21,7 +21,6 @@ import (
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/merkle"
 	"github.com/consensys/loom/internal/poly"
-	"github.com/consensys/loom/internal/reedsolomon"
 )
 
 func TestRSCommitDualRailProof(t *testing.T) {
@@ -44,8 +43,11 @@ func TestRSCommitDualRailProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	tree := committed.Tree
-	if got := tree.NumLeaves(); got != 8 {
-		t.Fatalf("NumLeaves = %d, want 8", got)
+	if got := tree.NumRows(); got != 8 {
+		t.Fatalf("NumRows = %d, want 8", got)
+	}
+	if got := tree.NumLeaves(); got != 4 {
+		t.Fatalf("NumLeaves = %d, want 4", got)
 	}
 	if got := tree.BaseWidth(); got != len(basePolys) {
 		t.Fatalf("base rail width = %d, want %d", got, len(basePolys))
@@ -54,13 +56,17 @@ func TestRSCommitDualRailProof(t *testing.T) {
 		t.Fatalf("ext rail width = %d, want %d", got, len(extPolys))
 	}
 
-	const leafIdx = 1
-	proof, err := tree.OpenProof(leafIdx)
+	const pairIdx = 1
+	proof, err := tree.OpenProof(pairIdx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseLeaf, extLeaf := rawLeafFromPolys(2, basePolys, extPolys, leafIdx)
-	leaf := DefaultLeafHasher.HashLeaf(baseLeaf, extLeaf)
+	lo, hi := pairRowsForIndex(pairIdx)
+	pair, err := rawRowPairFromSource(committed.Sources[0], lo, hi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf := hashRawRowPair(DefaultLeafHasher, pair)
 	if !merkle.Verify(tree.Root(), proof, leaf, DefaultNodeHasher) {
 		t.Fatal("dual-rail Merkle proof did not verify")
 	}
@@ -87,14 +93,18 @@ func TestWMerkleTreeOpenProof(t *testing.T) {
 	}
 	tree := committed.Tree
 
-	const leafIdx = 2
-	proof, err := tree.OpenProof(leafIdx)
+	const pairIdx = 2
+	proof, err := tree.OpenProof(pairIdx)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	baseLeaf, extLeaf := rawLeafFromPolys(2, basePolys, extPolys, leafIdx)
-	leaf := DefaultLeafHasher.HashLeaf(baseLeaf, extLeaf)
+	lo, hi := pairRowsForIndex(pairIdx)
+	pair, err := rawRowPairFromSource(committed.Sources[0], lo, hi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf := hashRawRowPair(DefaultLeafHasher, pair)
 	if !merkle.Verify(tree.Root(), proof, leaf, DefaultNodeHasher) {
 		t.Fatal("opened Merkle proof did not verify")
 	}
@@ -113,8 +123,11 @@ func TestRSCommitWithDomainCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	tree := committed.Tree
-	if got := tree.NumLeaves(); got != 8 {
-		t.Fatalf("NumLeaves = %d, want 8", got)
+	if got := tree.NumRows(); got != 8 {
+		t.Fatalf("NumRows = %d, want 8", got)
+	}
+	if got := tree.NumLeaves(); got != 4 {
+		t.Fatalf("NumLeaves = %d, want 4", got)
 	}
 	if got := cache.Get(4); got != cache.Get(4) {
 		t.Fatalf("DomainCache did not reuse input domain: %p vs %p", got, cache.Get(4))
@@ -428,8 +441,11 @@ func TestRSCommitEmptyRails(t *testing.T) {
 	if got := extTree.BaseWidth(); got != 0 {
 		t.Fatalf("ext-only tree base rail width = %d, want 0", got)
 	}
-	if got := extTree.NumLeaves(); got != 8 {
-		t.Fatalf("ext-only NumLeaves = %d, want 8", got)
+	if got := extTree.NumRows(); got != 8 {
+		t.Fatalf("ext-only NumRows = %d, want 8", got)
+	}
+	if got := extTree.NumLeaves(); got != 4 {
+		t.Fatalf("ext-only NumLeaves = %d, want 4", got)
 	}
 }
 
@@ -487,11 +503,14 @@ func TestRSCommitMultiGroupOpenProof(t *testing.T) {
 	if shapes[1].Rows != 8 || shapes[1].BaseWidth != 1 || shapes[1].ExtWidth != 0 {
 		t.Fatalf("small group shape = %+v", shapes[1])
 	}
-	if got := tree.NumLeaves(); got != 16 {
-		t.Fatalf("NumLeaves = %d, want 16", got)
+	if got := tree.NumRows(); got != 16 {
+		t.Fatalf("NumRows = %d, want 16", got)
 	}
-	if widths := tree.InjectionWidths(); len(widths) != 1 || widths[0] != 8 {
-		t.Fatalf("InjectionWidths = %v, want [8]", widths)
+	if got := tree.NumLeaves(); got != 8 {
+		t.Fatalf("NumLeaves = %d, want 8", got)
+	}
+	if widths := tree.InjectionWidths(); len(widths) != 1 || widths[0] != 4 {
+		t.Fatalf("InjectionWidths = %v, want [4]", widths)
 	}
 
 	// Public PCS shapes stay in declaration order, unlike tree.Groups().
@@ -522,49 +541,57 @@ func TestRSCommitMultiGroupOpenProof(t *testing.T) {
 
 	injectionWidths := tree.InjectionWidths()
 
-	// Verify an opening for every row index: at each idx, the path crosses
-	// the size-4 injection level at position idx>>1, and both the top-row
-	// hash and the injection leaf must reconstruct the published root.
-	for leafIdx := 0; leafIdx < 16; leafIdx++ {
-		proof, err := tree.OpenProof(leafIdx)
+	// Verify an opening for every pair-leaf index: at each idx, the path
+	// crosses the size-4 injection level at pair position idx>>1, and both
+	// the top pair hash and the injection pair leaf must reconstruct the
+	// published root.
+	for pairIdx := 0; pairIdx < tree.NumLeaves(); pairIdx++ {
+		proof, err := tree.OpenProof(pairIdx)
 		if err != nil {
-			t.Fatalf("OpenProof(%d): %v", leafIdx, err)
+			t.Fatalf("OpenProof(%d): %v", pairIdx, err)
 		}
 		if len(proof.InjectionLeaves) != 1 {
-			t.Fatalf("leaf %d: InjectionLeaves length = %d, want 1", leafIdx, len(proof.InjectionLeaves))
+			t.Fatalf("pair %d: InjectionLeaves length = %d, want 1", pairIdx, len(proof.InjectionLeaves))
 		}
 
-		// Compute the top-group leaf hash that the verifier consumes.
-		baseLeaf, extLeaf := rawLeafFromPolys(2, topBase, topExt, leafIdx)
-		leaf := DefaultLeafHasher.HashLeaf(baseLeaf, extLeaf)
-		smallRow := leafIdx >> 1
-		smallBaseLeaf, smallExtLeaf := leafFromSource(sources[1], smallRow)
-		injectionLeaf := DefaultLeafHasher.HashLeaf(smallBaseLeaf, smallExtLeaf)
+		// Compute the top-group pair leaf hash that the verifier consumes.
+		topLo, topHi := pairRowsForIndex(pairIdx)
+		topPair, err := rawRowPairFromSource(sources[0], topLo, topHi)
+		if err != nil {
+			t.Fatalf("top pair %d: %v", pairIdx, err)
+		}
+		leaf := hashRawRowPair(DefaultLeafHasher, topPair)
+		smallLo, smallHi := pairRowsForIndex(pairIdx >> 1)
+		smallPair, err := rawRowPairFromSource(sources[1], smallLo, smallHi)
+		if err != nil {
+			t.Fatalf("small pair %d: %v", pairIdx>>1, err)
+		}
+		injectionLeaf := hashRawRowPair(DefaultLeafHasher, smallPair)
 		if proof.InjectionLeaves[0] != injectionLeaf {
-			t.Fatalf("leaf %d: injection leaf digest mismatch at small row %d", leafIdx, smallRow)
+			t.Fatalf("pair %d: injection leaf digest mismatch at small pair %d", pairIdx, pairIdx>>1)
 		}
 
 		if !merkle.VerifyWithInjections(tree.Root(), proof, leaf, injectionWidths, DefaultNodeHasher) {
-			t.Fatalf("leaf %d: VerifyWithInjections rejected a valid proof", leafIdx)
+			t.Fatalf("pair %d: VerifyWithInjections rejected a valid proof", pairIdx)
 		}
 
 		// Cross-check: the legacy Verify (no injection support) must reject,
 		// since the proof carries InjectionLeaves the bare path can't fold in.
 		if merkle.Verify(tree.Root(), proof, leaf, DefaultNodeHasher) {
-			t.Fatalf("leaf %d: legacy Verify unexpectedly accepted an injection-bearing proof", leafIdx)
+			t.Fatalf("pair %d: legacy Verify unexpectedly accepted an injection-bearing proof", pairIdx)
 		}
 
 		badLeaf := leaf
 		badLeaf[0].SetUint64(0xdeadbeef)
 		if merkle.VerifyWithInjections(tree.Root(), proof, badLeaf, injectionWidths, DefaultNodeHasher) {
-			t.Fatalf("leaf %d: VerifyWithInjections accepted a tampered top row", leafIdx)
+			t.Fatalf("pair %d: VerifyWithInjections accepted a tampered top pair", pairIdx)
 		}
 
 		badProof := proof
 		badProof.InjectionLeaves = append([]hash.Digest{}, proof.InjectionLeaves...)
 		badProof.InjectionLeaves[0][0].SetUint64(0xdeadbeef)
 		if merkle.VerifyWithInjections(tree.Root(), badProof, leaf, injectionWidths, DefaultNodeHasher) {
-			t.Fatalf("leaf %d: VerifyWithInjections accepted a tampered injected row", leafIdx)
+			t.Fatalf("pair %d: VerifyWithInjections accepted a tampered injected pair", pairIdx)
 		}
 	}
 }
@@ -581,14 +608,15 @@ func TestWMerkleProofCompactShapeSingleSize(t *testing.T) {
 	}
 
 	const sFull = 5
-	topRows := committed.Tree.NumLeaves()
+	topRows := committed.Tree.NumRows()
 	topRow := sFull
 	lo, hi := siblingRows(topRow)
 	topRowPair, err := rawRowPairFromSource(committed.Sources[0], lo, hi)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, err := committed.Tree.OpenProof(lo)
+	pairIdx := lo / 2
+	path, err := committed.Tree.OpenProof(pairIdx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -598,7 +626,7 @@ func TestWMerkleProofCompactShapeSingleSize(t *testing.T) {
 		Path:    path,
 	}
 
-	if got, want := proof.Path.LeafIdx, lo; got != want {
+	if got, want := proof.Path.LeafIdx, pairIdx; got != want {
 		t.Fatalf("Path.LeafIdx = %d, want %d", got, want)
 	}
 	if got := len(proof.Injections); got != 0 {
@@ -610,8 +638,8 @@ func TestWMerkleProofCompactShapeSingleSize(t *testing.T) {
 	if !proof.TopRows.Hi.RawRowBase[0].Equal(&committed.Sources[0].Base[0][hi]) {
 		t.Fatal("TopRows.Hi mismatch")
 	}
-	if got, want := proof.Path.Siblings[0], hashRawRow(DefaultLeafHasher, proof.TopRows.Hi); got != want {
-		t.Fatalf("top companion digest mismatch: got %v, want %v", got, want)
+	if !merkle.Verify(committed.Tree.Root(), proof.Path, hashRawRowPair(DefaultLeafHasher, proof.TopRows), DefaultNodeHasher) {
+		t.Fatal("pair-leaf Merkle proof did not verify")
 	}
 	if topRows != 8 {
 		t.Fatalf("top rows = %d, want 8", topRows)
@@ -637,14 +665,15 @@ func TestWMerkleProofCompactShapeTwoSizeInjection(t *testing.T) {
 	}
 
 	const sFull = 11
-	topRows := committed.Tree.NumLeaves()
+	topRows := committed.Tree.NumRows()
 	topRow := sFull
 	topLo, topHi := siblingRows(topRow)
 	topRowPair, err := rawRowPairFromSource(committed.Sources[0], topLo, topHi)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, err := committed.Tree.OpenProof(topLo)
+	topPairIdx := topLo / 2
+	path, err := committed.Tree.OpenProof(topPairIdx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -657,23 +686,15 @@ func TestWMerkleProofCompactShapeTwoSizeInjection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	topReduction := log2(topRows) - log2(smallRows)
-	pathRowAtWidth := topLo >> topReduction
-	siblingRunning, err := committed.Tree.Tree.PreInjectionSibling(smallRows, pathRowAtWidth)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	proof := WMerkleProof{
 		TopRows: topRowPair,
 		Path:    path,
 		Injections: []WMerkleInjectionOpening{{
-			Rows:           smallRowPair,
-			SiblingRunning: siblingRunning,
+			Rows: smallRowPair,
 		}},
 	}
 
-	if got, want := proof.Path.LeafIdx, topLo; got != want {
+	if got, want := proof.Path.LeafIdx, topPairIdx; got != want {
 		t.Fatalf("Path.LeafIdx = %d, want %d", got, want)
 	}
 	if got, want := len(proof.Injections), 1; got != want {
@@ -686,46 +707,38 @@ func TestWMerkleProofCompactShapeTwoSizeInjection(t *testing.T) {
 		t.Fatal("injected Rows.Hi mismatch")
 	}
 
-	if got, want := proof.Path.Siblings[0], hashRawRow(DefaultLeafHasher, proof.TopRows.Hi); got != want {
-		t.Fatalf("top companion digest mismatch: got %v, want %v", got, want)
+	topPairLeaves := committed.Tree.NumLeaves()
+	smallPairLeaves := mustPairLeafCount(smallRows)
+	topReduction := log2(topPairLeaves) - log2(smallPairLeaves)
+	pathPairAtWidth := topPairIdx >> topReduction
+	if got, want := pathPairAtWidth, smallLo/2; got != want {
+		t.Fatalf("path pair at injection width = %d, want %d", got, want)
 	}
-
-	injectionDepth := topReduction
-	var companionRow RawRow
-	if pathRowAtWidth == smallLo {
-		companionRow = proof.Injections[0].Rows.Hi
-	} else {
-		companionRow = proof.Injections[0].Rows.Lo
-	}
-	companionPost := DefaultNodeHasher.HashNode(
-		proof.Injections[0].SiblingRunning,
-		hashRawRow(DefaultLeafHasher, companionRow),
-	)
-	if got, want := proof.Path.Siblings[injectionDepth], companionPost; got != want {
-		t.Fatalf("injection companion post digest mismatch: got %v, want %v", got, want)
+	if got, want := proof.Path.InjectionLeaves[0], hashRawRowPair(DefaultLeafHasher, proof.Injections[0].Rows); got != want {
+		t.Fatalf("injection pair digest mismatch: got %v, want %v", got, want)
 	}
 }
 
 func TestWMerkleProofCompactDigestAccounting(t *testing.T) {
 	topRows := 16
 	groupRows := []int{16, 8, 4}
-	topPathDepth := log2(topRows)
+	topPathDepth := log2(mustPairLeafCount(topRows))
 
 	oldSiblingDigests := 2 * len(groupRows) * topPathDepth
 	compactPathSiblings := topPathDepth
-	compactSiblingRunningDigests := len(groupRows) - 1
-	compactTotalDigests := compactPathSiblings + compactSiblingRunningDigests
+	compactInjectionDigests := len(groupRows) - 1
+	compactTotalDigests := compactPathSiblings + compactInjectionDigests
 
-	if got, want := oldSiblingDigests, 24; got != want {
+	if got, want := oldSiblingDigests, 18; got != want {
 		t.Fatalf("old sibling digests = %d, want %d", got, want)
 	}
-	if got, want := compactPathSiblings, 4; got != want {
+	if got, want := compactPathSiblings, 3; got != want {
 		t.Fatalf("compact path siblings = %d, want %d", got, want)
 	}
-	if got, want := compactSiblingRunningDigests, 2; got != want {
-		t.Fatalf("compact SiblingRunning digests = %d, want %d", got, want)
+	if got, want := compactInjectionDigests, 2; got != want {
+		t.Fatalf("compact injection digests = %d, want %d", got, want)
 	}
-	if got, want := compactTotalDigests, 6; got != want {
+	if got, want := compactTotalDigests, 5; got != want {
 		t.Fatalf("compact total digests = %d, want %d", got, want)
 	}
 	if compactTotalDigests >= oldSiblingDigests {
@@ -811,33 +824,4 @@ func extElement(a0, a1, b0, b1 uint64, b2 ...uint64) ext.E6 {
 		e.B2.A1.SetUint64(b2[1])
 	}
 	return e
-}
-
-// rawLeafFromPolys re-encodes basePolys/extPolys at the given rate (same
-// blowup PCS uses) and reads the row evaluation at position leafIdx. It is a
-// test-only mirror of what RSCommit / PCS.Commit does internally, used to
-// check Merkle openings against the single-group leaf hash.
-func rawLeafFromPolys(rate uint64, basePolys []poly.Polynomial, extPolys []poly.ExtPolynomial, leafIdx int) ([]koalabear.Element, []ext.E6) {
-	var cache poly.DomainCache
-	N := 0
-	if len(basePolys) > 0 {
-		N = len(basePolys[0])
-	} else if len(extPolys) > 0 {
-		N = len(extPolys[0])
-	}
-	encoder := reedsolomon.NewEncoder(rate*uint64(N), reedsolomon.WithCache(&cache))
-
-	baseLeaf := make([]koalabear.Element, len(basePolys))
-	for j, p := range basePolys {
-		encoded := encoder.Encode(p, cache.Get(uint64(len(p))))
-		baseLeaf[j].Set(&encoded[leafIdx])
-	}
-
-	extLeaf := make([]ext.E6, len(extPolys))
-	for j, p := range extPolys {
-		encoded := encoder.EncodeExt(p, cache.Get(uint64(len(p))))
-		extLeaf[j].Set(&encoded[leafIdx])
-	}
-
-	return baseLeaf, extLeaf
 }

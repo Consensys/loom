@@ -164,17 +164,16 @@ func TestOpenCommittedAtCompactTwoSizeBranches(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	maxRows := committed.Tree.NumLeaves()
+	maxRows := committed.Tree.NumRows()
 	smallRows := leafSourceRows(committed.Sources[1])
 	topReduction := log2(maxRows) - log2(smallRows)
 
 	for _, tc := range []struct {
-		name         string
-		sFull        int
-		wantPathIsLo bool
+		name  string
+		sFull int
 	}{
-		{name: "path-side-lo", sFull: 1, wantPathIsLo: true},
-		{name: "path-side-hi", sFull: 2, wantPathIsLo: false},
+		{name: "small-pair-lo-row", sFull: 1},
+		{name: "small-pair-hi-row", sFull: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wp, err := openCommittedAt(committed, tc.sFull, maxRows)
@@ -189,7 +188,8 @@ func TestOpenCommittedAtCompactTwoSizeBranches(t *testing.T) {
 			}
 
 			topLo, topHi := siblingRows(tc.sFull)
-			if got, want := wp.Path.LeafIdx, topLo; got != want {
+			topPairIdx := topLo / 2
+			if got, want := wp.Path.LeafIdx, topPairIdx; got != want {
 				t.Fatalf("Path.LeafIdx = %d, want %d", got, want)
 			}
 			if !wp.TopRows.Lo.RawRowBase[0].Equal(&committed.Sources[0].Base[0][topLo]) {
@@ -209,24 +209,15 @@ func TestOpenCommittedAtCompactTwoSizeBranches(t *testing.T) {
 				t.Fatal("injected Rows.Hi mismatch")
 			}
 
-			pathRowAtWidth := topLo >> topReduction
-			pathIsLo := pathRowAtWidth == smallLo
-			if pathIsLo != tc.wantPathIsLo {
-				t.Fatalf("path side is lo = %t, want %t", pathIsLo, tc.wantPathIsLo)
+			topPairLeaves := committed.Tree.NumLeaves()
+			smallPairLeaves := mustPairLeafCount(smallRows)
+			pairReduction := log2(topPairLeaves) - log2(smallPairLeaves)
+			pathPairAtWidth := topPairIdx >> pairReduction
+			if got, want := pathPairAtWidth, smallLo/2; got != want {
+				t.Fatalf("path pair at injection width = %d, want %d", got, want)
 			}
-
-			pathRow := inj.Rows.Hi
-			companionRow := inj.Rows.Lo
-			if pathIsLo {
-				pathRow = inj.Rows.Lo
-				companionRow = inj.Rows.Hi
-			}
-			if got, want := wp.Path.InjectionLeaves[0], hashRawRow(DefaultLeafHasher, pathRow); got != want {
-				t.Fatalf("path-side injection leaf mismatch")
-			}
-			companionPost := DefaultNodeHasher.HashNode(inj.SiblingRunning, hashRawRow(DefaultLeafHasher, companionRow))
-			if got, want := wp.Path.Siblings[topReduction], companionPost; got != want {
-				t.Fatalf("companion injected sibling mismatch")
+			if got, want := wp.Path.InjectionLeaves[0], hashRawRowPair(DefaultLeafHasher, inj.Rows); got != want {
+				t.Fatalf("injection pair leaf mismatch")
 			}
 		})
 	}

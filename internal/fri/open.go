@@ -296,13 +296,13 @@ func bindClaimedValuesByPolynomialOrder(
 
 // openCommittedAt opens a Committed batch at the full FRI query row sQ. It
 // builds the compact proof shape: one top-level row pair, one Merkle path from
-// the top lo row, and one raw row pair per injected smaller group.
+// the top row-pair leaf, and one raw row pair per injected smaller group.
 func openCommittedAt(c Committed, sQ int, maxRows int) (WMerkleProof, error) {
 	if c.Tree.Tree == nil {
 		return WMerkleProof{}, fmt.Errorf("openCommittedAt: WMerkleTree is uninitialised")
 	}
-	topLeafCount := c.Tree.NumLeaves()
-	if topLeafCount == 0 {
+	topPairLeaves := c.Tree.NumLeaves()
+	if topPairLeaves == 0 {
 		return WMerkleProof{}, fmt.Errorf("openCommittedAt: empty WMerkleTree")
 	}
 	if len(c.Sources) == 0 {
@@ -311,13 +311,17 @@ func openCommittedAt(c Committed, sQ int, maxRows int) (WMerkleProof, error) {
 	if maxRows <= 0 || maxRows&(maxRows-1) != 0 {
 		return WMerkleProof{}, fmt.Errorf("openCommittedAt: maxRows=%d must be a positive power of two", maxRows)
 	}
-	if topLeafCount > maxRows {
-		return WMerkleProof{}, fmt.Errorf("openCommittedAt: top rows %d exceeds maxRows %d", topLeafCount, maxRows)
-	}
 
 	topRows := leafSourceRows(c.Sources[0])
-	if topRows != topLeafCount {
-		return WMerkleProof{}, fmt.Errorf("openCommittedAt: top source rows %d != tree leaves %d", topRows, topLeafCount)
+	topPairLeavesFromSource, err := pairLeafCount(topRows)
+	if err != nil {
+		return WMerkleProof{}, fmt.Errorf("openCommittedAt: top source rows: %w", err)
+	}
+	if topPairLeavesFromSource != topPairLeaves {
+		return WMerkleProof{}, fmt.Errorf("openCommittedAt: top source pair leaves %d != tree leaves %d", topPairLeavesFromSource, topPairLeaves)
+	}
+	if topRows > maxRows {
+		return WMerkleProof{}, fmt.Errorf("openCommittedAt: top rows %d exceeds maxRows %d", topRows, maxRows)
 	}
 
 	topGlobalReduction := log2(maxRows) - log2(topRows)
@@ -330,9 +334,10 @@ func openCommittedAt(c Committed, sQ int, maxRows int) (WMerkleProof, error) {
 	if err != nil {
 		return WMerkleProof{}, fmt.Errorf("openCommittedAt: top rows: %w", err)
 	}
-	path, err := c.Tree.OpenProof(topLo)
+	topPairIdx := topLo / 2
+	path, err := c.Tree.OpenProof(topPairIdx)
 	if err != nil {
-		return WMerkleProof{}, fmt.Errorf("openCommittedAt: top proof row=%d: %w", topLo, err)
+		return WMerkleProof{}, fmt.Errorf("openCommittedAt: top proof pair=%d: %w", topPairIdx, err)
 	}
 
 	injections := make([]WMerkleInjectionOpening, 0, len(c.Sources)-1)
@@ -348,6 +353,10 @@ func openCommittedAt(c Committed, sQ int, maxRows int) (WMerkleProof, error) {
 		if groupRows&(groupRows-1) != 0 {
 			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d rows %d is not a power of two", sourceIdx, groupRows)
 		}
+		groupPairLeaves, err := pairLeafCount(groupRows)
+		if err != nil {
+			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d rows: %w", sourceIdx, err)
+		}
 
 		globalReduction := log2(maxRows) - log2(groupRows)
 		row := sQ >> globalReduction
@@ -357,19 +366,17 @@ func openCommittedAt(c Committed, sQ int, maxRows int) (WMerkleProof, error) {
 			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d rows: %w", sourceIdx, err)
 		}
 
-		topReduction := log2(topRows) - log2(groupRows)
+		topReduction := log2(topPairLeavesFromSource) - log2(groupPairLeaves)
 		if topReduction < 0 {
 			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d rows %d exceeds top rows %d", sourceIdx, groupRows, topRows)
 		}
-		pathRowAtWidth := topLo >> topReduction
-		siblingRunning, err := c.Tree.Tree.PreInjectionSibling(groupRows, pathRowAtWidth)
-		if err != nil {
-			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d pre-injection sibling: %w", sourceIdx, err)
+		pathPairAtWidth := topPairIdx >> topReduction
+		if want := lo / 2; pathPairAtWidth != want {
+			return WMerkleProof{}, fmt.Errorf("openCommittedAt: source %d path pair at width = %d, want %d", sourceIdx, pathPairAtWidth, want)
 		}
 
 		injections = append(injections, WMerkleInjectionOpening{
-			Rows:           rows,
-			SiblingRunning: siblingRunning,
+			Rows: rows,
 		})
 	}
 

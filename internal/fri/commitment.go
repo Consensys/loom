@@ -40,7 +40,7 @@ type LeafHasher interface {
 }
 
 // LeafSource describes the encoded column-oriented data used to build Merkle
-// leaves. Leaf i absorbs one row value at i for every base and extension
+// leaves. Row i stores one encoded value at i for every base and extension
 // polynomial.
 type LeafSource struct {
 	Base []poly.Polynomial
@@ -108,7 +108,8 @@ type Group struct {
 // GroupShape records the per-group layout of a committed tree, in
 // decreasing-size order (groups[0] is the largest, hashed at the actual
 // leaves; groups[1..] are injection levels). Rows is the number of encoded
-// Merkle rows at this group's level, i.e. ρ · N_native.
+// rows at this group's level, i.e. ρ · N_native. The underlying Merkle tree
+// hashes adjacent row pairs, so its level width is Rows/2.
 type GroupShape struct {
 	Rows      int
 	BaseWidth int
@@ -130,9 +131,7 @@ type WMerkleTree struct {
 
 // RawRow holds one encoded row for one Group of the committed tree: one base
 // value per base-rail polynomial and one extension value per extension-rail
-// polynomial, in declaration order. Hashing a RawRow with LeafHasher.HashLeaf
-// reproduces the digest that lives at the matching position in the Merkle tree
-// for that group.
+// polynomial, in declaration order.
 type RawRow struct {
 	RawRowBase []koalabear.Element
 	RawRowExt  []ext.E6
@@ -146,9 +145,8 @@ type RawRowPair struct {
 
 // WMerkleInjectionOpening is the compact opening payload for one injected
 // smaller group. Rows is the canonical lo/hi row pair at that group's row
-// domain. SiblingRunning is the pre-injection running digest of the companion
-// row at this injection level; the path-side running digest is reconstructed
-// while verifying the main Merkle path.
+// domain. SiblingRunning is retained for compatibility with older compact
+// proof code paths and is unused for pair-leaf openings.
 type WMerkleInjectionOpening struct {
 	Rows           RawRowPair
 	SiblingRunning hash.Digest
@@ -158,10 +156,9 @@ type WMerkleInjectionOpening struct {
 //
 // One top Merkle path authenticates the top row pair and every injected raw row
 // pair crossed by that path. TopRows is the canonical lo/hi row pair for the
-// top group. Path authenticates TopRows.Lo, and Path.Siblings[0] authenticates
-// TopRows.Hi. Injections carries one compact opening per injected smaller group,
-// in the same decreasing-size order as WMerkleTree.InjectionWidths().
-// Companion injected rows are bound by SiblingRunning digests.
+// top group. Path authenticates hash(TopRows.Lo || TopRows.Hi). Injections
+// carries one compact opening per injected smaller group, in the same
+// decreasing-size order as WMerkleTree.InjectionWidths().
 type WMerkleProof struct {
 	TopRows    RawRowPair
 	Path       merkle.Proof
@@ -172,14 +169,27 @@ func (wt WMerkleTree) Root() hash.Digest {
 	return wt.Tree.Root()
 }
 
-// NumLeaves returns the number of encoded rows of the top (largest) group.
-// For trees committed with several sizes, smaller groups live at higher
-// levels and their per-group widths are accessible via Groups.
-func (wt WMerkleTree) NumLeaves() int {
+// NumRows returns the number of encoded rows of the top (largest) group.
+func (wt WMerkleTree) NumRows() int {
 	if len(wt.groups) == 0 {
 		return 0
 	}
 	return wt.groups[0].Rows
+}
+
+// NumLeaves returns the number of actual Merkle leaves in the top group. Each
+// leaf hashes one adjacent encoded row pair, so NumLeaves() == NumRows()/2 for
+// valid committed trees.
+func (wt WMerkleTree) NumLeaves() int {
+	rows := wt.NumRows()
+	if rows == 0 {
+		return 0
+	}
+	n, err := pairLeafCount(rows)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // BaseWidth returns the number of base-field values in the top group row.
@@ -205,24 +215,23 @@ func (wt WMerkleTree) Groups() BatchShapes {
 	return wt.groups
 }
 
-// InjectionWidths returns the LevelWidth of each merkle injection in the
-// same order as the tree's injection schedule (decreasing widths). It is
-// nil for single-group trees. Suitable for passing to
-// merkle.VerifyWithInjections.
+// InjectionWidths returns the pair-leaf LevelWidth of each merkle injection in
+// the same order as the tree's injection schedule (decreasing widths). It is
+// nil for single-group trees. Suitable for passing to merkle.VerifyWithInjections.
 func (wt WMerkleTree) InjectionWidths() []int {
 	if len(wt.groups) <= 1 {
 		return nil
 	}
 	res := make([]int, len(wt.groups)-1)
 	for i := range res {
-		res[i] = wt.groups[i+1].Rows
+		res[i] = mustPairLeafCount(wt.groups[i+1].Rows)
 	}
 	return res
 }
 
-// OpenProof returns the Merkle proof for leaf i. Raw leaf values are
-// reconstructed by the prover from the committed polynomials when needed.
-// For multi-group trees the returned proof carries InjectionLeaves matching
+// OpenProof returns the Merkle proof for pair leaf i. Raw row-pair values are
+// reconstructed by the prover from the committed polynomials when needed. For
+// multi-group trees the returned proof carries InjectionLeaves matching
 // InjectionWidths.
 func (wt WMerkleTree) OpenProof(i int) (merkle.Proof, error) {
 	return wt.Tree.OpenProof(i)
@@ -337,21 +346,21 @@ type Batch = []Group
 // Commit commits to one or more Groups of polynomials into a single Merkle
 // tree. Each Group in batch must hold polynomials sharing a single power-of-two
 // length; group sizes must be pairwise distinct. The largest group's encoded
-// row hashes form the actual tree leaves; each smaller group is folded in
+// row-pair hashes form the actual tree leaves; each smaller group is folded in
 // as a merkle.LevelInjection at the level whose width matches its number of
-// encoded rows.
+// encoded row pairs.
 //
-// Within a group, leaf i absorbs the row {f_k(ω^i)}_k for every base
-// polynomial in declaration order, then for every extension polynomial in
-// declaration order. Multi-group calls add injection levels above the top
+// Within a group, pair leaf i absorbs rows 2*i and 2*i+1: first all base
+// polynomial values from the two rows, then all extension polynomial values
+// from the two rows. Multi-group calls add injection levels above the top
 // group.
 //
 // In addition to the committed tree, Commit returns the per-group LeafSource
 // in the same decreasing-size order used internally to build the tree (i.e.
-// sources[0] is the top group whose RS-encoded rows form the
-// Merkle leaves; sources[k>0] corresponds to a smaller group folded in as a
+// sources[0] is the top group whose RS-encoded row pairs form the Merkle
+// leaves; sources[k>0] corresponds to a smaller group folded in as a
 // LevelInjection at the level whose width matches that group's number of
-// encoded rows). Callers needing to reopen committed values at FRI query
+// encoded row pairs). Callers needing to reopen committed values at FRI query
 // positions can read RS-encoded evaluations directly from the LeafSource.
 func (rs *RSCommit) Commit(batch Batch, opts ...CommitOption) (WMerkleTree, []LeafSource, error) {
 	var config CommitConfig
@@ -390,11 +399,12 @@ func (rs *RSCommit) Commit(batch Batch, opts ...CommitOption) (WMerkleTree, []Le
 	}
 
 	// 2- encode each group's polynomials on its RS-encoded domain and hash
-	//    one encoded row into one digest per group. The largest
+	//    one adjacent row pair into one digest per group. The largest
 	//    group's slice is the tree's leaf layer; the rest become injections.
 	//    The per-group LeafSource is retained and returned to the caller in
 	//    the same `order` (decreasing native size) used here.
 	perGroupLeaves := make([][]hash.Digest, len(batch))
+	perGroupRows := make([]int, len(batch))
 	sources := make([]LeafSource, len(batch))
 	for k, gi := range order {
 		g := batch[gi]
@@ -436,15 +446,20 @@ func (rs *RSCommit) Commit(batch Batch, opts ...CommitOption) (WMerkleTree, []Le
 			Base: encodedBase,
 			Ext:  encodedExt,
 		}
-		leaves := make([]hash.Digest, rows)
-		HashLeavesParallel(rs.LeafHasher, leaves, src)
+		pairLeaves, err := pairLeafCount(rows)
+		if err != nil {
+			return WMerkleTree{}, nil, fmt.Errorf("commitment: Group[%d] encoded rows: %w", gi, err)
+		}
+		leaves := make([]hash.Digest, pairLeaves)
+		HashLeafPairsParallel(rs.LeafHasher, leaves, src)
 		perGroupLeaves[k] = leaves
+		perGroupRows[k] = rows
 		sources[k] = src
 	}
 
 	// 3- build the underlying merkle tree. Smaller groups become injections
-	//    on the way up; their LevelWidth equals the number of encoded rows
-	//    at that group's level.
+	//    on the way up; their LevelWidth equals the number of encoded row
+	//    pairs at that group's level.
 	topLeaves := perGroupLeaves[0]
 	var injections []merkle.LevelInjection
 	if len(perGroupLeaves) > 1 {
@@ -469,7 +484,7 @@ func (rs *RSCommit) Commit(batch Batch, opts ...CommitOption) (WMerkleTree, []Le
 	shapes := make(BatchShapes, len(order))
 	for k, gi := range order {
 		shapes[k] = GroupShape{
-			Rows:      len(perGroupLeaves[k]),
+			Rows:      perGroupRows[k],
 			BaseWidth: len(batch[gi].Base),
 			ExtWidth:  len(batch[gi].Ext),
 		}
@@ -534,6 +549,14 @@ func pairLeafCount(rows int) (int, error) {
 		return 0, fmt.Errorf("pair leaf rows must be a power of two, got %d", rows)
 	}
 	return rows / 2, nil
+}
+
+func mustPairLeafCount(rows int) int {
+	n, err := pairLeafCount(rows)
+	if err != nil {
+		panic(err)
+	}
+	return n
 }
 
 func pairLeafIndexForRow(row int) int {

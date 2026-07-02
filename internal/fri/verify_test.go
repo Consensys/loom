@@ -126,14 +126,12 @@ func TestPCSVerifyRoundtripMultiSizeBatch(t *testing.T) {
 		topSourceRows := leafSourceRows(committed[0].Sources[0])
 		rowTop := sFull >> (log2(params.N) - log2(topSourceRows))
 		topLo, topHi := siblingRows(rowTop)
-		if got, want := wp.Path.LeafIdx, topLo; got != want {
+		topPairIdx := topLo / 2
+		if got, want := wp.Path.LeafIdx, topPairIdx; got != want {
 			t.Fatalf("query %d top Path.LeafIdx = %d, want %d", q, got, want)
 		}
 		if len(wp.Path.Siblings) == 0 {
 			t.Fatalf("query %d top path has no siblings", q)
-		}
-		if got, want := wp.Path.Siblings[0], hashRawRow(DefaultLeafHasher, wp.TopRows.Hi); got != want {
-			t.Fatalf("query %d top companion sibling mismatch", q)
 		}
 		if !wp.TopRows.Lo.RawRowBase[0].Equal(&committed[0].Sources[0].Base[0][topLo]) {
 			t.Fatalf("query %d top lo row mismatch", q)
@@ -153,32 +151,18 @@ func TestPCSVerifyRoundtripMultiSizeBatch(t *testing.T) {
 			t.Fatalf("query %d small hi row mismatch", q)
 		}
 
-		topRows := committed[0].Tree.NumLeaves()
-		topReduction := log2(topRows) - log2(smallRows)
-		pathRowAtWidth := topLo >> topReduction
-		if got, want := pathRowAtWidth, rowSmall; got != want {
-			t.Fatalf("query %d small path row at width = %d, want %d", q, got, want)
+		topPairLeaves := committed[0].Tree.NumLeaves()
+		smallPairLeaves := mustPairLeafCount(smallRows)
+		topReduction := log2(topPairLeaves) - log2(smallPairLeaves)
+		pathPairAtWidth := topPairIdx >> topReduction
+		if got, want := pathPairAtWidth, lo/2; got != want {
+			t.Fatalf("query %d small path pair at width = %d, want %d", q, got, want)
 		}
 		if len(wp.Path.InjectionLeaves) == 0 {
 			t.Fatalf("query %d path has no injection leaves", q)
 		}
-		var pathRow, companionRow RawRow
-		if pathRowAtWidth == lo {
-			pathRow = smallOpening.Rows.Lo
-			companionRow = smallOpening.Rows.Hi
-		} else {
-			pathRow = smallOpening.Rows.Hi
-			companionRow = smallOpening.Rows.Lo
-		}
-		if got, want := wp.Path.InjectionLeaves[0], hashRawRow(DefaultLeafHasher, pathRow); got != want {
-			t.Fatalf("query %d small path-side injection hash mismatch", q)
-		}
-		if len(wp.Path.Siblings) <= topReduction {
-			t.Fatalf("query %d path has no sibling at injection depth %d", q, topReduction)
-		}
-		companionPost := DefaultNodeHasher.HashNode(smallOpening.SiblingRunning, hashRawRow(DefaultLeafHasher, companionRow))
-		if got, want := wp.Path.Siblings[topReduction], companionPost; got != want {
-			t.Fatalf("query %d small companion injection hash mismatch", q)
+		if got, want := wp.Path.InjectionLeaves[0], hashRawRowPair(DefaultLeafHasher, smallOpening.Rows); got != want {
+			t.Fatalf("query %d small injection pair hash mismatch", q)
 		}
 	}
 
@@ -238,9 +222,9 @@ func TestCheckFRIBridgeUsesCompactRows(t *testing.T) {
 
 func TestVerifyOneWMerkleProofRejectsCompactTampering(t *testing.T) {
 	committed := buildCompactVerifyCommitted(t)
-	maxRows := committed.Tree.NumLeaves()
+	maxRows := committed.Tree.NumRows()
 	smallRows := leafSourceRows(committed.Sources[1])
-	topReduction := log2(maxRows) - log2(smallRows)
+	topReduction := log2(committed.Tree.NumLeaves()) - log2(mustPairLeafCount(smallRows))
 
 	for _, tc := range []struct {
 		name   string
@@ -262,31 +246,17 @@ func TestVerifyOneWMerkleProofRejectsCompactTampering(t *testing.T) {
 			},
 		},
 		{
-			name:  "injected path-side lo row",
+			name:  "injected lo row",
 			sFull: 1,
 			tamper: func(_ *testing.T, wp *WMerkleProof) {
 				wp.Injections[0].Rows.Lo.RawRowBase[0].SetUint64(0xdeadbeef)
 			},
 		},
 		{
-			name:  "injected path-side hi row",
+			name:  "injected hi row",
 			sFull: 2,
 			tamper: func(_ *testing.T, wp *WMerkleProof) {
 				wp.Injections[0].Rows.Hi.RawRowBase[0].SetUint64(0xdeadbeef)
-			},
-		},
-		{
-			name:  "injected companion row",
-			sFull: 1,
-			tamper: func(_ *testing.T, wp *WMerkleProof) {
-				wp.Injections[0].Rows.Hi.RawRowBase[0].SetUint64(0xdeadbeef)
-			},
-		},
-		{
-			name:  "sibling running digest",
-			sFull: 1,
-			tamper: func(_ *testing.T, wp *WMerkleProof) {
-				wp.Injections[0].SiblingRunning[0].SetUint64(0xdeadbeef)
 			},
 		},
 		{
