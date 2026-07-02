@@ -104,9 +104,6 @@ func TestBuildLayoutBaseOnlySlotStability(t *testing.T) {
 	if got := layout.NumTrees; got != 3 {
 		t.Errorf("NumTrees = %d, want 3", got)
 	}
-	if wantTreeSize := []int{8, 8, 8}; !reflect.DeepEqual(layout.TreeSize, wantTreeSize) {
-		t.Errorf("TreeSize = %v, want %v", layout.TreeSize, wantTreeSize)
-	}
 	if wantTreeGroups := [][]TreeGroup{{{N: 8}}, {{N: 8}}, {{N: 8}}}; !reflect.DeepEqual(layout.TreeGroups, wantTreeGroups) {
 		t.Errorf("TreeGroups = %v, want %v", layout.TreeGroups, wantTreeGroups)
 	}
@@ -166,9 +163,6 @@ func TestBuildLayoutRailRelativePolyIdx(t *testing.T) {
 		}
 	}
 
-	if wantTreeSize := []int{8, 8}; !reflect.DeepEqual(layout.TreeSize, wantTreeSize) {
-		t.Errorf("TreeSize = %v, want %v", layout.TreeSize, wantTreeSize)
-	}
 	if wantTreeGroups := [][]TreeGroup{{{N: 8}}, {{N: 8}}}; !reflect.DeepEqual(layout.TreeGroups, wantTreeGroups) {
 		t.Errorf("TreeGroups = %v, want %v", layout.TreeGroups, wantTreeGroups)
 	}
@@ -198,9 +192,6 @@ func TestBuildLayoutMixedSizeTraceRoundUsesSingleTree(t *testing.T) {
 	if got := layout.TraceEnd[0] - layout.TraceBegin[0]; got != 1 {
 		t.Fatalf("trace round 0 has %d trees, want 1", got)
 	}
-	if wantTreeSize := []int{8}; !reflect.DeepEqual(layout.TreeSize, wantTreeSize) {
-		t.Errorf("TreeSize = %v, want %v", layout.TreeSize, wantTreeSize)
-	}
 	if wantTreeGroups := [][]TreeGroup{{{N: 8}, {N: 4}}}; !reflect.DeepEqual(layout.TreeGroups, wantTreeGroups) {
 		t.Errorf("TreeGroups = %v, want %v", layout.TreeGroups, wantTreeGroups)
 	}
@@ -215,6 +206,71 @@ func TestBuildLayoutMixedSizeTraceRoundUsesSingleTree(t *testing.T) {
 		if got := layout.ColSlot[name]; got != want {
 			t.Errorf("ColSlot[%q] = %+v, want %+v", name, got, want)
 		}
+	}
+}
+
+func TestBuildCanonicalScheduleMixedTraceGroupsMatchLayout(t *testing.T) {
+	program := board.Program{
+		Modules: map[string]board.CompiledModule{
+			"big": {
+				Name: "big",
+				N:    8,
+				VanishingRelation: dag.ExprToDAG(
+					expr.Col("big_0").Add(expr.Col("big_1", expr.WithShift(1))),
+				),
+			},
+			"small": {
+				Name: "small",
+				N:    4,
+				VanishingRelation: dag.ExprToDAG(
+					expr.Col("small_0", expr.WithShift(-1)).Add(expr.ExtCol("small_ext")),
+				),
+			},
+		},
+		FScolumnsDependencies: [][]board.ColumnRef{
+			{
+				{Name: "small_0", Module: "small", Field: field.Base},
+				{Name: "big_0", Module: "big", Field: field.Base},
+				{Name: "small_ext", Module: "small", Field: field.Ext},
+				{Name: "big_1", Module: "big", Field: field.Base},
+			},
+		},
+	}
+
+	layout := BuildLayout(program, 0)
+	treeIdx := layout.TraceBegin[0]
+	schedule := BuildCanonicalSchedule(program, layout)
+
+	if got := layout.TraceEnd[0] - layout.TraceBegin[0]; got != 1 {
+		t.Fatalf("trace round 0 has %d trees, want 1", got)
+	}
+	if want := []TreeGroup{{N: 8}, {N: 4}}; !reflect.DeepEqual(layout.TreeGroups[treeIdx], want) {
+		t.Fatalf("trace TreeGroups = %v, want %v", layout.TreeGroups[treeIdx], want)
+	}
+	if got, want := len(schedule.Shifts[treeIdx]), len(layout.TreeGroups[treeIdx]); got != want {
+		t.Fatalf("schedule.Shifts[%d] has %d groups, want %d", treeIdx, got, want)
+	}
+	if got, want := len(schedule.ColNamesByTree[treeIdx]), len(layout.TreeGroups[treeIdx]); got != want {
+		t.Fatalf("schedule.ColNamesByTree[%d] has %d groups, want %d", treeIdx, got, want)
+	}
+
+	if got := schedule.ColNamesByTree[treeIdx][0].Base; !reflect.DeepEqual(got, []string{"big_0", "big_1"}) {
+		t.Fatalf("group 0 base names = %v, want [big_0 big_1]", got)
+	}
+	if got := schedule.ColNamesByTree[treeIdx][1].Base; !reflect.DeepEqual(got, []string{"small_0"}) {
+		t.Fatalf("group 1 base names = %v, want [small_0]", got)
+	}
+	if got := schedule.ColNamesByTree[treeIdx][1].Ext; !reflect.DeepEqual(got, []string{"small_ext"}) {
+		t.Fatalf("group 1 ext names = %v, want [small_ext]", got)
+	}
+	if got := schedule.Shifts[treeIdx][0].Base; !reflect.DeepEqual(got, [][]int{{0}, {1}}) {
+		t.Fatalf("group 0 base shifts = %v, want [[0] [1]]", got)
+	}
+	if got := schedule.Shifts[treeIdx][1].Base; !reflect.DeepEqual(got, [][]int{{3}}) {
+		t.Fatalf("group 1 base shifts = %v, want [[3]]", got)
+	}
+	if got := schedule.Shifts[treeIdx][1].Ext; !reflect.DeepEqual(got, [][]int{{0}}) {
+		t.Fatalf("group 1 ext shifts = %v, want [[0]]", got)
 	}
 }
 

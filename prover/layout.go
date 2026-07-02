@@ -70,10 +70,6 @@ type Layout struct {
 	AIRBegin   int
 	AIREnd     int // = NumTrees
 
-	// Per-tree top polynomial size N. For mixed trace trees this is the
-	// largest group size; for setup and AIR trees it is the tree's only size.
-	TreeSize []int
-
 	// Per-tree group metadata. Trace trees can contain several groups in
 	// decreasing N; setup and AIR trees remain single-group.
 	TreeGroups [][]TreeGroup
@@ -119,7 +115,6 @@ func BuildLayout(program board.Program, numSetupSizes int) Layout {
 				polyIdx := nextRailPolyIdx(railIdx, col.Field)
 				layout.ColSlot[col.Name] = Slot{TreeIdx: treeIdx, GroupIdx: 0, PolyIdx: polyIdx, Field: col.Field}
 			}
-			layout.TreeSize = append(layout.TreeSize, N)
 			layout.TreeGroups = append(layout.TreeGroups, []TreeGroup{{N: N}})
 			treeIdx++
 		}
@@ -152,7 +147,6 @@ func BuildLayout(program board.Program, numSetupSizes int) Layout {
 		if len(sizes) > 0 {
 			roundTreeIdx := treeIdx
 			groups := make([]TreeGroup, len(sizes))
-			layout.TreeSize = append(layout.TreeSize, sizes[0])
 			for groupIdx, N := range sizes {
 				groups[groupIdx] = TreeGroup{N: N}
 			}
@@ -215,7 +209,6 @@ func BuildLayout(program board.Program, numSetupSizes int) Layout {
 				polyIdx := nextRailPolyIdx(railIdx, e.field)
 				layout.AIRChunkSlot[chunkName] = Slot{TreeIdx: treeIdx, GroupIdx: 0, PolyIdx: polyIdx, Field: e.field}
 			}
-			layout.TreeSize = append(layout.TreeSize, N)
 			layout.TreeGroups = append(layout.TreeGroups, []TreeGroup{{N: N}})
 			treeIdx++
 		}
