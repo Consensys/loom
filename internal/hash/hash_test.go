@@ -203,6 +203,48 @@ func TestPoseidon2SpongeBatch16MatchesScalar(t *testing.T) {
 	}
 }
 
+func TestPoseidon2SpongeBatch16SumIntoMatchesSum(t *testing.T) {
+	for _, n := range []int{0, 1, SPONGE_RATE + 3} {
+		sumHasher := NewPoseidon2SpongeBatch16()
+		intoHasher := NewPoseidon2SpongeBatch16()
+		for i := 0; i < n; i++ {
+			var batch [Poseidon2SpongeBatchSize]koalabear.Element
+			for lane := 0; lane < Poseidon2SpongeBatchSize; lane++ {
+				batch[lane].SetUint64(uint64((lane+1)*1000 + i + 1))
+			}
+			sumHasher.WriteElementBatch(batch)
+			intoHasher.WriteElementBatch(batch)
+		}
+
+		want := sumHasher.Sum()
+		dst := make([]Digest, Poseidon2SpongeBatchSize+1)
+		for lane := range dst {
+			for i := range dst[lane] {
+				dst[lane][i].SetUint64(uint64(100000 + lane*100 + i))
+			}
+		}
+		sentinel := dst[Poseidon2SpongeBatchSize]
+
+		intoHasher.SumInto(dst)
+		for lane := 0; lane < Poseidon2SpongeBatchSize; lane++ {
+			if dst[lane] != want[lane] {
+				t.Fatalf("n=%d lane=%d: digest mismatch", n, lane)
+			}
+		}
+		if dst[Poseidon2SpongeBatchSize] != sentinel {
+			t.Fatalf("n=%d: SumInto wrote past batch size", n)
+		}
+
+		var repeated [Poseidon2SpongeBatchSize]Digest
+		intoHasher.SumInto(repeated[:])
+		for lane := 0; lane < Poseidon2SpongeBatchSize; lane++ {
+			if repeated[lane] != want[lane] {
+				t.Fatalf("n=%d lane=%d: repeated SumInto digest mismatch", n, lane)
+			}
+		}
+	}
+}
+
 func TestPoseidon2SpongeBatch16WriteExtMatchesScalar(t *testing.T) {
 	same := NewElement(42)
 	var exts [Poseidon2SpongeBatchSize]ext.E6

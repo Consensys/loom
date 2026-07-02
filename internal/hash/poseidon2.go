@@ -312,18 +312,33 @@ func (ph *Poseidon2SpongeBatch16) WriteExtBatch(elmts [Poseidon2SpongeBatchSize]
 }
 
 func (ph *Poseidon2SpongeBatch16) Sum() [Poseidon2SpongeBatchSize]Digest {
+	var res [Poseidon2SpongeBatchSize]Digest
+	ph.SumInto(res[:])
+	return res
+}
+
+// SumInto writes the digest for each batch lane into dst.
+func (ph *Poseidon2SpongeBatch16) SumInto(dst []Digest) {
+	if len(dst) < Poseidon2SpongeBatchSize {
+		panic("Poseidon2SpongeBatch16.SumInto: destination too short")
+	}
+	dst = dst[:Poseidon2SpongeBatchSize]
 	if ph.finalized {
-		return ph.digest()
+		ph.digestInto(dst)
+		return
 	}
 	if !ph.wrote && ph.blockLen == 0 {
 		ph.finalized = true
-		return [Poseidon2SpongeBatchSize]Digest{}
+		for i := range dst {
+			dst[i] = Digest{}
+		}
+		return
 	}
 	if ph.blockLen > 0 {
 		ph.absorbPartialBlock()
 	}
 	ph.finalized = true
-	return ph.digest()
+	ph.digestInto(dst)
 }
 
 func (ph *Poseidon2SpongeBatch16) absorbFullBlock() {
@@ -361,12 +376,16 @@ func (ph *Poseidon2SpongeBatch16) clearBlock() {
 
 func (ph *Poseidon2SpongeBatch16) digest() [Poseidon2SpongeBatchSize]Digest {
 	var res [Poseidon2SpongeBatchSize]Digest
-	for lane := range res {
-		for i := range res[lane] {
-			res[lane][i].Set(&ph.state[i][lane])
+	ph.digestInto(res[:])
+	return res
+}
+
+func (ph *Poseidon2SpongeBatch16) digestInto(dst []Digest) {
+	for lane := 0; lane < Poseidon2SpongeBatchSize; lane++ {
+		for i := 0; i < DIGEST_NB_ELEMENTS; i++ {
+			dst[lane][i].Set(&ph.state[i][lane])
 		}
 	}
-	return res
 }
 
 // Poseidon2NodeCompress is a one-permutation Merkle node hasher using the

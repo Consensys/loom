@@ -575,6 +575,5 @@ func (lh Poseidon2LeafHasher) hashLeavesBatch16(dst []hash.Digest, src LeafSourc
 		sponge.WriteExtBatch(row)
 	}
 
-	digests := sponge.Sum()
-	copy(dst, digests[:])
+	sponge.SumInto(dst)
 }
