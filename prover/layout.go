@@ -28,12 +28,20 @@ import (
 //
 //	TreeIdx = index into the canonical tree order
 //	          (setup → trace-round-0 → … → trace-round-{r-1} → AIR)
-//	PolyIdx = rail-relative index of this polynomial inside the tree's raw leaf entries
+//	GroupIdx = declaration-order group index inside that tree's fri.Batch
+//	PolyIdx  = rail-relative index of this polynomial inside the group's raw leaf entries
 //	Field   = rail to read/write inside the tree
 type Slot struct {
-	TreeIdx int
-	PolyIdx int
-	Field   field.Kind
+	TreeIdx  int
+	GroupIdx int
+	PolyIdx  int
+	Field    field.Kind
+}
+
+// TreeGroup records the native polynomial size of one declaration-order group
+// inside a canonical commitment tree.
+type TreeGroup struct {
+	N int
 }
 
 // Layout describes the canonical order of WMerkleTrees produced by the
@@ -62,6 +70,11 @@ type Layout struct {
 	// Per-tree polynomial size N (the encoded tree has 2·N·RATE/2 leaves).
 	// Base and extension polynomial rails share the same tree for a given N.
 	TreeSize []int
+
+	// Per-tree group metadata. PR1 keeps every tree single-group, so
+	// TreeGroups[t][0].N == TreeSize[t]; later trace-round compaction can
+	// add several groups to one tree without changing the schedule shape.
+	TreeGroups [][]TreeGroup
 
 	// Column-name → Slot for trace columns and setup public columns.
 	ColSlot map[string]Slot
@@ -102,9 +115,10 @@ func BuildLayout(program board.Program, numSetupSizes int) Layout {
 			railIdx := map[field.Kind]int{}
 			for _, col := range cols {
 				polyIdx := nextRailPolyIdx(railIdx, col.Field)
-				layout.ColSlot[col.Name] = Slot{TreeIdx: treeIdx, PolyIdx: polyIdx, Field: col.Field}
+				layout.ColSlot[col.Name] = Slot{TreeIdx: treeIdx, GroupIdx: 0, PolyIdx: polyIdx, Field: col.Field}
 			}
 			layout.TreeSize = append(layout.TreeSize, N)
+			layout.TreeGroups = append(layout.TreeGroups, []TreeGroup{{N: N}})
 			treeIdx++
 		}
 	}
@@ -140,9 +154,10 @@ func BuildLayout(program board.Program, numSetupSizes int) Layout {
 			railIdx := map[field.Kind]int{}
 			for _, dep := range group {
 				polyIdx := nextRailPolyIdx(railIdx, dep.Field)
-				layout.ColSlot[dep.Name] = Slot{TreeIdx: treeIdx, PolyIdx: polyIdx, Field: dep.Field}
+				layout.ColSlot[dep.Name] = Slot{TreeIdx: treeIdx, GroupIdx: 0, PolyIdx: polyIdx, Field: dep.Field}
 			}
 			layout.TreeSize = append(layout.TreeSize, N)
+			layout.TreeGroups = append(layout.TreeGroups, []TreeGroup{{N: N}})
 			treeIdx++
 		}
 
@@ -189,9 +204,10 @@ func BuildLayout(program board.Program, numSetupSizes int) Layout {
 			for _, e := range chunksByN[N] {
 				chunkName := constants.QuotientChunkName(e.module, e.idx)
 				polyIdx := nextRailPolyIdx(railIdx, e.field)
-				layout.AIRChunkSlot[chunkName] = Slot{TreeIdx: treeIdx, PolyIdx: polyIdx, Field: e.field}
+				layout.AIRChunkSlot[chunkName] = Slot{TreeIdx: treeIdx, GroupIdx: 0, PolyIdx: polyIdx, Field: e.field}
 			}
 			layout.TreeSize = append(layout.TreeSize, N)
+			layout.TreeGroups = append(layout.TreeGroups, []TreeGroup{{N: N}})
 			treeIdx++
 		}
 	}

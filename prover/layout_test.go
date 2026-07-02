@@ -61,14 +61,14 @@ func TestBuildLayoutBaseOnlySlotStability(t *testing.T) {
 
 	wantColSlot := map[string]Slot{
 		// Setup section (TreeIdx=0): setup columns sorted by name.
-		"pa": {TreeIdx: 0, PolyIdx: 0, Field: field.Base},
-		"pm": {TreeIdx: 0, PolyIdx: 1, Field: field.Base},
-		"pz": {TreeIdx: 0, PolyIdx: 2, Field: field.Base},
+		"pa": {TreeIdx: 0, GroupIdx: 0, PolyIdx: 0, Field: field.Base},
+		"pm": {TreeIdx: 0, GroupIdx: 0, PolyIdx: 1, Field: field.Base},
+		"pz": {TreeIdx: 0, GroupIdx: 0, PolyIdx: 2, Field: field.Base},
 		// Trace round 0 (TreeIdx=1): relation leaves in LeavesFull order.
-		"z":      {TreeIdx: 1, PolyIdx: 0, Field: field.Base},
-		mulChunk: {TreeIdx: 1, PolyIdx: 1, Field: field.Base},
-		"s":      {TreeIdx: 1, PolyIdx: 2, Field: field.Base},
-		"t":      {TreeIdx: 1, PolyIdx: 3, Field: field.Base},
+		"z":      {TreeIdx: 1, GroupIdx: 0, PolyIdx: 0, Field: field.Base},
+		mulChunk: {TreeIdx: 1, GroupIdx: 0, PolyIdx: 1, Field: field.Base},
+		"s":      {TreeIdx: 1, GroupIdx: 0, PolyIdx: 2, Field: field.Base},
+		"t":      {TreeIdx: 1, GroupIdx: 0, PolyIdx: 3, Field: field.Base},
 	}
 	for name, want := range wantColSlot {
 		got, ok := layout.ColSlot[name]
@@ -85,7 +85,7 @@ func TestBuildLayoutBaseOnlySlotStability(t *testing.T) {
 	}
 
 	wantAIRSlot := map[string]Slot{
-		constants.QuotientChunkName("m", 0): {TreeIdx: 2, PolyIdx: 0, Field: field.Base},
+		constants.QuotientChunkName("m", 0): {TreeIdx: 2, GroupIdx: 0, PolyIdx: 0, Field: field.Base},
 	}
 	for name, want := range wantAIRSlot {
 		got, ok := layout.AIRChunkSlot[name]
@@ -106,6 +106,9 @@ func TestBuildLayoutBaseOnlySlotStability(t *testing.T) {
 	}
 	if wantTreeSize := []int{8, 8, 8}; !reflect.DeepEqual(layout.TreeSize, wantTreeSize) {
 		t.Errorf("TreeSize = %v, want %v", layout.TreeSize, wantTreeSize)
+	}
+	if wantTreeGroups := [][]TreeGroup{{{N: 8}}, {{N: 8}}, {{N: 8}}}; !reflect.DeepEqual(layout.TreeGroups, wantTreeGroups) {
+		t.Errorf("TreeGroups = %v, want %v", layout.TreeGroups, wantTreeGroups)
 	}
 	if got := layout.SetupEnd - layout.SetupBegin; got != 1 {
 		t.Errorf("setup section has %d trees, want 1", got)
@@ -142,10 +145,10 @@ func TestBuildLayoutRailRelativePolyIdx(t *testing.T) {
 	layout := BuildLayout(program, 0)
 
 	wantColSlot := map[string]Slot{
-		"base_0": {TreeIdx: 0, PolyIdx: 0, Field: field.Base},
-		"base_1": {TreeIdx: 0, PolyIdx: 1, Field: field.Base},
-		"ext_0":  {TreeIdx: 0, PolyIdx: 0, Field: field.Ext},
-		"ext_1":  {TreeIdx: 0, PolyIdx: 1, Field: field.Ext},
+		"base_0": {TreeIdx: 0, GroupIdx: 0, PolyIdx: 0, Field: field.Base},
+		"base_1": {TreeIdx: 0, GroupIdx: 0, PolyIdx: 1, Field: field.Base},
+		"ext_0":  {TreeIdx: 0, GroupIdx: 0, PolyIdx: 0, Field: field.Ext},
+		"ext_1":  {TreeIdx: 0, GroupIdx: 0, PolyIdx: 1, Field: field.Ext},
 	}
 	for name, want := range wantColSlot {
 		if got := layout.ColSlot[name]; got != want {
@@ -154,8 +157,8 @@ func TestBuildLayoutRailRelativePolyIdx(t *testing.T) {
 	}
 
 	wantAIRSlot := map[string]Slot{
-		constants.QuotientChunkName("base", 0): {TreeIdx: 1, PolyIdx: 0, Field: field.Base},
-		constants.QuotientChunkName("ext", 0):  {TreeIdx: 1, PolyIdx: 0, Field: field.Ext},
+		constants.QuotientChunkName("base", 0): {TreeIdx: 1, GroupIdx: 0, PolyIdx: 0, Field: field.Base},
+		constants.QuotientChunkName("ext", 0):  {TreeIdx: 1, GroupIdx: 0, PolyIdx: 0, Field: field.Ext},
 	}
 	for name, want := range wantAIRSlot {
 		if got := layout.AIRChunkSlot[name]; got != want {
@@ -165,6 +168,56 @@ func TestBuildLayoutRailRelativePolyIdx(t *testing.T) {
 
 	if wantTreeSize := []int{8, 8}; !reflect.DeepEqual(layout.TreeSize, wantTreeSize) {
 		t.Errorf("TreeSize = %v, want %v", layout.TreeSize, wantTreeSize)
+	}
+	if wantTreeGroups := [][]TreeGroup{{{N: 8}}, {{N: 8}}}; !reflect.DeepEqual(layout.TreeGroups, wantTreeGroups) {
+		t.Errorf("TreeGroups = %v, want %v", layout.TreeGroups, wantTreeGroups)
+	}
+}
+
+func TestBuildCanonicalScheduleSupportsMultipleGroupsPerTree(t *testing.T) {
+	layout := Layout{
+		NumTrees:   1,
+		AIRBegin:   0,
+		AIREnd:     1,
+		TreeGroups: [][]TreeGroup{{{N: 8}, {N: 4}}},
+		ColSlot:    map[string]Slot{},
+		AIRChunkSlot: map[string]Slot{
+			"g0_base": {TreeIdx: 0, GroupIdx: 0, PolyIdx: 0, Field: field.Base},
+			"g1_base": {TreeIdx: 0, GroupIdx: 1, PolyIdx: 0, Field: field.Base},
+			"g1_ext":  {TreeIdx: 0, GroupIdx: 1, PolyIdx: 0, Field: field.Ext},
+		},
+	}
+
+	schedule := BuildCanonicalSchedule(board.Program{
+		Modules: map[string]board.CompiledModule{},
+	}, layout)
+
+	if got := len(schedule.Shifts); got != 1 {
+		t.Fatalf("Shifts has %d trees, want 1", got)
+	}
+	if got := len(schedule.Shifts[0]); got != 2 {
+		t.Fatalf("Shifts[0] has %d groups, want 2", got)
+	}
+	if got := schedule.ColNamesByTree[0][0].Base; !reflect.DeepEqual(got, []string{"g0_base"}) {
+		t.Fatalf("group 0 base names = %v, want [g0_base]", got)
+	}
+	if got := schedule.ColNamesByTree[0][1].Base; !reflect.DeepEqual(got, []string{"g1_base"}) {
+		t.Fatalf("group 1 base names = %v, want [g1_base]", got)
+	}
+	if got := schedule.ColNamesByTree[0][1].Ext; !reflect.DeepEqual(got, []string{"g1_ext"}) {
+		t.Fatalf("group 1 ext names = %v, want [g1_ext]", got)
+	}
+	if got := schedule.Shifts[0][0].Base; !reflect.DeepEqual(got, [][]int{{0}}) {
+		t.Fatalf("group 0 base shifts = %v, want [[0]]", got)
+	}
+	if got := schedule.Shifts[0][1].Base; !reflect.DeepEqual(got, [][]int{{0}}) {
+		t.Fatalf("group 1 base shifts = %v, want [[0]]", got)
+	}
+	if got := schedule.Shifts[0][1].Ext; !reflect.DeepEqual(got, [][]int{{0}}) {
+		t.Fatalf("group 1 ext shifts = %v, want [[0]]", got)
+	}
+	if got := schedule.Keys[0][1].Ext; !reflect.DeepEqual(got, [][][]string{{{"g1_ext"}}}) {
+		t.Fatalf("group 1 ext keys = %v, want [[[g1_ext]]]", got)
 	}
 }
 

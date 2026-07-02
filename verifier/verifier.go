@@ -446,15 +446,25 @@ func (vr *verifierRunTime) checkAIRRelations() error {
 // in canonical-layout order, runs the multi-degree FRI check, and
 // authenticates every (query, batch) Merkle path.
 func (vr *verifierRunTime) runPCSVerify() error {
-	shapes := make([][]fri.GroupShape, vr.layout.NumTrees)
+	shapes := make([]fri.BatchShapes, vr.layout.NumTrees)
 	for treeIdx := 0; treeIdx < vr.layout.NumTrees; treeIdx++ {
-		names := vr.schedule.ColNamesByTree[treeIdx][0]
-		N := vr.layout.TreeSize[treeIdx]
-		shapes[treeIdx] = []fri.GroupShape{{
-			Rows:      int(constants.RATE) * N,
-			BaseWidth: len(names.Base),
-			ExtWidth:  len(names.Ext),
-		}}
+		if treeIdx >= len(vr.layout.TreeGroups) {
+			return fmt.Errorf("runPCSVerify: tree %d has no layout group metadata", treeIdx)
+		}
+		groups := vr.layout.TreeGroups[treeIdx]
+		namesByGroup := vr.schedule.ColNamesByTree[treeIdx]
+		if len(namesByGroup) != len(groups) {
+			return fmt.Errorf("runPCSVerify: tree %d has %d scheduled groups, layout has %d", treeIdx, len(namesByGroup), len(groups))
+		}
+		shapes[treeIdx] = make(fri.BatchShapes, len(groups))
+		for groupIdx, group := range groups {
+			names := namesByGroup[groupIdx]
+			shapes[treeIdx][groupIdx] = fri.GroupShape{
+				Rows:      int(constants.RATE) * group.N,
+				BaseWidth: len(names.Base),
+				ExtWidth:  len(names.Ext),
+			}
+		}
 	}
 
 	pcs := fri.NewPCSWithParams(vr.friParams)

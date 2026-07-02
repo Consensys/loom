@@ -588,15 +588,14 @@ func (pr *proverRuntime) ComputeAIRQuotients() error {
 // buildBatches assembles the per-tree fri.Batch slices in canonical
 // order, looking up Lagrange-form polynomials by canonical column name
 // (trace/setup polys live in pr.t, AIR chunks in pr.airTrace). Setup
-// batches come first (decreasing N, single-group), then trace-round
-// batches (single-group per (round, N)), then AIR batches. The
-// canonical layout's tree index is the batch index.
+// batches come first, then trace-round batches, then AIR batches. The
+// canonical layout's tree index is the batch index; each batch may carry
+// one or more declaration-order groups.
 func (pr *proverRuntime) buildBatches() ([]fri.Batch, error) {
 	n := pr.layout.NumTrees
 	batches := make([]fri.Batch, n)
 	for treeIdx := 0; treeIdx < n; treeIdx++ {
 		isAIR := treeIdx >= pr.layout.AIRBegin && treeIdx < pr.layout.AIREnd
-		names := pr.schedule.ColNamesByTree[treeIdx][0]
 
 		traceBase := pr.t.Base
 		traceExt := pr.t.Ext
@@ -605,23 +604,28 @@ func (pr *proverRuntime) buildBatches() ([]fri.Batch, error) {
 			traceExt = pr.airTrace.Ext
 		}
 
-		basePolys := make([]poly.Polynomial, len(names.Base))
-		for i, name := range names.Base {
-			p, ok := traceBase[name]
-			if !ok {
-				return nil, fmt.Errorf("buildBatches: tree %d base poly %q not found", treeIdx, name)
+		batchNames := pr.schedule.ColNamesByTree[treeIdx]
+		batch := make(fri.Batch, len(batchNames))
+		for groupIdx, names := range batchNames {
+			basePolys := make([]poly.Polynomial, len(names.Base))
+			for i, name := range names.Base {
+				p, ok := traceBase[name]
+				if !ok {
+					return nil, fmt.Errorf("buildBatches: tree %d group %d base poly %q not found", treeIdx, groupIdx, name)
+				}
+				basePolys[i] = p
 			}
-			basePolys[i] = p
-		}
-		extPolys := make([]poly.ExtPolynomial, len(names.Ext))
-		for i, name := range names.Ext {
-			p, ok := traceExt[name]
-			if !ok {
-				return nil, fmt.Errorf("buildBatches: tree %d ext poly %q not found", treeIdx, name)
+			extPolys := make([]poly.ExtPolynomial, len(names.Ext))
+			for i, name := range names.Ext {
+				p, ok := traceExt[name]
+				if !ok {
+					return nil, fmt.Errorf("buildBatches: tree %d group %d ext poly %q not found", treeIdx, groupIdx, name)
+				}
+				extPolys[i] = p
 			}
-			extPolys[i] = p
+			batch[groupIdx] = fri.Group{Base: basePolys, Ext: extPolys}
 		}
-		batches[treeIdx] = fri.Batch{{Base: basePolys, Ext: extPolys}}
+		batches[treeIdx] = batch
 	}
 	return batches, nil
 }

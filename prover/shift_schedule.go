@@ -32,8 +32,8 @@ import (
 type CanonicalSchedule struct {
 	// Shifts[b] is the fri.BatchShifts for the b-th batch in the canonical
 	// commitment-tree order: setup batches (decreasing N) → trace-round-r
-	// batches (decreasing N) → AIR batches (decreasing N). Every batch
-	// today is single-group, so each Shifts[b] has length 1.
+	// batches (decreasing N) → AIR batches (decreasing N). Each batch may
+	// contain one or more declaration-order groups.
 	Shifts []fri.BatchShifts
 
 	// Keys is parallel to Shifts. Keys[b][g].Base[i][k] is the list of
@@ -136,7 +136,7 @@ func BuildCanonicalSchedule(program board.Program, layout Layout) CanonicalSched
 		}
 	}
 
-	// 2- Invert layout.ColSlot / layout.AIRChunkSlot into per-tree rail
+	// 2- Invert layout.ColSlot / layout.AIRChunkSlot into per-tree/per-group rail
 	//    lists ordered by Slot.PolyIdx -- the same order the prover commits
 	//    polynomials in and that PCS.Open / PCS.Verify use for per-polynomial
 	//    DEEP quotient traversal.
@@ -144,9 +144,17 @@ func BuildCanonicalSchedule(program board.Program, layout Layout) CanonicalSched
 		base []string
 		ext  []string
 	}
-	railsByTree := make([]railList, layout.NumTrees)
-	put := func(treeIdx, polyIdx int, f field.Kind, name string) {
-		rl := &railsByTree[treeIdx]
+	railsByTree := make([][]railList, layout.NumTrees)
+	for treeIdx := 0; treeIdx < layout.NumTrees; treeIdx++ {
+		if treeIdx < len(layout.TreeGroups) {
+			railsByTree[treeIdx] = make([]railList, len(layout.TreeGroups[treeIdx]))
+		}
+	}
+	put := func(treeIdx, groupIdx, polyIdx int, f field.Kind, name string) {
+		for len(railsByTree[treeIdx]) <= groupIdx {
+			railsByTree[treeIdx] = append(railsByTree[treeIdx], railList{})
+		}
+		rl := &railsByTree[treeIdx][groupIdx]
 		switch f {
 		case field.Base:
 			for len(rl.base) <= polyIdx {
@@ -161,15 +169,15 @@ func BuildCanonicalSchedule(program board.Program, layout Layout) CanonicalSched
 		}
 	}
 	for colName, slot := range layout.ColSlot {
-		put(slot.TreeIdx, slot.PolyIdx, slot.Field, colName)
+		put(slot.TreeIdx, slot.GroupIdx, slot.PolyIdx, slot.Field, colName)
 	}
 	for chunkName, slot := range layout.AIRChunkSlot {
-		put(slot.TreeIdx, slot.PolyIdx, slot.Field, chunkName)
+		put(slot.TreeIdx, slot.GroupIdx, slot.PolyIdx, slot.Field, chunkName)
 	}
 
 	isAIRTree := func(t int) bool { return t >= layout.AIRBegin && t < layout.AIREnd }
 
-	// 3- For each tree, build the single-group BatchShifts + BatchKeys.
+	// 3- For each tree, build the per-group BatchShifts + BatchKeys.
 	schedule := CanonicalSchedule{
 		Shifts:         make([]fri.BatchShifts, layout.NumTrees),
 		Keys:           make([]BatchKeys, layout.NumTrees),
@@ -177,15 +185,10 @@ func BuildCanonicalSchedule(program board.Program, layout Layout) CanonicalSched
 	}
 
 	for t := 0; t < layout.NumTrees; t++ {
-		rl := railsByTree[t]
-		gs := fri.GroupShifts{
-			Base: make([][]int, len(rl.base)),
-			Ext:  make([][]int, len(rl.ext)),
-		}
-		gk := GroupKeys{
-			Base: make([][][]string, len(rl.base)),
-			Ext:  make([][][]string, len(rl.ext)),
-		}
+		treeRails := railsByTree[t]
+		schedule.Shifts[t] = make(fri.BatchShifts, len(treeRails))
+		schedule.Keys[t] = make(BatchKeys, len(treeRails))
+		schedule.ColNamesByTree[t] = make(BatchNames, len(treeRails))
 
 		air := isAIRTree(t)
 		fill := func(rail string, names []string, shifts *[][]int, keys *[][][]string) {
@@ -209,15 +212,25 @@ func BuildCanonicalSchedule(program board.Program, layout Layout) CanonicalSched
 				}
 			}
 		}
-		fill("Base", rl.base, &gs.Base, &gk.Base)
-		fill("Ext", rl.ext, &gs.Ext, &gk.Ext)
+		for g, rl := range treeRails {
+			gs := fri.GroupShifts{
+				Base: make([][]int, len(rl.base)),
+				Ext:  make([][]int, len(rl.ext)),
+			}
+			gk := GroupKeys{
+				Base: make([][][]string, len(rl.base)),
+				Ext:  make([][][]string, len(rl.ext)),
+			}
+			fill("Base", rl.base, &gs.Base, &gk.Base)
+			fill("Ext", rl.ext, &gs.Ext, &gk.Ext)
 
-		schedule.Shifts[t] = fri.BatchShifts{gs}
-		schedule.Keys[t] = BatchKeys{gk}
-		schedule.ColNamesByTree[t] = BatchNames{GroupNames{
-			Base: append([]string{}, rl.base...),
-			Ext:  append([]string{}, rl.ext...),
-		}}
+			schedule.Shifts[t][g] = gs
+			schedule.Keys[t][g] = gk
+			schedule.ColNamesByTree[t][g] = GroupNames{
+				Base: append([]string{}, rl.base...),
+				Ext:  append([]string{}, rl.ext...),
+			}
+		}
 	}
 
 	return schedule
