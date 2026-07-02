@@ -596,6 +596,127 @@ func TestRSCommitMultiGroupOpenProof(t *testing.T) {
 	}
 }
 
+func TestRSCommitPairLeafEdgeTopTwoEncodedRows(t *testing.T) {
+	polys := []poly.Polynomial{{baseElement(7)}}
+
+	for _, tt := range []struct {
+		name string
+		lh   LeafHasher
+		nh   NodeHasher
+	}{
+		{name: "poseidon2", lh: DefaultLeafHasher, nh: DefaultNodeHasher},
+		{name: "sha256", lh: SHA256LeafHasher{}, nh: SHA256NodeHasher{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			pcs := NewPCS(2, tt.lh, tt.nh)
+			committed, err := pcs.Commit([]Group{{Base: polys}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := committed.Tree.NumRows(), 2; got != want {
+				t.Fatalf("NumRows = %d, want %d", got, want)
+			}
+			if got, want := committed.Tree.NumLeaves(), 1; got != want {
+				t.Fatalf("NumLeaves = %d, want %d", got, want)
+			}
+			if widths := committed.Tree.InjectionWidths(); widths != nil {
+				t.Fatalf("InjectionWidths = %v, want nil", widths)
+			}
+
+			proof, err := committed.Tree.OpenProof(0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(proof.Siblings); got != 0 {
+				t.Fatalf("path siblings = %d, want 0", got)
+			}
+			pair, err := rawRowPairFromSource(committed.Sources[0], 0, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !merkle.Verify(committed.Tree.Root(), proof, hashRawRowPair(tt.lh, pair), tt.nh) {
+				t.Fatal("single pair-leaf proof did not verify")
+			}
+
+			wp, err := openCommittedAt(committed, 1, committed.Tree.NumRows())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyOneWMerkleProof(tt.lh, tt.nh, committed.Tree.Root(), committed.Shapes, wp, 1, committed.Tree.NumRows()); err != nil {
+				t.Fatalf("verifyOneWMerkleProof rejected 2-row top tree: %v", err)
+			}
+		})
+	}
+}
+
+func TestRSCommitPairLeafEdgeMixedRowsSixteenEightTwo(t *testing.T) {
+	topBase := []poly.Polynomial{
+		{baseElement(1), baseElement(2), baseElement(3), baseElement(4),
+			baseElement(5), baseElement(6), baseElement(7), baseElement(8)},
+	}
+	midBase := []poly.Polynomial{
+		{baseElement(101), baseElement(102), baseElement(103), baseElement(104)},
+	}
+	tinyBase := []poly.Polynomial{
+		{baseElement(201)},
+	}
+
+	for _, tt := range []struct {
+		name string
+		lh   LeafHasher
+		nh   NodeHasher
+	}{
+		{name: "poseidon2", lh: DefaultLeafHasher, nh: DefaultNodeHasher},
+		{name: "sha256", lh: SHA256LeafHasher{}, nh: SHA256NodeHasher{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			pcs := NewPCS(2, tt.lh, tt.nh)
+			committed, err := pcs.Commit([]Group{
+				{Base: tinyBase},
+				{Base: topBase},
+				{Base: midBase},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tree := committed.Tree
+			if got, want := tree.NumRows(), 16; got != want {
+				t.Fatalf("NumRows = %d, want %d", got, want)
+			}
+			if got, want := tree.NumLeaves(), 8; got != want {
+				t.Fatalf("NumLeaves = %d, want %d", got, want)
+			}
+			if got, want := tree.InjectionWidths(), []int{4, 1}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+				t.Fatalf("InjectionWidths = %v, want %v", got, want)
+			}
+			if got, want := len(committed.Sources), 3; got != want {
+				t.Fatalf("sources = %d, want %d", got, want)
+			}
+			for i, wantRows := range []int{16, 8, 2} {
+				if got := leafSourceRows(committed.Sources[i]); got != wantRows {
+					t.Fatalf("source %d rows = %d, want %d", i, got, wantRows)
+				}
+			}
+
+			for _, sFull := range []int{0, 5, 15} {
+				wp, err := openCommittedAt(committed, sFull, tree.NumRows())
+				if err != nil {
+					t.Fatalf("openCommittedAt(%d): %v", sFull, err)
+				}
+				if got, want := len(wp.Injections), 2; got != want {
+					t.Fatalf("s=%d Injections = %d, want %d", sFull, got, want)
+				}
+				if err := verifyOneWMerkleProof(tt.lh, tt.nh, tree.Root(), committed.Shapes, wp, sFull, tree.NumRows()); err != nil {
+					t.Fatalf("verifyOneWMerkleProof(%d): %v", sFull, err)
+				}
+				if got, want := wp.Path.InjectionLeaves[1], hashRawRowPair(tt.lh, wp.Injections[1].Rows); got != want {
+					t.Fatalf("s=%d width-1 injection digest mismatch", sFull)
+				}
+			}
+		})
+	}
+}
+
 func TestWMerkleProofCompactShapeSingleSize(t *testing.T) {
 	basePolys := []poly.Polynomial{
 		{baseElement(1), baseElement(2), baseElement(3), baseElement(4)},

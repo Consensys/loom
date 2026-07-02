@@ -45,11 +45,10 @@ type BatchNodeHasher interface {
 }
 
 // LevelInjection adds an extra leaf-hash payload at an internal level of the
-// tree. It is the mechanism that lets a single Tree commit to several
-// polynomials whose row domains have different sizes: the largest
-// polynomial occupies the actual leaves, and each smaller polynomial is
-// introduced as an injection at the level whose node count matches its
-// number of encoded rows.
+// tree. It is the mechanism that lets a single Tree commit to several payload
+// vectors with different Merkle widths: the largest payload occupies the actual
+// leaves, and each smaller payload is introduced as an injection at the level
+// whose node count matches its payload width.
 //
 // Semantics: at the level whose width equals LevelWidth, each running-hash
 // node j (j in 0..LevelWidth-1) is replaced by HashNode(running, LeafHashes[j])
@@ -77,16 +76,14 @@ type LevelInjection struct {
 //   - children of node k   = nodes[2k] (left) and nodes[2k+1] (right)
 //   - parent of node k     = nodes[k/2]
 //
-// If the tree was constructed with injections (NewWithInjections), the
-// digest stored at any node on an injection level is the post-fold value
-// HashNode(standard_2_to_1, LeafHashes[j]). For compact openings, the tree
-// also retains the pre-injection running nodes at each injection width.
+// If the tree was constructed with injections (NewWithInjections), the digest
+// stored at any node on an injection level is the post-fold value
+// HashNode(standard_2_to_1, LeafHashes[j]).
 type Tree struct {
-	nodes             []hash.Digest
-	nLeaves           int
-	nodeHasher        NodeHasher
-	injections        []LevelInjection
-	preInjectionNodes map[int][]hash.Digest
+	nodes      []hash.Digest
+	nLeaves    int
+	nodeHasher NodeHasher
+	injections []LevelInjection
 }
 
 // Proof is an opening proof for a single leaf.
@@ -205,12 +202,6 @@ type batchScratch struct{ left, right, dst []hash.Digest }
 // replaced by HashNode(nodes[start+j], injection.LeafHashes[j]). Inputs to
 // the fold are contiguous, so it skips the gather scratch entirely.
 func (t *Tree) buildInternalNodes() {
-	if len(t.injections) == 0 {
-		t.preInjectionNodes = nil
-	} else {
-		t.preInjectionNodes = make(map[int][]hash.Digest, len(t.injections))
-	}
-
 	batchHasher, hasBatch := t.nodeHasher.(BatchNodeHasher)
 	batchSize := 0
 	if hasBatch {
@@ -304,10 +295,6 @@ func (t *Tree) buildInternalNodes() {
 		}
 		inj := &t.injections[injIdx]
 
-		preInjection := make([]hash.Digest, start)
-		copy(preInjection, t.nodes[start:start+start])
-		t.preInjectionNodes[start] = preInjection
-
 		if !hasBatch || start < batchSize {
 			parallel.ExecuteWithThreshold(start, parallelLevelThreshold, func(lo, hi int) {
 				for j := lo; j < hi; j++ {
@@ -332,30 +319,6 @@ func (t *Tree) buildInternalNodes() {
 			}
 		}
 	}
-}
-
-// PreInjectionSibling returns the pre-injection running digest of the sibling
-// node at the injection level with the supplied width.
-//
-// pathRowAtWidth is the row index crossed by an opening path at that width;
-// the returned digest is for pathRowAtWidth^1. The value exists only after
-// Build or BuildNodes on a tree constructed with an injection at levelWidth.
-func (t *Tree) PreInjectionSibling(levelWidth int, pathRowAtWidth int) (hash.Digest, error) {
-	if levelWidth <= 0 || levelWidth&(levelWidth-1) != 0 {
-		return hash.Digest{}, fmt.Errorf("merkle: levelWidth must be a positive power of two, got %d", levelWidth)
-	}
-	if pathRowAtWidth < 0 || pathRowAtWidth >= levelWidth {
-		return hash.Digest{}, fmt.Errorf("merkle: path row %d out of range [0, %d)", pathRowAtWidth, levelWidth)
-	}
-	nodes, ok := t.preInjectionNodes[levelWidth]
-	if !ok {
-		return hash.Digest{}, fmt.Errorf("merkle: no pre-injection nodes retained at width %d", levelWidth)
-	}
-	sibling := pathRowAtWidth ^ 1
-	if sibling >= len(nodes) {
-		return hash.Digest{}, fmt.Errorf("merkle: sibling row %d out of retained range [0, %d)", sibling, len(nodes))
-	}
-	return nodes[sibling], nil
 }
 
 // Root returns the Merkle root digest. Build must be called first.

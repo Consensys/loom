@@ -29,7 +29,7 @@ func (testNodeHasher) HashNode(left, right hash.Digest) hash.Digest {
 	return out
 }
 
-func TestPreInjectionSiblingSingleInjection(t *testing.T) {
+func TestVerifyWithInjectionsSingleInjection(t *testing.T) {
 	nh := testNodeHasher{}
 	injection := LevelInjection{
 		LevelWidth: 4,
@@ -49,25 +49,23 @@ func TestPreInjectionSiblingSingleInjection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	depth := log2(tree.nLeaves / injection.LevelWidth)
-	pathRow := leafIdx >> depth
-	siblingRow := pathRow ^ 1
-	runningSibling, err := tree.PreInjectionSibling(injection.LevelWidth, pathRow)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	gotPostSibling := proof.Siblings[depth]
-	wantPostSibling := nh.HashNode(runningSibling, injection.LeafHashes[siblingRow])
-	if gotPostSibling != wantPostSibling {
-		t.Fatalf("post-injection sibling mismatch: got %v, want %v", gotPostSibling, wantPostSibling)
-	}
+	pathRow := leafIdx >> log2(tree.nLeaves/injection.LevelWidth)
 	if proof.InjectionLeaves[0] != injection.LeafHashes[pathRow] {
 		t.Fatalf("path injection leaf mismatch: got %v, want %v", proof.InjectionLeaves[0], injection.LeafHashes[pathRow])
 	}
+	if !VerifyWithInjections(tree.Root(), proof, testDigests(8, 10)[leafIdx], []int{injection.LevelWidth}, nh) {
+		t.Fatal("VerifyWithInjections rejected a valid proof")
+	}
+
+	badProof := proof
+	badProof.InjectionLeaves = append([]hash.Digest{}, proof.InjectionLeaves...)
+	badProof.InjectionLeaves[0][0].SetUint64(0xdeadbeef)
+	if VerifyWithInjections(tree.Root(), badProof, testDigests(8, 10)[leafIdx], []int{injection.LevelWidth}, nh) {
+		t.Fatal("VerifyWithInjections accepted a tampered injection leaf")
+	}
 }
 
-func TestPreInjectionSiblingMultipleInjectionsIncludesLowerInjections(t *testing.T) {
+func TestVerifyWithInjectionsMultipleInjections(t *testing.T) {
 	nh := testNodeHasher{}
 	injections := []LevelInjection{
 		{
@@ -93,40 +91,17 @@ func TestPreInjectionSiblingMultipleInjectionsIncludesLowerInjections(t *testing
 		t.Fatal(err)
 	}
 
-	depth := log2(tree.nLeaves / injections[1].LevelWidth)
-	pathRow := leafIdx >> depth
-	siblingRow := pathRow ^ 1
-	runningSibling, err := tree.PreInjectionSibling(injections[1].LevelWidth, pathRow)
-	if err != nil {
-		t.Fatal(err)
+	if len(proof.InjectionLeaves) != len(injections) {
+		t.Fatalf("InjectionLeaves length = %d, want %d", len(proof.InjectionLeaves), len(injections))
 	}
-
-	gotPostSibling := proof.Siblings[depth]
-	wantPostSibling := nh.HashNode(runningSibling, injections[1].LeafHashes[siblingRow])
-	if gotPostSibling != wantPostSibling {
-		t.Fatalf("post-injection sibling mismatch: got %v, want %v", gotPostSibling, wantPostSibling)
+	for k, injection := range injections {
+		pathRow := leafIdx >> log2(tree.nLeaves/injection.LevelWidth)
+		if proof.InjectionLeaves[k] != injection.LeafHashes[pathRow] {
+			t.Fatalf("injection %d leaf mismatch: got %v, want %v", k, proof.InjectionLeaves[k], injection.LeafHashes[pathRow])
+		}
 	}
-
-	// The width-2 pre-injection node is computed from width-4 nodes after
-	// the width-4 injection has already been folded in.
-	width2Node := injections[1].LevelWidth + siblingRow
-	wantRunningSibling := nh.HashNode(tree.nodes[2*width2Node], tree.nodes[2*width2Node+1])
-	if runningSibling != wantRunningSibling {
-		t.Fatalf("pre-injection sibling did not include lower injection: got %v, want %v", runningSibling, wantRunningSibling)
-	}
-}
-
-func TestPreInjectionSiblingRejectsMissingLevel(t *testing.T) {
-	nh := testNodeHasher{}
-	tree, err := New(4, nh)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := tree.Build(testDigests(4, 10)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tree.PreInjectionSibling(2, 0); err == nil {
-		t.Fatal("expected missing pre-injection level error")
+	if !VerifyWithInjections(tree.Root(), proof, testDigests(8, 10)[leafIdx], []int{4, 2}, nh) {
+		t.Fatal("VerifyWithInjections rejected a valid multi-injection proof")
 	}
 }
 

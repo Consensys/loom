@@ -61,7 +61,7 @@ type BatchLeafHasher interface {
 //
 //	base(lo) || base(hi) || ext(lo) || ext(hi)
 //
-// through the same LeafHasher.HashLeaf interface used by row leaves.
+// through the same LeafHasher.HashLeaf interface used by single-row hashing.
 type BatchPairLeafHasher interface {
 	LeafHasher
 	BatchSize() int
@@ -145,11 +145,9 @@ type RawRowPair struct {
 
 // WMerkleInjectionOpening is the compact opening payload for one injected
 // smaller group. Rows is the canonical lo/hi row pair at that group's row
-// domain. SiblingRunning is retained for compatibility with older compact
-// proof code paths and is unused for pair-leaf openings.
+// domain and is authenticated as a pair leaf on the top Merkle path.
 type WMerkleInjectionOpening struct {
-	Rows           RawRowPair
-	SiblingRunning hash.Digest
+	Rows RawRowPair
 }
 
 // WMerkleProof is an opening proof for a WMerkleTree at one query position.
@@ -608,7 +606,7 @@ func hashRawRowPair(leafHasher LeafHasher, pair RawRowPair) hash.Digest {
 	return leafHasher.HashLeaf(base, ext)
 }
 
-// HashLeavesParallel hashes len(dst) row leaves from src into dst, using
+// HashLeavesParallel hashes len(dst) single-row digests from src into dst, using
 // the batched leaf hasher when available (rate-16 Poseidon2 sponge) and
 // fanning the work out across goroutines.
 func HashLeavesParallel(lh LeafHasher, dst []hash.Digest, src LeafSource) {
