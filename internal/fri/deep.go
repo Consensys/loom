@@ -30,8 +30,8 @@ import (
 // deepShiftTerm is one requested opening point for one polynomial in the
 // per-polynomial DEEP quotient.
 type deepShiftTerm struct {
-	zs    ext.E6 // z_s = zeta * omega_N^shift
-	value ext.E6 // claimed value P(z_s)
+	zs          ext.E6 // z_s = zeta * omega_N^shift
+	scaledValue ext.E6 // alpha^i times the claimed value P(z_s)
 }
 
 // deepPolyBundle groups all requested shifts for one polynomial. The shifts are
@@ -44,6 +44,11 @@ type deepPolyBundle struct {
 	baseCol poly.Polynomial
 	extCol  poly.ExtPolynomial
 	shifts  []deepShiftTerm
+}
+
+type deepDenominatorPlan struct {
+	points  []ext.E6
+	indexes [][]int
 }
 
 // computeDeepQuotientCodewordsByPolynomial builds one DEEP-quotient codeword
@@ -145,7 +150,7 @@ func deepPolyBundlesForSize(
 					field:   field.Base,
 					scale:   alphaRunning,
 					baseCol: col,
-					shifts:  deepShiftTerms(gShifts.Base[i], gValues.Base[i], N, zeta, traceDomain),
+					shifts:  deepShiftTerms(gShifts.Base[i], gValues.Base[i], N, zeta, alphaRunning, traceDomain),
 				})
 				alphaRunning.Mul(&alphaRunning, &alpha)
 			}
@@ -157,7 +162,7 @@ func deepPolyBundlesForSize(
 					field:  field.Ext,
 					scale:  alphaRunning,
 					extCol: col,
-					shifts: deepShiftTerms(gShifts.Ext[i], gValues.Ext[i], N, zeta, traceDomain),
+					shifts: deepShiftTerms(gShifts.Ext[i], gValues.Ext[i], N, zeta, alphaRunning, traceDomain),
 				})
 				alphaRunning.Mul(&alphaRunning, &alpha)
 			}
@@ -166,15 +171,36 @@ func deepPolyBundlesForSize(
 	return bundles, nil
 }
 
-func deepShiftTerms(shifts []int, values []ext.E6, N int, zeta ext.E6, traceDomain *fft.Domain) []deepShiftTerm {
+func deepShiftTerms(shifts []int, values []ext.E6, N int, zeta ext.E6, scale ext.E6, traceDomain *fft.Domain) []deepShiftTerm {
 	terms := make([]deepShiftTerm, len(shifts))
 	for i, s := range shifts {
 		var omegaShift koalabear.Element
 		omegaShift.Exp(traceDomain.Generator, big.NewInt(int64(normalizeShift(s, N))))
 		terms[i].zs.MulByElement(&zeta, &omegaShift)
-		terms[i].value = values[i]
+		terms[i].scaledValue.Mul(&scale, &values[i])
 	}
 	return terms
+}
+
+func newDeepDenominatorPlan(bundles []deepPolyBundle) deepDenominatorPlan {
+	byPoint := make(map[ext.E6]int)
+	plan := deepDenominatorPlan{
+		indexes: make([][]int, len(bundles)),
+	}
+	for b := range bundles {
+		bun := &bundles[b]
+		plan.indexes[b] = make([]int, len(bun.shifts))
+		for t, sh := range bun.shifts {
+			idx, ok := byPoint[sh.zs]
+			if !ok {
+				idx = len(plan.points)
+				byPoint[sh.zs] = idx
+				plan.points = append(plan.points, sh.zs)
+			}
+			plan.indexes[b][t] = idx
+		}
+	}
+	return plan
 }
 
 func accumulateDeepQuotientByPolynomialOnTrace(deep poly.ExtPolynomial, bundles []deepPolyBundle, traceDomain *fft.Domain) {
@@ -183,49 +209,58 @@ func accumulateDeepQuotientByPolynomialOnTrace(deep poly.ExtPolynomial, bundles 
 		return
 	}
 
+	denomPlan := newDeepDenominatorPlan(bundles)
+	nbShiftPoints := len(denomPlan.points)
+
 	parallel.Execute(N, func(start, end int) {
 		chunkLen := end - start
 
-		xs := make([]ext.E6, chunkLen)
+		denoms := make([]ext.E6, chunkLen*nbShiftPoints)
 		var omegaX koalabear.Element
 		if start == 0 {
 			omegaX.SetOne()
 		} else {
 			omegaX.Exp(traceDomain.Generator, big.NewInt(int64(start)))
 		}
-		for x := range xs {
-			xs[x] = hash.LiftBaseToExt(omegaX)
+		for row := 0; row < chunkLen; row++ {
+			xExt := hash.LiftBaseToExt(omegaX)
+			rowDenoms := denoms[row*nbShiftPoints : (row+1)*nbShiftPoints]
+			for s, zs := range denomPlan.points {
+				rowDenoms[s].Sub(&zs, &xExt)
+			}
 			omegaX.Mul(&omegaX, &traceDomain.Generator)
 		}
+		invs := ext.BatchInvertE6(denoms)
+		numerators := make([]ext.E6, nbShiftPoints)
 
-		for b := range bundles {
-			bun := &bundles[b]
-			denoms := make([]ext.E6, chunkLen*len(bun.shifts))
-			for t, sh := range bun.shifts {
-				for x := 0; x < chunkLen; x++ {
-					denoms[t*chunkLen+x].Sub(&sh.zs, &xs[x])
+		for x := start; x < end; x++ {
+			for s := range numerators {
+				numerators[s] = ext.E6{}
+			}
+
+			for b := range bundles {
+				bun := &bundles[b]
+				shiftIndexes := denomPlan.indexes[b]
+
+				var scaledPx ext.E6
+				if bun.field == field.Base {
+					scaledPx.MulByElement(&bun.scale, &bun.baseCol[x])
+				} else {
+					scaledPx.Mul(&bun.scale, &bun.extCol[x])
+				}
+				for t, sh := range bun.shifts {
+					idx := shiftIndexes[t]
+					numerators[idx].Add(&numerators[idx], &sh.scaledValue)
+					numerators[idx].Sub(&numerators[idx], &scaledPx)
 				}
 			}
-			invs := ext.BatchInvertE6(denoms)
 
-			for x := start; x < end; x++ {
-				var px ext.E6
-				if bun.field == field.Base {
-					px = hash.LiftBaseToExt(bun.baseCol[x])
-				} else {
-					px.Set(&bun.extCol[x])
-				}
-
-				row := x - start
-				var sum ext.E6
-				for t, sh := range bun.shifts {
-					var num, term ext.E6
-					num.Sub(&sh.value, &px)
-					term.Mul(&num, &invs[t*chunkLen+row])
-					sum.Add(&sum, &term)
-				}
-				sum.Mul(&sum, &bun.scale)
-				deep[x].Add(&deep[x], &sum)
+			row := x - start
+			invRow := invs[row*nbShiftPoints : (row+1)*nbShiftPoints]
+			for s := range numerators {
+				var term ext.E6
+				term.Mul(&numerators[s], &invRow[s])
+				deep[x].Add(&deep[x], &term)
 			}
 		}
 	})
