@@ -77,6 +77,8 @@ peakHeap = max HeapAlloc observed during phase (sampled in background)
 9. loom.Verify(statement, proof)
 ```
 
+For a detailed note on the low-degree testing and polynomial commitment layer, see [docs/fri.md](docs/fri.md).
+
 ## Example: PLONK gate + copy constraint
 
 Prove that PLONK arithmetic gates are satisfied and that wires are consistently connected.
