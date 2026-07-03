@@ -14,6 +14,7 @@ Benchmarks are run on 40x instances of a plonk trace of size 1<<14
 
 ### Poseidon2 backend (no SIMD)
 
+```text
 phase           wall      cpu      par     gc%    alloc      objs   peakHeap   GCs
 -----           ----      ---      ---     ---    -----      ----   --------   ---
 traces+modules  196.3ms   407.4ms   2.08x   7.6%  674.7 MiB  1.54M  105.8 MiB  40
@@ -27,9 +28,11 @@ cpu      = on-CPU time (user goroutines + GC); excludes idle
 par      = cpu / wall   (ideal: 14x = 14 cores fully busy; 1x = single-threaded)
 gc%      = GC CPU time / on-CPU time
 peakHeap = max HeapAlloc observed during phase (sampled in background)
+```
 
-### Sha256
+### Sha256 backend
 
+```text
 phase           wall      cpu      par     gc%    alloc      objs    peakHeap   GCs
 -----           ----      ---      ---     ---    -----      ----    --------   ---
 traces+modules  171.9ms   381.4ms   2.22x   7.5%  676.0 MiB  1.54M   89.6 MiB   40
@@ -43,6 +46,7 @@ cpu      = on-CPU time (user goroutines + GC); excludes idle
 par      = cpu / wall   (ideal: 14x = 14 cores fully busy; 1x = single-threaded)
 gc%      = GC CPU time / on-CPU time
 peakHeap = max HeapAlloc observed during phase (sampled in background)
+```
 
 ## Core concepts
 
