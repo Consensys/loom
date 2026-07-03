@@ -8,6 +8,42 @@ It lets you describe a computation as a set of polynomial constraints over a **t
 
 Fiat-Shamir challenges, including lookup/permutation challenges, canonical trace-round challenges, `__zeta`, `alpha_DEEP`, and FRI fold challenges, are sampled in the Koalabear E6 extension field. The `alpha_DEEP` challenge binds the claimed evaluations folded into the DEEP quotient. Base trace columns remain base-valued and are lifted only when evaluated at extension points. The resulting soundness error is approximately `N/2^186`.
 
+## Benchmarks
+
+Benchmarks are run on 40x instances of a plonk trace of size 1<<14
+
+### Poseidon2 backend (no SIMD)
+
+phase           wall      cpu      par     gc%    alloc      objs   peakHeap   GCs
+-----           ----      ---      ---     ---    -----      ----   --------   ---
+traces+modules  196.3ms   407.4ms   2.08x   7.6%  674.7 MiB  1.54M  105.8 MiB  40
+compile         10.4ms    48.3ms    4.65x   2.9%  33.1 MiB   28.9k  105.8 MiB  1
+merge-trace     41.459µs  0s        0.00x   0.0%  6.3 KiB    4      103.4 MiB  0
+prove           4.49s     26.63s    5.94x   0.1%  2.03 GiB   53.8k  1.21 GiB   5
+-----           ----      ---      ---     ---    -----      ----   --------   ---
+TOTAL           4.69s     27.08s    5.77x   0.2%  2.72 GiB   1.62M  1.21 GiB   46
+
+cpu      = on-CPU time (user goroutines + GC); excludes idle
+par      = cpu / wall   (ideal: 14x = 14 cores fully busy; 1x = single-threaded)
+gc%      = GC CPU time / on-CPU time
+peakHeap = max HeapAlloc observed during phase (sampled in background)
+
+### Sha256
+
+phase           wall      cpu      par     gc%    alloc      objs    peakHeap   GCs
+-----           ----      ---      ---     ---    -----      ----    --------   ---
+traces+modules  171.9ms   381.4ms   2.22x   7.5%  676.0 MiB  1.54M   89.6 MiB   40
+compile         8.4ms     0s        0.00x   0.0%  31.6 MiB   21.8k   110.2 MiB  0
+merge-trace     33.375µs  0s        0.00x   0.0%  6.3 KiB    4       110.2 MiB  0
+prove           1.73s     12.72s    7.34x   0.2%  3.04 GiB   62.55M  1.60 GiB   7
+-----           ----      ---      ---     ---    -----      ----    --------   ---
+TOTAL           1.91s     13.11s    6.85x   0.4%  3.73 GiB   64.11M  1.60 GiB   47
+
+cpu      = on-CPU time (user goroutines + GC); excludes idle
+par      = cpu / wall   (ideal: 14x = 14 cores fully busy; 1x = single-threaded)
+gc%      = GC CPU time / on-CPU time
+peakHeap = max HeapAlloc observed during phase (sampled in background)
+
 ## Core concepts
 
 | Concept | Type | Description |
