@@ -11,6 +11,7 @@ Fiat-Shamir challenges, including lookup/permutation challenges, canonical trace
 ## Benchmarks
 
 Benchmarks are run on 40x instances of a plonk trace of size 1<<14
+(cd bench && go run main.go -log2-size 14 -instances 40)
 
 ### Poseidon2 backend (no SIMD)
 
