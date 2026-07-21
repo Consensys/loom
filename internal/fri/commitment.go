@@ -47,15 +47,6 @@ type LeafSource struct {
 	Ext  []poly.ExtPolynomial
 }
 
-// BatchLeafHasher hashes a consecutive range of leaves into dst. HashLeaf
-// remains the compatibility path and the source of truth for single-leaf
-// verifier checks.
-type BatchLeafHasher interface {
-	LeafHasher
-	BatchSize() int
-	HashLeaves(dst []hash.Digest, src LeafSource, start int)
-}
-
 // BatchPairLeafHasher hashes consecutive adjacent row pairs into dst.
 // Pair k absorbs rows 2*k and 2*k+1 as
 //
@@ -279,22 +270,6 @@ func (Poseidon2LeafHasher) HashLeaf(base []koalabear.Element, ext []ext.E6) hash
 		h.WriteExt(v)
 	}
 	return h.Sum()
-}
-
-func (lh Poseidon2LeafHasher) HashLeaves(dst []hash.Digest, src LeafSource, start int) {
-	if len(dst) < hash.Poseidon2SpongeBatchSize {
-		hashLeavesScalar(lh, dst, src, start)
-		return
-	}
-
-	fullBatches := len(dst) / hash.Poseidon2SpongeBatchSize
-	for batch := 0; batch < fullBatches; batch++ {
-		offset := batch * hash.Poseidon2SpongeBatchSize
-		lh.hashLeavesBatch16(dst[offset:offset+hash.Poseidon2SpongeBatchSize], src, start+offset)
-	}
-	if tail := fullBatches * hash.Poseidon2SpongeBatchSize; tail < len(dst) {
-		hashLeavesScalar(lh, dst[tail:], src, start+tail)
-	}
 }
 
 func (lh Poseidon2LeafHasher) HashLeafPairs(dst []hash.Digest, src LeafSource, startPair int) {
@@ -606,19 +581,6 @@ func hashRawRowPair(leafHasher LeafHasher, pair RawRowPair) hash.Digest {
 	return leafHasher.HashLeaf(base, ext)
 }
 
-// HashLeavesParallel hashes len(dst) single-row digests from src into dst, using
-// the batched leaf hasher when available (rate-16 Poseidon2 sponge) and
-// fanning the work out across goroutines.
-func HashLeavesParallel(lh LeafHasher, dst []hash.Digest, src LeafSource) {
-	if batchHasher, ok := lh.(BatchLeafHasher); ok {
-		hashLeavesBatchParallel(batchHasher, dst, src)
-		return
-	}
-	parallel.Execute(len(dst), func(start, end int) {
-		hashLeavesScalar(lh, dst[start:end], src, start)
-	})
-}
-
 // HashLeafPairsParallel hashes len(dst) adjacent row-pair leaves from src.
 // Pair k absorbs rows 2*k and 2*k+1.
 func HashLeafPairsParallel(lh LeafHasher, dst []hash.Digest, src LeafSource) {
@@ -629,30 +591,6 @@ func HashLeafPairsParallel(lh LeafHasher, dst []hash.Digest, src LeafSource) {
 	parallel.Execute(len(dst), func(start, end int) {
 		hashLeafPairsScalar(lh, dst[start:end], src, start)
 	})
-}
-
-func hashLeavesBatchParallel(lh BatchLeafHasher, dst []hash.Digest, src LeafSource) {
-	batchSize := lh.BatchSize()
-	if batchSize <= 0 {
-		batchSize = 1
-	}
-
-	if batchSize == 1 || len(dst) < batchSize {
-		parallel.Execute(len(dst), func(start, end int) {
-			lh.HashLeaves(dst[start:end], src, start)
-		})
-		return
-	}
-
-	full := (len(dst) / batchSize) * batchSize
-	parallel.Execute(full/batchSize, func(startBatch, endBatch int) {
-		start := startBatch * batchSize
-		end := endBatch * batchSize
-		lh.HashLeaves(dst[start:end], src, start)
-	})
-	if full < len(dst) {
-		lh.HashLeaves(dst[full:], src, full)
-	}
 }
 
 func hashLeafPairsBatchParallel(lh BatchPairLeafHasher, dst []hash.Digest, src LeafSource) {
@@ -679,24 +617,24 @@ func hashLeafPairsBatchParallel(lh BatchPairLeafHasher, dst []hash.Digest, src L
 	}
 }
 
-func hashLeavesScalar(lh LeafHasher, dst []hash.Digest, src LeafSource, start int) {
-	baseLeaf := make([]koalabear.Element, len(src.Base))
-	extLeaf := make([]ext.E6, len(src.Ext))
-	for k := range dst {
-		i := start + k
-		if len(src.Base) > 0 {
-			for j := range src.Base {
-				baseLeaf[j].Set(&src.Base[j][i])
-			}
-		}
-		if len(src.Ext) > 0 {
-			for j := range src.Ext {
-				extLeaf[j].Set(&src.Ext[j][i])
-			}
-		}
-		dst[k] = lh.HashLeaf(baseLeaf, extLeaf)
-	}
-}
+// func hashLeavesScalar(lh LeafHasher, dst []hash.Digest, src LeafSource, start int) {
+// 	baseLeaf := make([]koalabear.Element, len(src.Base))
+// 	extLeaf := make([]ext.E6, len(src.Ext))
+// 	for k := range dst {
+// 		i := start + k
+// 		if len(src.Base) > 0 {
+// 			for j := range src.Base {
+// 				baseLeaf[j].Set(&src.Base[j][i])
+// 			}
+// 		}
+// 		if len(src.Ext) > 0 {
+// 			for j := range src.Ext {
+// 				extLeaf[j].Set(&src.Ext[j][i])
+// 			}
+// 		}
+// 		dst[k] = lh.HashLeaf(baseLeaf, extLeaf)
+// 	}
+// }
 
 func hashLeafPairsScalar(lh LeafHasher, dst []hash.Digest, src LeafSource, startPair int) {
 	baseLeaf := make([]koalabear.Element, 2*len(src.Base))

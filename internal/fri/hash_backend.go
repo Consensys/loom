@@ -137,10 +137,6 @@ func (SHA256LeafHasher) HashLeaf(base []koalabear.Element, ext []ext.E6) hash.Di
 	return h.Sum()
 }
 
-func (lh SHA256LeafHasher) HashLeaves(dst []hash.Digest, src LeafSource, start int) {
-	hashLeavesScalar(lh, dst, src, start)
-}
-
 func (SHA256LeafHasher) BatchSize() int {
 	return 1
 }
