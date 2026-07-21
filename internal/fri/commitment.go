@@ -617,25 +617,6 @@ func hashLeafPairsBatchParallel(lh BatchPairLeafHasher, dst []hash.Digest, src L
 	}
 }
 
-// func hashLeavesScalar(lh LeafHasher, dst []hash.Digest, src LeafSource, start int) {
-// 	baseLeaf := make([]koalabear.Element, len(src.Base))
-// 	extLeaf := make([]ext.E6, len(src.Ext))
-// 	for k := range dst {
-// 		i := start + k
-// 		if len(src.Base) > 0 {
-// 			for j := range src.Base {
-// 				baseLeaf[j].Set(&src.Base[j][i])
-// 			}
-// 		}
-// 		if len(src.Ext) > 0 {
-// 			for j := range src.Ext {
-// 				extLeaf[j].Set(&src.Ext[j][i])
-// 			}
-// 		}
-// 		dst[k] = lh.HashLeaf(baseLeaf, extLeaf)
-// 	}
-// }
-
 func hashLeafPairsScalar(lh LeafHasher, dst []hash.Digest, src LeafSource, startPair int) {
 	baseLeaf := make([]koalabear.Element, 2*len(src.Base))
 	extLeaf := make([]ext.E6, 2*len(src.Ext))
