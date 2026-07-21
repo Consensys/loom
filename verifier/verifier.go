@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/consensys/gnark-crypto/field/koalabear"
 	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
@@ -212,10 +211,7 @@ func (vr *verifierRunTime) valueAtZetaExt(name string) (ext.E6, bool) {
 	return v, ok
 }
 
-func liftBaseToExt(v koalabear.Element) ext.E6 {
-	return hash.LiftBaseToExt(v)
-}
-
+// TODO catch error when calling Bind
 func (vr *verifierRunTime) deriveChallenges() error {
 
 	// For each FS round, bind every trace root for that round before computing
@@ -226,7 +222,10 @@ func (vr *verifierRunTime) deriveChallenges() error {
 		challengeName := constants.CanonicalChallengeName(r)
 		for i := vr.layout.TraceBegin[r]; i < vr.layout.TraceEnd[r]; i++ {
 			root := vr.roots[i]
-			vr.fs.Bind(challengeName, root[:])
+			err := vr.fs.Bind(challengeName, root[:])
+			if err != nil {
+				return err
+			}
 		}
 		challenge, err := vr.fs.ComputeChallenge(challengeName)
 		if err != nil {
@@ -238,7 +237,10 @@ func (vr *verifierRunTime) deriveChallenges() error {
 	// Bind every per-size AIR-quotient root before computing zeta.
 	for i := vr.layout.AIRBegin; i < vr.layout.AIREnd; i++ {
 		root := vr.roots[i]
-		vr.fs.Bind(constants.FINAL_EVALUATION_POINT, root[:])
+		err := vr.fs.Bind(constants.FINAL_EVALUATION_POINT, root[:])
+		if err != nil {
+			return err
+		}
 	}
 	zeta, err := vr.fs.ComputeChallenge(constants.FINAL_EVALUATION_POINT)
 	if err != nil {
@@ -378,6 +380,7 @@ func (vr *verifierRunTime) checkLogupBus() error {
 			if len(vr.proof.ExposedValues[pos].Entries) > 1 {
 				return fmt.Errorf("an extracted value from a logup column should have exactly one entry")
 			}
+			// TODO add a check that the exposed value's index is N-1
 			pe := vr.proof.ExposedValues[pos].Entries[0]
 			value := pe.ExtValue()
 			cumPositive.Add(&cumPositive, &value)
@@ -386,6 +389,7 @@ func (vr *verifierRunTime) checkLogupBus() error {
 			if len(vr.proof.ExposedValues[neg].Entries) > 1 {
 				return fmt.Errorf("an extracted value from a logup column should have exactly one entry")
 			}
+			// TODO add a check that the exposed value's index is N-1
 			pe := vr.proof.ExposedValues[neg].Entries[0]
 			value := pe.ExtValue()
 			cumNegative.Add(&cumNegative, &value)
