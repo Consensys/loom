@@ -32,6 +32,7 @@ import (
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/parallel"
 	"github.com/consensys/loom/internal/poly"
+	"github.com/consensys/loom/internal/protocol"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/public"
 	"github.com/consensys/loom/setup"
@@ -100,11 +101,11 @@ type proverRuntime struct {
 	// at the start of every Prove call so program.SetSize changes are
 	// reflected). It defines the order of trees in `committed` and the
 	// column-name → Slot mapping used to assemble pcs.Open's inputs.
-	layout Layout
+	layout protocol.Layout
 	// schedule is the per-tree (shifts, names, canonical-keys) bundle the
 	// prover hands to pcs.Open. Built deterministically from program/layout
 	// so prover and verifier produce identical schedules.
-	schedule CanonicalSchedule
+	schedule protocol.CanonicalSchedule
 	// committed[i] is the per-batch fri.Committed for tree i in canonical
 	// order (setup → trace rounds → AIR). Setup committeds are copied from
 	// provingKey.Setup at construction; trace and AIR slots get populated by
@@ -154,8 +155,8 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 	// Build the canonical commitment layout + parallel shift schedule.
 	// Both prover and verifier construct identical schedules from the same
 	// program; the alpha_DEEP transcript binding depends on it.
-	res.layout = BuildLayout(program, len(provingKey.Setup))
-	res.schedule = BuildCanonicalSchedule(program, res.layout)
+	res.layout = protocol.BuildLayout(program, len(provingKey.Setup))
+	res.schedule = protocol.BuildCanonicalSchedule(program, res.layout)
 
 	// committed[i] is the i-th batch's full Committed in canonical order
 	// (setup → trace rounds → AIR). Setup slots are filled now; the
@@ -283,7 +284,7 @@ type mixedCommitGroup struct {
 	ext  []poly.ExtPolynomial
 }
 
-func buildBatchFromNames(batchNames BatchNames, base map[string]poly.Polynomial, ext map[string]poly.ExtPolynomial, errPrefix string, liftExtFromBase bool) (fri.Batch, error) {
+func buildBatchFromNames(batchNames protocol.BatchNames, base map[string]poly.Polynomial, ext map[string]poly.ExtPolynomial, errPrefix string, liftExtFromBase bool) (fri.Batch, error) {
 	batch := make(fri.Batch, len(batchNames))
 	for groupIdx, names := range batchNames {
 		basePolys := make([]poly.Polynomial, len(names.Base))

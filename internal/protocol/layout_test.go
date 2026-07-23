@@ -11,7 +11,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package prover
+package protocol
 
 import (
 	"reflect"

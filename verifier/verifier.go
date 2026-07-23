@@ -25,8 +25,8 @@ import (
 	"github.com/consensys/loom/internal/fri"
 	"github.com/consensys/loom/internal/hash"
 	"github.com/consensys/loom/internal/poly"
+	"github.com/consensys/loom/internal/protocol"
 	"github.com/consensys/loom/proof"
-	"github.com/consensys/loom/prover"
 	"github.com/consensys/loom/public"
 	"github.com/consensys/loom/setup"
 )
@@ -82,12 +82,11 @@ type verifierRunTime struct {
 
 	// layout is the canonical commitment layout, shared with the prover side
 	// (built from program + len(setup) at the start of every Verify call).
-	layout prover.Layout
-	// schedule mirrors prover.CanonicalSchedule: per-batch shifts + the
-	// reverse name table that lets us translate Opening.ClaimedValues
-	// back into a canonical-key ValuesAtZeta map for AIR-equation
-	// evaluation.
-	schedule prover.CanonicalSchedule
+	layout protocol.Layout
+	// schedule is the per-batch shift schedule and reverse name table used
+	// to translate Opening.ClaimedValues back into a canonical-key
+	// ValuesAtZeta map for AIR-equation evaluation.
+	schedule protocol.CanonicalSchedule
 	// roots is the flat sequence of Merkle roots in canonical order:
 	//   setup roots (from VerificationKey) ++ proof.Commitments
 	// roots[i] aligns with proof.Opening.PointSamplings[q][i] for any q.
@@ -124,8 +123,8 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 	// Build the canonical layout + per-batch shift schedule. Both sides
 	// must agree on these to share the alpha_DEEP transcript binding
 	// order; they're deterministic in program + |verificationKey|.
-	res.layout = prover.BuildLayout(program, len(verificationKey.Roots))
-	res.schedule = prover.BuildCanonicalSchedule(program, res.layout)
+	res.layout = protocol.BuildLayout(program, len(verificationKey.Roots))
+	res.schedule = protocol.BuildCanonicalSchedule(program, res.layout)
 
 	// Validate proof.Commitments matches layout (trace + AIR section).
 	wantCommitments := res.layout.NumTrees - res.layout.SetupEnd

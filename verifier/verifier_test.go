@@ -20,6 +20,7 @@ import (
 	"github.com/consensys/loom/arguments"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
+	"github.com/consensys/loom/internal/protocol"
 	"github.com/consensys/loom/proof"
 	"github.com/consensys/loom/prover"
 	"github.com/consensys/loom/setup"
@@ -28,7 +29,7 @@ import (
 
 func TestVerifyMixedTraceRoundTrip(t *testing.T) {
 	program, tr := mixedTraceRoundFixture(t)
-	layout := prover.BuildLayout(program, 0)
+	layout := protocol.BuildLayout(program, 0)
 	traceTreeIdx := mixedTraceTreeIndex(t, layout)
 
 	oldTraceTrees, nonEmptyTraceRounds := legacyTraceTreeCount(program)
@@ -105,7 +106,7 @@ func mixedTraceRoundFixture(t *testing.T) (board.Program, trace.Trace) {
 	return program, prover.MergeTrace(prover.TraceFibonacci(n, a, b), prover.TraceRange(n))
 }
 
-func mixedTraceTreeIndex(t *testing.T, layout prover.Layout) int {
+func mixedTraceTreeIndex(t *testing.T, layout protocol.Layout) int {
 	t.Helper()
 
 	for r := range layout.TraceBegin {
