@@ -82,6 +82,13 @@ func WithHashBackend(backend fri.HashBackend) Option {
 	}
 }
 
+func WithNewTranscriptHasher(h fiatshamir.NewTranscriptHasher) Option {
+	return func(c *Config) error {
+		c.NewTranscriptHasher = h
+		return nil
+	}
+}
+
 // WithPhaseCallback installs a callback that fires after each major prover
 // phase with the phase name and wall-clock duration. Phases reported (in
 // order): "execute-steps", "compute-air-quotients", "evaluations-at-zeta",

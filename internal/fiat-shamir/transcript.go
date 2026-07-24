@@ -38,6 +38,7 @@ const (
 	maxGrindingBits                     = koalabearBits // current proofs of work use a single Koalabear salt
 	NewTranscriptHasherPoseidon2        = "poseidon2"
 	NewTranscriptHasherSha256           = "sha256"
+	NewTranscriptHasherBlake3           = "blake3"
 )
 
 // ResolveNewTranscriptHasher returns newTranscriptHasher if it is not nil,
@@ -63,6 +64,8 @@ func NewTranscriptHasherByID(id string) (NewTranscriptHasher, error) {
 		}, nil
 	case NewTranscriptHasherSha256:
 		return func() hash.FieldHasher { return hash.NewSHA256FieldHasher() }, nil
+	case NewTranscriptHasherBlake3:
+		return func() hash.FieldHasher { return hash.NewBlake3FieldHasher() }, nil
 	default:
 		return nil, fmt.Errorf("unknown hash backend %q", id)
 	}

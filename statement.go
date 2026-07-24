@@ -66,6 +66,10 @@ func SHA256HashBackend() HashBackend {
 	return fri.SHA256HashBackend()
 }
 
+func Blake3HashBackend() HashBackend {
+	return fri.Blake3HashBackend()
+}
+
 func WithSetupHashBackend(backend HashBackend) SetupOption {
 	return setup.WithHashBackend(backend)
 }

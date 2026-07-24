@@ -63,6 +63,13 @@ func WithHashBackend(backend fri.HashBackend) Option {
 	}
 }
 
+func WithNewTranscriptHasher(h fiatshamir.NewTranscriptHasher) Option {
+	return func(c *Config) error {
+		c.NewTranscriptHasher = h
+		return nil
+	}
+}
+
 // WithFriGrinding adds nbBits of POW to FRI, to reduce the number of queries.
 func WithFriGrinding(nbBits int) Option {
 	return func(c *Config) error {

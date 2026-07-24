@@ -11,8 +11,9 @@
 //
 // Run examples:
 //
-//	go run ./bench/synth -log2-rows 20 -repetitions 8     # tall
-//	go run ./bench/synth -log2-rows 14 -repetitions 512   # wide
+//	go run ./bench/synth -log2-rows 20 -repetitions 8                         # tall
+//	go run ./bench/synth -log2-rows 14 -repetitions 512                       # wide
+//	go run ./bench/synth -log2-rows 20 -repetitions 8 -hash sha256 -fs-hash sha256
 package main
 
 import (
@@ -33,6 +34,7 @@ import (
 	"github.com/consensys/loom"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
+	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	"github.com/consensys/loom/prover"
 	"github.com/consensys/loom/setup"
 	loomtrace "github.com/consensys/loom/trace"
@@ -42,7 +44,8 @@ import (
 var (
 	log2Rows    = flag.Int("log2-rows", 20, "log2 of trace height (rows)")
 	repetitions = flag.Int("repetitions", 16, "number of (a,b,c) tuples per row; trace width = 3 * repetitions")
-	hashName    = flag.String("hash", "poseidon2", "hash backend: poseidon2 | sha256")
+	hashName    = flag.String("hash", "poseidon2", "Merkle tree hash backend: poseidon2 | sha256 | blake3")
+	fsHashName  = flag.String("fs-hash", "poseidon2", "Fiat-Shamir transcript hasher: poseidon2 | sha256 | blake3")
 	gomaxprocs  = flag.Int("gomaxprocs", 0, "override GOMAXPROCS (0 = leave default)")
 	profileDir  = flag.String("profile-dir", "", "if non-empty, write cpu_prove.pprof + heap_after_prove.pprof + trace_prove.out into this directory (created if missing)")
 )
@@ -61,8 +64,8 @@ func main() {
 	rows := 1 << *log2Rows
 	width := 3 * *repetitions
 
-	fmt.Printf("loom synth   rows=2^%d (=%d)  width=%d (3 cols × %d reps)  cells=%d  hash=%s  GOMAXPROCS=%d  NumCPU=%d\n\n",
-		*log2Rows, rows, width, *repetitions, rows*width, *hashName, procs, runtime.NumCPU())
+	fmt.Printf("loom synth   rows=2^%d (=%d)  width=%d (3 cols × %d reps)  cells=%d  hash=%s  fs-hash=%s  GOMAXPROCS=%d  NumCPU=%d\n\n",
+		*log2Rows, rows, width, *repetitions, rows*width, *hashName, *fsHashName, procs, runtime.NumCPU())
 
 	// Build module + compile program.
 	builder := board.NewBuilder()
@@ -98,6 +101,7 @@ func main() {
 	}
 
 	hashBackend := resolveHashBackend(*hashName)
+	fsHasher := resolveFSHasher(*fsHashName)
 
 	// Prove with phase timings collected via the public WithPhaseCallback option.
 	type phase struct {
@@ -110,6 +114,7 @@ func main() {
 	)
 	opts := []prover.Option{
 		prover.WithHashBackend(hashBackend),
+		prover.WithNewTranscriptHasher(fsHasher),
 		prover.WithPhaseCallback(func(name string, d time.Duration) {
 			mu.Lock()
 			phases = append(phases, phase{name, d})
@@ -180,7 +185,8 @@ func main() {
 
 	t0 = time.Now()
 	if err := verifier.Verify(nil, setup.VerificationKey{}, program, prf,
-		verifier.WithHashBackend(hashBackend)); err != nil {
+		verifier.WithHashBackend(hashBackend),
+		verifier.WithNewTranscriptHasher(fsHasher)); err != nil {
 		fail("Verify: %v", err)
 	}
 	verifyWall := time.Since(t0)
@@ -206,10 +212,20 @@ func resolveHashBackend(name string) loom.HashBackend {
 		return loom.Poseidon2HashBackend()
 	case "sha256":
 		return loom.SHA256HashBackend()
+	case "blake3":
+		return loom.Blake3HashBackend()
 	default:
-		fail("unknown hash backend %q (want poseidon2 | sha256)", name)
+		fail("unknown hash backend %q (want poseidon2 | sha256 | blake3)", name)
 		return loom.HashBackend{}
 	}
+}
+
+func resolveFSHasher(name string) fiatshamir.NewTranscriptHasher {
+	h, err := fiatshamir.NewTranscriptHasherByID(name)
+	if err != nil {
+		fail("unknown fs-hash %q (want poseidon2 | sha256 | blake3)", name)
+	}
+	return h
 }
 
 func fmtDur(d time.Duration) string {

@@ -15,7 +15,7 @@
 // Run examples:
 //
 //	go run ./bench
-//	go run ./bench -instances 80 -log2-size 16 -hash sha256
+//	go run ./bench -instances 80 -log2-size 16 -hash sha256 -fs-hash sha256
 //	go run ./bench -skip-fri -profile-dir /tmp/loom-bench
 package main
 
@@ -35,6 +35,7 @@ import (
 	"github.com/consensys/loom/arguments"
 	"github.com/consensys/loom/board"
 	"github.com/consensys/loom/expr"
+	fiatshamir "github.com/consensys/loom/internal/fiat-shamir"
 	gnarkplonk "github.com/consensys/loom/integration_test/gnark_plonk"
 	"github.com/consensys/loom/prover"
 	"github.com/consensys/loom/setup"
@@ -48,7 +49,8 @@ import (
 var (
 	nbInstances = flag.Int("instances", 40, "number of PLONK instances to aggregate")
 	log2Size    = flag.Int("log2-size", 17, "log2 of each PLONK instance size")
-	hashName    = flag.String("hash", "poseidon2", "hash backend: poseidon2 | sha256")
+	hashName    = flag.String("hash", "poseidon2", "Merkle tree hash backend: poseidon2 | sha256 | blake3")
+	fsHashName  = flag.String("fs-hash", "poseidon2", "Fiat-Shamir transcript hasher: poseidon2 | sha256 | blake3")
 	profileDir  = flag.String("profile-dir", "bench_profiles", "directory to write pprof profiles")
 	skipFRI     = flag.Bool("skip-fri", false, "skip the FRI / sampling phase of Prove")
 	gomaxprocs  = flag.Int("gomaxprocs", 0, "override GOMAXPROCS (0 = leave default)")
@@ -66,11 +68,12 @@ func main() {
 	}
 
 	hashBackend := resolveHashBackend(*hashName)
+	fsHasher := resolveFSHasher(*fsHashName)
 	procs := runtime.GOMAXPROCS(0)
 	n := 1 << *log2Size
 
-	fmt.Printf("loom bench   instances=%d  size=2^%d (=%d)  hash=%s  GOMAXPROCS=%d  NumCPU=%d\n",
-		*nbInstances, *log2Size, n, *hashName, procs, runtime.NumCPU())
+	fmt.Printf("loom bench   instances=%d  size=2^%d (=%d)  hash=%s  fs-hash=%s  GOMAXPROCS=%d  NumCPU=%d\n",
+		*nbInstances, *log2Size, n, *hashName, *fsHashName, procs, runtime.NumCPU())
 	fmt.Printf("profiles ->  %s\n\n", *profileDir)
 
 	var phases []phaseReport
@@ -123,7 +126,7 @@ func main() {
 		fail("StartCPUProfile: %v", err)
 	}
 
-	opts := []prover.Option{prover.WithHashBackend(hashBackend)}
+	opts := []prover.Option{prover.WithHashBackend(hashBackend), prover.WithNewTranscriptHasher(fsHasher)}
 	if *skipFRI {
 		opts = append(opts, prover.SkipFRI())
 	}
@@ -430,10 +433,20 @@ func resolveHashBackend(name string) loom.HashBackend {
 		return loom.Poseidon2HashBackend()
 	case "sha256":
 		return loom.SHA256HashBackend()
+	case "blake3":
+		return loom.Blake3HashBackend()
 	default:
-		fail("unknown hash backend %q (want poseidon2 | sha256)", name)
+		fail("unknown hash backend %q (want poseidon2 | sha256 | blake3)", name)
 		return loom.HashBackend{}
 	}
+}
+
+func resolveFSHasher(name string) fiatshamir.NewTranscriptHasher {
+	h, err := fiatshamir.NewTranscriptHasherByID(name)
+	if err != nil {
+		fail("unknown fs-hash %q (want poseidon2 | sha256 | blake3)", name)
+	}
+	return h
 }
 
 func dumpHeap(path string) {
