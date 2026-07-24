@@ -29,10 +29,9 @@ const (
 // HashBackend contains every hash primitive that must agree between setup,
 // proving, and verification.
 type HashBackend struct {
-	ID                  string
-	LeafHasher          LeafHasher
-	NodeHasher          NodeHasher
-	NewTranscriptHasher func() hash.FieldHasher
+	ID         string
+	LeafHasher LeafHasher
+	NodeHasher NodeHasher
 }
 
 type SHA256LeafHasher struct{}
@@ -44,19 +43,14 @@ func Poseidon2HashBackend() HashBackend {
 		ID:         HashBackendPoseidon2,
 		LeafHasher: DefaultLeafHasher,
 		NodeHasher: DefaultNodeHasher,
-		NewTranscriptHasher: func() hash.FieldHasher {
-			h := hash.NewPoseidon2SpongeHasher()
-			return &h
-		},
 	}
 }
 
 func SHA256HashBackend() HashBackend {
 	return HashBackend{
-		ID:                  HashBackendSHA256,
-		LeafHasher:          SHA256LeafHasher{},
-		NodeHasher:          SHA256NodeHasher{},
-		NewTranscriptHasher: func() hash.FieldHasher { return hash.NewSHA256FieldHasher() },
+		ID:         HashBackendSHA256,
+		LeafHasher: SHA256LeafHasher{},
+		NodeHasher: SHA256NodeHasher{},
 	}
 }
 
@@ -96,7 +90,7 @@ func NormalizeHashBackendID(id string) string {
 }
 
 func isZeroHashBackend(backend HashBackend) bool {
-	return backend.ID == "" && backend.LeafHasher == nil && backend.NodeHasher == nil && backend.NewTranscriptHasher == nil
+	return backend.ID == "" && backend.LeafHasher == nil && backend.NodeHasher == nil // && backend.NewTranscriptHasher == nil
 }
 
 func validateHashBackend(backend HashBackend) error {
@@ -108,12 +102,6 @@ func validateHashBackend(backend HashBackend) error {
 	}
 	if backend.NodeHasher == nil {
 		return fmt.Errorf("hash backend %q has nil node hasher", backend.ID)
-	}
-	if backend.NewTranscriptHasher == nil {
-		return fmt.Errorf("hash backend %q has nil transcript hasher factory", backend.ID)
-	}
-	if backend.NewTranscriptHasher() == nil {
-		return fmt.Errorf("hash backend %q returned nil transcript hasher", backend.ID)
 	}
 	return nil
 }

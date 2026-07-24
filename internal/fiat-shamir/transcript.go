@@ -15,6 +15,7 @@ package fiatshamir
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/consensys/gnark-crypto/field/koalabear"
 	"github.com/consensys/loom/internal/hash"
@@ -31,11 +32,43 @@ var (
 )
 
 const (
-	challengeIDDomainTag uint64 = 0x46534944 // "FSID"
-	proofOfWorkDomainTag uint64 = 0x46535057 // "FSPW"
-	koalabearBits               = 31
-	maxGrindingBits             = koalabearBits // current proofs of work use a single Koalabear salt
+	challengeIDDomainTag         uint64 = 0x46534944 // "FSID"
+	proofOfWorkDomainTag         uint64 = 0x46535057 // "FSPW"
+	koalabearBits                       = 31
+	maxGrindingBits                     = koalabearBits // current proofs of work use a single Koalabear salt
+	NewTranscriptHasherPoseidon2        = "poseidon2"
+	NewTranscriptHasherSha256           = "sha256"
 )
+
+// ResolveNewTranscriptHasher returns newTranscriptHasher if it is not nil,
+// otherwise returns a poseidon2 hasher by default
+func ResolveNewTranscriptHasher(newTranscriptHasher NewTranscriptHasher) (NewTranscriptHasher, error) {
+	if newTranscriptHasher != nil {
+		return newTranscriptHasher, nil
+	}
+	return NewTranscriptHasherByID("")
+}
+
+func NewTranscriptHasherByID(id string) (NewTranscriptHasher, error) {
+	switch id {
+	case "":
+		return func() hash.FieldHasher {
+			h := hash.NewPoseidon2SpongeHasher()
+			return &h
+		}, nil
+	case NewTranscriptHasherPoseidon2:
+		return func() hash.FieldHasher {
+			h := hash.NewPoseidon2SpongeHasher()
+			return &h
+		}, nil
+	case NewTranscriptHasherSha256:
+		return func() hash.FieldHasher { return hash.NewSHA256FieldHasher() }, nil
+	default:
+		return nil, fmt.Errorf("unknown hash backend %q", id)
+	}
+}
+
+type NewTranscriptHasher func() hash.FieldHasher
 
 // ComputeChallengeConfig configuration file used when 'ComputeChallenge' is called
 type ComputeChallengeConfig struct {

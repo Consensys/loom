@@ -26,6 +26,7 @@ var (
 	rate         = flag.Int("rate", 4, "Reed-Solomon blowup factor")
 	numQueries   = flag.Int("queries", 32, "number of FRI queries")
 	maxShifts    = flag.Int("max-shifts", 3, "maximum number of shifts per polynomial")
+	fsHasher     = flag.String("fs-hash", "poseidon2", "fs-hash: poseidon2 | sha256")
 	hashName     = flag.String("hash", fri.HashBackendPoseidon2, "hash backend: poseidon2 | sha256")
 	seed         = flag.Uint64("seed", 1, "deterministic synthetic input seed")
 	gomaxprocs   = flag.Int("gomaxprocs", 0, "override GOMAXPROCS (0 = leave default)")
@@ -52,8 +53,8 @@ func main() {
 	}
 	pcs := fri.NewPCSWithParams(params)
 
-	fmt.Printf("fri pcs bench  sizes=2^%d..2^%d  base=%d/group  ext=%d/group  rate=%d  queries=%d  hash=%s  GOMAXPROCS=%d  NumCPU=%d\n\n",
-		*minLog2, *maxLog2, *basePolys, *extPolys, *rate, *numQueries, backend.ID, runtime.GOMAXPROCS(0), runtime.NumCPU())
+	fmt.Printf("fri pcs bench  sizes=2^%d..2^%d  base=%d/group  ext=%d/group  rate=%d  queries=%d  hash=%s hashFS=%s GOMAXPROCS=%d  NumCPU=%d\n\n",
+		*minLog2, *maxLog2, *basePolys, *extPolys, *rate, *numQueries, backend.ID, *fsHasher, runtime.GOMAXPROCS(0), runtime.NumCPU())
 
 	batch := makeSyntheticBatch(*minLog2, *maxLog2, *basePolys, *extPolys, *seed)
 	batches := []fri.Batch{batch}
@@ -78,7 +79,12 @@ func main() {
 	roots := []hash.Digest{committed.Tree.Root()}
 	shapes := []fri.BatchShapes{committed.Shapes}
 
-	proverFS, zeta := proverTranscript(backend, roots)
+	newFsHasher, err := fiatshamir.NewTranscriptHasherByID(*fsHasher)
+	if err != nil {
+		fail("NewTranscriptHasherByID: %v", err)
+	}
+
+	proverFS, zeta := proverTranscript(newFsHasher, roots)
 
 	tr = newTracker("Open", *sampleMillis)
 	proof, err := pcs.Open(batches, []fri.Committed{committed}, []fri.BatchShifts{shifts}, zeta, proverFS, fri.WithOpenDomainCache(&domainCache))
@@ -87,7 +93,7 @@ func main() {
 	}
 	phases = append(phases, tr.stop())
 
-	verifierFS, verifierZeta := verifierTranscript(backend, roots)
+	verifierFS, verifierZeta := verifierTranscript(newFsHasher, roots)
 	if !verifierZeta.Equal(&zeta) {
 		fail("verifier transcript sampled a different zeta")
 	}
@@ -260,14 +266,14 @@ func nextRand(x uint64) uint64 {
 
 const zetaChallengeName = "fri_bench_zeta"
 
-func proverTranscript(backend fri.HashBackend, roots []hash.Digest) (*fiatshamir.Transcript, ext.E6) {
-	fs := fiatshamir.NewTranscript(backend.NewTranscriptHasher())
+func proverTranscript(newTranscriptHasher fiatshamir.NewTranscriptHasher, roots []hash.Digest) (*fiatshamir.Transcript, ext.E6) {
+	fs := fiatshamir.NewTranscript(newTranscriptHasher())
 	zeta := bindRootsAndSampleZeta(fs, roots)
 	return fs, zeta
 }
 
-func verifierTranscript(backend fri.HashBackend, roots []hash.Digest) (*fiatshamir.Transcript, ext.E6) {
-	fs := fiatshamir.NewTranscript(backend.NewTranscriptHasher())
+func verifierTranscript(newTranscriptHasher fiatshamir.NewTranscriptHasher, roots []hash.Digest) (*fiatshamir.Transcript, ext.E6) {
+	fs := fiatshamir.NewTranscript(newTranscriptHasher())
 	zeta := bindRootsAndSampleZeta(fs, roots)
 	return fs, zeta
 }

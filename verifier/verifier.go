@@ -32,10 +32,11 @@ import (
 )
 
 type Config struct {
-	SkipFRI     bool
-	HashBackend fri.HashBackend
-	FriGrinding int
-	Fs          *fiatshamir.Transcript
+	SkipFRI             bool
+	HashBackend         fri.HashBackend
+	NewTranscriptHasher fiatshamir.NewTranscriptHasher
+	FriGrinding         int
+	Fs                  *fiatshamir.Transcript
 }
 
 type Option func(c *Config) error
@@ -151,7 +152,12 @@ func newVerifierRuntime(program board.Program, verificationKey setup.Verificatio
 	if config.Fs != nil {
 		res.fs = config.Fs
 	} else {
-		res.fs = fiatshamir.NewTranscript(hashBackend.NewTranscriptHasher())
+		// default is poseidon2
+		newTranscriptHasher, err := fiatshamir.ResolveNewTranscriptHasher(config.NewTranscriptHasher)
+		if err != nil {
+			return res, err
+		}
+		res.fs = fiatshamir.NewTranscript(newTranscriptHasher())
 	}
 	numRounds := len(program.FScolumnsDependencies)
 	for i := 0; i < numRounds; i++ {

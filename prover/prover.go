@@ -40,11 +40,12 @@ import (
 )
 
 type Config struct {
-	SkipFRI       bool
-	HashBackend   fri.HashBackend
-	PhaseCallback func(name string, d time.Duration)
-	FriGrinding   int
-	Fs            *fiatshamir.Transcript
+	SkipFRI             bool
+	HashBackend         fri.HashBackend
+	NewTranscriptHasher fiatshamir.NewTranscriptHasher
+	PhaseCallback       func(name string, d time.Duration)
+	FriGrinding         int
+	Fs                  *fiatshamir.Transcript
 }
 
 type Option func(c *Config) error
@@ -193,7 +194,12 @@ func newProverRuntime(t trace.Trace, provingKey setup.ProvingKey, publicInputs p
 	if config.Fs != nil {
 		res.fs = config.Fs
 	} else {
-		res.fs = fiatshamir.NewTranscript(hashBackend.NewTranscriptHasher())
+		// default is poseidon2
+		newTranscriptHasher, err := fiatshamir.ResolveNewTranscriptHasher(config.NewTranscriptHasher)
+		if err != nil {
+			return res, err
+		}
+		res.fs = fiatshamir.NewTranscript(newTranscriptHasher())
 	}
 	numRounds := len(program.FScolumnsDependencies)
 	for i := 0; i < numRounds; i++ {
