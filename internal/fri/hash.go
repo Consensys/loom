@@ -165,6 +165,32 @@ func (SHA256NodeHasher) HashNode(left, right hash.Digest) hash.Digest {
 	return h.Sum()
 }
 
+//----------------- blake3 -----------------
+
+type Blake3LeafHasher struct{}
+
+func (Blake3LeafHasher) HashLeaf(base []koalabear.Element, extElems []ext.E6) hash.Digest {
+	h := hash.NewBlake3FieldHasher()
+	h.WriteElements(hash.NewElement(leafDomainTag), hash.NewElement(uint64(len(base))), hash.NewElement(uint64(len(extElems))))
+	for _, v := range base {
+		h.WriteElements(v)
+	}
+	for _, v := range extElems {
+		h.WriteExt(v)
+	}
+	return h.Sum()
+}
+
+type Blake3NodeHasher struct{}
+
+func (Blake3NodeHasher) HashNode(left, right hash.Digest) hash.Digest {
+	h := hash.NewBlake3FieldHasher()
+	h.WriteElements(hash.NewElement(nodeDomainTag))
+	h.WriteElements(left[:]...)
+	h.WriteElements(right[:]...)
+	return h.Sum()
+}
+
 //----------------- helpers-----------------
 
 func hashLeavesScalar(lh LeafHasher, dst []hash.Digest, src LeafSource, start int) {

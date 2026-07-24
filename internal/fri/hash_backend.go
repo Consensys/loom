@@ -20,6 +20,7 @@ import (
 const (
 	HashBackendPoseidon2 = "poseidon2"
 	HashBackendSHA256    = "sha256"
+	HashBackendBlake3    = "blake3"
 )
 
 // HashBackend contains every hash primitive that must agree between setup,
@@ -46,6 +47,14 @@ func SHA256HashBackend() HashBackend {
 	}
 }
 
+func Blake3HashBackend() HashBackend {
+	return HashBackend{
+		ID:         HashBackendBlake3,
+		LeafHasher: Blake3LeafHasher{},
+		NodeHasher: Blake3NodeHasher{},
+	}
+}
+
 func DefaultHashBackend() HashBackend {
 	return Poseidon2HashBackend()
 }
@@ -56,6 +65,8 @@ func HashBackendByID(id string) (HashBackend, error) {
 		return Poseidon2HashBackend(), nil
 	case HashBackendSHA256:
 		return SHA256HashBackend(), nil
+	case HashBackendBlake3:
+		return Blake3HashBackend(), nil
 	default:
 		return HashBackend{}, fmt.Errorf("unknown hash backend %q", id)
 	}
