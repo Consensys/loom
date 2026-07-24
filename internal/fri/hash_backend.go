@@ -15,10 +15,6 @@ package fri
 
 import (
 	"fmt"
-
-	"github.com/consensys/gnark-crypto/field/koalabear"
-	ext "github.com/consensys/gnark-crypto/field/koalabear/extensions"
-	"github.com/consensys/loom/internal/hash"
 )
 
 const (
@@ -33,10 +29,6 @@ type HashBackend struct {
 	LeafHasher LeafHasher
 	NodeHasher NodeHasher
 }
-
-type SHA256LeafHasher struct{}
-
-type SHA256NodeHasher struct{}
 
 func Poseidon2HashBackend() HashBackend {
 	return HashBackend{
@@ -111,28 +103,4 @@ func normalizeHashBackendID(id string) string {
 		return HashBackendPoseidon2
 	}
 	return id
-}
-
-func (SHA256LeafHasher) HashLeaf(base []koalabear.Element, ext []ext.E6) hash.Digest {
-	h := hash.NewSHA256FieldHasher()
-	h.WriteElements(hash.NewElement(leafDomainTag), hash.NewElement(uint64(len(base))), hash.NewElement(uint64(len(ext))))
-	for _, v := range base {
-		h.WriteElements(v)
-	}
-	for _, v := range ext {
-		h.WriteExt(v)
-	}
-	return h.Sum()
-}
-
-func (SHA256LeafHasher) BatchSize() int {
-	return 1
-}
-
-func (SHA256NodeHasher) HashNode(left, right hash.Digest) hash.Digest {
-	h := hash.NewSHA256FieldHasher()
-	h.WriteElements(hash.NewElement(nodeDomainTag))
-	h.WriteElements(left[:]...)
-	h.WriteElements(right[:]...)
-	return h.Sum()
 }
